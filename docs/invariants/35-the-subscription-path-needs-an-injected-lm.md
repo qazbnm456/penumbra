@@ -1,52 +1,25 @@
-# Invariant 35 — The subscription path needs an injected LM
+# Invariant 35: The subscription path uses an injected LM
 
-**A model string prefixed `claude-agent-sdk/` routes that role onto the user's Claude Pro/Max
-SUBSCRIPTION, through a `ClaudeAgentLM` that `config.setup` injects into `configure`'s public
-`main_lm=`/`sub_lm=` seam.** Every non-sentinel role is still built from the `RN_*` config.
+**A model string prefixed `claude-agent-sdk/` runs that role on the user's Claude Pro or Max subscription, through a `ClaudeAgentLM` that `config.setup` injects into `configure`'s public `main_lm=` and `sub_lm=` seam.**
 
-**THE REASON THIS FUNCTION EXISTED HAS EXPIRED, AND THE OLD WORDING MUST NOT COME BACK.** It read:
-"it works ONLY because `config.setup` injects the LM — `rlm_harness.configure` does not route on
-the prefix itself", on the premise that `runtime.configure` calls `dspy.LM(...)` unconditionally
-for any seat left unsupplied, so a bare sentinel would reach litellm as a provider that does not
-exist. That was true of the harness of the time. It is FALSE of `rlm-harness==1.10.0`, the version
-`pyproject.toml` pins: `runtime.configure` calls its own `_maybe_subscription_lm(cfg.main_model)`
-for any role left `None`, on the identical prefix string, and its docstring calls it
-"Claude-subscription auto-routing".
+Every other role is still built from the `RN_*` config.
 
-So what the injection does now is WIN, not enable: an explicit `main_lm=` is used verbatim, and the
-seat never reaches upstream's branch. Nothing about the behaviour changed when upstream gained the
-feature, which is exactly why nobody noticed the justification had stopped being true.
+## The injection decides which LM wins
 
-Two consequences worth stating rather than leaving to be rediscovered. `_maybe_subscription_lm`
-here is now a DUPLICATE of upstream's, and `SUBSCRIPTION_PREFIX` a second copy of
-`claude_agent_lm.SUBSCRIPTION_PREFIX` — kept, because `config.py` deliberately stays free of
-`dspy`/`rlm_harness` at import time and cannot read upstream's constant to compare against. And
-deleting ours would now "work", which is the trap: it would silently hand every subscription run to
-upstream's construction, whose timeout and error semantics this project has never tested against.
-Removing it is a measurement, not a cleanup.
+`rlm-harness==1.10.0`, the version `pyproject.toml` pins, routes the same prefix itself: `runtime.configure` calls its own `_maybe_subscription_lm(cfg.main_model)` for any role left unsupplied. An explicit `main_lm=` is used as is and never reaches that branch, so the injection now decides whose construction is used rather than making the subscription path work at all. Do not bring back the older statement that `configure` ignores the prefix; it was true of an earlier harness and is false now.
 
-The sentinel string ALSO stays in `RLMConfig` — inert for an injected seat, but it is what labels
-the trace and the log.
+Two consequences follow. This project's `_maybe_subscription_lm` duplicates upstream's, and `SUBSCRIPTION_PREFIX` is a second copy of `claude_agent_lm.SUBSCRIPTION_PREFIX`. Both are kept because `config.py` stays free of `dspy` and `rlm_harness` at import time and cannot read upstream's constant. Deleting ours would appear to work, which is the trap: every subscription run would silently move to upstream's construction, whose timeout and error behaviour this project has never tested. Removing it needs a measurement, not a cleanup.
 
-`SUBSCRIPTION_PREFIX` lives in `config.py` (a naming convention, in the module that stays free of
-`dspy`/`rlm_harness` at import time) and `_maybe_subscription_lm` imports `ClaudeAgentLM` LAZILY,
-inside the sentinel branch only, so an API-key-only install never touches the optional SDK.
-**`config.setup` is the ONE place either entry point configures a model** — `cli.py` in-process
-and `worker.py` inside the subprocess both call it — so one change covers both execution models.
+The sentinel string also stays in `RLMConfig`. It does nothing for an injected role, but it labels the trace and the log.
 
-**`RN_SUB_MODEL` inheriting the sentinel from `RN_MAIN_MODEL` is correct HERE** (this project has
-no separate role that must stay on its own endpoint), and is pinned by a test so the divergence
-from the sibling that gates against it stays deliberate.
+## Where it lives
 
-`claude-agent-sdk` is the `subscription` extra, MIRRORED as a `subscription-sdk` dev group with
-`[tool.uv] default-groups`. Not redundancy: an extra is not synced by default, so a bare
-`uv sync` PRUNES the SDK back out and the next subscription run dies with an `ImportError`
-nobody caused. The SDK also needs the Claude Code CLI installed and logged in, a runtime
-prerequisite no manifest can express. `ClaudeAgentLM` refuses to construct when
-`ANTHROPIC_API_KEY` is set (the CLI silently prefers it over subscription OAuth, which would
-quietly bill API credit) — an upstream guard. A BARE `claude-agent-sdk/` with no model after the
-slash raises `SystemExit`, reaching the API as a clean 500 through `_config()`.
+`SUBSCRIPTION_PREFIX` is in `config.py`, and `_maybe_subscription_lm` imports `ClaudeAgentLM` lazily, only inside the sentinel branch, so an install that uses only API keys never touches the optional SDK. `config.setup` is the one place either entry point configures a model (`cli.py` in-process and `worker.py` in the subprocess both call it), so one change covers both.
+
+`RN_SUB_MODEL` inherits the sentinel from `RN_MAIN_MODEL`. That is correct here, because this project has no role that must stay on its own endpoint, and a test pins it so the difference from the sibling project that forbids it stays deliberate.
+
+`claude-agent-sdk` is the `subscription` extra, mirrored as a `subscription-sdk` dev group listed in `[tool.uv] default-groups`. An extra is not synced by default, so without the mirror a bare `uv sync` would remove the SDK and the next subscription run would fail with an `ImportError`. The SDK also needs the Claude Code CLI installed and logged in, which no manifest can express. `ClaudeAgentLM` refuses to construct when `ANTHROPIC_API_KEY` is set, because the CLI would silently prefer the key over the subscription and bill API credit. A bare `claude-agent-sdk/` with no model name raises `SystemExit`, which reaches the API as a clean 500 through `_config()`.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

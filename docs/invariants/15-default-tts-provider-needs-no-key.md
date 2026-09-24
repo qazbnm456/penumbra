@@ -1,11 +1,9 @@
-# Invariant 15 — Default TTS provider needs no key
+# Invariant 15: The default TTS provider needs no key
 
-**The default TTS provider (`RN_TTS_PROVIDER=edge-tts`) needs no API key or paid account, so
-`rlm-notebook audio` works out of the box** — the same "ship a working default, not just a
-pluggable interface" reasoning as OCR (invariant 7). The known-provider list lives in ONE place,
-`tts.py`'s `_PROVIDERS` (`get_tts_provider` refuses loudly on an unknown name); `config.py`
-deliberately keeps NO second copy to validate against, because a second list drifts.
+**The default TTS provider (`RN_TTS_PROVIDER=edge-tts`) needs no API key or paid account, so `rlm-notebook audio` works out of the box.**
+
+This is the same reasoning as shipping OCR on by default (invariant 7): ship a working default, not just an interface. The list of known providers lives in one place, `_PROVIDERS` in `tts.py`, and `get_tts_provider` refuses an unknown name loudly. `config.py` deliberately keeps no second copy to validate against, because a second list drifts.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

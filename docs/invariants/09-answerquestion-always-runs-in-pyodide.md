@@ -1,10 +1,9 @@
-# Invariant 9 — AnswerQuestion always runs in pyodide
+# Invariant 9: AnswerQuestion always runs in Pyodide
 
-**`AnswerQuestion` always runs in the `pyodide` sandbox; `NotebookConfig.from_env` refuses any
-other `RN_INTERPRETER` value rather than silently overriding it.** An operator who set
-`RN_INTERPRETER=local` believes something about this run that would not be true if the kit
-quietly corrected it; refusal makes the misconfiguration visible.
+**`AnswerQuestion` always runs in the `pyodide` sandbox, and `NotebookConfig.from_env` refuses any other `RN_INTERPRETER` value instead of silently overriding it.**
+
+An operator who set `RN_INTERPRETER=local` believes something about the run that would stop being true if the value were quietly corrected. Refusing makes the misconfiguration visible.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

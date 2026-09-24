@@ -1,9 +1,9 @@
-# Invariant 16 — An empty podcast script says so
+# Invariant 16: An empty podcast script says so
 
-**`PodcastScript.utterances` may legitimately be empty, and `cli._cmd_audio` says so
-explicitly rather than printing nothing** — the same allowance and UI fix `Timeline.events`/
-`FAQ.items` already have, where "silently prints nothing" was a real bug.
+**`PodcastScript.utterances` may legitimately be empty, and `cli._cmd_audio` says so explicitly instead of printing nothing.**
+
+`Timeline.events` and `FAQ.items` have the same allowance and the same fix, because silently printing nothing was a real bug there first.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

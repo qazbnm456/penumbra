@@ -1,16 +1,11 @@
-# Invariant 64 — Long scripts are built across turns
+# Invariant 64: Long scripts are built across turns
 
-**A `long` script is built across REPL turns, and that is what the sandbox is FOR.** Written as one
-code block it was TRUNCATED by the per-call generation cap mid-structure and the run failed;
-accumulated in a list across turns — printing only its LENGTH, never its contents — the same corpus and
-the same cap produced 80 utterances with 44 citations, with **nothing about the budget changed**. This
-is the second time a truncation could have been answered by raising `max_tokens` and the first time it
-should not have been: invariant 59's raise was correct because the PLANNER's reasoning did not fit, and
-this is an OUTPUT that should never have been one reply. **If a finished object will not comfortably
-fit in one reply, it must not be written in one reply** — recorded in the `corpus-navigation` skill
-(named because it is one of exactly two shipped, and invariant 65's split decides what belongs in a
-skill rather than a prompt), and as `instructions.ACCUMULATE_LARGE_OUTPUTS` (invariant 65).
+**A `long` script is built across REPL turns, which is what the sandbox is for.**
+
+Written as one code block, a long script was cut off mid-structure by the per-call generation cap and the run failed. Built up in a list across turns, printing only its length and never its contents, the same corpus under the same cap produced 80 utterances with 44 citations. Nothing about the budget changed.
+
+Raising `max_tokens` would have been the wrong answer here. Invariant 59's raise was right because the planner's reasoning did not fit in one reply; this was an output that should never have been one reply. If a finished object will not comfortably fit in one reply, it must not be written in one reply. The rule lives in the prompt as `instructions.ACCUMULATE_LARGE_OUTPUTS` for all six tasks (invariant 65), and the `corpus-navigation` skill explains it.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

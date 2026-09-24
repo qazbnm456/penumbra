@@ -231,7 +231,7 @@ async function api(path, options) {
       //: printed", which is not a thing that exists — at exactly the moment they are locked out.
       t(
         "err.tokenInvalid",
-        "API token missing or expired — open this page again with `?token=` and the token the server printed."
+        "API token missing or expired. Open this page again with `?token=` and the token the server printed."
       )
     );
   }
@@ -541,6 +541,23 @@ const WAITING_AFTER_SECONDS = 20;
 //: phrase for seven minutes on a subscription model and reported it as looking like a crash.
 const LONG_WAIT_AFTER_SECONDS = 90;
 
+//: The next sensible control in the panel a run was stopped in: the composer in Chat; in the Studio
+//: the starter or ↻ Regenerate that the stop just brought back, else the selected tab.
+function focusAfterStop(home) {
+  const current = document.activeElement;
+  if (current && current !== document.body && current.isConnected) return; // already placed
+  const usable = (el) => el && !el.disabled && !el.hidden && el.getClientRects().length;
+  const candidates = home && home.id === "col-chat"
+    ? [document.getElementById("ask-input"), home.querySelector(".chat-starter button")]
+    : [
+        home && home.querySelector("#guide-body .chat-starter button, #podcast-generate"),
+        document.getElementById("guide-regenerate"),
+        home && home.querySelector('[role="tab"][aria-selected="true"]'),
+      ];
+  const target = candidates.find(usable);
+  if (target) target.focus();
+}
+
 function runStatus({ notebookId, runIds, label, onCancel }) {
   noteRunStarted(notebookId);
   const node = document.createElement("div");
@@ -781,6 +798,11 @@ function runStatus({ notebookId, runIds, label, onCancel }) {
   }
 
   stop.addEventListener("click", async () => {
+    //: **Where focus goes after Stop.** Disabling the focused button drops focus to `<body>`, and
+    //: the row that held it is then removed — so a keyboard reader lost their place on every Stop.
+    //: Remembered BEFORE either happens; handed on once the panel has re-rendered.
+    const hadFocus = document.activeElement === stop;
+    const home = node.closest(".col");
     stop.disabled = true;
     text.textContent = t("run.stopping", "Stopping\u2026");
     // Cancel every run this action started, not "whatever this notebook is doing" — a notebook-
@@ -803,11 +825,13 @@ function runStatus({ notebookId, runIds, label, onCancel }) {
       // pretending, and say so once.
       stop.disabled = false;
       text.textContent = currentPhrase;
-      notify(t("run.stopFailed", "Could not stop that run \u2014 it may still be going."));
+      if (hadFocus) stop.focus();
+      notify(t("run.stopFailed", "Could not stop that run. It may still be going."));
       return;
     }
     finish();
     if (onCancel) onCancel();
+    if (hadFocus) queueMicrotask(() => focusAfterStop(home));
   });
 
   return {
@@ -1490,6 +1514,8 @@ async function reattachInFlightRuns(notebookId, generation) {
   //: and the next rebuild dropped the row with the first run's only Stop.
   const mount = {};
   recoveredRuns.set(notebookId, mount);
+  // Lock what the composer's handler owns (Send, ↻ Regenerate, Clear) while this run is recovered.
+  store.emit("chat:pending", { pending: false });
   syncRunGuards();
 
   let watching = true;
@@ -1671,14 +1697,14 @@ function settingRows() {
     {
       key: "tts_voice_host_a",
       choicesKey: "voices",
-      label: t("settings.voiceA", "Podcast voice — host A"),
+      label: t("settings.voiceA", "Podcast voice: host A"),
       placeholder: "e.g. zh-TW-YunJheNeural or host-a",
       help: voiceHelp,
     },
     {
       key: "tts_voice_host_b",
       choicesKey: "voices",
-      label: t("settings.voiceB", "Podcast voice \u2014 host B"),
+      label: t("settings.voiceB", "Podcast voice: host B"),
       placeholder: "e.g. zh-TW-HsiaoChenNeural or host-b",
       help: "",
     },
@@ -1858,7 +1884,7 @@ function renderSettings(state_) {
     note.className = "setting-source";
     note.textContent =
       entry.source === "env"
-        ? t("settings.pinnedBy", `Pinned by ${entry.env_var} — unset it to edit here.`, { env: entry.env_var })
+        ? t("settings.pinnedBy", `Pinned by ${entry.env_var}. Unset it to edit here.`, { env: entry.env_var })
         : row.help;
     wrap.appendChild(note);
 
@@ -2115,7 +2141,7 @@ function readableError(text) {
   if (RUN_TIMED_OUT.test(raw)) {
     return t(
       "err.runTimedOut",
-      "This run hit the time limit and was stopped. A long Audio Overview can need longer — raise RN_RUN_TIMEOUT_SECONDS and try again."
+      "This run hit the time limit and was stopped. A long Audio Overview can need more time: raise RN_RUN_TIMEOUT_SECONDS and try again."
     );
   }
   if (HTML_BODY.test(raw)) {
@@ -2621,7 +2647,7 @@ function renderSourceItem(source) {
     flags.textContent = `\u26a0 ${source.flags.join(", ")}`;
     flags.dataset.tip = t(
       "sources.flagHelp",
-      "Found in this source's own text, not in your question. It is not blocked and answers still cite it — this is a heads-up that the source contains something shaped like an instruction to a model."
+      "Found in this source's own text, not in your question. It is not blocked and answers can still cite it. This is a heads-up that the source contains something that looks like an instruction to a model."
     );
     li.appendChild(flags);
   }
@@ -2992,7 +3018,7 @@ function notebookMarkdown() {
     //: internal `pasted:<opening words> #<hash>` form the interface hides everywhere else, and its
     //: label already is those opening words.
     sources.forEach((source, i) => {
-      const where = (source.origin || "").startsWith("pasted:") ? "" : ` — ${source.origin}`;
+      const where = (source.origin || "").startsWith("pasted:") ? "" : `: ${source.origin}`;
       out.push(`${i + 1}. ${markdownInline(sourceLabel(source))}${where}`);
     });
     out.push("");
@@ -3056,7 +3082,7 @@ function copyButton(getMarkdown) {
     } catch {
       //: A clipboard write can be refused (no permission, an insecure origin). Saying so beats a
       //: control that looks like it worked.
-      btn.dataset.tip = t("copy.failed", "Could not copy — select the text and copy it yourself.");
+      btn.dataset.tip = t("copy.failed", "Could not copy. Select the text and copy it yourself.");
     }
     setTimeout(() => {
       btn.dataset.tip = before;
@@ -3074,7 +3100,7 @@ function saveAsNoteButton(text) {
   btn.textContent = "\u2606";  // U+2606 WHITE STAR — geometric, never emoji (see the theme toggle)
   btn.dataset.tip = t(
     "chat.saveAsNoteHelp",
-    "Keep a copy in Notes (Studio, right). A note can later be PROMOTED into a source, which is what makes it citable by a later question."
+    "Keep a copy in Notes, in the Studio on the right. Promote a note into a source later and your questions can cite it."
   );
   btn.addEventListener("click", async (event) => {
     event.stopPropagation();
@@ -3091,7 +3117,7 @@ function saveAsNoteButton(text) {
         btn.disabled = false;
         btn.dataset.tip = t(
           "chat.saveAsNoteHelp",
-          "Keep a copy in Notes (Studio, right). A note can later be PROMOTED into a source, which is what makes it citable by a later question."
+          "Keep a copy in Notes, in the Studio on the right. Promote a note into a source later and your questions can cite it."
         );
       }, 1800);
     }
@@ -3696,7 +3722,7 @@ function citationHoverLabel(citation) {
   const label = locator ? `${name} · ${locator}` : name;
   return citation.verified
     ? label
-    : t("cite.unverifiedHover", `${label} — coordinate not found in this source`, { label });
+    : t("cite.unverifiedHover", `Not found in this source: ${label}`, { label });
 }
 
 //: "Ask this again, and replace the answer." A separate factory rather than something
@@ -3930,7 +3956,7 @@ function renderChatOverview() {
     note.className = "chat-overview-note";
     note.textContent = t(
       "chat.noStarters",
-      "No suggested questions came back with this overview \u2014 regenerate to try again.",
+      "No suggested questions came back with this overview. Regenerate to try again.",
     );
     el.appendChild(note);
     offerRegenerate = true;
@@ -4014,8 +4040,9 @@ function starterQuestionRow(questions) {
       //: The LOCK, not the button's state: Send is also disabled whenever the field is EMPTY, which
       //: is exactly when a chip is pressed — so every suggested question did nothing at all.
       if (composerLocked() || !(state.sources || []).length) return;
-      document.getElementById("ask-input").value = question;
-      document.getElementById("ask-form").requestSubmit();
+      //: Asked DIRECTLY, not by writing into the composer and submitting it: that replaced whatever
+      //: the reader had half-typed there with the chip's question, and the draft was gone.
+      store.emit("chat:ask", { question });
     });
     row.appendChild(chip);
   });
@@ -4359,7 +4386,8 @@ function initChatPanel() {
     // and then `ask`'s own persist would append the answer to the empty list, so the conversation
     // the reader just cleared comes back with one entry. Stop is the control for a run in flight;
     // this one is for a conversation that has finished happening.
-    clearBtn.disabled = composerHeld;
+    // The SAME lock as Send: a recovered run's answer would bring a cleared conversation back.
+    clearBtn.disabled = composerLocked();
   });
 
   // One flow, two entry points: the composer, and a turn's own "regenerate". Extracted rather than
@@ -4406,12 +4434,18 @@ function initChatPanel() {
         if (row) {
           row.classList.remove("is-pending");
           row.textContent = t("chat.stopped", "(stopped)");
+          // Not a later turn: the answer above keeps its ↻ Regenerate and its chips (style.css).
+          row.closest(".turn")?.classList.add("is-stopped");
         }
       },
     });
     if (answerEl) {
       answerEl.textContent = "";
       answerEl.appendChild(status.node);
+      //: Re-pinned AFTER the status row is in: `chat:turnAdded` scrolled to the bottom while the
+      //: row still read "Thinking…", the taller status row then left the thread ~62px short of the
+      //: bottom — past `PINNED_SLACK` — and so the landed answer (or failure) was never followed.
+      history.scrollTop = history.scrollHeight;
     }
     //: The row travels WITH the pending turn, so a rebuild re-attaches it (see `renderTurn`'s
     //: pending branch). Removing a source emits `chat:rerender`, and the rebuild drew a bare
@@ -4441,6 +4475,12 @@ function initChatPanel() {
       if (pendingTurn && pendingTurn.run_id === runId) pendingTurn = null;
       refreshReferenceView();
       rebuildHistory(state.turns);
+      //: The first answer changes two things outside the thread: the overview's "Start with" row
+      //: retires (the answer's own "Ask next" takes over), and Clear conversation now has something
+      //: to clear. Neither re-decided itself, so a fresh notebook showed two competing chip rows and
+      //: no Clear until the next question or a reload.
+      renderChatOverview();
+      syncClearBtn();
       ensureTitle(); // the answer arrived, so the reader has paid for a run either way
       void result; // already folded into notebook.turns above
     } catch (err) {
@@ -4496,7 +4536,7 @@ function initChatPanel() {
     //: disabled, so with no sources the question was cleared and came back as a failed turn quoting
     //: the server's `no notebook 'nb-…' — POST sources to it first`. The question stays in the field.
     if (!(state.sources || []).length) {
-      notify(t("chat.needSource", "Add a source first — every answer is grounded in your sources."));
+      notify(t("chat.needSource", "Add a source first. Every answer is grounded in your sources."));
       setPanel("sources");
       return;
     }
@@ -4510,6 +4550,11 @@ function initChatPanel() {
 
   // A turn asks to be redone. Exposed on `store` rather than threaded through `renderTurn`'s six
   // call sites: the button is built far from here and this is the one flow that can run it.
+  store.on("chat:ask", ({ question }) => {
+    if (composerLocked() || !(state.sources || []).length) return;
+    void askQuestion(question);
+  });
+
   store.on("chat:regenerate", ({ question }) => {
     // The same lock as Send: ↻ Regenerate is a new paid question too (see `composerLocked`).
     if (composerLocked()) return;
@@ -4612,7 +4657,7 @@ function guideMarkdown(kind, data) {
         //: a Timeline produced a list of bare dates with every event's text dropped. The harness
         //: fixture was written to match THIS LINE rather than the wire, so the test asserting
         //: `"- **2012** — crossed"` passed on an input the server cannot produce.
-        return `- **${event.when}** — ${(event.description || "").trim()}`;
+        return `- **${event.when}**: ${(event.description || "").trim()}`;
       })
       .join("\n");
     return artifactMarkdown(body, every, heading);
@@ -4631,7 +4676,7 @@ function renderGuideContent(kind, data, runId) {
 
   if (kind === "faq") {
     if (!data.items || !data.items.length) {
-      container.textContent = t("studio.noFaq", "(no FAQ items — the sources didn't produce enough to ask about)");
+      container.textContent = t("studio.noFaq", "No FAQ items. The sources did not give enough to ask about.");
       return container;
     }
     data.items.forEach((item) => {
@@ -4649,7 +4694,7 @@ function renderGuideContent(kind, data, runId) {
 
   // "timeline"
   if (!data.events || !data.events.length) {
-    container.textContent = t("studio.noTimeline", "(no timeline events — the sources didn't produce enough to place in time)");
+    container.textContent = t("studio.noTimeline", "No timeline events. The sources had nothing to place in time.");
     return container;
   }
   data.events.forEach((event) => {
@@ -4765,6 +4810,12 @@ function initStudioPanel() {
 
   function renderCached(kind, cached) {
     body.innerHTML = "";
+    if (cached.stale) {
+      body.appendChild(
+        elt("div", "chat-overview-note", t("studio.guideStale",
+          "Made from your sources as they were before they changed. ↻ Regenerate to use the current set."))
+      );
+    }
     body.appendChild(renderGuideContent(kind, cached.result, cached.runId));
     body.appendChild(renderTickerAffordance(cached.runId));
     //: A Guide kind is an artifact too — arguably the most artifact-shaped thing here — and it had
@@ -4833,7 +4884,10 @@ function initStudioPanel() {
       if (cancelled) return;
       settle();
       if (generation !== notebookGeneration) return;  // switched away — never cache into the new one
-      cache.set(kind, { result: data, runId });
+      //: `stale` when the sources changed WHILE it ran: the result is paid for, so it is kept, but
+      //: it was made from a corpus that no longer exists and must not read as current (a citation
+      //: to a removed source looked verified). Invariant 38's third state, for a guide.
+      cache.set(kind, { result: data, runId, stale: epoch !== cacheEpoch });
       ensureTitle(); // the guide arrived, so a run was paid for
       refreshReferenceView();
       // Into ITS kind; drawn now only if the reader is looking at that tab.
@@ -5334,6 +5388,15 @@ function initPodcastPlayer() {
   // It used to be one permanent primary button sitting above a player that already existed, which
   // put the most prominent control in the panel on the one action a reader with an episode is least
   // likely to want — and made "have I already made one?" a question the button could not answer.
+  //: Re-DECIDE the button rather than switching it on. A question may be running in this notebook
+  //: (asking during a podcast is allowed), and `syncRunGuards` — which would keep every starter
+  //: off while it does — skipped this button because it was already disabled by its own run. So
+  //: Stop or a failure turned Generate back on mid-question.
+  function releaseGenerate() {
+    syncGenerateButton();
+    queueMicrotask(syncRunGuards);
+  }
+
   function syncGenerateButton() {
     const podcast = state.podcast;
     //: **The most expensive press in the product was live on an empty notebook.** The four Studio
@@ -5395,7 +5458,7 @@ function initPodcastPlayer() {
         body.classList.remove("is-pending");
         clearPlayer();
         if (generation === notebookGeneration) renderSavedEpisode();
-        generateBtn.disabled = false;
+        releaseGenerate();
       },
     });
     body.appendChild(status.node);
@@ -5435,7 +5498,7 @@ function initPodcastPlayer() {
         //: The server CLEARED the episode and its audio for an empty script (invariant 42), so the
         //: page must forget it too — or a later Stop would restore it with a Play that 404s.
         state.podcast = null;
-        body.textContent = t("podcast.empty", "(no podcast script — the sources didn't produce enough to discuss)");
+        body.textContent = t("podcast.empty", "No podcast script. The sources did not give enough to discuss.");
         syncGenerateButton();
         return;
       }
@@ -5479,7 +5542,7 @@ function initPodcastPlayer() {
       //: in the middle of B's own run, and a press started a second paid run whose status row the
       //: first one's render then overwrote — no Stop for it anywhere. A switch re-decides the
       //: button for the new notebook (`syncGenerateButton`).
-      if (generation === notebookGeneration) generateBtn.disabled = false;
+      if (generation === notebookGeneration) releaseGenerate();
     }
   });
 
@@ -5519,8 +5582,7 @@ function renderNoteItem(note) {
   // native one's ~1s delay is what made hover help feel disconnected from the hover effect.
   promoteBtn.dataset.tip = t(
     "notes.promoteHelp",
-    "Turn this note into a real source. Only then can a later question cite it — a note on its own "
-    + "is just text, with no citations of its own.",
+    "Turn this note into a real source. Only then can a later question cite it; a note on its own is just text, with no citations.",
   );
   promoteBtn.addEventListener("click", async () => {
     promoteBtn.disabled = true;
@@ -6114,9 +6176,7 @@ function renderReferenceView() {
         why.className = "ref-card-why";
         why.textContent = t(
           "cite.unverifiedWhy",
-          "This citation points at a place that does not exist in this source, so we could not " +
-            "check it. The passage below may still be accurate — what failed is the address, not " +
-            "necessarily the claim.",
+          "This citation points at a place that does not exist in this source, so it could not be checked. The passage below may still be accurate: what failed is the address, not necessarily the claim.",
         );
         cardBody.appendChild(why);
         if (reference.reason) {
@@ -6582,7 +6642,7 @@ function renderTrajBudget(budget) {
     tag.textContent = t("traj.budgetTagNone", "\u24d8 budget");
     body.textContent = t(
       "traj.budgetNone",
-      "Token budgets aren't recorded for this trace \u2014 it predates the field. Not the same as \"nothing was truncated\".",
+      "This trace does not record token usage because it predates the field. That is not the same as \"nothing was truncated\".",
     );
     tone = "is-info";
   } else if (budget.truncated) {
@@ -6679,7 +6739,7 @@ function renderTrajectory(runId) {
   const noteBody = document.createElement("span");
   noteBody.className = "note-body";
   noteBody.textContent = trajData.per_turn_timing
-    ? t("traj.timingLive", "Per-turn timing is live \u2014 captured as each turn was parsed.")
+    ? t("traj.timingLive", "Per-turn timing is live, recorded as each turn was parsed.")
     : t(
         "traj.timingStale",
         "Per-turn timing isn't available for this trace; the tool timeline still carries real times.",
@@ -6759,7 +6819,7 @@ function renderTrajTimeline(line, turns) {
     // validator did not record a `tool_call` event at all — so an empty strip meant nothing.
     empty.textContent = t(
       "traj.noTools",
-      "This run called no tools \u2014 including the validator its instructions ask it to run before SUBMIT.",
+      "This run called no tools, not even the validator its instructions ask it to run before SUBMIT.",
     );
     trajEl.timeline.appendChild(empty);
     return;
@@ -6975,8 +7035,7 @@ function renderTrajDetail() {
         ? t("traj.noMeta", "No configuration was recorded for this run.")
         : t(
             "traj.notStarted",
-            "Nothing has been recorded for this run yet \u2014 it may still be starting, or it " +
-              "never got going.",
+            "Nothing has been recorded for this run yet. It may still be starting, or it never got going.",
           );
       host.appendChild(note);
     }
@@ -8238,7 +8297,7 @@ async function nodeActions(node, detail) {
     // Say WHY, rather than leaving a gap where a control was. A failed node still offers Try again
     // and Forget; this is the one action that is genuinely unavailable.
     main.appendChild(
-      elt("span", "node-filed", t("inbox.notFilable", "Nothing to file yet \u2014 it has no text."))
+      elt("span", "node-filed", t("inbox.notFilable", "Nothing to file yet: it has no text."))
     );
   }
 
@@ -8626,7 +8685,7 @@ async function renderFacets() {
       // "Christopher Alexander 2".
       item.setAttribute(
         "aria-label",
-        `${label} \u2014 ${t("app.sourceCount", `${book.source_count} sources`, { count: book.source_count })}`
+        `${label}, ${t("app.sourceCount", `${book.source_count} sources`, { count: book.source_count })}`
       );
     }
     item.addEventListener("click", async () => {
@@ -8742,7 +8801,7 @@ function initInbox() {
     }
     if (files.length > 1) {
       notify(
-        t("sources.oneFileOnly", "One file at a time here — drop the rest on the Inbox."),
+        t("sources.oneFileOnly", "One file at a time here. Drop the rest on the Inbox."),
         { tone: "info" }
       );
       return;

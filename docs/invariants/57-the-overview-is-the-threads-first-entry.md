@@ -1,19 +1,13 @@
-# Invariant 57 — The overview is the thread's first entry
+# Invariant 57: The overview is the thread's first entry
 
-**The chat overview is the THREAD's first entry, inside the scroller — not a panel pinned above it.**
-As a sibling of `.chat-history` with `flex: 0 0 auto` and `max-height: 45%` it permanently owned up to
-half the chat column; inside the scroller it simply scrolls away as the conversation grows. The
-`max-height` was there for a real reason — as a sibling it was a flex item whose automatic minimum
-size is its content, which would have collapsed `.chat-history` — and that reason evaporates once
-there is no competing flex item.
+**The chat overview is the thread's first entry, inside the scroller, not a panel pinned above it.**
 
-**A returning reader must not LAND scrolled past it**: `chat:turnAdded` scrolls to the bottom, and
-replaying a saved conversation fired it once per turn, so the overview started far above the fold.
-Only a genuinely new turn scrolls now.
+As a sibling of `.chat-history` with `flex: 0 0 auto` and `max-height: 45%`, it permanently took up to half the chat column; inside the scroller it scrolls away as the conversation grows. The `max-height` had a real reason: as a sibling it was a flex item whose minimum size is its content, which would have squeezed `.chat-history`. Inside the scroller there is no competing flex item, so the reason is gone.
 
-**Every path that redraws the thread goes through `rebuildHistory`**, which re-appends the overview
-node; a `history.innerHTML = ""` that forgot to would silently delete it.
+Opening a notebook starts at the top of the thread, with the overview in view. Only a new turn scrolls to the bottom; replaying a saved conversation used to scroll once per turn and landed the reader far below the overview.
+
+Every path that redraws the thread goes through `rebuildHistory`, which re-appends the overview node; a `history.innerHTML = ""` that forgot it would silently delete the overview.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

@@ -23,9 +23,7 @@
   <form class="token-gate-card" id="token-gate-form">
     <h2 class="token-gate-head" data-i18n="token.head">This app needs its token</h2>
     <p class="token-gate-why" data-i18n="token.why">
-      rlm-notebook runs on your machine and every request needs the token it printed when it
-      started. Every browser on this machine can reach the server, so being local is not the same
-      as being private.
+      rlm-notebook runs on your machine, and every request needs the token it printed when it started. Every browser on this machine can reach the server, so being local is not the same as being private.
     </p>
     <label class="token-gate-label" for="token-gate-input" data-i18n="token.label">
       Paste the token the server printed
@@ -33,7 +31,7 @@
     <input type="password" id="token-gate-input" class="token-gate-input" autocomplete="off"
            spellcheck="false" autocapitalize="off" />
     <p class="token-gate-hint" data-i18n="token.hint">
-      Lost it? Stop the server and start it again — it prints the token every time.
+      Lost it? Restart the server. It prints the token every time.
     </p>
     <p class="token-gate-error" id="token-gate-error" role="alert" hidden></p>
     <button type="submit" class="btn btn-primary" data-i18n="token.submit">Unlock</button>
@@ -194,7 +192,7 @@
       <!-- Shown only on a genuinely empty Inbox, never over a search that found nothing. -->
       <div class="first-run" id="first-run" hidden>
         <p data-i18n="inbox.firstRun.keep">Anything you paste is kept as it was, and read in the background.</p>
-        <p data-i18n="inbox.firstRun.facets">A facet is a notebook you file things into later, when you know what they are for.</p>
+        <p data-i18n="inbox.firstRun.facets">Notebooks are where you file things later, once you know what they are for.</p>
         <p data-i18n="inbox.firstRun.cost">Summaries are a separate, deliberate step. Keeping costs nothing.</p>
       </div>
 
@@ -243,7 +241,7 @@
         <div class="tab-body" data-kind-body="url" id="kind-body-url"
              role="tabpanel" aria-labelledby="ktab-url">
           <input type="url" id="source-url" placeholder="https://…" />
-          <p class="hint" data-i18n="sources.url.hint">A web page, or a YouTube link — captions only, never the video/audio itself.</p>
+          <p class="hint" data-i18n="sources.url.hint">A web page or a YouTube link. YouTube gives captions only, never the video or audio.</p>
         </div>
         <div class="tab-body" data-kind-body="text" id="kind-body-text"
              role="tabpanel" aria-labelledby="ktab-text" hidden>
@@ -259,7 +257,7 @@
         <button type="button" class="capture-pick" id="source-file-pick"
                 data-i18n="sources.choose">Choose a file…</button>
         <span class="hint" id="source-file-name"></span>
-          <p class="hint" data-i18n="sources.file.hint">PDF, TXT, or Markdown — one file per upload.</p>
+          <p class="hint" data-i18n="sources.file.hint">PDF, TXT or Markdown, one file at a time.</p>
         </div>
 
         <button type="submit" class="btn btn-primary btn-block" data-i18n="sources.add">Add source</button>
@@ -277,12 +275,10 @@
              podcast's audio file. -->
         <button type="button" class="panel-head-action" id="notebook-export"
                 data-i18n="chat.export" data-i18n-tip="chat.exportTip"
-                data-tip="Download this notebook — sources, overview, every answer and its
-                          references — as one Markdown file.">Export</button>
+                data-tip="Download this notebook (sources, overview, every answer and its references) as one Markdown file.">Export</button>
         <button type="button" class="panel-head-action" id="chat-clear" hidden
                 data-i18n="chat.clear" data-i18n-tip="chat.clearTip"
-                data-tip="Delete every question and answer in this notebook. Sources, notes and
-                          the overview are kept.">Clear conversation</button>
+                data-tip="Delete every question and answer in this notebook. Sources, notes and the overview are kept.">Clear conversation</button>
       </h2>
 
       <div class="chat-history" id="chat-history">
@@ -353,7 +349,7 @@
       </div>
 
       <div class="studio-view" data-view-body="studio" id="panel-studio" role="tabpanel" aria-labelledby="tab-studio">
-      <p class="panel-sub" data-i18n="studio.sub">Things made FROM your sources. Nothing here runs until you ask it to.</p>
+      <p class="panel-sub" data-i18n="studio.sub">Made from your sources. Nothing here runs until you ask.</p>
       <!-- Every tab explains itself on hover rather than spending rail space on a paragraph — the
            same `data-tip` treatment `toolscout`/`cve-reverser` use for their own controls. -->
       <div class="guide-tabs" id="guide-tabs" role="tablist" aria-label="Guide kinds"
@@ -407,7 +403,7 @@
 
       <div class="studio-view" data-view-body="notes" id="panel-notes" role="tabpanel" aria-labelledby="tab-notes" hidden>
       <div class="notes-section">
-        <p class="panel-sub" data-i18n="notes.sub">Your own scratchpad. Save an answer from Chat with its ☆ star, then promote a note to turn it into a source later questions can cite.</p>
+        <p class="panel-sub" data-i18n="notes.sub">Your own scratchpad. Save an answer from the chat with its ☆, then promote a note into a source so later questions can cite it.</p>
         <form id="add-note-form" class="add-note">
           <textarea id="note-text" rows="3" placeholder="Write a note…" data-i18n-placeholder="notes.placeholder"></textarea>
           <button type="submit" class="btn btn-block" data-i18n="notes.add">Add note</button>

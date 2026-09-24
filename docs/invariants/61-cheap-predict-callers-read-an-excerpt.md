@@ -1,17 +1,11 @@
-# Invariant 61 — Cheap Predict callers read an excerpt
+# Invariant 61: Cheap Predict callers read an excerpt
 
-**The cheap `dspy.Predict` callers read `Corpus.excerpt`, never `blob()[:n]` — a prefix is source ONE,
-not the notebook.** `naming.SuggestTitle` and `naming.SuggestLanguage` cannot read a multi-MB corpus
-(invariant 37), so they get a window; but the blob concatenates sources IN ORDER, so a 69,859-character
-first source against a 4,000-character budget made sources two through four invisible — a four-source
-notebook got titled by transliterating source one's own paper title. **Language resolution read the
-same prefix, and that is the worse half**: a notebook whose later sources are in another language would
-resolve the wrong one, and invariant 39 then persists that guess and stops re-resolving.
+**The cheap `dspy.Predict` callers read `Corpus.excerpt`, never `blob()[:n]`; a prefix is source one, not the notebook.**
 
-`excerpt(n)` gives every source an equal share taken from its START — a paper, a page or a report
-states its subject in the opening lines. The prompt matches: name what the COLLECTION is about, with
-"translate source one's title" as the named failure mode.
+`naming.SuggestTitle` and `naming.SuggestLanguage` cannot read a large corpus (invariant 37), so they get a window. The blob concatenates sources in order, so with a 69,859-character first source and a 4,000-character budget, sources two to four were invisible, and a four-source notebook was titled by translating the first source's title. Language resolution read the same prefix, which is worse: a notebook whose later sources are in another language would resolve the wrong language, and invariant 39 then stores that guess and stops resolving.
+
+`excerpt(n)` gives every source an equal share taken from its start, because a paper, page or report states its subject in its opening lines. The prompt matches: it asks what the whole collection is about, and names "translate the first source's title" as the failure to avoid.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

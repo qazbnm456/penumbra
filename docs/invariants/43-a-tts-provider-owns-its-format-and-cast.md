@@ -1,92 +1,33 @@
-# Invariant 43 — A TTS provider owns its format and cast
+# Invariant 43: A TTS provider owns its format and cast
 
-**A `TTSProvider` owns its OUTPUT FORMAT, its own cast, and — since it may be cross-lingual — is
-handed the LANGUAGE as a separate input. None of the three is the caller's.**
+**A `TTSProvider` owns its output format and its cast, and since it may be cross-lingual it receives the language as a separate input. None of the three belongs to the caller.**
 
-A voice NAME is provider-specific (edge-tts wants `zh-TW-YunJheNeural`, chatterbox wants one of
-its shipped reference-clip names), so `default_voices`/`fallback_voices` live on the protocol — a
-shared map would leak one provider's names into the other's request. **The format is on the
-provider for the same reason**: chatterbox emits 24kHz WAV, and forcing it through an MP3 encoder
-would drag in the `ffmpeg`/`pydub` dependency invariant 17 refused. **`synthesize` takes
-`language`** because a cross-lingual provider's voice and language are independent axes;
-`EdgeTTSProvider` ignores it, because an edge-tts voice id already carries its locale. That same
-fact makes `ChatterboxProvider.default_voices` return `None` for EVERY language, routing the
-default to `fallback_voices` exactly as invariant 40's ladder intends. An unknown language RAISES
-rather than falling back to `"en"`: synthesizing Korean with an English language id produces
-confident nonsense, and failing before any audio is written beats a wrong-language episode.
+Voice names are provider-specific (edge-tts wants `zh-TW-YunJheNeural`, Chatterbox wants one of its shipped clip names), so `default_voices` and `fallback_voices` live on the protocol; a shared map would leak one provider's names into another's request. The format is the provider's for the same reason: Chatterbox emits 24kHz WAV, and forcing it through an MP3 encoder would bring in the `ffmpeg` dependency invariant 17 refused.
 
-**`tts.ChatterboxProvider` (`RN_TTS_PROVIDER=chatterbox`, the `chatterbox` extra) is the
-local/privacy option, NOT the default.** No network, no API key. It sounds better and never
-touches the network — exactly the trade a reader who cannot send their sources to a cloud service
-wants, and exactly the trade nobody should be made to take by default: measured against edge-tts
-on the same input, **33x the wall clock and 9x the bytes**, and a 3.4-minute episode took 16.1
-minutes end to end, of which 15.0 was synthesis. Invariant 29's "only the script half is
-cancellable" therefore covers a far longer window here.
+`synthesize` takes `language` because a cross-lingual provider treats voice and language as independent. `EdgeTTSProvider` ignores it, because an edge-tts voice id already carries its locale. For the same reason `ChatterboxProvider.default_voices` returns `None` for every language, which routes the default to `fallback_voices` as invariant 40 intends. An unknown language raises instead of falling back to `"en"`, because Korean synthesised with an English language id is confident nonsense.
 
-Consequences handled rather than assumed: `notebook.find_audio` looks for WHICHEVER format is
-present, because the provider that generated an episode may not be the one currently configured;
-`clear_audio` removes every format before a regenerate; and `GET .../audio/file` derives its
-media type from the FILE, never from the configured provider.
+`validate(language, voice_map)` runs before script generation, not inside `synthesize`, which is invariant 19 applied to the provider's inputs. A language Chatterbox has no id for (Thai and Vietnamese are in edge-tts's map but not in `_CHATTERBOX_LANGUAGES`) would otherwise waste a model call on every attempt. `EdgeTTSProvider.validate` is an explicit no-op, and a source-tree test pins the ordering at both call sites.
 
-**`_generate_one` re-rolls against `expected_seconds`** because chatterbox's output LENGTH is
-unstable (the identical sentence measured 34.80s / 5.48s / 11.68s against an expected ~7s, the
-long take holding 25.1s of actual speech, i.e. the decoder looping). It keeps the SHORTEST take
-if it never converges rather than raising — losing a paid-for episode is worse than a clipped
-line (invariants 19 and 37). `expected_seconds` is CALIBRATED against real measured utterances
-and pinned by a test; a moderate 1.7× overshoot is explicitly NOT caught, because tightening that
-far would start rejecting correct takes.
+## Chatterbox is the local option, not the default
 
-**Two hosts need two reference clips**, because chatterbox's checkpoint carries a single
-`conds.pt` and naming both hosts that voice turns a two-host episode into a monologue in two
-halves. `rlm_notebook/voices/{host_a,host_b}.wav` are ten-second clips (the `DEC_COND_LEN` bound)
-SYNTHESIZED by Kokoro (Apache-2.0) — no person was recorded, because cloning a real human's voice
-raises a consent question a recording's licence does not answer. Kokoro's own model card says its
-training data includes synthetic audio from closed TTS models, so the provenance chain is three
-hops; `rlm_notebook/voices/README.md` carries the full statement and the escape hatch
-(`RN_TTS_VOICE_HOST_A`/`_B` accept an absolute path to your own clip). Under `rlm_notebook/` for
-invariant 29's packaging reason. **The built-in voice must be captured BEFORE the prep loop**,
-since it exists only as `model.conds` and the first `prepare_conditionals` overwrites it — a
-MIXED map (one host `built-in`, one clip, a documented configuration) otherwise leaves the
-built-in speaker inheriting whichever clip was prepared last, so BOTH hosts come out in one
-voice, silently, after fifteen minutes of synthesis.
+`ChatterboxProvider` (`RN_TTS_PROVIDER=chatterbox`, the `chatterbox` extra) needs no network and no key, and it sounds better. That is the right trade for a reader who cannot send sources to a cloud service, and the wrong one to impose by default: on the same input it took 33 times the wall-clock time and produced 9 times the bytes, and a 3.4-minute episode took 16.1 minutes, 15.0 of them synthesis, during which the run cannot be stopped.
 
-**`validate(language, voice_map)` runs BEFORE the script generation, not inside `synthesize`** —
-invariant 19's discipline one level deeper than the provider NAME. A language chatterbox has no
-id for (Thai and Vietnamese are in edge-tts's map but not `_CHATTERBOX_LANGUAGES`) would
-otherwise burn a whole model call on every attempt and could never succeed.
-`EdgeTTSProvider.validate` is an explicit no-op. A source-tree test pins the ORDERING at both
-call sites, because neither has a seam to observe it through.
+Because the configured provider may not be the one that generated an episode, `notebook.find_audio` looks for whichever format is present, `clear_audio` removes every format before a regenerate, and `GET .../audio/file` takes its media type from the file.
 
-**A PATH is reachable from the ENVIRONMENT only, never the settings file.** `_VOICE_PATTERN`
-accepts edge-tts ids and short lowercase names and excludes `.` and `/`, so a path arriving
-through the settings page, which any token holder can write — a brand-new arbitrary-file-read
-surface — cannot
-happen. Invariant 26's reasoning applied to a second input channel.
+Chatterbox's output length is unstable (the same sentence measured 34.80s, 5.48s and 11.68s against about 7s expected), so `_generate_one` re-rolls against `expected_seconds` and keeps the shortest take if it never converges, because losing a paid episode is worse than one clipped line. `expected_seconds` is calibrated against measured utterances and pinned by a test; a moderate 1.7 times overshoot is deliberately allowed, because a tighter bound would reject correct takes.
 
-**The extra is marked `python_full_version >= '3.13'`, and that marker is not tidiness.**
-`chatterbox-tts` pins `numpy<2.0.0` below 3.13 and permits numpy 2 at and above it, while uv's
-lock is UNIVERSAL — so an unmarked extra dragged numpy back to 1.26.4 for every 3.11 and 3.12
-install of this project, whether chatterbox was requested or not. **numpy 1.x is broken with the
-dspy this project now requires**: dspy 3.3.1 installs a lazy-import proxy for numpy
-(`dspy/utils/lazy_import.py`) which, on numpy 1.x, re-executes numpy's `__init__` while it is
-already partially imported the moment another extension module touches it — `import dspy;
-import cv2` dies with a circular import of `numpy.core`, taking the whole OCR path
-(rapidocr -> cv2) with it. That is why `numpy>=2` is a CORE dependency. Below 3.13 the extra now
-resolves to nothing and `ChatterboxProvider`'s own import guard reports a `TTSError`, which is
-the loud failure; the alternative was every 3.11 user's ingestion dying on an import they never
-asked for.
+Two hosts need two reference clips, because the checkpoint carries a single built-in voice and giving it to both hosts turns a conversation into a monologue. `rlm_notebook/voices/host_a.wav` and `host_b.wav` are ten-second clips synthesised with Kokoro (Apache-2.0); no person was recorded, because cloning a real voice raises a consent question a licence does not answer. `rlm_notebook/voices/README.md` states the provenance, including that Kokoro's training data includes synthetic audio from closed models, and the escape hatch: `RN_TTS_VOICE_HOST_A` and `RN_TTS_VOICE_HOST_B` accept an absolute path to your own clip. The built-in voice is captured before the preparation loop, because it exists only as `model.conds` and the first `prepare_conditionals` overwrites it; otherwise a mixed cast (one built-in, one clip) would come out in a single voice after fifteen minutes of synthesis.
 
-**An EXTRA, never a core dependency**, and its two odd pins are load-bearing: `numba>=0.61`,
-without which the resolver backtracks to a `llvmlite` supporting Python <3.10 and the install
-FAILS on the 3.13 this project targets; and `setuptools<82`, because `perth` and `librosa` both
-import `pkg_resources`, which setuptools removed in exactly 82.0.0 — and `perth` swallows that
-ImportError and sets its watermarker to `None`, so the failure surfaces as an uninformative
-`TypeError` seconds into model loading. The watermark is imperceptible and is KEPT: a provenance
-marker on synthetic speech is a feature.
+A clip path is accepted from the environment only, never from the settings file. `_VOICE_PATTERN` excludes `.` and `/`, so a page any token holder can write cannot become a file-read surface (invariant 26's reasoning on a second channel).
 
-**Nothing is adopted here until it has been installed and run.** Three earlier recommendations
-were wrong, all from unverified sources; the rejected alternatives and why are in `CHANGELOG.md`.
+## Packaging
+
+The extra is marked `python_full_version >= '3.13'`. `chatterbox-tts` pins `numpy<2.0.0` below 3.13, and uv's lock is universal, so an unmarked extra pulled numpy back to 1.x for every 3.11 and 3.12 install. numpy 1.x breaks with the required dspy: dspy's lazy numpy import re-runs numpy's `__init__` while it is partly imported, so `import dspy; import cv2` fails and takes the OCR path with it. That is why `numpy>=2` is a core dependency. Below 3.13 the extra resolves to nothing, and `ChatterboxProvider`'s import guard reports a `TTSError`.
+
+It is an extra, never a core dependency, and its two unusual pins matter. `numba>=0.61` stops the resolver from backtracking to an `llvmlite` that fails to install on 3.13. `setuptools<82` is needed because `perth` and `librosa` import `pkg_resources`, which setuptools 82.0.0 removed, and `perth` swallows that error and fails later with an unhelpful `TypeError`. The imperceptible watermark is kept, because a provenance marker on synthetic speech is a feature.
+
+Nothing is adopted here until it has been installed and run; earlier recommendations taken from unverified sources were wrong.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

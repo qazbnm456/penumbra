@@ -824,7 +824,7 @@ def test_removing_a_source_re_verifies_every_surface_not_only_the_overview():
     for surface in ("turnStroke", "podcastStroke"):
         stroke = result[surface]
         assert "is-unverified" in stroke["cls"].split(), f"{surface} still looks verified: {stroke}"
-        assert "coordinate not found" in stroke["title"], f"{surface}'s hover still says verified"
+        assert "Not found in this source" in stroke["title"], f"{surface}'s hover still says verified"
     # A re-stamp numbers a stroke ONCE, on its last fragment. It stamped every fragment, so a claim
     # crossing `*emphasis*` read "¹a ¹parametric¹ model" after any guide or answer arrived.
     assert result["fragments"] == [None, "2"], result["fragments"]
@@ -869,7 +869,7 @@ def test_a_notebook_can_leave_the_product_as_an_artifact():
 
     # The Guide kinds have three different shapes and all three come out with their references.
     assert "**Q?**" in result["faq"] and "### References" in result["faq"]
-    assert "- **2012** — crossed the heliopause" in result["timeline"]
+    assert "- **2012**: crossed the heliopause" in result["timeline"]
     # The English heading is the tab's own label, not the internal kind (`## summary`, `## faq`).
     assert result["faq"].startswith("## FAQ\n"), result["faq"]
     assert result["timeline"].startswith("## Timeline\n"), result["timeline"]

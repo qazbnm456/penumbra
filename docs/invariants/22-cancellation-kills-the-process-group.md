@@ -1,13 +1,11 @@
-# Invariant 22 — Cancellation kills the process group
+# Invariant 22: Cancellation kills the process group
 
-**Cancellation works via `killpg` on the WHOLE process group (`start_new_session=True` when
-spawning), not just the worker's own PID.** A stuck Deno grandchild must not survive as an
-orphan after its parent worker is killed. **Verified by a real test that spawns an actual
-grandchild and confirms it dies too** (`test_runner.py::test_cancel_kills_the_whole_process_group_not_just_the_leader`)
-— one of the few claims here that is executable rather than a source-tree assertion, so breaking
-it costs a red test, not a review catch. Don't simplify this to `process.kill()`, which only
-signals the worker's own PID.
+**Cancellation calls `killpg` on the whole process group (the worker is spawned with `start_new_session=True`), not just the worker's own PID.**
+
+A stuck Deno grandchild must not survive as an orphan once its parent worker is killed. `test_runner.py::test_cancel_kills_the_whole_process_group_not_just_the_leader` spawns a real grandchild and confirms it dies, so breaking this rule turns a test red. Do not simplify it to `process.kill()`, which signals only the worker's PID.
+
+The same rule covers shutdown: `rlm-notebook serve` bounds its graceful shutdown and turns a terminal hangup into SIGTERM, so quitting the server with a run in flight cancels the request and kills the run's whole process group instead of leaving it billing.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

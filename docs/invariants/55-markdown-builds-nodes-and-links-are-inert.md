@@ -1,51 +1,21 @@
-# Invariant 55 — Markdown builds nodes and links are inert
+# Invariant 55: Markdown builds nodes, and links are inert
 
-**Markdown in an answer is rendered by a HAND-WRITTEN renderer that builds DOM nodes, and a link in
-it is shown but NOT navigable.** Answers arrive full of raw `**bold**`, `## heading` and `- list`
-characters because the model writes markdown whether or not anyone asked.
+**Markdown in an answer is rendered by a hand-written renderer that builds DOM nodes, and links in it are shown but not clickable.**
 
-**No library and no HTML strings**, which is invariant 29's rule stated where it costs the most.
-Every string here came out of a model that has been reading source content an attacker may have
-written (invariant 6); one missed `esc()` in a string-building renderer is an XSS sink, and building
-nodes removes the failure mode instead of guarding it.
-**`test_the_markdown_renderer_builds_nodes_rather_than_markup` pins the node-building rule.** The
-NAVIGABLE-LINK rule below is a different test with a different sink list
-(`test_the_markdown_renderer_never_creates_a_navigable_link`), and its coverage floor is part of
-that rule: mutation testing got THREE links past its first version — `setAttribute("href", …)`, a
-template-literal ``createElement(`a`)``, and a click handler assigning `window.location`. A future
-widening must still catch all three. Do not merge the two in your head: widening the wrong one
-leaves the XSS guard exactly as it was.
+Answers arrive full of `**bold**`, `## heading` and `- list` characters because the model writes Markdown whether asked or not.
 
-**A `[label](url)` renders its label with the URL revealed on hover and COPIED on click, never an
-`<a href>`.** Invariant 1 refuses to let the MODEL reach a URL because a prompt-injected source could
-steer it into exfiltrating notebook contents; a clickable link in an answer is the same hazard with
-the READER's click as the transport, arriving dressed as a citation-grounded reference. A stated
-trade — `createElement("a")` is exactly what a later edit reaches for, since the renderer has the URL
-in hand. Copy-on-click exists because CSS generated content is not selectable, so "shown so a reader
-can copy it" was not otherwise true.
+There is no library and no HTML strings; this is invariant 29's rule where it matters most. Every string came from a model that has been reading content an attacker may have written (invariant 6). One missed `esc()` in a string-building renderer is an XSS hole, and building nodes removes that failure mode instead of guarding it. `test_the_markdown_renderer_builds_nodes_rather_than_markup` pins that rule.
 
-**The renderer never creates a text node.** It walks RAW OFFSETS into the original string and appends
-through `emit`, which is where a citation range is split out — that is what lets block structure and
-citation strokes compose rather than one being applied on top of the other's output. A renderer that
-made its own text nodes would silently produce prose no stroke can reach.
+A `[label](url)` renders its label, shows the URL on hover and copies it on click; it is never an `<a href>`. Invariant 1 keeps URLs out of the model's reach because a prompt-injected source could steer it into sending the notebook away, and a clickable link in an answer is the same hazard with the reader's click as the transport, dressed as a grounded reference. A separate test, `test_the_markdown_renderer_never_creates_a_navigable_link`, covers link creation, and it must keep catching the three forms that got past an earlier version: `setAttribute("href", …)`, a template-literal ``createElement(`a`)`` and a click handler that sets `window.location`. Copy-on-click exists because CSS generated content cannot be selected. Links copied into an exported Markdown file become clickable in other viewers; the rule applies to the web UI only.
 
-**`data-reference` is stamped AFTER the whole answer is built, not decided while emitting.** A stroke
-crossing an inline `**bold**` is emitted as several fragments, and an `isLast` test of
-`sliceTo === match.end` never fires when a span's final characters are syntax the renderer DROPS (a
-closing `**`, a backtick, a link's `](url)`) — so the stroke got NO number while the References panel
-numbered it anyway, which is the two-lists-to-join-by-eye that invariant 58 exists to remove.
-Collecting the fragments and stamping the last one afterwards is decided where every fragment is
-known.
+The renderer never creates its own text nodes. It walks raw offsets into the original string and appends through `emit`, which is where citation ranges are split out, so block structure and citation marks compose rather than one being applied on top of the other.
 
-**Emphasis follows a simplified CommonMark flanking rule**, without which `3 * 4 * 5` renders as
-`3 <em>4</em> 5` and `my_var and other_var_name` mangles — multiplication and snake_case identifiers
-both appear in this project's own subject matter.
+A citation's number is stamped after the whole answer is built. A mark that crosses inline `**bold**` is emitted in several fragments, and deciding "is this the last fragment" while emitting fails when the span ends in syntax the renderer drops, such as a closing `**`. The renderer collects the fragments and marks the last one with `data-stroke-end`, and a later re-numbering stamps only that fragment, so a split mark never shows its number twice.
 
-**Known limits**: a blockquote does not nest other blocks; a `.md-link` tooltip inside a table is
-clipped by `.md-table-wrap`'s scroller (invariant 54's uncovered ancestor case, mitigated by
-copy-on-click working everywhere); and `renderMdList` recurses per indent level, bounded in practice
-by the corpus cap.
+Emphasis follows a simplified CommonMark flanking rule; without it `3 * 4 * 5` becomes `3 <em>4</em> 5` and snake_case names are mangled, and both appear in this project's subject matter. Strikethrough is not supported.
+
+Known limits: a blockquote does not nest other blocks, a `.md-link` tooltip inside a table is clipped by `.md-table-wrap`'s scroller (invariant 54's uncovered case, softened by copy-on-click), and `renderMdList` recurses once per indent level, bounded in practice by the corpus cap.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

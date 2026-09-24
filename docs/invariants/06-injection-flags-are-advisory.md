@@ -1,27 +1,15 @@
-# Invariant 6 — Injection flags are advisory
+# Invariant 6: Injection flags are advisory
 
-**`injection_scan.py`'s flags are deterministic and additive — they gate nothing.** A flagged
-source's content still reaches the model and its answer still returns; the flag is metadata
-attached to the SOURCE at ingestion (`ingest.with_injection_flags`). `AskResponse` carries no
-flags, so an ANSWER never shows one — but the SOURCE does, on every surface: `cli.py` prints it,
-`api.py` emits `flags` on each source in `NotebookResponse` and on `SourceDetailResponse`, and
-`app.js` renders an amber `⚠` chip in the Sources list plus a row in the source viewer. An earlier
-wording read the `AskResponse` premise as covering the whole API and concluded the flag was
-CLI-only, which the Sources list has contradicted on screen for as long as it has existed. It is a
-transparency mechanism; do not wire it to refuse a run. Its patterns trade recall for precision
-on purpose (a paper *discussing* prompt injection can trip it) — an acceptable false-positive
-rate for a flag nobody is forced to act on — **don't over-tighten it into false negatives chasing
-a clean read.**
+**`injection_scan.py`'s flags are deterministic and additive, and they gate nothing.**
 
-**A flag is a SENTENCE addressed to a person, never a regex**, because since these flags gate
-nothing, whether a human can act on them is their entire value. `_INSTRUCTION_PATTERNS` pairs
-every pattern with its description, and the role-label pattern is anchored to its own LINE
-(`^\s*(system|assistant|user)\s*:\s*`, MULTILINE) rather than matching mid-sentence prose.
+A flagged source still reaches the model and its answers still return. The flag is metadata attached to the source at ingestion (`ingest.with_injection_flags`). An answer never carries one, because `AskResponse` has no flags field, but the source shows it everywhere: `cli.py` prints it, `api.py` returns `flags` on each source in `NotebookResponse` and on `SourceDetailResponse`, and the web UI shows an amber `⚠` chip in the Sources list and a row in the source viewer.
 
-**Both apply to sources ingested FROM NOW ON only.** `scan_source` runs once and the result is
-persisted into `Source.flags`; nothing re-scans. No migration, deliberately — re-scanning on
-every `GET` is expensive, and rewriting on load would silently edit stored notebooks.
+It is a transparency mechanism, so do not wire it to refuse a run. Its patterns trade recall for precision on purpose; a paper that discusses prompt injection can trip it. That false-positive rate is acceptable for a flag nobody has to act on, so do not tighten the patterns into false negatives to get a cleaner result.
+
+Because the flags gate nothing, their whole value is whether a person can act on them. Each flag is therefore a sentence addressed to a person, never a raw regex: `_INSTRUCTION_PATTERNS` pairs every pattern with its description, and the role-label pattern is anchored to its own line (`^\s*(system|assistant|user)\s*:\s*`, MULTILINE) instead of matching mid-sentence prose.
+
+The scan runs once, at ingestion, and its result is stored in `Source.flags`. Nothing re-scans, so a change to the patterns applies only to sources ingested afterwards. There is deliberately no migration: re-scanning on every read is expensive, and rewriting on load would silently edit stored notebooks.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

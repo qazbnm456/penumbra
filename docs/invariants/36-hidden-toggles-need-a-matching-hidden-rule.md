@@ -1,39 +1,17 @@
-# Invariant 36 — Hidden toggles need a matching hidden rule
+# Invariant 36: Hidden toggles need a matching hidden rule
 
-**`rlm_notebook/web/`'s `hidden`-toggled elements must never be given an author `display` rule
-without a matching `[hidden]` rule, and `tests/test_web_assets.py` fails the build if one is.**
-`hidden` works through the UA stylesheet's `[hidden] { display: none }`, which ANY author
-`display` declaration outranks — author styles beat UA styles regardless of specificity. This
-shipped broken twice: `.modal-overlay { display: flex }` left an overlay permanently visible
-whose `inset: 0` swallowed every click on the page, and `.ticker-detail` left the reasoning log
-permanently expanded. Invisible to every other layer this project can test — the Python suite
-never renders, and a unit test of the close handler would pass against the broken stylesheet,
-because the JS was always correct. Hence a SOURCE-TREE assertion, keyed on CSS CLASSES (which
-markup and JS spell the same way) and asserting up front that it can still see every known
-instance, so a future extraction failure fails the build instead of passing vacuously. The same
-file pins invariant 29's "never `innerHTML` with an interpolated string" (and its `outerHTML`/
-`insertAdjacentHTML`/`document.write` siblings).
+**An element in `rlm_notebook/web/` that is toggled with `hidden` never gets an author `display` rule without a matching `[hidden]` rule, and `tests/test_web_assets.py` fails the build if one does.**
 
-**A visible author `display` on a hidden-toggled class IS allowed — with a guard that OUTRANKS
-it**, i.e. a `[hidden]` rule whose selector is one token LONGER, so it wins on specificity
-regardless of source order. This tripwire compares by class NAME and would accept a guard that
-loses the cascade; `test_the_podcast_transcript_is_not_capped_by_a_fixed_height` computes
-specificity and is the one that actually checks it.
+`hidden` works through the browser stylesheet's `[hidden] { display: none }`, and any author `display` declaration outranks it regardless of specificity. This shipped broken twice: `.modal-overlay { display: flex }` left an overlay permanently visible whose `inset: 0` swallowed every click on the page, and `.ticker-detail` left the reasoning log permanently expanded. In both cases the JavaScript was correct, so only the stylesheet could show the fault.
 
-**A flex column stretches its children to full width, and that is a DEFAULT, not a choice** —
-only what should span may span.
+The check is a source-tree assertion keyed on CSS class names, which markup and JavaScript spell the same way. It first asserts that it can still see every known instance, so a future extraction failure fails the build instead of passing without checking anything. The same file pins invariant 29's rule against `innerHTML` with an interpolated string, along with `outerHTML`, `insertAdjacentHTML` and `document.write`.
 
-**SUPERSEDED**: this invariant used to require that a re-click on an already-open citation detail
-COLLAPSE it (`showCitationTurn`'s `_shownKey`) rather than blank to "Loading…" and re-fetch an
-identical payload, keyed on WHICH citation including its `quote` — because text and web sources emit
-a single block with locator `"whole"`, so every citation into one such source shares the
-`source_id|locator` pair. None of that markup survives; invariant 58's References panel replaced it.
-**The keying lesson does transfer** and is why `referenceKey` includes `quote` today.
+A visible author `display` on a hidden-toggled class is allowed if a guard outranks it: a `[hidden]` rule whose selector is one token longer, so it wins on specificity regardless of source order. The class-name tripwire would also accept a guard that loses the cascade; `test_the_podcast_transcript_is_not_capped_by_a_fixed_height` computes specificity and is the check that actually proves it.
 
-**Known gap**: this project has no JavaScript test runner at all (zero-build vanilla JS, by
-design), so interactive UI state has no test seam. A source-tree assertion catches the
-stylesheet class of bug; it cannot catch a toggle that stops toggling.
+More generally, CSS source order decides ties between equal specificity, and several fixes were lost to it: a touch-reveal rule overridden by a later base rule, and a tooltip anchor overriding a control's own positioning. Rules that must win are placed last or given more specificity, and `test_the_touch_escape_comes_after_every_rule_it_overrides` pins one such order. A flex column stretches its children to full width by default, so only what should span may span.
+
+Behaviour is tested separately: the node harness in `tests/web_dom_harness.mjs` runs real functions out of `app.js` against a small DOM shim. It covers logic, not the cascade, which is why this invariant still needs its source-tree assertion.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

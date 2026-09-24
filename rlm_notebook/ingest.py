@@ -134,6 +134,11 @@ def ingest_uploaded_file(data: bytes, filename: str, source_id: str) -> Source:
             with open(fd, "wb") as fh:
                 fh.write(data)
             source = parse_pdf(str(tmp_path), source_id)
+        except ValueError as exc:
+            # The parser names the path it was handed, which here is the server's TEMP file: the
+            # reader saw `no extractable text in '/var/folders/…/tmp7m1gumlz'` for the file they
+            # dropped. Their own filename instead — the temp path means nothing to them.
+            raise ValueError(str(exc).replace(repr(str(tmp_path)), repr(filename))) from exc
         finally:
             tmp_path.unlink(missing_ok=True)
         return source.model_copy(update={"origin": filename})
