@@ -293,3 +293,18 @@ def test_the_kind_guess_and_the_parse_take_the_same_branch(monkeypatch, tmp_path
         guessed = ingest.kind_for(value)
         ingest.ingest_one(value, "s1")
         assert took == [guessed], f"{value}: filed as {guessed!r} but parsed as {took}"
+
+
+def test_a_refused_pdf_upload_names_the_file_not_the_servers_temp_path(monkeypatch):
+    """The parser only ever sees the temp file, so its message named `/var/folders/…/tmpXXXX`, which
+    the reader who dropped `scan.pdf` could make nothing of — and which is the server's own path."""
+    from rlm_notebook import ingest as ingest_module
+
+    def refuse(path, source_id, **kwargs):
+        raise ValueError(f"no extractable text in {path!r}, even with OCR")
+
+    monkeypatch.setattr(ingest_module, "parse_pdf", refuse)
+    with pytest.raises(ValueError) as exc:
+        ingest_uploaded_file(b"%PDF-1.4", "scan.pdf", "s1")
+    assert "'scan.pdf'" in str(exc.value)
+    assert tempfile_module.gettempdir() not in str(exc.value)

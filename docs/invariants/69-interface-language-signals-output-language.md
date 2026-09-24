@@ -1,27 +1,15 @@
-# Invariant 69 — Interface language signals output language
+# Invariant 69: The interface language signals the output language
 
-**The INTERFACE language is a SIGNAL to output-language resolution — a fourth one, ranked above
-`Accept-Language` — which narrows invariant 48 without merging it.** A user running a Chinese interface
-got an English notebook title, because the one place they had actually SAID which language they read
-was invisible to `naming.SuggestLanguage`.
+**The interface language is one of the signals for choosing the output language, a fourth one ranked above `Accept-Language`. This narrows invariant 48 without merging the two.**
 
-**Chosen beats inherited.** `Accept-Language` comes from the operating system; the interface language
-was picked in this app. That ordering is the whole justification, and it is the same reasoning invariant
-39 uses to weight typed questions highest. Invariant 48's separation survives: two rows on the settings
-page, and an explicit output-language setting still wins outright.
+A user with a Chinese interface got an English notebook title, because the one place they had actually said which language they read was invisible to `naming.SuggestLanguage`.
 
-**Carried in a header (`X-RLM-Interface-Language`), added once in `app.js`'s `api()`** —
-`_resolve_language` is reached from every run-taking endpoint, so a body field would be five schema
-changes and a sixth one forgotten. **The value sent is the language's ENGLISH NAME, not `zh-Hant`**: the
-model answers in English language names, so sending a code or a word in the very language it is
-identifying makes it parse rather than weigh.
+A chosen preference outranks an inherited one. `Accept-Language` comes from the operating system, while the interface language was picked in this app; that is the whole justification, and it is the same reasoning invariant 39 uses to weight typed questions highest. Invariant 48's separation survives: the settings page keeps two rows, and an explicit output language still wins outright.
 
-**A proper noun is never translated (`instructions.PROPER_NOUNS`)** — translating the WORD hands a
-reader a term they cannot search for, which is the opposite of what a research notebook is for.
-Composed into BOTH `chat_language_rule` and `artifact_language_rule` from one constant (invariant 13),
-plus the title prompt, which is a plain `dspy.Predict` and shares nothing. This generalises invariant
-45's reversal from the podcast to every artifact a reader might search from.
+The value travels in a header, `X-RLM-Interface-Language`, added once in `api()` in `app.js`. `_resolve_language` is reached from every run-taking endpoint, so a body field would mean five schema changes and one forgotten. The value sent is the language's English name, not `zh-Hant`, because the model answers in English language names, and a code or a word in the language being identified makes it parse instead of weigh.
+
+A proper noun is never translated (`instructions.PROPER_NOUNS`), because translating it hands the reader a term they cannot search for. The rule is composed into both `chat_language_rule` and `artifact_language_rule` from one constant (invariant 13), and into the title prompt, which is a plain `dspy.Predict` and shares nothing else. It extends invariant 45's rule from the podcast to every artifact a reader might search from.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

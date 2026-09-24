@@ -4157,7 +4157,10 @@ body.is-resizing .studio-grip {
    ten-turn conversation showed ten rows of chips, nine of them offering to continue from a point
    the reader had already moved past. `:last-child` reads the DOM instead of asking both render
    paths to agree on which turn is newest — and it hides them under a pending row for free. */
-.turn:not(:last-child) .turn-followups {
+/* Hidden when a LATER TURN exists, not when the turn is not the last child: a recovered run's row or
+   its "Load the result" line is appended after the turns too, and `:last-child` then hid the newest
+   answer's chips and ↻ Regenerate. A stopped question is not a later turn either. */
+.turn:has(~ .turn:not(.is-stopped)) .turn-followups {
   display: none;
 }
 
@@ -5017,7 +5020,7 @@ body.is-resizing .studio-grip {
   margin-top: var(--space-2);
 }
 
-.turn:not(:last-child) .turn-regenerate {
+.turn:has(~ .turn:not(.is-stopped)) .turn-regenerate {
   display: none;
 }
 

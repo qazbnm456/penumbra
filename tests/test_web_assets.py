@@ -805,7 +805,9 @@ def test_only_the_latest_answer_offers_follow_up_questions():
     # selects nothing, which is the mutation an independent review walked straight through.
     hides = []
     for selector, body in _rules(css):
-        if "display: none" not in body or "not(:last-child)" not in selector:
+        # `:has(~ .turn…)`: hidden under a LATER TURN, not merely a later child — a recovered run's
+        # "Load the result" line is appended after the turns and must not hide the newest chips.
+        if "display: none" not in body or "has(~ .turn" not in selector:
             continue
         for part in selector.split(","):
             subject = re.split(r"::", part.strip().split()[-1])[0]
@@ -1679,7 +1681,7 @@ def test_only_the_last_turn_offers_to_be_regenerated():
     through TWO paths — `rebuildHistory` and the `chat:turnAdded` replay — and a rule that reads the
     DOM is right for both. The same mechanism `.turn-followups` already uses."""
     css = _strip_css_comments((WEB / "style.css").read_text(encoding="utf-8"))
-    assert re.search(r"\.turn:not\(:last-child\)\s+\.turn-regenerate\s*\{[^}]*display:\s*none", css), (
+    assert re.search(r"\.turn:has\(~\s*\.turn[^{]*\s\.turn-regenerate\s*\{[^}]*display:\s*none", css), (
         "a mid-thread answer can be regenerated, invalidating every answer after it"
     )
     # ...and never while a question is in flight.
@@ -1753,11 +1755,12 @@ def test_the_clear_conversation_control_appears_only_when_there_is_one():
     # green too. Both are invariant 60's own recorded lesson: a substring assertion is not a
     # behavioural one.
     #
-    # FIVE sites: the three handlers below, the clear handler's own re-sync after it empties the
-    # thread, and the initial paint at the tail of `initChatPanel`. An exact count rather than a
-    # floor, so DELETING one fails here — adding a sixth is a deliberate edit to this number.
-    assert js.count("syncClearBtn();") == 5, (
-        f"syncClearBtn is called from {js.count('syncClearBtn();')} places, expected 5 — the three "
+    # SIX sites: the three handlers below, the clear handler's own re-sync after it empties the
+    # thread, the initial paint at the tail of `initChatPanel`, and a question's success path (the
+    # FIRST answer in a fresh notebook is when Clear gains something to clear — it stayed hidden
+    # until the next question). An exact count rather than a floor, so DELETING one fails here.
+    assert js.count("syncClearBtn();") == 6, (
+        f"syncClearBtn is called from {js.count('syncClearBtn();')} places, expected 6 — the three "
         f"handlers, the clear handler's own re-sync, and the initial paint"
     )
     # Scoped to `initChatPanel`: `notebook:switched` is subscribed in FOUR init functions, and an
@@ -1775,7 +1778,7 @@ def test_the_clear_conversation_control_appears_only_when_there_is_one():
     pending = re.search(r'store\.on\("chat:pending", \(\{ pending \}\) => \{(.*?)\n  \}\);', js, re.DOTALL)
     # `composerHeld`: held while EITHER owner (the overview, a question) is live, not only the one
     # that sent this event.
-    assert pending and "clearBtn.disabled = composerHeld" in pending.group(1), (
+    assert pending and "clearBtn.disabled = composerLocked()" in pending.group(1), (
         "the clear control is live during an in-flight question"
     )
     # Destructive and irreversible, so it confirms — and names what SURVIVES, since losing sources
@@ -1846,7 +1849,7 @@ def test_an_unrecorded_token_budget_never_renders_as_no_truncation():
         "the not-recorded branch must use its own string, not the healthy one"
     )
     # The string itself has to deny the wrong reading, in both tables.
-    assert "Not the same as" in body
+    assert "not the same as" in body
     zh = (WEB / "i18n.js").read_text(encoding="utf-8")
     assert "這不等於" in zh[zh.index('"traj.budgetNone"') : zh.index('"traj.budgetNone"') + 200]
 

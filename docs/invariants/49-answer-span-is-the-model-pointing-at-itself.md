@@ -1,32 +1,17 @@
-# Invariant 49 — Answer span is the model pointing at itself
+# Invariant 49: answer_span is the model pointing at its own prose
 
-**`Citation.answer_span` is the model pointing at its OWN prose, and it exists because locating the
-highlight by `quote` stopped being possible.** The highlighter stroke used to find its span with
-`answer.indexOf(citation.quote)`, which works only while the answer and the source share a
-language. Invariant 39 made the prose follow the READER while the quote stays in the SOURCE's
-words, so the two never share a substring and NO span could be found again. Not a bug in either
-invariant — it is what 39 costs, paid here rather than by weakening the verbatim-quote rule.
+**`Citation.answer_span` is the model pointing at its own prose, and it exists because locating the highlight by `quote` stopped working.**
 
-**`citations.locate_answer_spans` applies invariant 5's coordinate-existence discipline to the
-model's own text.** A span that does not occur VERBATIM in the prose is dropped; the citation
-survives. Losing a highlight costs a reader one affordance, highlighting the wrong sentence tells
-them a claim is supported when it is not. Matching is EXACT with one allowance — leading and
-trailing whitespace — and deliberately no case folding, punctuation normalisation or fuzzy match:
-each buys a few more highlights at the price of sometimes underlining prose the citation does not
-support. It verifies WHERE, never WHETHER.
+The highlight used to find its place with `answer.indexOf(citation.quote)`, which works only while the answer and the source share a language. Invariant 39 made the prose follow the reader while the quote stays in the source's words, so the two stopped sharing any substring. That is the cost of invariant 39, paid here rather than by weakening the verbatim-quote rule.
 
-**`_citation_responses` takes the prose it must check against as a REQUIRED argument**, and every
-call site passes the string that artifact actually renders (a chat answer, an FAQ item's `answer`,
-a timeline event's `description`, a podcast utterance's `text`, the overview's `text`). It had a
-`""` default that SKIPPED validation when empty — a fail-OPEN default under a docstring promising
-the opposite — now simply not expressible. Passing the WRONG text is still silent (the spans stop
-being found and the page renders with no strokes), which is what the dedicated test pins.
+`citations.locate_answer_spans` applies invariant 5's existence check to the model's own text. A span that does not occur verbatim in the prose is dropped, and the citation survives. Losing a highlight costs the reader one affordance, while highlighting the wrong sentence would tell them a claim is supported when it is not. Matching is exact apart from leading and trailing whitespace, with no case folding, punctuation normalisation or fuzzy matching, because each would buy a few more highlights at the price of sometimes underlining prose the citation does not support. It checks where, never whether.
 
-`instructions.CITATION_RULES` teaches it as the deliberate MIRROR of `quote`: `quote` is in the
-source's language, `answer_span` is in the model's. (NOT `VERBATIM_COORDINATES`, which does not
-mention `answer_span` at all.) Same residual-risk hedge as invariants 4 and 11 — whether the model
-emits a usable span at all is a compliance claim, and the offline suite drives a scripted LM.
+`_citation_responses` takes the prose to check against as a required argument, and every call site passes the text that artifact actually renders: a chat answer, an FAQ item's `answer`, a timeline event's `description`, a podcast utterance's `text` or the overview's `text`. An empty default that skipped validation is no longer possible. Passing the wrong text is still silent (the page renders with no marks), which a dedicated test pins.
+
+The span also orders the numbering. The interface numbers citations in the order the reader meets them in the prose, using `answer_span`, on every surface that renders marks; a citation without a span keeps its position.
+
+`CITATION_RULES` teaches `answer_span` as the mirror of `quote`: `quote` is in the source's language and `answer_span` in the model's. Whether the model emits a usable span is a compliance claim, with the same caveat as invariants 4 and 11.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

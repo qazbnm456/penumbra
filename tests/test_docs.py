@@ -88,7 +88,8 @@ def test_the_scope_note_agrees_with_cli_py_about_the_inbox():
         or re.search(r"^from rlm_notebook import .*\binbox\b", cli, re.MULTILINE)
         or re.search(r"^from \.? ?inbox import|^from rlm_notebook\.inbox import", cli, re.MULTILINE)
     )
-    denies = "no `cli.py` surface" in note or "command line cannot reach it" in note
+    phrases = ("no `cli.py` surface", "command line cannot reach it", "`cli.py` cannot reach the Inbox")
+    denies = any(phrase in note for phrase in phrases)
 
     if surface:
         assert not denies, (

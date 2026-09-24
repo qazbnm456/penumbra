@@ -1,24 +1,13 @@
-# Invariant 10 — Notebook ids are sanitized filenames
+# Invariant 10: Notebook ids are sanitised filenames
 
-**A notebook id is sanitized (`notebook.slug`) before it becomes a filename, and an id the
-whitelist empties falls back to a content hash rather than being rejected.** `--notebook` and
-the API's `{notebook_id}` turn directly into `<notebooks_dir>/<slug(id)>.json`, so an
-unsanitized id could become a traversal segment (`..`, an absolute path, a nested directory) or
-blow past a path-component length limit.
+**A notebook id is sanitised (`notebook.slug`) before it becomes a filename, and an id the whitelist empties falls back to a content hash instead of being rejected.**
 
-**`nb-<sha256[:16]>` when the whitelist leaves nothing.** `[A-Za-z0-9._-]` strips every CJK,
-Arabic, Cyrillic and emoji character, so a notebook named in Chinese reduced to the empty string
-and was rejected. The id is NFC-normalized before hashing (two spellings reach the same file)
-and encoded with `surrogatepass` — load-bearing, because `api._derive_run_id` calls `slug()`
-OUTSIDE every error wrapper, which would make a raising `slug` a bare HTTP 500. It
-affects the FILENAME only: `Notebook.id` stores what the user typed and
-`list_notebook_summaries` reports that stored value, so non-Latin names round-trip. A genuinely
-empty or whitespace-only id still raises.
+`--notebook` and the API's `{notebook_id}` become `<notebooks_dir>/<slug(id)>.json`. Unsanitised, an id could become a traversal segment (`..`, an absolute path, a nested directory) or exceed a path-component length limit.
 
-**This deliberately supersedes part of invariant 27**: `"!!!"` is an ordinary notebook now, not
-a 400. The unhandled 500 that 27 exists to fix is still gone; that input simply no longer
-reaches the arm, and a genuinely empty id still exercises it.
+The whitelist `[A-Za-z0-9._-]` strips every CJK, Arabic, Cyrillic and emoji character, so a notebook named in Chinese used to reduce to nothing and be rejected. It now falls back to `nb-<sha256[:16]>`. The id is NFC-normalised before hashing, so two spellings reach the same file, and encoded with `surrogatepass`, because `api._derive_run_id` calls `slug()` outside every error handler and a raising `slug` would be a bare HTTP 500. The hash affects only the filename: `Notebook.id` keeps what the user typed, and listings report that value, so non-Latin names round-trip. A truly empty or whitespace-only id still raises.
+
+This supersedes part of invariant 27: `"!!!"` is now an ordinary notebook rather than a 400. The unhandled 500 that invariant 27 fixed is still gone; that input simply no longer reaches that path.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

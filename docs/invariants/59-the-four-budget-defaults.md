@@ -1,79 +1,29 @@
-# Invariant 59 — The four budget defaults
+# Invariant 59: The four budget defaults
 
-**The four budget defaults are each a decision, and `max_tokens` is the one that silently kills a
-run.** `RLMConfig`'s own defaults are 10 / 8192 / 10,000 / 1; this project ships
-`max_iterations=25`, `max_tokens=32768`, `max_output_chars=40000`, `max_retries=1`.
+**The four budget defaults are each a decision, and `max_tokens` is the one that silently kills a run.**
 
-**`max_tokens: 32768` — a per-call GENERATION cap, and a trap for a reasoning model**, whose
-chain-of-thought is billed against a cap it never appears in, so the reply arrives cut mid-JSON and
-fails to parse; `max_retries=1` then makes that terminal, since a second attempt hits the same
-ceiling. It is NOT only the planner's: `runtime.configure` builds ONE `lm_kwargs` and hands it to both
-`dspy.LM(cfg.main_model)` and `dspy.LM(cfg.sub_model)`. On the `claude-agent-sdk/` subscription path
-(invariant 35) it is ENTIRELY INERT — `ClaudeAgentLM` tolerates and ignores sampling kwargs — so it is
-visible in the trace and applied to nothing, the same shape invariant 7 records for `ocr_provider`.
+`RLMConfig`'s own defaults are 10, 8192, 10,000 and 1. This project ships `max_iterations=25`, `max_tokens=32768`, `max_output_chars=40000` and `max_retries=1`.
 
-**Raised 16384 -> 32768 against a DISTRIBUTION, never against one truncation.** A live
-`GeneratePodcastScript` call hit 16384 exactly and came back `Invalid Python syntax`, cut
-mid-code, costing an iteration — and it was invariant 59's case rather than 64's, because the
-model was ALREADY batching 5-20 utterances per step and the call left only 407 characters of
-reasoning and 995 of code in the trace. One truncation is not a size, so the size came from
-a sibling project's 3,683 calls on the same model under a 32768 cap: median 1,621, p90 6,993, p99
-15,030, at cap 0.71%, and **the band from 60% to 90% of that cap is EMPTY**. Legitimate long
-turns end below ~16k — the 13-16k bucket is exactly what this project's old cap was cutting —
-and everything that reaches the cap is a runaway no cap saves. So the doubling buys the
-legitimate tail and a second one buys nothing. **Do not raise it again without a distribution.**
+## max_tokens: 32768
 
-Their measured cost: a run WITH a cap hit is ~2.5x the completion tokens and ~2.5x the wall
-clock of one without, which at 0.71% is noise — and the same runaways under the old cap cost
-half each and failed the same runs anyway. **One thing does NOT transfer**: their cap hits are
-single turns, while `max_iterations` here is 25 and the budgets MULTIPLY, so
-`run_timeout_seconds` (scaled per podcast tier, invariant 68) is the only bound on a looping
-runaway.
+`max_tokens` caps each call's generation, and it is a trap for a reasoning model: the reasoning is billed against a cap it never appears in, so an undersized cap returns a reply cut off mid-JSON that fails to parse, and `max_retries=1` makes that final because a second attempt hits the same ceiling. It applies to the sub-model too, because `runtime.configure` builds one `lm_kwargs` for both `dspy.LM(cfg.main_model)` and `dspy.LM(cfg.sub_model)`. On the `claude-agent-sdk/` subscription path (invariant 35) it does nothing, because `ClaudeAgentLM` ignores sampling arguments.
 
-**`max_output_chars: 40000`** bounds how much of a REPL OUTPUT reaches the planner's prompt, which
-matters for invariant 8's reason: every task explores a corpus blob by `.find()`/slicing and prints
-the spans, so a truncated output is a span that has to be fetched again — a wasted iteration.
+It was raised from 16384 against a distribution, not against one truncation. A live podcast call hit 16384 exactly and came back cut off mid-code. That was a sizing problem rather than invariant 64's structure problem, because the model was already building the script in batches. The size came from a sibling project's 3,683 calls on the same model under a 32768 cap: median 1,621 tokens, p90 6,993, p99 15,030, 0.71% at the cap, and nothing between 60% and 90% of the cap. Legitimate long turns end below about 16k, which is exactly what the old cap cut, and whatever reaches the cap is a runaway no cap would save. Do not raise it again without a distribution.
 
-**`max_iterations: 25`, and 10 was about to bind** — an 8-source notebook's Summary took NINE main
-steps. The failure modes are not symmetric: exhausting the budget loses a run already paid for, unused
-headroom costs nothing since the loop ends when the model submits, and a runaway is bounded by
-`run_timeout_seconds`, which is a wall-clock bound the step budget cannot be.
+The budgets multiply: with 25 iterations, `run_timeout_seconds` (scaled per podcast tier, invariant 68) is the only bound on a looping runaway.
 
-**`max_retries: 1` is PINNED, and stays pinned.** A whole-run retry rarely fixes a PERSISTENT coercion
-failure, and it burns the budget a second time while writing a second copy of the same failure into
-the trace. The counter-argument — that a turn-0 parse failure is transient and cheap to re-run — is
-wrong, because the second attempt hits the same token ceiling and fails identically. **One DIVERGENCE
-from the siblings, which hardcode the 1: this project reads `RN_MAX_RETRIES`.** The default does not
-move, so raising it is a deliberate choice — and the budgets MULTIPLY: `RN_MAX_RETRIES=5` against
-`max_iterations=25` is up to 125 iterations. The API path has `run_timeout_seconds` as a wall-clock
-backstop; **the CLI path has none at all**.
+The number is a request, and the provider has the last word. Many models have a lower completion ceiling (`openai/gpt-4o` stops at 16384, `gemini-2.0-flash` at 8192), and OpenAI rejects an oversized `max_tokens` before it even checks the key, so every run failed with `max_tokens is too large: 32768` for an operator following this repository's own example configuration. `config._max_tokens_for` clamps to `litellm.get_model_info(model)["max_output_tokens"]` when that is lower and logs both numbers once per model, because a silent override would make the operator's belief about their run false (invariant 9). A model litellm does not know keeps the configured value, because refusing to run without a table entry would break every self-hosted or proxied setup. Lowering the default instead would give every large model a cap chosen for the smallest one.
 
-**`worker._describe` carries the ROOT CAUSE across the process boundary.** `RLMTaskError: Failed to
-produce a valid 'script' after 1 attempts` names the symptom; the chain names the cause, and the cause
-was being discarded at exactly the boundary where a person starts reading.
+## The other three
 
-**The number is a REQUEST, and the provider has the last word.** Everything above argues 32768 from
-the distribution of replies this product gets back. That argument is silent about a second limit
-entirely: the model's own completion ceiling, which for most models people actually run is lower.
-`openai/gpt-4o` and `gpt-4o-mini` stop at 16384, `gpt-4-turbo` and `claude-3-opus` at 4096,
-`gemini-2.0-flash` and `deepseek-chat` at 8192. OpenAI refuses an oversized `max_tokens` **before it
-validates the key**, so the request never leaves the machine — ask, guide, overview, title and
-podcast all answered 502 with `max_tokens is too large: 32768`, and a valid key changed nothing. An
-operator following this repo's own `.env.example`, which names `openai/gpt-4o` as the worked
-example, got a product in which nothing worked at all.
+`max_output_chars: 40000` bounds how much of a REPL output reaches the planner's prompt. Every task explores the corpus by searching and slicing and prints the spans, so a truncated output means fetching the span again and wasting an iteration.
 
-`config._max_tokens_for` clamps to `litellm.get_model_info(model)["max_output_tokens"]` when that is
-lower, and **logs both numbers once per model per process** rather than correcting silently —
-invariant 9's rule, that a silent override makes an operator's belief about their own run false,
-applies here too. A model litellm has no entry for keeps the operator's value untouched: the
-metadata is a convenience, not an authority, and refusing to run because a table has no row would
-break every self-hosted and proxied setup this product is aimed at.
+`max_iterations: 25`, because 10 was about to be reached: an 8-source notebook's summary took nine main steps. Running out loses a run already paid for, while unused headroom costs nothing because the loop ends when the model submits, and `run_timeout_seconds` bounds a runaway in wall-clock time.
 
-Lowering the DEFAULT instead was the obvious alternative and is worse: it would give every
-large-context model a cap chosen for the smallest one, which is the exact failure the 32768 was
-raised to fix. The bug survived seven review rounds because it is invisible to anyone whose own
-model has a ≥32k output ceiling.
+`max_retries: 1` stays. A whole-run retry rarely fixes a persistent failure, burns the budget again and writes a second copy of the same failure into the trace, and a turn-zero parse failure is not transient, because the retry hits the same token ceiling. Unlike its siblings, this project reads `RN_MAX_RETRIES`, but the default does not move, and raising it multiplies the budget: `RN_MAX_RETRIES=5` with 25 iterations is up to 125 iterations. The API has `run_timeout_seconds` as a backstop; the CLI has none.
+
+`worker._describe` carries the root cause across the process boundary. "Failed to produce a valid 'script' after 1 attempts" names the symptom; the exception chain names the cause, which used to be discarded exactly where a person starts reading.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

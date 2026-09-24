@@ -1,34 +1,15 @@
-# Invariant 32 — Notes are uncited until promoted
+# Invariant 32: Notes are uncited until promoted
 
-**Notes (`schema.Note`, `Notebook.notes`) are freeform, uncited text — grounded and citable only
-once PROMOTED into a real `Source`, never before.** A note may have originated as a copy of a
-citation-grounded answer, but the note itself carries no `citations` and is never re-verified —
-invariant 5's guarantee doesn't extend to it. `notebook.promote_note` is the ONLY path a note's
-text reaches `notebook.sources`, and it reuses `ingest.ingest_pasted_text` UNCHANGED, so a
-promoted note gets the identical content-derived-origin, dedup-by-origin and injection-scan
-treatment. Promotion removes the note regardless of whether a source was appended (a dedup hit
-appends nothing) — promotion is a completed user action either way, and the endpoint returns the
-full `NotebookResponse` so a client distinguishes outcomes by diffing, never by a status code.
+**Notes (`schema.Note`, `Notebook.notes`) are free, uncited text, grounded and citable only once promoted into a real `Source`.**
 
-**A note id is assigned from the MAX id among currently-live notes, never `len(notes) + 1`**
-(`notebook._next_note_id`). With length-based ids, deleting a non-last note lets TWO LIVE notes
-share one id, and since `delete_note`/`promote_note` both act BY id, that made either one
-silently affect BOTH. `delete_note`/`promote_note` also remove exactly the first matching note
-by index rather than filtering every id-equal match — defence in depth on top of the id fix.
-Reusing an id once NO live note holds it is safe and unchanged.
+A note may start as a copy of a grounded answer, but the note carries no `citations` and is never re-verified, so invariant 5's guarantee does not extend to it. `notebook.promote_note` is the only path from a note to `notebook.sources`, and it reuses `ingest.ingest_pasted_text` unchanged, so a promoted note gets the same content-derived origin, dedup by origin and injection scan as any paste. Promotion removes the note whether or not a source was appended (a dedup hit appends nothing), because the user's action is complete either way; the endpoint returns the full `NotebookResponse`, and a client tells the outcomes apart by comparing, not by status code.
 
-**`POST /notebooks/{id}/notes` creates a notebook (`create=True`, like `add_sources`) so a new
-notebook can start life with a note; `DELETE .../notes/{note_id}` requires an existing one
-(`create=False`, matching `ask`/`guide`).**
+A note id comes from the highest id among live notes, never `len(notes) + 1` (`notebook._next_note_id`). With length-based ids, deleting a note in the middle let two live notes share one id, and since deleting and promoting act by id, one action silently affected both. `delete_note` and `promote_note` also remove exactly the first matching note, as defence in depth.
 
-**The "+ Save as note" button belongs to a CALL SITE that opts in, never to the shared
-`renderAnswerWithCitations`**, which is called from six sites — putting it inside would leak it
-onto every artifact. It is a small factory (`saveAsNoteButton`) so opting-in sites share one
-implementation. **Two sites opt in: a Chat answer (`renderTurn`) and the chat overview
-(`renderChatOverview`).** The line is about the SURFACE, not who authored the text: things
-rendered IN the chat thread are the user's to curate; a Studio tab's artifact and a podcast
-transcript are not part of that thread.
+`POST /notebooks/{id}/notes` creates the notebook if needed (`create=True`, like `add_sources`), so a new notebook can start with a note. `DELETE .../notes/{note_id}` requires an existing notebook (`create=False`), and the web UI asks for confirmation before deleting, as it does for every other delete.
+
+Saving as a note is offered by call sites that opt in, never by the shared `renderAnswerWithCitations`, which six places call. The `saveAsNoteButton` factory is used by a chat answer (`renderTurn`) and by the overview (`renderChatOverview`). The line follows the surface, not the author: what appears in the chat thread is the reader's to curate, while a Studio guide and a podcast transcript are not part of that thread.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

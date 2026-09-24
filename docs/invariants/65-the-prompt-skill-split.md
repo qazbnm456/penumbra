@@ -1,50 +1,23 @@
-# Invariant 65 — The prompt/skill split
+# Invariant 65: The prompt and skill split
 
-**Every RLM task here carries `rlm_harness.skills` with `discovery="inject"`, and the prompt/skill
-split is a rule rather than a preference.** (This is `rlm-harness`'s own mechanism, distinct from the
-Claude Code skills a coding agent reads and this task never sees.)
+**Every RLM task here carries `rlm_harness.skills` with `discovery="inject"`, and the split between prompt and skill is a rule, not a preference.**
 
-**The split**: a skill is read only if the model chooses to, so anything that CORRUPTS the output when
-skipped stays in the PROMPT — grounding, citations, the marker rule, language, the output shape, the
-length target. Craft and measured technique are what a skill is for: work done without them is duller
-or more expensive, not wrong. A no-disfluencies rule and a good-close rule appear in BOTH, deliberately:
-they are must-apply so they cannot leave the prompt, and the skill is where the REASON lives.
+These are `rlm-harness`'s skills for the task's model, not the Claude Code skills a coding agent reads.
 
-**`instructions.ACCUMULATE_LARGE_OUTPUTS` is the one line of that split that had to be fixed.** The
-build-across-turns mechanic (invariant 64) is must-apply by its own account — skipping it LOSES the run
-— yet it lived in `GeneratePodcastScript`'s prompt only, existing for the other five tasks solely in an
-optional skill a model may never read. It is a shared constant composed into all six now, worded
-CONDITIONALLY, because a short answer built across turns wastes the step budget just as surely as a long
-one written in a single reply loses the run. The podcast keeps its TIER-SPECIFIC pointer and no longer
-restates the mechanic. A tripwire asserts all six carry it and the podcast holds exactly one copy.
+A skill is read only if the model chooses to read it, so anything that corrupts the output when skipped stays in the prompt: grounding, citations, the marker rule, language, the output shape and the length target. Craft and measured technique belong in a skill, because work done without them is duller or more expensive, not wrong. A no-disfluencies rule and a good-close rule appear in both on purpose: they must always apply, so they stay in the prompt, and the skill holds the reasoning.
 
-**`instructions.apply_skills` is the ONE copy of the wiring**, next to `CITATION_RULES` and for the
-identical reason: six tasks each calling `load_skills_as_tools` would each own a catalog header, and
-the headers would drift. A test forbids `load_skills_as_tools` from appearing in `audio.py`/`guide.py`/
-`task.py` at all.
+`instructions.ACCUMULATE_LARGE_OUTPUTS` is where the split had to be corrected. The build-across-turns mechanic (invariant 64) must always apply, because skipping it loses the run, yet it once lived only in the podcast prompt and reached the other five tasks only through an optional skill. It is now a shared constant in all six, worded as a condition, because a short answer built across turns wastes steps just as a long one written in one reply loses the run. A tripwire asserts that all six carry it and that the podcast has exactly one copy.
 
-**The catalog is CLOSED (`</available_skills>`) and the MANIFEST decides whether anything is wired at
-all.** Without an explicit close, every rule in the task's own prompt reads as though it were inside the
-skills element. Gating on the manifest rather than on the directory existing is what stops an empty
-directory from adding `read_skill`, whose own description tells the model to pick from a manifest that
-would not be there. Pinned in both directions.
+`instructions.apply_skills` is the one copy of the wiring, for the same reason as `CITATION_RULES`: six tasks each calling `load_skills_as_tools` would each own a catalog header, and the headers would drift. A test forbids `load_skills_as_tools` in `audio.py`, `guide.py` and `task.py`.
 
-**`skills_dir` is a constructor argument defaulting ON**: a test points it at a fixture and `None` turns
-it off, which a caller needs because a stale skill is worse than an absent one — and defaulting ON
-because a planner that has to be told to consult its own knowledge base will not. `read_skill` resolves
-a NAME against the skills discovered at construction, so it cannot read an arbitrary path and never
-touches the network; invariants 1 and 14 are about reaching the outside world, which this does not do.
+The catalog is closed with `</available_skills>`, and the manifest decides whether anything is wired at all. Without the closing tag, every rule after it reads as if it were inside the skills element. Gating on the manifest rather than on the directory's existence stops an empty directory from adding `read_skill`, whose description tells the model to choose from a manifest that would not exist. Both directions are pinned.
 
-**ONE directory for every task**, because `discover_skills` takes a single directory and does not
-recurse, and a catalog line per skill is cheap. Split it when a chat turn is measurably paying to be
-told about podcast craft — not before. The files ship inside the wheel for invariant 29's packaging
-reason.
+`skills_dir` is a constructor argument that defaults on. A test points it at a fixture and `None` turns it off, which a caller needs because a stale skill is worse than none; it defaults on because a planner that has to be told to consult its own notes will not. `read_skill` resolves a name against the skills found at construction, so it cannot read an arbitrary path and never uses the network, which keeps invariants 1 and 14 intact.
 
-**Provenance is part of the craft.** A skill is a durable claim about how to work; an unchecked quote in
-one is worse than no skill, because a later reader has no reason to doubt it. Every technique in
-`podcast-craft` must be traceable to a source someone actually opened, or to this project's own
-measurement.
+There is one directory for every task, because `discover_skills` reads a single directory without recursing and a catalog line per skill is cheap. Split it when a chat turn is measurably paying to hear about podcast craft, not before. The files ship inside the wheel, for invariant 29's packaging reason.
+
+Provenance is part of the craft. A skill is a lasting claim about how to work, and an unchecked quote in one is worse than no skill, because a later reader has no reason to doubt it. Every technique in `podcast-craft` must trace to a source someone actually opened, or to this project's own measurement.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

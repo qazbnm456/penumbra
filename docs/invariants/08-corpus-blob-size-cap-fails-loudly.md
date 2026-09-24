@@ -1,13 +1,11 @@
-# Invariant 8 — Corpus blob size cap fails loudly
+# Invariant 8: The corpus size cap fails loudly
 
-**`corpus.py` enforces a size cap on the assembled blob and fails loudly, not silently, past
-it.** The single-blob-as-REPL-variable design has a real memory ceiling in the pyodide/deno
-sandbox; the cap exists to stop a mysteriously failing or slow chat turn later. **Two known
-gaps**: `Corpus.blob()` concatenates every source in full BEFORE checking the length, and the
-check fires at QUESTION time, not at ingestion (`max_chars` defaults to `None`, and every call
-site that passes it is an `ask`/`guide`/`audio` path). Closing either means assembling the blob
-on every source add — they are one follow-up, not two.
+**`corpus.py` caps the size of the assembled blob and fails loudly past it.**
+
+The design hands the whole corpus to the REPL as one variable, and the Pyodide/Deno sandbox has a real memory ceiling. The cap turns what would otherwise be a mysteriously slow or failing chat turn into a clear error.
+
+Two gaps are known. `Corpus.blob()` concatenates every source in full before it checks the length, and the check fires when a question is asked, not at ingestion (`max_chars` defaults to `None`, and only the `ask`, `guide` and `audio` paths pass it). Closing either gap means assembling the blob on every source add, so they are one follow-up, not two.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

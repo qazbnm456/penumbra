@@ -1,62 +1,25 @@
-# Invariant 44 — The transcript is subtitles timed by the provider
+# Invariant 44: The transcript is subtitles timed by the provider
 
-**The podcast transcript behaves like subtitles, and the timing comes from the PROVIDER rather
-than from measuring the audio.** `TTSProvider.synthesize` returns each utterance's start offset
-IN SECONDS — the unit is the contract between every provider, `Podcast.offsets` and `app.js`'s
-seek handler, so it is stated rather than inferred from a call site;
-every provider here already synthesizes utterance by utterance, so it knows them, and parsing MP3
-frame headers to recover a number the provider already reports would be a second, worse
-implementation.
+**The podcast transcript behaves like subtitles, and its timing comes from the provider rather than from measuring the audio.**
 
-**`Podcast.offsets` is a list PARALLEL to `utterances`, never a field on `Utterance`** —
-`Utterance` is the MODEL's output shape, and the model has no idea how long its own words take to
-say.
+`TTSProvider.synthesize` returns each utterance's start offset in seconds. The unit is the contract between every provider, `Podcast.offsets` and the seek handler in `app.js`, so it is stated rather than inferred. Every provider synthesises utterance by utterance and already knows these numbers; parsing MP3 frame headers to recover them would be a second, worse implementation.
 
-**The consumer's guard is MONOTONICITY, not length alone.** A provider reporting no boundaries
-yields `[0.0, 0.0, ...]`, which is exactly as long as `utterances` — every line stamped `0:00`,
-one row highlighted for the whole episode, every click seeking to zero. `app.js`'s `timed`
-requires finite, non-negative, strictly increasing offsets AND a matching length; anything else
-renders a plain transcript (which is also what a persisted episode from before this field existed
-gets). Mis-aligned subtitles are worse than none.
+`Podcast.offsets` is a list parallel to `utterances`, never a field on `Utterance`, because `Utterance` is the model's output and the model has no idea how long its words take to say.
 
-**Match ANY `*Boundary` event from edge-tts, not `WordBoundary`** — the installed edge-tts
-defaults to `boundary="SentenceBoundary"` and emits only that, so keying on `WordBoundary`
-returns every offset as 0.0. The boundary sum APPROXIMATES each utterance's duration rather than
-equalling it (measured error -0.049s..+0.066s per utterance, non-systematic in sign): fine for
-highlighting a line, and NOT a drift that grows in one direction. The drift-free alternative is
-named in the docstring and left as a follow-up.
+The consumer checks that offsets increase, not only that the length matches. A provider that reports no boundaries yields `[0.0, 0.0, ...]`, exactly as long as `utterances`, which would stamp every line `0:00`, highlight one row for the whole episode and send every click to zero. `app.js` requires finite, non-negative, strictly increasing offsets and a matching length; anything else, including an episode stored before offsets existed, gets a plain transcript. Misaligned subtitles are worse than none.
 
-**A provider holding raw samples gets its offsets from a PURE FUNCTION, `tts.sequence_offsets`,**
-with the gap between utterances charged to the line BEFORE it, so an offset is where its own
-line's audio starts. Extracting the bookkeeping out of `synthesize` is what lets CI check it at
-all — with no extra, no model download and no audio. Both offset tests use THREE DIFFERENT
-durations on purpose: with equal ones, a running-total bug and a correct implementation produce
-the same list.
+edge-tts is matched on any `*Boundary` event, not `WordBoundary`, because the installed version defaults to sentence boundaries and emits only those. The boundary sum approximates each utterance's duration (measured error between -0.049s and +0.066s, with no consistent sign), which is fine for highlighting and does not drift in one direction.
 
-**`.btn` sets `color: inherit`, `text-decoration: none` and `display: inline-block` because it
-has to work on an `<a>`** — the global reset covers `button` only. The `display` is what would
-enrol this file's most-used class in invariant 36's tripwire the moment anyone `hidden`-toggles a
-`.btn`, so `.btn` carries its own `[hidden] { display: none }` up front: a pre-emptive pairing,
-not a tripwire the code trips today.
+A provider that holds raw samples gets its offsets from a pure function, `tts.sequence_offsets`, which charges the gap between utterances to the line before it, so each offset is where its own line's audio starts. Keeping this bookkeeping out of `synthesize` lets CI check it without the extra, a model download or any audio. Both offset tests use three different durations, because with equal ones a running-total bug and a correct implementation produce the same list.
 
-**The transcript scrolls in its OWN box (`.podcast-transcript.is-timed`) and the playhead follower
-moves `scrollTop` directly, never `scrollIntoView`**, which walks EVERY scrollable ancestor and
-would drag a listener who scrolled away back to the podcast panel every few seconds. Positions are
-read from `getBoundingClientRect`, not `offsetTop`, so the arithmetic doesn't break if the box
-stops being positioned. Only a TIMED transcript becomes a scroll box.
+## The transcript in the page
 
-**A transcript line seeks on click, but not when the click was meant for something inside it** —
-excluding `.citation, .reference-link, .podcast-timecode`. `.reference-link` is the "N references"
-control, a SIBLING inside the same utterance, so clicking it would both jump the player and switch
-the panel away. That entry was MISSING while two dead classes from the replaced citation-list markup
-(`.citation-row`, `.citation-detail`) were still listed — **a stale exclusion list costs nothing
-until the thing it forgot to name ships**. `click` also fires on the mouseup ending a
-drag-selection, so a non-collapsed selection suppresses the seek. The `play()` promise is caught:
-a cleared file should be a silent no-op, not an unhandled rejection. **And a `.is-seekable:hover`
-rule must not touch a property `.is-speaking` sets** — the fix is DISJOINT PROPERTIES, not lower
-specificity: hover still wins any property it declares, it just declares `border-color`, which
-`.is-speaking` (`background` + `box-shadow`) never sets.
+`.btn` sets `color: inherit`, `text-decoration: none` and `display: inline-block` because it is also used on an `<a>`, which the global reset does not cover. The `display` would enrol the class in invariant 36's tripwire the moment a `.btn` is toggled with `hidden`, so `.btn` carries its own `[hidden] { display: none }` in advance.
+
+A timed transcript scrolls in its own box (`.podcast-transcript.is-timed`), and the follower sets `scrollTop` directly rather than calling `scrollIntoView`, which scrolls every scrollable ancestor and would drag a listener who scrolled away back to the podcast every few seconds. Positions come from `getBoundingClientRect`, not `offsetTop`, so the arithmetic survives the box no longer being positioned.
+
+Clicking a line seeks to it, unless the click was meant for something inside it: `.citation`, `.reference-link` (the "N references" control) or `.podcast-timecode`. A click that ends a drag-selection also does not seek. The `play()` promise is caught, so a cleared file is a silent no-op rather than an unhandled rejection. A `.is-seekable:hover` rule must not touch any property `.is-speaking` sets; hover declares `border-color`, and `.is-speaking` uses `background` and `box-shadow`, so the two never compete.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

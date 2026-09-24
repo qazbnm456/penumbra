@@ -1,32 +1,15 @@
-# Invariant 31 — The source text endpoint is a new exposure
+# Invariant 31: Endpoints that return a whole document are deliberate
 
-**`GET /notebooks/{id}/sources/{source_id}` returns a source's FULL text — a materially
-different exposure, shared now with the trace pair (invariant 29) and with Tier 0's
-`GET /inbox/{node_id}/source`, whose own docstring names this file.** Before the first of them, no
-caller could read more of a source than a citation's short `quote`; the count in this sentence was
-“every other endpoint except” one, and it went stale the moment the Inbox shipped a second full-text
-reader. What does not change is the rule: an endpoint that hands back whole documents is a decision,
-said out loud, not one more getter. It reuses
-`corpus.Corpus.get(source_id)` — the SAME lookup `citations.py` already performs on every
-request — rather than a second hand-rolled scan. Invariant 25's posture covers this in spirit
-(the model already has the whole corpus), but the SURFACE is new and worth its own line.
+**An endpoint that returns a whole document is a deliberate decision, stated openly. There are three: `GET /notebooks/{id}/sources/{source_id}`, the trace pair (invariant 29) and `GET /inbox/{node_id}/source`.**
 
-**The Sources row is the click target for the source-text viewer** (`app.js`'s
-`showSourceViewer(source.id, null, null)`), and its fetch carries a staleness guard —
-`sourceViewerAbort`, a module-level `AbortController` — so a slow first response cannot repopulate
-a panel the reader has moved on from. Don't reintroduce that gap in a future source-detail fetch
-path.
+Before the first of them, no caller could read more of a source than a citation's short `quote`. Invariant 25's posture covers them in spirit, since the model already sees the whole corpus, but the surface is new and deserves its own line. The source endpoint reuses `corpus.Corpus.get(source_id)`, the same lookup `citations.py` performs on every request, instead of a second hand-written scan.
 
-**SUPERSEDED, recorded because the earlier shape is still described in older entries**: this
-invariant used to name a per-answer citation LIST whose rows opened the viewer, with a secondary
-per-row `⌁ trace` icon. That markup is gone — invariant 58's References panel replaced it, a
-citation stroke now calls `focusReference`, and `showCitationTurn`/`_shownKey`/`.citation-row` exist
-nowhere in `app.js`. `style.css` still carries the dead `.citation-list` rules; removing them is a
-loose end, not a behaviour change.
+Clicking a row in the Sources list opens the source viewer (`showSourceViewer(source.id, null, null)`). Its fetch carries a staleness guard, the module-level `AbortController` `sourceViewerAbort`, so a slow response cannot refill a panel the reader has already moved on from. Keep that guard on any future source-detail fetch.
 
-**Known and explicitly NOT fixed here**: `Corpus.add()`'s duplicate-id dedup guard is dead code —
-nothing in the real ingestion path calls it.
+Citations reach the source through invariant 58's References panel: a citation calls `focusReference`, which opens the matching card and marks the cited words in its passage.
+
+`Corpus.add()`'s duplicate-id guard is dead code, because nothing in the real ingestion path calls it. This is known and deliberately left alone.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

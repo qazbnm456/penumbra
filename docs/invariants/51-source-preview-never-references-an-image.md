@@ -1,26 +1,13 @@
-# Invariant 51 — Source preview never references an image
+# Invariant 51: Source previews never reference an image
 
-**`Source.preview` is display-only page metadata, scraped from html already in hand, and it NEVER
-references an image.** `parsers/web.extract_preview` reads og:/twitter:/`description`/`<title>` out
-of the SAME html `parse_web` already fetched — one host-side request per source, as invariant 1
-requires; a preview that fetched anything of its own would quietly break that. The corpus blob is
-built from `blocks` alone, so a page controlling its own `<meta>` tags influences what a Sources row
-LOOKS like and nothing the model reads — the same trust level `origin` already carries, rendered
-with `textContent` for the same reason.
+**`Source.preview` is display-only page metadata, scraped from HTML already in hand, and it never references an image.**
 
-**`og:image` is deliberately absent, and adding it back looks like an obvious improvement.**
-Rendering one makes the READER's browser fetch a URL the page author chose, handing that third party
-the reader's IP and a request to log — every pasted link becomes a beacon, in exchange for a
-thumbnail. Pinned by a test. Regex rather than an HTML parser because the point is to add no
-dependency to an ingestion path where `trafilatura` already does the real work; a malformed match is
-a cosmetic miss, never a hazard.
+`parsers/web.extract_preview` reads Open Graph, Twitter, `description` and `<title>` tags from the same HTML `parse_web` already fetched, so there is still one host-side request per source (invariant 1). The corpus is built from `blocks` alone, so a page's own `<meta>` tags affect only how its row looks in the Sources list, never what the model reads, the same trust level as `origin`, and it is rendered with `textContent` for the same reason.
 
-**Every quantifier in those patterns is BOUNDED and the input is windowed to the `<head>`, and both
-are load-bearing.** With an unbounded `[^>]*?`, a page of UNCLOSED `<meta` tags backtracks
-catastrophically — cubic, and `re` does NOT release the GIL, so `asyncio.to_thread` buys the event
-loop nothing. On an API where any token holder can paste any URL, that is a one-request freeze of
-the whole server.
+`og:image` is deliberately absent, although adding it looks like an obvious improvement. Rendering it would make the reader's browser fetch a URL chosen by the page author, handing that third party the reader's IP address and a request to log, so every pasted link would become a beacon in exchange for a thumbnail. A test pins its absence. Parsing uses regular expressions rather than an HTML parser to add no dependency to an ingestion path where `trafilatura` does the real work; a malformed match is a cosmetic miss, never a hazard.
+
+Every quantifier in those patterns is bounded, and the input is limited to the `<head>`. With an unbounded `[^>]*?`, a page full of unclosed `<meta` tags backtracks catastrophically, and `re` does not release the GIL, so running it on a thread does not protect the event loop. On an API where any token holder can paste any URL, that would freeze the whole server with one request.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

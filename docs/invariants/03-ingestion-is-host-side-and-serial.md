@@ -1,66 +1,23 @@
-# Invariant 3 — Ingestion is host-side and serial
+# Invariant 3: Ingestion is host-side and serial
 
-**Ingestion is host-side only AND SERIAL — never inside the sandbox, never in a thread pool.** `parsers/{text,web,pdf,youtube}.py`
-and `parsers/_ocr.py` all run before any `RLMTask` exists. `pypdfium2`, `trafilatura`, `yt-dlp`
-and the OCR backends are native/C-extension dependencies unsuited to the pyodide/deno sandbox —
-and untrusted parsing logic has no reason to run inside the same trust boundary as the model's
-own code anyway. `corpus.py` only ever hands the RLM a plain string, already parsed.
+**Ingestion runs on the host and serially: never inside the sandbox, never in a thread pool.**
 
-**`ingest.ingest_new`'s plain `for` loop is load-bearing, and it looks exactly like an easy win.**
-Each source is a network round trip, so a serial loop spends the sum of every wait when the
-longest would do, and the sources are independent by construction (the caller handed us a list) —
-the case for a `ThreadPoolExecutor` writes itself. It was written, measured, and it CRASHES:
-four PDFs ingested concurrently died with `rc=134` (SIGABRT; an earlier attempt `rc=139`,
-SIGSEGV), because `pypdfium2`'s own metadata says so in as many words —
-*"PDFium is inherently not thread-safe"* (`pypdfium2-5.12.1.dist-info/METADATA:1066`). That
-constraint arrived with the dependency invariant 7 chose and nobody had written it down here.
+`parsers/{text,web,pdf,youtube}.py` and `parsers/_ocr.py` all run before any `RLMTask` exists. `pypdfium2`, `trafilatura`, `yt-dlp` and the OCR backends are native extensions that do not suit the Pyodide/Deno sandbox, and untrusted parsing code has no business running inside the model's trust boundary anyway. `corpus.py` hands the RLM a plain, already parsed string.
 
-**The measured upside was near zero on the path that crashes**: five HTML sources went 7.55s to
-2.85s, but four ordinary PDFs parse serially in 0.41s — `api.py`'s "can take minutes" describes
-OCR on SCANNED pages, one branch of PDF ingestion, not the text-extraction path. So the workload
-the saving was supposed to scale on is the one where the saving is nearly zero and the risk is a
-hard crash.
+## Why the serial loop stays
 
-**A green suite proved nothing, and that is the transferable part**: `tests/test_ingest.py`'s
-multi-value cases all take local TEXT files through `parse_text`, so nothing in 614 passing tests
-drove two PDFs at once. **A suite that is green on the path you did not change is not evidence
-about the path you did.**
+`ingest.ingest_new` uses a plain `for` loop, and it looks like an easy win to parallelise: each source is a network round trip and the sources are independent. It was tried and it crashes. Four PDFs ingested concurrently died with `rc=134` (SIGABRT, and `rc=139` on another attempt), because PDFium is not thread-safe; `pypdfium2`'s own metadata says "PDFium is inherently not thread-safe". That constraint came with the dependency invariant 7 chose.
 
-A sound version is NOT ten lines: the waiting is the network FETCH and the crashing is the PDF
-PARSE, but `ingest_one` fuses them, so separating them is a real refactor of the ingestion
-dispatch — a different proposal with a different cost, and not one a 2.94% measurement buys.
+The gain was also small where the crash happens. Five HTML sources went from 7.55s to 2.85s, but four ordinary PDFs parse serially in 0.41s; the slow PDF case is OCR on scanned pages, which is one branch of PDF ingestion. A sound version would have to separate the network fetch (the waiting) from the PDF parse (the crash), and `ingest_one` fuses the two, so that is a real refactor with its own cost.
 
-## The HTTP API reached this by a path the argument above never considered
+The broader lesson: the 614 passing tests at the time all used local text files, so none drove two PDFs at once. A suite that is green on the path you did not change is not evidence about the path you did.
 
-Everything above is about `ingest_new`'s internal loop. Nothing in it considers two concurrent
-HTTP REQUESTS — and `api.add_sources` and `api.upload_source` both call ingestion through
-`asyncio.to_thread`, which hands the work to the default `ThreadPoolExecutor`. So two requests
-parse two PDFs at the same time, which is the forbidden shape arriving through the front door.
+## Concurrent HTTP requests
 
-**Measured, because this invariant's own standard is measurement:** two
-`POST /notebooks/{id}/sources/upload` fired with `asyncio.gather` against the real ASGI app
-overlapped inside the parser by **0.405s on two distinct threads**, and both returned 200.
+The HTTP API reached the same crash another way. `api.add_sources` and `api.upload_source` run ingestion through `asyncio.to_thread`, so two requests parse two PDFs on two threads at once. Measured against the real ASGI app, two concurrent uploads overlapped inside the parser for 0.405s and both returned 200. This is worse than the loop case: ingestion runs in the API process, not in a `worker.py` subprocess (invariant 21 covers `RLMTask` execution, not parsing), so the crash takes the whole server down. The per-notebook write lock does not help, because two notebooks take two different locks.
 
-It is worse here than in the loop this invariant was written about. Ingestion runs in the API
-PROCESS, not in a `worker.py` subprocess — invariant 21 is about `RLMTask` EXECUTION, and parsing
-is not a task — so the SIGABRT takes the whole server down rather than one request. The comment
-beside that call site says ingestion sits outside the per-notebook write lock because "there's no
-reason for ANY ingestion to sit under the lock"; that is correct about the WRITE lock and does not
-address this, since two different notebooks take two different locks anyway.
-
-**The fix is `parsers/pdf.py`'s `_PDFIUM_LOCK`, and where it sits is the decision.** Around
-`parse_pdf`, not around `ingest_one`: a lock on `ingest_one` would serialise the FETCH too, and
-`web._default_fetcher` has a 15-second timeout, so one slow page would block every other capture
-for up to fifteen seconds. That is not the fetch/parse refactor declined above — it is a mutex on a
-library that documents itself as thread-unsafe, placed at that library's door. It covers the OCR
-dispatch too, which is inside `_page_text`.
-
-**Two tests, and the second one is the point.** `test_two_threads_cannot_parse_two_pdfs_at_once`
-proves the lock; `test_api.py::test_two_concurrent_uploads_never_parse_two_pdfs_at_once` drives the
-real ASGI app, because of this invariant's own closing line — *a suite that is green on the path
-you did not change is not evidence about the path you did.* Both were confirmed to FAIL with the
-lock removed.
+The fix is `_PDFIUM_LOCK` in `parsers/pdf.py`, placed around `parse_pdf` and not around `ingest_one`. Locking `ingest_one` would also serialise the fetch, and with a 15-second fetch timeout one slow page would block every other capture. The lock sits at the door of the library that documents itself as thread-unsafe, and it covers the OCR dispatch inside `_page_text` too. `test_two_threads_cannot_parse_two_pdfs_at_once` proves the lock, and `test_api.py::test_two_concurrent_uploads_never_parse_two_pdfs_at_once` drives the real ASGI app; both fail with the lock removed.
 
 ---
 
-One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)
