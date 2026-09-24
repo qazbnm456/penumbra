@@ -56,6 +56,7 @@ Each entry states what the product does now and why. The reasoning behind each r
 - Below 640px wide (a narrow desktop window or high zoom), a notebook shows one panel at a time through a Sources, Chat and Studio tab row.
 - An empty notebook offers Paste a link, Paste text and Upload a file as its first move. An answer's references link, steps pill and Regenerate share one footer row. The Studio's tab strip stays pinned while its column scrolls.
 - The source viewer is headed by the page's own title, which the source-detail response now carries.
+- Server-written sentences are translated in the interface: injection-scan flags, a citation's "why unverified" reason and source kinds all follow the interface language, and the steps pill and the missing-audio line follow a live language switch. Markdown `~~strikethrough~~` renders as a deletion. The printed "unverified" tag uses weight instead of a synthesised CJK italic.
 - A settings page covers presentation choices only: interface and output language, podcast voices, and the auto-summary toggle. Safety bounds stay in the environment (invariant 41).
 
 #### Server, CLI and deployment
@@ -93,6 +94,7 @@ These are the few failures that shaped the current design. Smaller fixes are not
 - Removing a source re-verifies every saved citation on screen right away, not only after a reload.
 - A stored desktop layout choice (the collapsed Studio) no longer breaks narrow windows, and tooltip and control styles no longer override each other because of CSS source order.
 - Dark-theme printing produced cream text on white paper; print now always uses the light palette.
+- Five `margin: -var(...)` declarations were invalid CSS and silently dropped, including the one centring the podcast scrubber's thumb; a test now rejects the pattern.
 - A PDF that failed to parse reported the server's temporary file path; the error now names the uploaded file.
 
 ### Security

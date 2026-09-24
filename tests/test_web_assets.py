@@ -3508,3 +3508,13 @@ def test_no_nodelist_is_called_with_an_array_only_method():
         misuse += [f"{name}.{m}" for m in re.findall(rf"(?<![.\w]){name}\.({array_only})\(", scope)]
     assert bindings, "the scan found no querySelectorAll bindings at all — it is not reading app.js"
     assert not misuse, f"NodeList used as an Array (spread it first, `[...x]`): {misuse}"
+
+
+def test_no_css_negates_a_custom_property_with_a_bare_minus():
+    """`margin: -var(--space-1)` is not a negative margin: CSS has no unary minus on `var()`, so
+    the whole declaration is invalid at parse time and the browser drops it without a word. Five
+    of them sat in `style.css`, including the one meant to centre the podcast scrubber's thumb on
+    its track. Negate with `calc(-1 * var(...))`."""
+    css = _strip_css_comments((WEB / "style.css").read_text(encoding="utf-8"))
+    bare = re.findall(r"(?<![\w-])-var\(", css)
+    assert not bare, f"{len(bare)} declaration(s) negate var() with a bare minus; use calc(-1 * var(...))"
