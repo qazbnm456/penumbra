@@ -15,7 +15,7 @@
 (() => {
   "use strict";
   const PG = window.rlmPlayground;
-  const REPO = "https://github.com/qazbnm456/rlm-notebook";
+  const REPO = "https://github.com/qazbnm456/penumbra";
 
   const el = (tag, cls, text) => {
     const n = document.createElement(tag);
