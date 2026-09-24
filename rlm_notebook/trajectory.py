@@ -19,7 +19,8 @@ this module exists to avoid:
 
 Why a server-side decomposition rather than handing the raw trace to the browser: a trace can hold
 full ingested source text (AGENTS.md invariant 29 already calls the trace endpoints a materially
-different exposure than the rest of this no-auth API), and the per-field caps here are what keep a
+different exposure than the rest of this API, which has no authorization behind its token), and
+the per-field caps here are what keep a
 multi-megabyte REPL output from being shipped to a page that only ever renders a preview of it.
 """
 
@@ -253,6 +254,22 @@ def build_trajectory(events: list[dict]) -> dict:
                 payload = event.get("payload") or {}
                 ok = payload.get("ok")
                 error = payload.get("error")
+                #: **THE CAUSE, not just the wrapper.** `error` is the outermost exception the task
+                #: raised — `RLMTaskError("Failed to produce a valid 'answer' after 1 attempts")` —
+                #: which says that something went wrong and nothing about what. `error_chain` holds
+                #: the exceptions underneath it, and rlm-harness has been writing it into every
+                #: trace while nothing here read it. So the Trajectory drawer, which invariant 70
+                #: calls "where a run's reasoning lives", showed strictly LESS than the chat bubble
+                #: beside it: the bubble said the provider had rejected the key and named
+                #: `RN_API_KEY`, and the drawer said an attempt had failed.
+                #:
+                #: The innermost link is the one that explains it; `readableError` in the web layer
+                #: turns it into a sentence exactly as it does for the bubble.
+                chain = payload.get("error_chain")
+                if isinstance(chain, list) and chain:
+                    cause = str(chain[-1]).strip()
+                    if cause:
+                        error = cause
             break
 
     iterations: list[dict] = []

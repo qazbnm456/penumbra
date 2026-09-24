@@ -54,6 +54,23 @@
 /* Any chrome button that is an ANCHOR, not the star alone. Install became a link to the README's
    own section and duly grew a browser underline under its label. */
 a.pg-btn { text-decoration: none; color: inherit; display: inline-flex; align-items: center; }
+/* The glyph is the ICON and the word is the LABEL, and only the second is droppable. Both are
+   `inline` spans inside a flex row, so the 5px `gap` on `.pg-btn` is what separates them; hiding
+   the label therefore also removes its gap, with no second rule to keep in step. */
+.pg-ico { font-size: 0.9375rem; line-height: 1; }
+
+/* **A demo marker that survives a phone**, under the header rather than in it. Shown only where
+   the two in-header markers are gone: `.pg-sim` below 900px and `.wordmark` (which carries the
+   PLAYGROUND tag) below 640px, so between 640 and 900 the badge is still doing the job and this
+   would be a second one saying the same thing. */
+.pg-strip {
+  display: none;
+  align-items: center; gap: 7px;
+  padding: 5px 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-1); color: var(--text-dim);
+  font-size: 11px; letter-spacing: 0.01em;
+}
 
 /* No modal section any more: the scenario picker was the product's own notebook dropdown all along,
    and the install sheet was a copy of the README. Both are deleted, and so is the `modal()` helper
@@ -199,6 +216,72 @@ a.pg-btn { text-decoration: none; color: inherit; display: inline-flex; align-it
 .pg-foot a:hover { text-decoration: underline; }
 
 @media (max-width: 900px) {
-  .pg-tour { right: 8px; bottom: 8px; width: calc(100vw - 16px); max-height: 44vh; }
+  /* **Pinned to BOTH edges, and the width comes from that.** `width: calc(100vw - 16px)` with a
+     single `right` was correct arithmetic and the wrong mechanism: the tour's own positioning code
+     writes an inline `left` to slide the panel away from a popover, so at 375 the box sat at left
+     35 and ran to 394 against a 375 viewport. With both offsets set and `width: auto` there is no
+     arithmetic to get wrong and nothing for an inline `left` to fight. */
+  .pg-tour,
+  .pg-tour.is-left,
+  .pg-tour.is-topleft {
+    left: 8px;
+    right: 8px;
+    width: auto;
+    bottom: 8px;
+    max-height: 44vh;
+  }
   .pg-sim { display: none; }
+
+  /* The app's header has room for the app's own controls. The playground ADDS to that row, and it
+     ran off the edge: measured at 375, GitHub, the settings gear and the theme toggle occupied
+     x = 341...480 against a 375 viewport. Compacting the buttons was the first answer and was not
+     enough; the second was to let the row SCROLL, which is still the backstop below, but
+     `scrollbar-width: none` means a reader is given no sign at all that three controls are out
+     there. Two of the three were the APP's own.
+
+     The word goes, the control stays. A label was called the only meaning these carry, which is
+     true of the word alone: the glyph beside it was already the icon, so splitting the two keeps
+     the button, its tooltip and its `aria-label` while returning ~150px to the row. */
+  .pg-btn {
+    height: 28px;
+    width: 28px;
+    padding: 0;
+    justify-content: center;
+    font-size: 0.75rem;
+  }
+
+  .pg-label {
+    display: none;
+  }
+
+  .header-actions {
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .header-actions::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Icons alone still do not fit a phone. Measured at 375: the crumb and the notebook picker end at
+   x = 229 and the five remaining controls need 164px of the 134 that are left. ONE of the three
+   has to go, and it is the one whose destination the other two already reach, since Install links
+   into the repo (`#install-and-run`) and the footer links into it again. Never Install itself: it
+   is the only thing on this page asking the reader to do something afterwards. */
+@media (max-width: 560px) {
+  /* `a.pg-btn` above sets `display: inline-flex`, so a bare `.pg-btn-repo` loses the cascade on
+     specificity and the button stayed on screen looking exactly like a rule that had not been
+     written. Same shape as the `[hidden]` hazard this file opens with, one selector further on. */
+  .header-actions a.pg-btn-repo {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .pg-strip {
+    display: flex;
+  }
 }

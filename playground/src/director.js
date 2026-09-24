@@ -20,6 +20,7 @@
   "use strict";
   const PG = window.rlmPlayground;
   const POLL_MS = 350;
+  PG.touched = PG.touched || {};
 
   //: `driver.js` exposes itself as `driver.js.driver` from the IIFE build. Absence is not fatal:
   //: the script still runs, just without the spotlight, which keeps a vendored-asset 404 from
@@ -54,7 +55,20 @@
     return null;
   };
 
-  const notebookId = () => decodeURIComponent(location.hash.replace(/^#/, ""));
+  //: **The notebook the app actually has open**, then the tour's own pick. `app.js` writes `?nb=`
+  //: on every switch (`syncAddressBar`) and deletes it on the way back to the Inbox, so this is the
+  //: product's own record rather than a second one kept beside it. The hash is what the playground
+  //: itself set at load: on the Inbox, where the script now begins, there is no `?nb=` yet and the
+  //: progress being polled is still the notebook the tour is about to open.
+  const notebookId = () => {
+    try {
+      const open = new URL(window.location.href).searchParams.get("nb");
+      if (open) return open;
+    } catch {
+      /* no URL in this context; the hash is the fallback anyway */
+    }
+    return decodeURIComponent(location.hash.replace(/^#/, ""));
+  };
 
   //: The panel's own chrome follows the interface language too — a Chinese page with an English
   //: "Skip step" is the half-translated state this whole change exists to remove.
@@ -362,10 +376,11 @@
         this.waitedFor = 0;
         this.clearSpotlight();
         this.paint(step);
+        this.armTouch(step);
         // Pre-fill the composer so the reader presses send rather than typing a question the demo
         // then has to pretend it recognised.
         if (step.fill) {
-          const input = document.getElementById("ask-input");
+          const input = document.getElementById(step.fillInto || "ask-input");
           const text = step.fill(progress);
           if (input && text) {
             input.value = text;
@@ -400,7 +415,7 @@
         return;
       }
 
-      const target = firstMatch(step.target);
+      const target = firstMatch(typeof step.target === "function" ? step.target() : step.target);
       if (target) {
         this.missed = 0;
         this.showBodyInPanel(false);
@@ -443,6 +458,28 @@
       }
     }
 
+    //: **A step with nothing to press still needs an action.** Three of the Inbox steps describe a
+    //: control the playground cannot let anyone USE - capture, distillation and promotion all write,
+    //: and this page has no server, so pressing them would answer 501 and the tour would be teaching
+    //: a failure. `touch` completes such a step on the reader ENGAGING with the control instead:
+    //: a click, or a keyboard focus, which is the same act for someone who does not use a mouse.
+    //:
+    //: One `AbortController` per step, torn down by the next, so a click meant for the following
+    //: step never lands on this one's listener.
+    armTouch(step) {
+      if (this.touchStop) this.touchStop.abort();
+      this.touchStop = null;
+      if (!step.touch) return;
+      const stop = new AbortController();
+      this.touchStop = stop;
+      const mark = (event) => {
+        if (event.target.closest && event.target.closest(step.touch)) PG.touched[step.id] = true;
+      };
+      const opts = { capture: true, signal: stop.signal };
+      document.addEventListener("click", mark, opts);
+      document.addEventListener("focusin", mark, opts);
+    }
+
     //: One press starts it; the director presses the rest, spaced out, so the sources stream in the
     //: way an ingest of several URLs actually feels rather than appearing all at once.
     maybeRepeat(target) {
@@ -475,10 +512,15 @@
         // Let the response land and the app re-render before the tour moves on.
         await new Promise((r) => setTimeout(r, 120));
       }
-      if (step && step.fulfil && !PG.isRunning()) {
+      // `enters` WITHOUT `fulfil`, and the pair is not the same thing. `fulfil` names a stage the
+      // shim advances; the step that walks into the notebook advances no stage at all, it opens a
+      // door. Declaring it as `fulfil: "enter"` made it claim a stage `PG.fulfil` does not have,
+      // and the smoke suite's "every fulfillable step reports done after being fulfilled" check
+      // duly reported it stranded - correctly, because fulfilling it changed nothing.
+      if (step && (step.fulfil || step.enters) && !PG.isRunning()) {
         this.setHint(L("doing"));
         try {
-          await PG.fulfil(notebookId(), step.fulfil);
+          if (step.fulfil) await PG.fulfil(notebookId(), step.fulfil);
           if (typeof window.openNotebook === "function") await window.openNotebook(notebookId());
         } catch (err) {
           console.warn("playground: could not fulfil the step", err);
@@ -514,6 +556,7 @@
 
     stop() {
       this.stopped = true;
+      if (this.touchStop) this.touchStop.abort();
       clearInterval(this.timer);
       clearTimeout(this.avoidTimer);
       this.clearSpotlight();

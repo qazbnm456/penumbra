@@ -15,6 +15,7 @@ import asyncio
 import base64
 import json
 import os
+import threading
 import time
 import types
 from typing import ClassVar
@@ -30,7 +31,7 @@ httpx = pytest.importorskip("httpx")
 from _pdf_fixtures import make_text_pdf_bytes
 from fastapi.testclient import TestClient
 
-from rlm_notebook import api, cli
+from rlm_notebook import api, auth, cli
 from rlm_notebook.notebook import load_notebook, notebook_path
 from rlm_notebook.schema import FAQ, KeyInsight, Summary, Timeline
 
@@ -83,9 +84,25 @@ def _fake_web_ingestion(monkeypatch):
     monkeypatch.setattr("rlm_notebook.ingest.parse_web", _fake_parse_web)
 
 
+#: Loopback base URL AND the token, on every client this suite builds.
+#:
+#: `TestClient`'s default `base_url` is `http://testserver`, which is a DNS NAME — exactly the
+#: shape `auth.host_is_allowed` rejects to stop DNS rebinding (invariant 77). Allowing "testserver"
+#: in the guard so the tests could keep their default would be putting a test hostname inside a
+#: security control; pointing the tests at a literal address instead costs nothing and keeps the
+#: rule honest. The token is read through `auth.api_token()` rather than pinned, so these clients
+#: follow whatever the process is actually using.
+def _authed_client() -> TestClient:
+    return TestClient(
+        api.app,
+        base_url="http://127.0.0.1",
+        headers={"Authorization": f"Bearer {auth.api_token()}"},
+    )
+
+
 @pytest.fixture
 def client():
-    return TestClient(api.app)
+    return _authed_client()
 
 
 class _FakeRequest:
@@ -752,6 +769,112 @@ def test_audio_runs_isolated_and_returns_base64_encoded_audio(client, monkeypatc
     assert not tmp_path.exists()
 
 
+class _DuringSynthesis(_FakeTTSProvider):
+    """Runs `during` from INSIDE `synthesize`, which is where the window is: `_run_isolated` has
+    returned, so `_ACTIVE_RUNS` is already empty, and the mp3 has not been written yet."""
+
+    def __init__(self, during, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.during = during
+        self.seen = None
+
+    def synthesize(self, script, voice_map, out_path, language=None):
+        self.seen = self.during()
+        return super().synthesize(script, voice_map, out_path, language)
+
+
+def _one_utterance_script() -> dict:
+    return _podcast_script_result([{"speaker": "host_a", "text": "hello", "citations": []}])
+
+
+def test_a_notebook_cannot_be_deleted_while_its_episode_is_being_synthesized(client, monkeypatch):
+    """**The 409 said "something is running" and only ever looked at spawned subprocesses.**
+
+    `_ACTIVE_RUNS` empties the moment `_run_isolated` returns, and TTS synthesis — the longest phase
+    of `/audio` — runs entirely after that. So a DELETE mid-synthesis answered `{"deleted": true}`,
+    and the handler then wrote the mp3 back beside a notebook that no longer existed: an orphan
+    `GET .../audio/file` served to whatever notebook next took that id. Driven through the real
+    TestClient from inside `synthesize`, because that is the only place the window exists.
+    """
+    _live_env(monkeypatch)
+    _add_a_source(client)
+    _mock_runner(monkeypatch, _one_utterance_script())
+    provider = _DuringSynthesis(lambda: client.delete("/notebooks/mynb").status_code)
+    _fake_tts_provider(monkeypatch, provider)
+
+    resp = client.post("/notebooks/mynb/audio")
+
+    assert provider.seen == 409, f"a delete mid-synthesis answered {provider.seen}, not 409"
+    assert resp.status_code == 200, resp.text
+    assert client.get("/notebooks/mynb/audio/file").status_code == 200
+    # ...and the guard is released afterwards, or nothing could ever be deleted again.
+    assert client.delete("/notebooks/mynb").status_code == 200
+    assert api._BUSY == {}
+
+
+def test_a_notebook_that_vanishes_mid_synthesis_takes_its_audio_with_it(client, monkeypatch):
+    """The one interleaving `_working_on` cannot close: DELETE checks its guard and then deletes
+    across an `await`, so the file can still go between the two. Simulated by removing it directly.
+    The record write refuses (`create=False`), and the mp3 written just before it must go too —
+    otherwise a later notebook of the same id is served someone else's episode."""
+    from rlm_notebook.notebook import delete_notebook, find_audio
+
+    _live_env(monkeypatch)
+    _add_a_source(client)
+    _mock_runner(monkeypatch, _one_utterance_script())
+    _fake_tts_provider(monkeypatch, _DuringSynthesis(lambda: delete_notebook("mynb")))
+
+    resp = client.post("/notebooks/mynb/audio")
+
+    assert resp.status_code == 404, resp.text
+    assert find_audio("mynb") is None, "an episode was left behind for a notebook that is gone"
+    assert api._BUSY == {}
+
+
+def test_synthesis_runs_where_a_quitting_server_does_not_wait_for_it(client, monkeypatch):
+    """**One Ctrl-C did not quit the server during TTS synthesis.** `asyncio.to_thread` uses the
+    loop's default executor, which `asyncio.run` joins on the way out however the request was
+    cancelled: measured live, a 40s fake synthesis kept the process up 40.1s after one SIGINT, and
+    3.6s (the graceful-shutdown bound) once synthesis ran on a daemon thread instead.
+
+    The process-level half is a live measurement recorded in the CHANGELOG; this pins the two things
+    it rests on — that `_abandonable` really is a daemon thread that hands results and exceptions
+    back, and that `/audio` really routes synthesis through it.
+    """
+    import threading
+
+    seen = {}
+
+    def work(x):
+        seen["daemon"] = threading.current_thread().daemon
+        return x * 2
+
+    assert asyncio.run(api._abandonable(work, 21)) == 42
+    assert seen["daemon"] is True, "a non-daemon thread is joined at exit, which is the bug"
+
+    def boom():
+        raise api.TTSError("no voice")
+
+    with pytest.raises(api.TTSError):
+        asyncio.run(api._abandonable(boom))
+
+    routed: list[str] = []
+    real = api._abandonable
+
+    async def _recording(fn, *args):
+        routed.append(getattr(fn, "__name__", repr(fn)))
+        return await real(fn, *args)
+
+    monkeypatch.setattr(api, "_abandonable", _recording)
+    _live_env(monkeypatch)
+    _add_a_source(client)
+    _mock_runner(monkeypatch, _one_utterance_script())
+    _fake_tts_provider(monkeypatch, _FakeTTSProvider())
+
+    assert client.post("/notebooks/mynb/audio").status_code == 200
+    assert "synthesize" in routed, f"synthesis did not go through `_abandonable`: {routed}"
+
+
 def test_notebook_response_carries_the_slug_so_client_run_ids_match_the_servers(client):
     """The client builds its own run ids to open a live ticker on, and `_derive_run_id` prefixes
     them with `slug(notebook_id)`. Building them from the RAW id left every trace link dead for any
@@ -1006,7 +1129,7 @@ def test_upload_source_creates_and_persists_a_notebook(client):
 
 def test_upload_source_pdf():
     data = make_text_pdf_bytes(["hello uploaded pdf"])
-    client = TestClient(api.app)
+    client = _authed_client()
 
     resp = client.post(
         "/notebooks/mynb/sources/upload",
@@ -1331,6 +1454,65 @@ def test_stream_run_keeps_waiting_for_an_announced_run_whose_trace_does_not_exis
     assert events[-1]["kind"] in {"done", "failed"}
 
 
+@pytest.mark.parametrize("slow", ["summary", "faq"])
+def test_a_notebook_cannot_be_deleted_while_either_overview_run_is_in_flight(client, monkeypatch, slow):
+    """**`/overview` runs two tasks at once and `_ACTIVE_RUNS` has one slot per notebook.**
+
+    Whichever run registered last owned the slot and cleared it when it finished, while the other
+    was still going — so `DELETE /notebooks/{id}` answered `{"deleted": true}` with a paid run in
+    flight, and the page, now on the Inbox, had no Stop for it anywhere. Found by an independent
+    review with a 12s Summary and a 1s FAQ. Both orderings are driven, because which of the two owns
+    the slot depends on registration order; one of them is the bug.
+    """
+    _live_env(monkeypatch)
+    _add_a_source(client)
+    fast_done = asyncio.Event()
+    delete_sent = asyncio.Event()
+
+    async def _start(run_id, trace_dir, dotted_task, kwargs, *, fresh=False):
+        return _FakeRun(run_id)
+
+    async def _wait(run, *, timeout=None):
+        is_faq = run.run_id.endswith("-faq")
+        result = {"items": []} if is_faq else {"text": "an overview", "citations": []}
+        if (slow == "faq") == is_faq:
+            await delete_sent.wait()
+        else:
+            fast_done.set()
+        return result
+
+    monkeypatch.setattr(api.runner, "start_run", _start)
+    monkeypatch.setattr(api.runner, "wait_result", _wait)
+
+    async def _go():
+        transport = httpx.ASGITransport(app=api.app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://127.0.0.1",
+            headers={"Authorization": f"Bearer {auth.api_token()}"},
+        ) as ac:
+            async def _delete_mid_run():
+                await fast_done.wait()
+                for _ in range(20):  # let the fast run's `finally` clear what it owns
+                    await asyncio.sleep(0)
+                try:
+                    return await ac.delete("/notebooks/mynb")
+                finally:
+                    delete_sent.set()
+
+            return await asyncio.gather(
+                ac.post("/notebooks/mynb/overview", json={}), _delete_mid_run()
+            )
+
+    posted, deleted = asyncio.run(_go())
+
+    assert deleted.status_code == 409, (
+        f"with the {slow} run still in flight, DELETE answered {deleted.status_code}: {deleted.text}"
+    )
+    assert posted.status_code == 200, posted.text
+    assert api._BUSY == {}
+
+
 def test_overview_announces_its_runs_before_the_language_call(client, monkeypatch, tmp_path):
     """The reported bug, end to end. Pinning the `_announced` MECHANISM was not enough — deleting
     the announcement from `/overview` itself left that green, which is exactly the hollow-test shape
@@ -1356,7 +1538,11 @@ def test_overview_announces_its_runs_before_the_language_call(client, monkeypatc
 
     async def _go():
         transport = httpx.ASGITransport(app=api.app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://t") as ac:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://127.0.0.1",
+            headers={"Authorization": f"Bearer {auth.api_token()}"},
+        ) as ac:
             async def _stream():
                 async with ac.stream(
                     "GET", f"/notebooks/mynb/runs/{summary_run}/stream"
@@ -1388,10 +1574,28 @@ def test_cancel_run_targets_one_run_id_not_the_whole_notebook(client, monkeypatc
         assert client.post("/notebooks/mynb/runs/mynb-a/cancel").json()["cancelled"] == "mynb-a"
         assert killed == [4242]
 
-        # Reserved-but-not-spawned is reported honestly, not as a 404 reading "already finished".
+        # **Reserved-but-not-spawned is STOPPED, not merely reported.** This used to assert
+        # `cancelled is None` + "not spawned yet", which was honest and useless: an independent
+        # review pressed Stop during the pre-work window, got that reply, watched the page declare
+        # the run over — and watched the main worker spawn twenty-four seconds later and burn a full
+        # model call with no indicator and no control. Invariant 47 broken inside invariant 46's own
+        # window, on the paid path. Recording the id is what makes the stop real.
         body = client.post("/notebooks/mynb/runs/mynb-b/cancel").json()
-        assert body["cancelled"] is None and "not spawned" in body["detail"]
-        assert killed == [4242]
+        assert body["cancelled"] == "mynb-b", "a stop that signals nothing is not a stop"
+        assert "before it started" in body["detail"]
+        assert "mynb-b" in api._CANCELLED_BEFORE_SPAWN
+        assert killed == [4242], "there was no process to kill, and none was invented"
+
+        # And the PRE-WORK, which is a live subprocess under a DERIVED id the caller never saw:
+        # `_resolve_language` registers `{base}-lang`, so a Stop naming only the base id left the
+        # very model call that makes this window long enough to press Stop in still running.
+        api._RUN_PROCESSES["mynb-c"] = None
+        api._RUN_PROCESSES["mynb-c-lang"] = types.SimpleNamespace(pid=777)
+        body = client.post("/notebooks/mynb/runs/mynb-c/cancel").json()
+        assert body["also_cancelled"] == ["mynb-c-lang"]
+        assert killed == [4242, 777]
+        api._RUN_PROCESSES.pop("mynb-c", None)
+        api._RUN_PROCESSES.pop("mynb-c-lang", None)
 
         # A run belonging to another notebook is refused, same guard `stream_run` applies.
         assert client.post("/notebooks/other/runs/mynb-a/cancel").status_code == 404
@@ -1399,6 +1603,119 @@ def test_cancel_run_targets_one_run_id_not_the_whole_notebook(client, monkeypatc
     finally:
         api._RUN_PROCESSES.pop("mynb-a", None)
         api._RUN_PROCESSES.pop("mynb-b", None)
+        api._CANCELLED_BEFORE_SPAWN.clear()
+
+
+def test_a_stop_also_records_the_derived_pre_work_run(client, monkeypatch):
+    """`killpg` beside it carries most of today's behaviour, which is why deleting this line left
+    902 tests green — but the RECORD is what stops the pre-work run being spawned again by the
+    retry path, and the CHANGELOG calls it out by name ("the cancel reaches `{base}-lang`"). A line
+    described in the changelog and asserted nowhere is the shape four rounds of review kept
+    finding."""
+    monkeypatch.setattr(api.os, "killpg", lambda pid, sig: None)
+    api._RUN_PROCESSES["mynb-x"] = None
+    api._RUN_PROCESSES["mynb-x-lang"] = types.SimpleNamespace(pid=999)
+    try:
+        body = client.post("/notebooks/mynb/runs/mynb-x/cancel").json()
+        assert body["also_cancelled"] == ["mynb-x-lang"]
+        assert "mynb-x-lang" in api._CANCELLED_BEFORE_SPAWN, (
+            "the derived pre-work run was signalled but not RECORDED, so a respawn is not refused"
+        )
+    finally:
+        api._RUN_PROCESSES.pop("mynb-x", None)
+        api._RUN_PROCESSES.pop("mynb-x-lang", None)
+        api._CANCELLED_BEFORE_SPAWN.clear()
+
+
+def test_a_run_stopped_before_it_spawned_never_spawns(client, monkeypatch):
+    """The other half, and the half that actually costs money.
+
+    Recording the stop is only useful if something READS it. `_run_isolated` refuses an id in
+    `_CANCELLED_BEFORE_SPAWN` before it creates the trace file, let alone a process — so the main
+    run the reader stopped during the pre-work window never starts at all.
+    """
+    import asyncio as _asyncio
+
+    started: list = []
+    monkeypatch.setattr(
+        api.runner, "start_run", lambda *a, **k: started.append(a) or _asyncio.sleep(0)
+    )
+
+    api._CANCELLED_BEFORE_SPAWN.add("mynb-stopped")
+    try:
+        with pytest.raises(api.HTTPException) as caught:
+            _asyncio.run(
+                api._run_isolated(
+                    "mynb", "x.Y", {}, api.NotebookConfig(main_model="m"), "mynb-stopped"
+                )
+            )
+        assert caught.value.status_code == 499
+        assert started == [], "the run the reader stopped was spawned anyway"
+        # And the flag is consumed, so a later run reusing the id is not refused forever.
+        assert "mynb-stopped" not in api._CANCELLED_BEFORE_SPAWN
+    finally:
+        api._CANCELLED_BEFORE_SPAWN.clear()
+
+
+def test_a_stop_during_the_pre_work_window_survives_the_announcement(client, monkeypatch):
+    """**The COMPOSITION, which is the only shape production has.**
+
+    Two tests already covered this mechanism and both passed while the whole thing was dead. One
+    hand-built `_RUN_PROCESSES` and asserted the cancel lands in `_CANCELLED_BEFORE_SPAWN`; the
+    other pre-seeded that set and called `_run_isolated` directly. Neither ever put `_announced`
+    and `_run_isolated` together - and `_announced`'s `finally` discarded the flag when the `with`
+    block exited, which is one line before the only code that reads it. Every handler is
+    `with _announced(id): await pre_work()` then `_run_isolated(..., id)`, so Stop was a silent
+    no-op for the entire window it was written to cover: the reviewer pressed it at t=2s, the UI
+    said stopped, and a full chat turn was persisted and billed 27 seconds later.
+
+    Mutating the check in `_run_isolated` to `if False` DID fail two tests, so the line was
+    "covered". That is the illusion this test exists to end: each half green, the seam untested.
+    """
+    import asyncio as _asyncio
+
+    started: list = []
+    monkeypatch.setattr(
+        api.runner, "start_run", lambda *a, **k: started.append(a) or _asyncio.sleep(0)
+    )
+
+    async def scenario():
+        run_id = "mynb-prework"
+        # EXACTLY the handler shape: announce, do slow pre-work, then run.
+        with api._announced(run_id):
+            # The reader presses Stop while the language call is still going.
+            assert run_id in api._RUN_PROCESSES, "the id has to be announced (invariant 46)"
+            client.post(f"/notebooks/mynb/runs/{run_id}/cancel")
+            assert run_id in api._CANCELLED_BEFORE_SPAWN
+            await _asyncio.sleep(0)
+        # The `with` has exited. THIS is where the flag used to vanish.
+        assert run_id in api._CANCELLED_BEFORE_SPAWN, (
+            "the stop was erased by the announcement's own cleanup - `_run_isolated` will never see it"
+        )
+        with pytest.raises(api.HTTPException) as caught:
+            await api._run_isolated(
+                "mynb", "x.Y", {}, api.NotebookConfig(main_model="m"), run_id
+            )
+        assert caught.value.status_code == 499
+        assert started == [], "the run the reader stopped was spawned anyway"
+        # Consumed, so the id is free again and nothing leaks.
+        assert run_id not in api._CANCELLED_BEFORE_SPAWN
+        assert run_id not in api._RUN_PROCESSES
+
+    try:
+        _asyncio.run(scenario())
+    finally:
+        api._CANCELLED_BEFORE_SPAWN.clear()
+        api._RUN_PROCESSES.pop("mynb-prework", None)
+
+
+def test_an_uncancelled_announcement_still_cleans_up_after_itself(client):
+    """The other side of the same `finally`: with no stop, the placeholder must still be released
+    when the announcement ends, or a run id that was announced and then abandoned occupies
+    `_RUN_PROCESSES` forever and `stream_run` keeps waiting for a writer that is never coming."""
+    with api._announced("mynb-quiet"):
+        assert "mynb-quiet" in api._RUN_PROCESSES
+    assert "mynb-quiet" not in api._RUN_PROCESSES
 
 
 def test_every_run_taking_handler_announces_before_resolving_the_language():
@@ -1504,7 +1821,7 @@ def test_citation_turn_finds_the_marker_in_a_sub_call_event_not_just_main_step(c
 
 
 def test_citation_turn_404s_when_the_trace_file_does_not_exist():
-    client = TestClient(api.app)
+    client = _authed_client()
     resp = client.get("/notebooks/mynb/runs/mynb-never-ran/citation-turn?source_id=s1&locator=whole")
     assert resp.status_code == 404
 
@@ -1643,7 +1960,7 @@ def test_a_finished_run_leaves_its_own_fresh_trace_alone(monkeypatch, client):
 def test_the_startup_lifespan_prunes_old_traces():
     stale = _stale_trace("mynb-ancient", age_days=30)
 
-    with TestClient(api.app):
+    with _authed_client():
         pass
 
     assert not stale.exists()
@@ -1984,15 +2301,33 @@ def test_settings_refuses_an_unknown_key_and_a_crafted_voice(client, monkeypatch
 
 def test_no_safety_bound_or_credential_is_readable_or_writable(client, monkeypatch):
     """"Non-secret" was the wrong filter. Trace retention DELETES files that can hold ingested
-    source text, the upload cap bounds what an unauthenticated caller can push, and a writable
+    source text, the upload cap bounds what a token holder can push, and a writable
     RN_BASE_URL would exfiltrate RN_API_KEY on the next run without anyone reading it."""
     monkeypatch.delenv("RN_MAIN_MODEL", raising=False)
 
     exposed = set(client.get("/settings").json())
-    assert exposed == {"error", "output_language", "tts_voice_host_a", "tts_voice_host_b"}
+    assert exposed == {
+        "error",
+        "output_language",
+        "tts_voice_host_a",
+        "tts_voice_host_b",
+        # A BEHAVIOUR preference, not a bound: `POST /inbox/distil` is already a spend endpoint any
+        # token holder can call, so this changes WHEN summaries happen, not whether someone can
+        # cause them. Its bound is the next line down, and stays off the page.
+        "auto_distil",
+    }
 
     client.put("/settings", json={"output_language": "Japanese"})
-    for forbidden in ("max_upload_bytes", "trace_retention_days", "main_model", "api_key", "base_url"):
+    for forbidden in (
+        "max_upload_bytes",
+        "trace_retention_days",
+        "main_model",
+        "api_key",
+        "base_url",
+        # The bound on the toggle above. Writable here, a flipped toggle turns one dropped folder
+        # into an unbounded bill — which is precisely the move invariant 41 exists to refuse.
+        "auto_distil_max_per_batch",
+    ):
         assert client.put("/settings", json={forbidden: "1"}).status_code == 422, forbidden
         assert forbidden not in client.get("/settings").json()
     # and none of those refused writes wiped what was already there
@@ -2166,7 +2501,11 @@ def test_a_finishing_run_never_clears_a_LATER_runs_active_entry(client, monkeypa
 
     async def _go():
         transport = httpx.ASGITransport(app=api.app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://t") as ac:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://127.0.0.1",
+            headers={"Authorization": f"Bearer {auth.api_token()}"},
+        ) as ac:
             return await asyncio.gather(
                 ac.post("/notebooks/mynb/ask", json={"question": "q", "run_id": "first"}),
                 ac.post("/notebooks/mynb/ask", json={"question": "q", "run_id": "second"}),
@@ -2237,6 +2576,53 @@ def test_deleting_a_source_leaves_its_citations_unverified_rather_than_repointed
     assert citation["verified"] is False
     assert citation["source_id"] == "s2"  # still says where it pointed, not repointed at s1
     assert citation["reason"]
+
+
+def test_a_removed_sources_citation_cannot_be_revived_by_the_next_source(client):
+    """The failure the test above stops one step short of: it removes the HIGHEST source and checks
+    the citation goes unverified, but never adds another source. Adding one used to hand the new
+    source the freed `s2`, and the stale citation went back to `verified: true` — pointing at a
+    document that never contained its quote.
+
+    This is invariant 12's reassignment and invariant 5's coordinate-only guarantee meeting: nothing
+    re-checks that a locator still MEANS what it meant, so a reused id is a silently wrong answer
+    with a ✓ next to it. `next_source_id` allocates from a persisted high-water mark for this.
+    """
+    for url in ("https://example.com/a", "https://example.com/b"):
+        client.post("/notebooks/mynb/sources", json={"sources": [url]})
+    from rlm_notebook.notebook import mutate_notebook
+    from rlm_notebook.schema import Answer, ChatTurn, Citation
+
+    mutate_notebook(
+        "mynb",
+        lambda nb: nb.turns.append(
+            ChatTurn(
+                question="q",
+                answer=Answer(
+                    text="An answer.",
+                    citations=[
+                        Citation(
+                            source_id="s2", locator="whole", quote="content of https://example.com/b"
+                        )
+                    ],
+                ),
+            )
+        ),
+    )
+    assert client.get("/notebooks/mynb").json()["turns"][0]["citations"][0]["verified"] is True
+
+    client.delete("/notebooks/mynb/sources/s2")
+    resp = client.post("/notebooks/mynb/sources", json={"sources": ["https://example.com/c"]})
+    assert resp.status_code == 200
+    ids = [s["id"] for s in resp.json()["sources"]]
+    assert ids == ["s1", "s3"], "the freed id must never be handed out again"
+
+    citation = client.get("/notebooks/mynb").json()["turns"][0]["citations"][0]
+    assert citation["verified"] is False, "a removed source's citation must not be revived"
+    assert citation["source_id"] == "s2"
+    # And the mark SURVIVES the round trip through the file, which is what makes it a guarantee
+    # rather than a property of one in-memory object.
+    assert load_notebook("mynb").source_seq == 3
 
 
 def test_deleting_a_source_404s_for_an_unknown_id(client):
@@ -2944,12 +3330,11 @@ def test_finalize_flushed_timestamps_are_not_reported_as_per_turn_timing():
 def test_the_trajectory_endpoint_refuses_a_run_id_from_another_notebook(tmp_path, monkeypatch):
     """Same ownership check `stream_run`/`citation_turn` apply, and applied on the SLUG — invariant
     38 records that comparing the raw id made every trace link dead for a non-Latin notebook."""
-    from fastapi.testclient import TestClient
 
     from rlm_notebook import api
 
     monkeypatch.setattr(api, "_TRACE_DIR", tmp_path)
-    with TestClient(api.app) as client:
+    with _authed_client() as client:
         resp = client.get("/notebooks/mine/runs/theirs-abc/trajectory")
         assert resp.status_code == 404
         assert "does not belong" in resp.json()["detail"]
@@ -2959,7 +3344,6 @@ def test_the_trajectory_endpoint_reads_a_trace_that_is_still_being_written(tmp_p
     """The drawer is how a reader watches a LONG run, not only how they inspect a finished one — a
     `long` podcast is minutes of wall clock. The writer is appending while this reads, so a
     half-written final line is the normal case, not an error."""
-    from fastapi.testclient import TestClient
 
     from rlm_notebook import api
     from rlm_notebook.notebook import slug
@@ -2970,7 +3354,7 @@ def test_the_trajectory_endpoint_reads_a_trace_that_is_still_being_written(tmp_p
     # ...plus a torn final line, exactly as a concurrent flush leaves it.
     (tmp_path / f"{run_id}.jsonl").write_text("\n".join(lines) + '\n{"type": "main_ste', "utf-8")
 
-    with TestClient(api.app) as client:
+    with _authed_client() as client:
         body = client.get(f"/notebooks/nb1/runs/{run_id}/trajectory").json()
     assert body["run_id"] == run_id
     assert body["ok"] is None, "an unfinished run must not report an outcome"
@@ -3028,11 +3412,9 @@ def test_the_web_assets_tell_the_browser_to_revalidate():
     still running the previous `app.js`. The server was serving the new one and nothing on the page
     could have told them otherwise.
     """
-    from fastapi.testclient import TestClient
 
-    from rlm_notebook import api
 
-    with TestClient(api.app) as client:
+    with _authed_client() as client:
         for path in ("/", "/app.js", "/style.css", "/i18n.js"):
             resp = client.get(path)
             assert resp.status_code == 200, path
@@ -3161,9 +3543,7 @@ def test_clearing_a_conversation_keeps_everything_that_is_not_the_conversation(t
 
     Sources, notes, the overview and the podcast are NOT part of the conversation — a reader
     starting a chat over is not asking to lose their corpus."""
-    from fastapi.testclient import TestClient
 
-    from rlm_notebook import api
     from rlm_notebook import notebook as nbmod
     from rlm_notebook.schema import Answer, ChatTurn, Note, Notebook, Overview, Source, SourceBlock
 
@@ -3182,7 +3562,7 @@ def test_clearing_a_conversation_keeps_everything_that_is_not_the_conversation(t
     )
     nbmod.save_notebook(nb)
 
-    with TestClient(api.app) as client:
+    with _authed_client() as client:
         body = client.delete("/notebooks/nb1/turns").json()
     assert body["turns"] == []
     assert [s["id"] for s in body["sources"]] == ["s1"], "clearing a chat took the sources with it"
@@ -3198,12 +3578,10 @@ def test_clearing_a_conversation_keeps_everything_that_is_not_the_conversation(t
 def test_clearing_a_conversation_on_a_missing_notebook_is_a_404(tmp_path, monkeypatch):
     """`create=False`, matching every other existing-notebook-only mutator — clearing the chat of a
     notebook that does not exist must not conjure one."""
-    from fastapi.testclient import TestClient
 
-    from rlm_notebook import api
 
     monkeypatch.chdir(tmp_path)
-    with TestClient(api.app) as client:
+    with _authed_client() as client:
         assert client.delete("/notebooks/ghost/turns").status_code == 404
     assert not list((tmp_path / "notebooks").glob("*.json")), "a 404 left a notebook file behind"
 
@@ -3528,3 +3906,642 @@ def test_the_live_ticker_says_what_a_tool_did_not_just_that_one_ran():
     skill = translate({"tool": "read_skill", "args": {"name": "podcast-craft"}, "result_len": 2413})
     assert skill["primary"] == "read_skill" and skill["detail"] == "podcast-craft", skill
     assert skill["meta"] is None, skill
+
+
+# --- The API token (AGENTS.md invariant 77) ------------------------------------------------------
+#
+# `test_auth.py` covers the rules themselves and runs WITHOUT the `api` extra. These drive them
+# through the middleware, which is the only place the deny-by-default wiring is observable.
+
+
+def _unauthed_client() -> TestClient:
+    """Loopback Host, no `Authorization` — i.e. any other program on this machine, or any page the
+    user happens to have open in their browser."""
+    return TestClient(api.app, base_url="http://127.0.0.1")
+
+
+def test_an_api_request_without_a_token_is_refused():
+    resp = _unauthed_client().get("/notebooks")
+    assert resp.status_code == 401
+    # A client that cannot tell "no token" from "wrong URL" retries forever; `WWW-Authenticate` is
+    # the header that says which of the two this was.
+    assert resp.headers.get("www-authenticate") == "Bearer"
+
+
+def test_a_wrong_token_is_refused():
+    client = TestClient(
+        api.app, base_url="http://127.0.0.1", headers={"Authorization": "Bearer not-the-token"}
+    )
+    assert client.get("/notebooks").status_code == 401
+
+
+def test_the_token_may_arrive_in_the_query_string():
+    """`EventSource` and `<audio src>` cannot set headers at all (invariant 77 / `auth.py`), so the
+    live trace stream (invariant 29) and the persisted episode (invariant 42) would be unreachable
+    without this. Asserted on an ordinary endpoint so the test does not depend on a live run."""
+    resp = _unauthed_client().get(f"/notebooks?{auth.QUERY_PARAM}={auth.api_token()}")
+    assert resp.status_code == 200
+
+
+def test_a_destructive_endpoint_is_refused_before_the_handler_runs(tmp_path, monkeypatch):
+    """The point of the whole slice: a page in the user's browser can POST to 127.0.0.1 without
+    ever reading a response. `PUT /settings` must not take effect for an unauthenticated caller —
+    a 401 that still wrote would be worse than no check at all."""
+    monkeypatch.chdir(tmp_path)
+    before = _unauthed_client().put("/settings", json={"output_language": "Japanese"})
+    assert before.status_code == 401
+    settings = _authed_client().get("/settings").json()
+    assert settings.get("output_language") != "Japanese"
+
+
+def test_static_assets_stay_reachable_without_a_token():
+    """The page that READS the token has to load first, so the web assets are the one thing served
+    ungated. They are this application's own source code and carry nothing private."""
+    client = _unauthed_client()
+    assert client.get("/").status_code == 200
+    assert client.get("/app.js").status_code == 200
+    assert client.get("/style.css").status_code == 200
+
+
+def test_a_dns_name_in_the_host_header_is_refused():
+    """DNS rebinding: the attacker's page keeps its own origin while the name it was served from
+    re-resolves to 127.0.0.1, so from the browser's side the requests are same-origin. The browser
+    still sends the NAME, which is the one thing that gives it away."""
+    client = TestClient(
+        api.app,
+        base_url="http://evil.example",
+        headers={"Authorization": f"Bearer {auth.api_token()}"},
+    )
+    resp = client.get("/notebooks")
+    assert resp.status_code == 403
+    assert "rebinding" in resp.json()["detail"].lower()
+
+
+def test_every_registered_api_route_is_protected():
+    """The deny-by-default tripwire, and the reason this is a middleware rather than 25 copies of a
+    dependency. It walks the ACTUAL route table, so a route added later is covered by this
+    assertion without anyone thinking about it — invariant 24's "the RULE is the invariant, NOT the
+    current list of places it applies", enforced instead of stated."""
+    from fastapi.routing import APIRoute
+
+    api_paths = {route.path for route in api.app.routes if isinstance(route, APIRoute)}
+    assert len(api_paths) > 20, "route table looks empty — the assertion below would be vacuous"
+    overlap = api_paths & set(auth.PUBLIC_PATHS)
+    assert not overlap, f"these API routes would be served without a token: {sorted(overlap)}"
+
+
+def test_serve_puts_a_minted_token_into_the_environment_for_the_uvicorn_child(monkeypatch, capsys):
+    """`uvicorn.run` is given an IMPORT STRING, so under `--reload` the app is built in a CHILD
+    process. The environment is the only thing both processes share — if `serve` kept the token to
+    itself, the server would demand one nobody had."""
+    monkeypatch.delenv("RN_API_TOKEN", raising=False)
+    started: dict[str, object] = {}
+
+    def _fake_run(target, **kwargs):
+        started["target"] = target
+        started["token"] = os.environ.get("RN_API_TOKEN")
+
+    uvicorn = types.ModuleType("uvicorn")
+    uvicorn.run = _fake_run
+    monkeypatch.setitem(__import__("sys").modules, "uvicorn", uvicorn)
+
+    assert cli.main(["serve"]) == 0
+    assert started["target"] == "rlm_notebook.api:app"
+    assert started["token"] and started["token"] == auth.api_token()
+    # Printed, or the operator has a server they cannot talk to. stderr for the reason `_cmd_serve`
+    # already records: stdout is block-buffered off a TTY and never reaches `docker logs`.
+    assert str(started["token"]) in capsys.readouterr().err
+
+
+def test_two_concurrent_uploads_never_parse_two_pdfs_at_once(monkeypatch, tmp_path):
+    """The shape that FOUND the bug, not a unit test of the lock.
+
+    Invariant 3's argument is written about `ingest_new`'s internal loop and does not consider two
+    concurrent HTTP REQUESTS — but `add_sources` and `upload_source` both reach ingestion through
+    `asyncio.to_thread`, which hands the work to the default `ThreadPoolExecutor`. Measured before
+    the fix: two uploads fired with `asyncio.gather` against this app overlapped inside the parser
+    by 0.405s on two distinct threads, and both returned 200. PDFium is not thread-safe (invariant
+    3's own `rc=134`), and ingestion runs in THIS process rather than a `worker.py` subprocess, so
+    the SIGABRT takes the server down.
+
+    Invariant 3's closing line is why this lives here rather than only beside `parse_pdf`: "a suite
+    that is green on the path you did not change is not evidence about the path you did."
+    """
+    monkeypatch.chdir(tmp_path)
+    from rlm_notebook.parsers import pdf as pdf_module
+    from rlm_notebook.schema import Source, SourceBlock
+
+    windows: list[tuple[float, float]] = []
+    recorder = threading.Lock()
+
+    def slow(path, source_id):
+        start = time.monotonic()
+        time.sleep(0.15)
+        with recorder:
+            windows.append((start, time.monotonic()))
+        return Source(
+            id=source_id, kind="pdf", origin=path, blocks=[SourceBlock(locator="page:1", text="x")]
+        )
+
+    monkeypatch.setattr(pdf_module, "_parse_pdf_locked", slow)
+
+    async def _go():
+        transport = httpx.ASGITransport(app=api.app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://127.0.0.1",
+            headers={"Authorization": f"Bearer {auth.api_token()}"},
+        ) as ac:
+            def upload(notebook: str, name: str):
+                return ac.post(
+                    f"/notebooks/{notebook}/sources/upload",
+                    files={"file": (name, b"%PDF-1.4", "application/pdf")},
+                )
+
+            return await asyncio.gather(upload("alpha", "a.pdf"), upload("beta", "b.pdf"))
+
+    responses = asyncio.run(_go())
+    assert [r.status_code for r in responses] == [200, 200]
+    assert len(windows) == 2
+    (_, end_a), (start_b, _) = sorted(windows)
+    assert start_b >= end_a, (
+        f"two uploads parsed concurrently, overlapping by {end_a - start_b:.3f}s — this is the "
+        "shape that crashed PDFium with rc=134"
+    )
+
+def test_the_language_dropdown_offers_each_language_once():
+    """Chinese, Mandarin, Simplified Chinese and Traditional Chinese were four rows for two
+    choices. Three of them resolve to the same `zh-CN` voice pair; only Traditional Chinese is a
+    different language as far as this product is concerned.
+
+    Which NAME survives is invariant 39's question. A bare "Chinese" leaves the script undecided on
+    the setting that decides what every answer in the product is written in, which is the exact
+    failure invariant 39 exists to name — so the qualified names win and the ambiguous one goes.
+    """
+    from rlm_notebook.api import _one_name_per_language
+
+    offered = _one_name_per_language(
+        ["Chinese", "Mandarin", "Simplified Chinese", "Traditional Chinese", "English", "Japanese"]
+    )
+    assert "Simplified Chinese" in offered and "Traditional Chinese" in offered
+    assert "Chinese" not in offered, "a name that leaves the script undecided (invariant 39)"
+    assert "Mandarin" not in offered, "a synonym for the same voice pair"
+    # Anything with no synonym is untouched, including a language this build may not be able to
+    # SPEAK: `output_language` is global and drives written prose too.
+    assert "English" in offered and "Japanese" in offered
+
+    # A name with no voice pair at all is its own group and always survives.
+    assert _one_name_per_language(["Klingon", "Esperanto"]) == ["Esperanto", "Klingon"]
+
+
+def test_evicting_cancelled_ids_takes_their_placeholders_with_them(client):
+    """**`_announced` deliberately keeps a cancelled id's flag AND its `_RUN_PROCESSES` placeholder**
+    because `_run_isolated` is about to consume both. If the handler raises in between, it never
+    does — and both leak for the life of the process, so `cancel_run` answers "stopped before it
+    started" for that id forever and `_prune_traces` protects its trace permanently.
+
+    The bound clears the flags; this pins that it clears the placeholders too. Clearing only half
+    would leave the worse half behind.
+    """
+    from rlm_notebook import api
+
+    api._CANCELLED_BEFORE_SPAWN.clear()
+    api._RUN_PROCESSES.clear()
+    try:
+        for n in range(api._MAX_CANCELLED_IDS):
+            api._CANCELLED_BEFORE_SPAWN.add(f"leaked-{n}")
+            api._RUN_PROCESSES[f"leaked-{n}"] = None
+        # A real, spawned run must survive the sweep: only the `None` placeholders are ours to drop.
+        api._RUN_PROCESSES["a-real-one"] = object()
+        assert len(api._CANCELLED_BEFORE_SPAWN) >= api._MAX_CANCELLED_IDS
+
+        api._RUN_PROCESSES["nb-x-tok"] = None
+        api._ACTIVE_RUNS["nb-x"] = ["nb-x-tok"]
+        resp = client.post("/notebooks/nb-x/runs/nb-x-tok/cancel")
+        assert resp.status_code == 200, resp.text
+
+        leftovers = [k for k in api._RUN_PROCESSES if k.startswith("leaked-")]
+        assert not leftovers, (
+            f"{len(leftovers)} cancelled-before-spawn placeholders outlived their flags - "
+            "`cancel_run` will answer 'stopped before it started' for each of them forever"
+        )
+        assert "a-real-one" in api._RUN_PROCESSES, "the sweep took a live run's handle with it"
+    finally:
+        api._CANCELLED_BEFORE_SPAWN.clear()
+        api._RUN_PROCESSES.clear()
+        api._ACTIVE_RUNS.clear()
+
+
+def test_the_trajectory_reports_the_cause_not_just_the_wrapper():
+    """**The drawer showed strictly LESS than the chat bubble beside it.**
+
+    `run_end.error` is the outermost exception the task raised —
+    `RLMTaskError("Failed to produce a valid 'answer' after 1 attempts")` — which says that
+    something went wrong and nothing about what. `error_chain` holds the exceptions underneath, and
+    rlm-harness had been writing it into every trace while nothing here read it (`grep error_chain`
+    across the package: no hits). So on the commonest first-run failure the bubble said the provider
+    had rejected the key and named `RN_API_KEY`, and the Trajectory drawer — which invariant 70
+    calls "where a run's reasoning lives" — said an attempt had failed.
+    """
+    from rlm_notebook.trajectory import build_trajectory
+
+    cause = (
+        "LMServerError: [openai/gpt-4o-mini] litellm.InternalServerError: OpenAIException - "
+        "Missing credentials."
+    )
+    events = [
+        {"type": "run_start", "ts": 1.0, "payload": {"meta": {"task": "x:AnswerQuestion"}}},
+        {
+            "type": "run_end",
+            "ts": 2.0,
+            "payload": {
+                "ok": False,
+                "error": "RLMTaskError(\"Failed to produce a valid 'answer' after 1 attempts\")",
+                "error_chain": ["RLMTaskError: outer", cause],
+            },
+        },
+    ]
+    traj = build_trajectory(events)
+    assert traj["ok"] is False
+    assert traj["error"] == cause, (
+        f"the drawer reports the wrapper instead of the cause: {traj['error']!r}"
+    )
+
+    # With no chain, the wrapper is all there is and must still be reported.
+    bare = build_trajectory(
+        [
+            {"type": "run_start", "ts": 1.0, "payload": {"meta": {}}},
+            {"type": "run_end", "ts": 2.0, "payload": {"ok": False, "error": "just this"}},
+        ]
+    )
+    assert bare["error"] == "just this"
+    # An empty or malformed chain must not blank out the wrapper either.
+    for chain in ([], [""], "not a list", None):
+        odd = build_trajectory(
+            [
+                {"type": "run_start", "ts": 1.0, "payload": {"meta": {}}},
+                {
+                    "type": "run_end",
+                    "ts": 2.0,
+                    "payload": {"ok": False, "error": "the wrapper", "error_chain": chain},
+                },
+            ]
+        )
+        assert odd["error"] == "the wrapper", f"chain={chain!r} blanked the reason"
+
+
+def test_a_client_disconnect_during_the_spawn_does_not_reserve_the_run_id_forever(monkeypatch):
+    """**`CancelledError` is a `BaseException`, and the spawn's cleanup said `except Exception`.**
+
+    Starlette's `BaseHTTPMiddleware` — which this app uses — cancels the endpoint task when the
+    client goes away, so closing the tab while a run was being spawned skipped the cleanup
+    entirely. What it left behind: `_RUN_PROCESSES[run_id] = None` for the life of the process,
+    which keeps the empty trace file in `_prune_traces`' protected set forever, and — because
+    `_derive_run_id` is deterministic for a caller-supplied token — makes that (notebook, token)
+    pair answer `409 run id is already in use` from then on.
+    """
+    import asyncio
+    from pathlib import Path
+
+    from rlm_notebook import api, runner
+
+    started = asyncio.Event()
+
+    async def never_finishes(*args, **kwargs):
+        started.set()
+        await asyncio.Event().wait()  # the spawn is still in flight when the client leaves
+
+    monkeypatch.setattr(runner, "start_run", never_finishes)
+    api._RUN_PROCESSES.clear()
+
+    async def drive():
+        task = asyncio.create_task(
+            api._run_isolated(
+                "disconnect-nb",
+                "some:Task",
+                {},
+                api.NotebookConfig(main_model="m"),
+                "disconnect-nb-tok",
+            )
+        )
+        await started.wait()
+        assert api._RUN_PROCESSES.get("disconnect-nb-tok", "missing") is None, (
+            "the reservation should exist while the spawn is in flight"
+        )
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return True
+
+    asyncio.run(drive())
+
+    assert "disconnect-nb-tok" not in api._RUN_PROCESSES, (
+        "the run id stayed reserved, so retrying with the same token now 409s forever"
+    )
+    assert not (Path(api._TRACE_DIR) / "disconnect-nb-tok.jsonl").exists(), (
+        "the empty trace file survived, and `_prune_traces` protects anything _RUN_PROCESSES names"
+    )
+
+
+def test_a_question_about_a_notebook_with_no_sources_is_refused(client):
+    """**The one press in the product that spent money for nothing.**
+
+    `PUT /title` refuses a source-less notebook (422) and so does `POST /overview`; `ask` did not,
+    and neither did the UI — so on an empty notebook the Studio said "Add a source first, then
+    generate this" while the composer 20px away accepted a question and ran a full
+    `AnswerQuestion` loop against an empty corpus, which can only produce an ungrounded answer. In a
+    BYOK product whose Tier 0 rests on invariant 80 ("capture never pays for a summary"), the cheap
+    tier was careful with the reader's money and the expensive one was not.
+    """
+    from rlm_notebook.notebook import mutate_notebook
+
+    mutate_notebook("bare", lambda nb: None, create=True)
+    resp = client.post("/notebooks/bare/ask", json={"question": "what does it say?"})
+    assert resp.status_code == 422, resp.text
+    assert "no sources" in resp.json()["detail"]
+
+    # ...and the same notebook answers once it has one, so this is a guard and not a wall.
+    client.post("/notebooks/bare/sources", json={"sources": ["https://example.com/a"]})
+    assert client.post("/notebooks/bare/ask", json={"question": "what?"}).status_code != 422
+
+
+def test_a_misspelt_sources_field_is_refused_rather_than_silently_doing_nothing(client):
+    """`SourcesRequest` was the one request model here without `extra="forbid"`, so the singular
+    typo `{"source": [...]}` answered 200, CREATED the notebook and added nothing — a success for a
+    request that did nothing, which this project treats as worse than an error."""
+    resp = client.post("/notebooks/typo/sources", json={"source": ["https://example.com/a"]})
+    assert resp.status_code == 422, resp.text
+    assert load_notebook("typo") is None, "a typo created an empty notebook"
+
+    # The correct spelling still works, so this is a guard and not a wall.
+    assert client.post(
+        "/notebooks/typo/sources", json={"sources": ["https://example.com/a"]}
+    ).status_code == 200
+
+
+def test_every_paid_endpoint_refuses_a_notebook_with_no_sources(client):
+    """**Fixing the INSTANCE rather than the CLASS is what left five more.**
+
+    `ask` grew this guard, and `guide` (four kinds) and `audio` did not — so the Studio guides and
+    the Audio Overview each spawned a full model run whose corpus blob was the empty string. The
+    podcast is the most expensive action in the product (`PODCAST_TIMEOUT_FACTOR["long"] = 5.0`,
+    60-90 accumulated utterances, invariant 64), spent to produce a guaranteed-ungrounded artifact.
+
+    The second half is the tripwire: every handler that reaches `_run_isolated` must go through
+    `_require_sources`, so a sixth one cannot be added without this failing.
+    """
+    from rlm_notebook.notebook import mutate_notebook
+
+    mutate_notebook("nothing", lambda nb: None, create=True)
+    paid = [
+        ("post", "/notebooks/nothing/ask", {"question": "what?"}),
+        ("post", "/notebooks/nothing/overview", {}),
+        ("post", "/notebooks/nothing/title", {}),
+        ("post", "/notebooks/nothing/guide/summary", {}),
+        ("post", "/notebooks/nothing/guide/faq", {}),
+        ("post", "/notebooks/nothing/guide/timeline", {}),
+        ("post", "/notebooks/nothing/guide/insight", {}),
+        ("post", "/notebooks/nothing/audio", {}),
+    ]
+    for method, path, body in paid:
+        resp = getattr(client, method)(path, json=body)
+        assert resp.status_code == 422, f"{path} spent a run on an empty corpus: {resp.status_code}"
+        assert "no sources" in resp.json()["detail"], resp.text
+
+
+def test_no_handler_reaches_a_model_run_without_the_source_guard():
+    """The tripwire for the above: a SIXTH paid endpoint must not be addable without the guard.
+
+    Reads the source rather than driving every route, because the point is to catch the handler
+    nobody thought to add to the list — which is exactly the one a list-driven test misses.
+    """
+    import re
+    from pathlib import Path
+
+    src = Path(api.__file__).read_text(encoding="utf-8")
+    # Each `async def` handler body, up to the next top-level `def`/decorator.
+    bodies = re.split(r"\n(?=@app\.|async def |def )", src)
+    offenders = []
+    for body in bodies:
+        name = re.match(r"(?:@app\.[^\n]*\n)*async def (\w+)", body)
+        if not name:
+            continue
+        # `_run_isolated` is the runner itself, not a handler. `_resolve_language` also spawns a
+        # run and is exempt because it is reachable ONLY from the guarded handlers — which the
+        # assertion below checks rather than assumes, since "only reachable from" is exactly the
+        # kind of claim that stops being true quietly.
+        if name.group(1) in {"_run_isolated", "_resolve_language"}:
+            continue
+        if "_run_isolated(" not in body:
+            continue
+        if "_require_sources(" not in body:
+            offenders.append(name.group(1))
+    assert not offenders, (
+        "these handlers spawn a model run without checking there is anything to run it against — "
+        f"a press that spends the reader's money on an empty corpus: {offenders}"
+    )
+
+    # The exemption, checked: every caller of `_resolve_language` must itself carry the guard.
+    callers = [
+        re.match(r"(?:@app\.[^\n]*\n)*async def (\w+)", body).group(1)
+        for body in bodies
+        if re.match(r"(?:@app\.[^\n]*\n)*async def \w+", body) and "_resolve_language(" in body
+    ]
+    callers = [c for c in callers if c != "_resolve_language"]
+    assert callers, "nothing calls _resolve_language any more; drop the exemption above"
+    for caller in callers:
+        body = next(b for b in bodies if re.match(rf"(?:@app\.[^\n]*\n)*async def {caller}\b", b))
+        assert "_require_sources(" in body, (
+            f"{caller} resolves an output language — a model call — without the source guard"
+        )
+
+
+def test_a_delete_is_not_undone_by_a_slow_write_that_started_before_it(client, monkeypatch):
+    """**`DELETE` answered `{"deleted": true}` and the notebook came back.**
+
+    The endpoint's own docstring names this outcome as the thing its 409 exists to prevent — but the
+    409 reads `_ACTIVE_RUNS`, which is populated only AFTER `runner.start_run` returns. It therefore
+    covers spawned model runs and nothing else: not ingestion, which this file elsewhere says "can
+    take minutes", and not `ask`'s pre-spawn language resolution. A source added after the delete
+    re-created the file through `create=True`, holding only that source — every earlier source,
+    note, turn, overview and podcast gone, and its Inbox membership rows already dropped.
+
+    UI-reachable: drop a scanned PDF (OCR is the multi-minute case), think better of it, and press
+    the ✕ the picker puts on every row.
+    """
+    import threading
+
+    from rlm_notebook.notebook import notebook_path
+
+    client.post("/notebooks/doomed/sources", json={"texts": ["the original source"]})
+    assert notebook_path("doomed").exists()
+
+    ingesting = threading.Event()
+    release = threading.Event()
+    real = api.ingest_sources_for
+
+    def slow(snapshot, sources):
+        ingesting.set()
+        release.wait(10)
+        return real(snapshot, sources)
+
+    monkeypatch.setattr(api, "ingest_sources_for", slow)
+    result = {}
+
+    def add():
+        result["add"] = client.post(
+            "/notebooks/doomed/sources", json={"sources": ["https://example.com/late"]}
+        )
+
+    worker = threading.Thread(target=add, daemon=True)
+    worker.start()
+    assert ingesting.wait(10), "the slow ingest never started"
+
+    assert client.delete("/notebooks/doomed").status_code == 200
+    release.set()
+    worker.join(10)
+
+    assert not notebook_path("doomed").exists(), (
+        "the notebook was RESURRECTED by a write that started before the delete"
+    )
+    assert result["add"].status_code in (404, 409), (
+        f"the racing write reported success: {result['add'].status_code} {result['add'].text}"
+    )
+    assert "doomed" not in [n["id"] for n in client.get("/notebooks").json()["notebooks"]]
+
+
+def test_the_in_flight_guard_cannot_be_walked_past_with_another_spelling(client):
+    """`_ACTIVE_RUNS` is keyed by the RAW id and the file by `slug(id)`, so `"Reading List"` and
+    `"Reading-List"` are two keys in that map and one file on disk. The alias spelling answered
+    `{"deleted": true}` while a run was in flight under the other."""
+    import types
+
+    client.post("/notebooks/Reading List/sources", json={"texts": ["something"]})
+    api._ACTIVE_RUNS["Reading List"] = types.SimpleNamespace(process=None)
+    try:
+        assert client.delete("/notebooks/Reading List").status_code == 409
+        assert client.delete("/notebooks/Reading-List").status_code == 409, (
+            "an alias spelling of the same file walked past the in-flight guard"
+        )
+    finally:
+        api._ACTIVE_RUNS.pop("Reading List", None)
+
+
+def test_the_design_record_is_not_served_without_a_token(client):
+    """**`web/` holds more than assets, and the allowlist was the whole directory.**
+
+    `DESIGN.md` is a 47 KB internal spec; it ships in the wheel and answered `200` on `/DESIGN.md`
+    with no token. `auth.py` justifies the allowlist as "the static assets, which are this
+    application's own source code and carry nothing private" — an argument about assets, and a
+    design record is not one. The derive-from-the-directory rule meant anything dropped into `web/`
+    became an unauthenticated GET by default, which is the opposite of the deny-by-default shape the
+    same docstring argues for.
+    """
+    from rlm_notebook import auth
+
+    assert "/DESIGN.md" not in auth.PUBLIC_PATHS
+    # The page and the things it needs to render are still public — or nothing could load the token.
+    for needed in ("/", "/index.html", "/app.js", "/style.css", "/i18n.js"):
+        assert needed in auth.PUBLIC_PATHS, needed
+
+    bare = TestClient(api.app, base_url="http://127.0.0.1")
+    assert bare.get("/DESIGN.md").status_code == 401
+    assert bare.get("/app.js").status_code == 200
+
+
+def test_quitting_the_server_kills_every_run_it_left_running(monkeypatch):
+    """**Quitting used to leave every in-flight run SPENDING, with nothing able to reach it.**
+
+    The worker is spawned `start_new_session=True` so `killpg` can take its Deno grandchild with it
+    (invariant 22) — and that same flag puts it in a DIFFERENT session, so the terminal's Ctrl-C and
+    a terminal close's SIGHUP never reach it either. Reproduced against the shipped `serve`: the
+    first Ctrl-C made the server wait for the whole run, the second left the worker and its `deno`
+    child reparented to init and billing until their own wall-clock backstop — up to 9000s on the
+    subscription path. No `/cancel`, no UI, no signal, and a restarted server knows nothing about
+    it. Invariant 47 failing at the one moment the reader has decided to stop everything.
+
+    **This covers the lifespan and NOT the shipped path, which the first version of this docstring
+    claimed.** It writes runs into the map by hand, so it cannot see the two things that made the
+    fix unreachable under `rlm-notebook serve`: uvicorn guards `lifespan.shutdown()` with
+    `if not force_exit`, and every entry in `_ACTIVE_RUNS` belongs to an in-flight request whose
+    `finally` clears it — so on that path the map is empty by construction by the time this loop
+    runs. An independent review found both. The shipped path is covered by
+    `test_cli.py::test_serve_bounds_its_graceful_shutdown_and_handles_a_hangup`, and what actually
+    saves a run day to day is `_run_isolated`'s `except BaseException: run.cancel()` below.
+    """
+    import asyncio
+
+    cancelled: list[str] = []
+
+    class FakeRun:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.process = types.SimpleNamespace(pid=4242)
+
+        def cancel(self) -> None:
+            cancelled.append(self.name)
+
+    api._ACTIVE_RUNS.clear()
+    api._ACTIVE_RUNS["one"] = FakeRun("one")
+    api._ACTIVE_RUNS["two"] = FakeRun("two")
+
+    async def enter_and_leave() -> None:
+        async with api._lifespan(api.app):
+            pass
+
+    try:
+        asyncio.run(enter_and_leave())
+    finally:
+        api._ACTIVE_RUNS.clear()
+
+    assert sorted(cancelled) == ["one", "two"], (
+        f"shutdown left a paid run running that nothing can reach: cancelled={cancelled}"
+    )
+
+
+def test_a_cancelled_await_kills_the_worker_rather_than_orphaning_it(monkeypatch):
+    """The same one-line gap in the other place: `_run_isolated`'s `finally` FORGETS the run — which
+    is what makes it unreachable — so a cancellation there leaves a paid subprocess no endpoint, no
+    UI and no restart can get to. `CancelledError` is a `BaseException`, so `except RunError` never
+    saw it."""
+    import asyncio
+
+    from rlm_notebook import runner
+
+    cancelled: list[bool] = []
+
+    class FakeRun:
+        process = types.SimpleNamespace(pid=4242)
+
+        def cancel(self) -> None:
+            cancelled.append(True)
+
+    started = asyncio.Event()
+
+    async def fake_start(*args, **kwargs):
+        return FakeRun()
+
+    async def never_returns(run, timeout=None):
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(runner, "start_run", fake_start)
+    monkeypatch.setattr(runner, "wait_result", never_returns)
+    api._ACTIVE_RUNS.clear()
+
+    async def drive() -> None:
+        task = asyncio.create_task(
+            api._run_isolated(
+                "orphan-nb", "some:Task", {}, api.NotebookConfig(main_model="m"), "orphan-nb-tok"
+            )
+        )
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(drive())
+
+    assert cancelled == [True], "the worker was left running with nothing able to reach it"
+    assert "orphan-nb" not in api._ACTIVE_RUNS
+    assert "orphan-nb-tok" not in api._RUN_PROCESSES

@@ -24,7 +24,7 @@ record, or `GET .../audio/file` keeps serving audio for a script the notebook no
 
 Same staleness treatment as invariant 38, and citations re-verified against the current corpus on
 every read. **`GET .../audio/file` is the FOURTH materially-different exposure in this API** —
-with no authentication, anyone who can reach this server can play any notebook's episode.
+there is no authorization behind the token, so anyone holding it can play any notebook's episode.
 
 **The generate button has the same three states the chat overview has**: no episode → a primary
 offer; an episode → a QUIETER "Regenerate"; stale → the same button saying the sources moved.

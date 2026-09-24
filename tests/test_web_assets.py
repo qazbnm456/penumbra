@@ -257,11 +257,34 @@ def test_every_long_running_action_offers_a_way_to_stop_it():
     run burning a model call to completion.
     """
     js = (WEB / "app.js").read_text(encoding="utf-8")
-    # Minus one for the definition itself: chat, the chat overview, a Guide kind, the podcast.
-    assert js.count("runStatus({") - js.count("function runStatus({") == 4
+    # BY ACTION, not by count. This asserted `== 4` and broke the moment a FIFTH mount was added —
+    # the one that recovers a run after a page reload, which is more of this invariant, not less. A
+    # bare count cannot tell "an action lost its Stop" from "an action gained one", and it makes the
+    # correct change look like the regression. The list below is the invariant's own list.
+    mounts = {}
+    for match in re.finditer(r"runStatus\(\{", js):
+        # The enclosing function, found by walking BACK to the nearest declaration. Names, not
+        # offsets, so moving a function does not rewrite this test.
+        before = js[: match.start()]
+        owner = re.findall(r"(?:async\s+)?function\s+([A-Za-z_][\w]*)\s*\(", before)
+        mounts[owner[-1] if owner else "?"] = True
+
+    for action in (
+        "askQuestion",            # chat
+        "generateOverview",       # the chat overview
+        "fetchKind",              # each Guide kind
+        "syncGenerateButton",     # the podcast
+        "reattachInFlightRuns",   # and whatever a reload found still running
+    ):
+        assert action in mounts, f"{action} mounts no run status, so its action has no Stop"
+
     assert "/cancel" in js and "runs/${encodeURIComponent(runId)}/cancel" in js
     # The overview cancels BOTH of its runs.
     assert "runIds: [`${base}-summary`, `${base}-faq`]" in js
+    # And Stop only CLAIMS a stop the server confirmed: it used to call `finish()` unconditionally,
+    # so the page declared a run over even when the cancel had reached nothing.
+    stop = js[js.index('stop.addEventListener("click"') : js.index("  return {\n    node,")]
+    assert "missed" in stop and "finish();" in stop, "Stop must read the reply before believing it"
 
 
 def test_the_studio_panels_say_what_they_are_for():
@@ -313,7 +336,13 @@ def test_every_translation_key_used_by_the_ui_exists_in_the_table():
     assert len(defined) > 60, len(defined)
 
     html = (WEB / "index.html").read_text(encoding="utf-8")
-    used = set(re.findall(r'data-i18n(?:-title|-placeholder|-html|-tip)?="([\w.]+)"', html))
+    # `-label` included. It was added for `aria-label`, which OVERRIDES an element's text and its
+    # `title`, so a key missing here is a control announcing itself in English to a reader whose
+    # interface is not - and five of them slipped in unnoticed because this pattern did not know
+    # the attribute existed.
+    used = set(
+        re.findall(r'data-i18n(?:-title|-placeholder|-html|-tip|-label)?="([\w.]+)"', html)
+    )
     js = (WEB / "app.js").read_text(encoding="utf-8")
     # `\b` matters: without it this also matches the tail of `createElement("div")`.
     used |= set(re.findall(r'\bt\(\s*"([\w.]+)"', js))
@@ -351,7 +380,13 @@ def test_the_interface_language_is_separate_from_the_output_language():
     # about the OUTPUT language, so the two settings can never collapse into one.
     assert "localStorage" in i18n
     assert "RN_OUTPUT_LANGUAGE" not in i18n
-    assert "output_language" not in i18n
+    #: The `traj.meta.*` keys are translation LABELS for trace fields, keyed on the field's own name
+    #: so the lookup stays `t(\`traj.meta.${key}\`, …)` — `traj.meta.output_language` is the Chinese
+    #: word for a chip in the Trajectory drawer, not this file participating in the SETTING. Stripped
+    #: before the check rather than the check loosened, so the rule keeps its force everywhere else:
+    #: `i18n.js` still may not read, write or name the output-language setting.
+    without_trace_labels = re.sub(r'"traj\.meta\.[\w-]+"', '""', i18n)
+    assert "output_language" not in without_trace_labels
     # ...and the settings PUT body carries only the server settings, never the UI language.
     assert "setting-ui-language" in app
     put = app[app.index("function initSettings()") :]
@@ -374,12 +409,164 @@ def test_the_notebook_id_never_appears_in_the_picker():
     assert 'id="notebook-current"' in html and 'id="notebook-menu"' in html
     # The row is built from the TITLE; the id is only ever a value passed to openNotebook.
     row = js[js.index("function renderNotebookRow(") : js.index("function startRename(")]
-    assert "nb.title" in row
+
+    # THROUGH the helper, not only at the call site. The row now renders `facetLabel(nb)`, and an
+    # earlier version of that function fell back to the id when a person had chosen a short one -
+    # which put the handle back in the picker while satisfying every assertion below, because the
+    # string `nb.id` no longer appeared here. A tripwire a helper can hide behind is not one.
+    helper = js[js.index("function facetLabel(") : js.index("async function renderFacets(")]
+    assert "book.id" not in helper, "the id is a handle, not a label (invariant 37)"
+    assert "book.title" in helper
+    # Two properties of the SHORTENING, both of which were wrong in a shipped draft and neither of
+    # which any other layer here can see. Screenshot `v5.png` is the evidence for the first: a
+    # three-word slice rendered "A note to" and "Christopher Alexander, A" - fragments that fit, so
+    # they carried no ellipsis, so they read as complete names that happened to be gibberish.
+    #
+    # (a) A value that already FITS is returned whole. The clause split is a remedy for not fitting,
+    #     so it must be reached only after the fit check - otherwise "Less, but better" becomes
+    #     "Less", which is the same unsignalled-fragment bug one size down.
+    #     The clause split lives in `firstClause` now, because the header needs the same cut without
+    #     the rail's width cap - so the ordering is checked through the CALL, and `firstClause` is
+    #     checked to be the thing that actually splits.
+    assert helper.index("FACET_FITS") < helper.index("firstClause("), (
+        "the fit check has to gate the clause split, not follow it"
+    )
+    cutter = js[js.index("function firstClause(") : js.index("function facetLabel(")]
+    assert "FACET_CLAUSE" in cutter, "firstClause is where the clause boundary lives"
+    # (b) The fit is measured in COLUMNS, not in `.length`. A derived title follows the source's
+    #     language (invariant 39), and 24 Han characters are nearly twice the width of 24 Latin
+    #     ones: a character cap passes them and the rail overflows. `facetWidth` counts a
+    #     full-width codepoint as two.
+    assert "facetWidth(derived)" in helper, "the fit is measured in columns"
+    assert ".length <= FACET_FITS" not in helper, "`.length` is the wrong ruler for CJK"
+    width = js[js.index("function facetWidth(") : js.index("function facetLabel(")]
+    assert "FACET_WIDE.test" in width and "? 2 : 1" in width
+    # A tooltip only where there is a fuller value to REVEAL, and that means `book.title` alone.
+    # This used to require the opposite — the "full value" on `title`, including `derived_title` —
+    # and an independent review showed why that was wrong: `derived_title` IS the server's
+    # 60-character cut, so hovering a shortened label produced a tooltip that was ALSO cut, broken
+    # mid-word ("...the reason I cannot"). A tooltip that answers the question wrongly is worse
+    # than one that does not answer it.
+    # **Two reviewers disagreed here, and the rule is the synthesis.** This first required a
+    # tooltip only from `book.title`, because `derived_title` is the server's 60-character cut and
+    # hovering a shortened label produced a tooltip that was ALSO cut, broken mid-word. A later
+    # reviewer measured the consequence: rail labels ellipsise at 154px against a 238px natural
+    # width with no way to read them at all, in the one place a notebook's label IS its identity.
+    # Neither "show a fragment as if complete" nor "show nothing" is right. Show it, and MARK it.
+    rail = js[js.index("async function renderFacets(") : js.index("function inboxQuery(")]
+    assert "item.title = fuller" in rail, "a label that does not fit needs a way to be read"
+    marking = rail[rail.index("const raw = book.title") : rail.index("item.title = fuller")]
+    assert "PASTED_SNIPPET_CAP" in marking and "\\u2026" in marking, (
+        "a derived title can itself be a cut; presenting one as the full name is the defect this "
+        "assertion used to prevent by banning it outright"
+    )
+    assert "nb.title" in row or "facetLabel(nb)" in row
     # The id may be COMPARED (is this the current notebook?) and PASSED (openNotebook), but it must
     # never be rendered: no assignment of it to any textContent.
     shown = re.findall(r"\.textContent\s*=\s*([^;]+);", row)
     assert shown, row
     assert not [line for line in shown if "nb.id" in line], shown
+
+
+def test_no_id_reaches_visible_text_anywhere_in_the_app():
+    """Invariant 37, checked GLOBALLY instead of inside two functions.
+
+    The per-function version above is the one that caught the first violation, and its narrowness
+    is what let the second one through. When the Inbox was built, `nodeActions` grew a `<select>`
+    of notebooks built from `book.title || book.id` and a "filed in" line built from
+    `m.notebook_id`, and both shipped: the tripwire sliced `renderNotebookRow` and `facetLabel`, and
+    neither of those is `nodeActions`. An independent review found it - the rail called a notebook
+    "Christopher Alexander" while the picker beside it called the same notebook `reading`, in the
+    one control where the reader has to CHOOSE.
+
+    A rule about every place a label is READ cannot be tested by naming the places. So this walks
+    every expression in `app.js` that becomes visible text - a `textContent` assignment or the text
+    argument of `elt()` - and fails if an id is anywhere in it. Using an id as a LOOKUP KEY is
+    fine and is the fix, so `labels.get(book.id)` is allowed; what is banned is the id reaching the
+    DOM.
+    """
+    #: COMMENTS BLANKED, offsets preserved. Every rule here bans a token, so the comment that
+    #: explains the ban trips it — `_strip_js_comments`' docstring records all three doing exactly
+    #: that on their first run, and this scan was the one place still reading the raw file. It fired
+    #: on a comment saying "`promote_node` writes `slug(notebook_id)`", which is prose about the
+    #: server, not an id reaching the DOM. Blanked rather than removed so the line numbers this test
+    #: reports stay true.
+    js = _blank_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+
+    def third_argument_of_every_elt_call():
+        """A paren MATCHER, not a regex. `elt("option", null, bookLabels.get(book.id))` has a
+        nested call in the very argument this test reads, and a non-greedy `[^)]*\\)` stops at the
+        inner paren and reports the lookup it is meant to allow."""
+        for m in re.finditer(r"\belt\(", js):
+            depth, i = 0, m.end() - 1
+            while i < len(js):
+                if js[i] == "(":
+                    depth += 1
+                elif js[i] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                i += 1
+            args, depth, current = [], 0, ""
+            for ch in js[m.end() : i]:
+                if ch in "([{":
+                    depth += 1
+                elif ch in ")]}":
+                    depth -= 1
+                if ch == "," and depth == 0:
+                    args.append(current)
+                    current = ""
+                else:
+                    current += ch
+            args.append(current)
+            if len(args) >= 3:
+                yield js[: m.start()].count("\n") + 1, args[2].strip()
+
+    visible = [
+        (js[: m.start()].count("\n") + 1, m.group(1).strip())
+        for m in re.finditer(r"\.textContent\s*=\s*([^;]{0,200});", js)
+    ] + list(third_argument_of_every_elt_call())
+    assert len(visible) > 100, f"the scanner stopped matching; it found only {len(visible)}"
+
+    # A lookup is not a render. `labels.get(book.id)` resolves the id to a label, which is the whole
+    # point; strip those calls before looking at what is left.
+    lookup = re.compile(r"\w+\.get\([^()]*\)")
+    offenders = []
+    for line, expr in visible:
+        stripped = lookup.sub("", expr)
+        if re.search(r"\b\w+\.id\b|\bnotebook_id\b|\bnode_id\b", stripped):
+            offenders.append(f"app.js:{line}: {expr}")
+    assert not offenders, (
+        "an id is reaching the DOM as visible text (invariant 37 - the id is a HANDLE):\n"
+        + "\n".join(offenders)
+    )
+
+    # The scan above reads EXPRESSIONS, so it sees `elt("option", null, book.id)` and misses
+    # `(m) => m.notebook_id` mapped into a list that is joined into a `t()` interpolation three
+    # lines later - which is exactly how the second violation was written, and it survived the
+    # first version of this test. Following a value across a `.map()` and a `.join()` is dataflow,
+    # and a regex does not do dataflow.
+    #
+    # So the membership field gets a rule of its own, and it is a rule about the SHAPE of every
+    # read rather than about where the value ends up. `notebook_id` names a notebook and has no
+    # other job, so in this file it may only ever be a LOOKUP KEY or a URL segment. Anything else -
+    # returning it from an arrow, pushing it into an array, concatenating it - is banned outright,
+    # whether or not this test can prove where it lands.
+    for m in re.finditer(r"\bnotebook_id\b", js):
+        line = js[: m.start()].count("\n") + 1
+        before, after = js[max(0, m.start() - 40) : m.start()], js[m.end() : m.end() + 2]
+        is_lookup = bool(
+            re.search(r"(?:\.(?:get|set|has|delete)|encodeURIComponent)\(\s*\w*\.?$", before.rstrip())
+            and after.startswith(")")
+        )
+        # The third allowed shape: a key in a request BODY. `JSON.stringify({ notebook_id: ... })`
+        # is the wire name of the promote endpoint's field, not a label - the id belongs there and
+        # nowhere a reader can see.
+        is_wire_key = after.startswith(":") and before.rstrip().endswith(("{", ","))
+        assert is_lookup or is_wire_key, (
+            f"app.js:{line}: `notebook_id` may only be a lookup key, a URL segment or a request-body "
+            f"field (invariant 37). Resolve it to a label first: ...{before[-40:]}notebook_id{after}"
+        )
 
 
 def test_titling_never_fires_from_adding_a_source():
@@ -726,8 +913,25 @@ def test_the_chat_placeholder_only_appears_while_its_sentence_is_true():
         "direction, not just that `state.sources` is mentioned"
     )
     # And adding the first source must retire it immediately: nothing else redraws at that moment.
+    # Read the HANDLER, not a fixed character window after the subscription — the window was 400
+    # characters, and a comment added inside the handler pushed the call past it. A test that fails
+    # on prose rather than on behaviour is a test that gets edited to pass.
     changed_at = body.index('store.on("sources:changed"')
-    assert "syncEmptyNote" in body[changed_at : changed_at + 400]
+    # From the ARROW BODY, not the first brace: `({ sources })` is a destructuring parameter, and a
+    # counter starting there opens and closes before the handler has begun.
+    depth, i = 0, body.index("=> {", changed_at) + 3
+    while i < len(body):
+        if body[i] == "{":
+            depth += 1
+        elif body[i] == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    assert "syncEmptyNote" in body[changed_at : i + 1], (
+        "adding the first source does not retire the placeholder, and nothing else redraws the "
+        "thread at that moment"
+    )
 
 
 def test_a_citations_number_comes_from_the_notebook_wide_reference_order():
@@ -769,7 +973,9 @@ def test_regenerating_the_overview_renumbers_the_thread():
     """A new overview changes which coordinates come FIRST in the notebook-wide order, so strokes
     already on screen would keep numbers pointing at the wrong rows until the next reload."""
     script = (WEB / "app.js").read_text(encoding="utf-8")
-    assert script.count('store.emit("chat:rerender"') == 1
+    # Emitted from more than one place (removing a source re-verifies the turns too); what this
+    # pins is that the overview's generation is one of them, below. ONE subscriber still.
+    assert script.count('store.emit("chat:rerender"') >= 1
     assert script.count('store.on("chat:rerender"') == 1
     gen = script[script.index("async function generateOverview") :]
     gen = gen[: gen.index("\nfunction ")]
@@ -866,13 +1072,22 @@ def test_the_podcast_button_offers_the_action_that_fits_the_state():
     # Primary ONLY in the no-episode branch. Comparing POSITIONS passed with the regenerate branch
     # also styled primary, because the first occurrence is in the early-return either way — so this
     # reads the regenerate branch itself, which is everything after the early return.
+    #
+    # The DISTINCTION is what this pins, not the class that expresses it. It required
+    # `btn-primary` on the no-episode branch until a reviewer measured the consequence: the podcast
+    # is the most expensive action in the product and wore the identical copper fill as "Add
+    # source", which is free and instant, while the CHEAP "Generate summary" was the quiet one.
+    # Cost and prominence ran opposite. `.btn-offer` keeps the distinction and drops the fill.
     regenerate_branch = sync[sync.index("podcast.stale") :]
-    assert "btn-primary" not in regenerate_branch, (
-        "regenerating is styled as the primary action, on a panel that already has an episode — it "
-        "costs a full model run plus synthesis (invariant 43)"
-    )
-    assert "btn-primary" in sync[: sync.index("podcast.stale")], (
-        "the no-episode offer is no longer the primary action"
+    for loud in ("btn-primary", "btn-offer"):
+        assert loud not in regenerate_branch, (
+            f"regenerating is styled as {loud}, on a panel that already has an episode — it costs a "
+            "full model run plus synthesis (invariant 43)"
+        )
+    offer_branch = sync[: sync.index("podcast.stale")]
+    assert "btn-offer" in offer_branch, "the no-episode offer no longer stands out at all"
+    assert "btn-primary" not in offer_branch, (
+        "the most expensive action in the product may not wear the same fill as the free one"
     )
     # And it has to be re-synced everywhere the state can change, or the label lies.
     for trigger in ('store.on("notebook:switched"', 'store.on("sources:changed"'):
@@ -1264,7 +1479,13 @@ def test_a_repaint_cannot_delete_the_overviews_progress_and_stop():
     # ...and every path out of the run must release it, or the panel is frozen forever. A notebook
     # SWITCH matters most: without it the new notebook keeps the old run's status node.
     gen = re.search(r"async function generateOverview\(\)\s*\{(.*?)\n\}\n", js, re.DOTALL)
-    assert gen and gen.group(1).count("overviewRunning = false") >= 3, (
+    # The ok and error exits release through `releaseIfMine()` (only while this run still owns the
+    # panel — an overview ending in another notebook must not release that notebook's); cancel
+    # releases inline. Three exits, each accounted for.
+    assert gen, "generateOverview is gone"
+    exits = gen.group(1)
+    releases = exits.count("overviewRunning = false") + exits.count("releaseIfMine();")
+    assert releases >= 3, (
         "not every exit from generateOverview releases the panel"
     )
     switched = re.search(r'store\.on\("notebook:switched", \(\) => \{(.*?)\n  \}\)', js, re.DOTALL)
@@ -1331,7 +1552,11 @@ def test_the_chat_composer_is_frozen_while_an_overview_generates():
     body = gen.group(1)
     assert 'store.emit("chat:pending", { pending: true })' in body, "the composer is never frozen"
     # Every exit must thaw it, or one failed generation locks the composer for the session.
-    releases = body.count('store.emit("chat:pending", { pending: false })')
+    # Inline on cancel; through `releaseIfMine()` on ok and error, which thaws only the composer of
+    # the notebook that asked (a run ending in A must not unlock B mid-question).
+    inline = body.count('store.emit("chat:pending", { pending: false })') - 1  # minus the helper's own
+    releases = inline + body.count("releaseIfMine();")
+    assert "const releaseIfMine = () => {" in body, "the ok/error release helper is gone"
     assert releases >= 3, f"only {releases} of the exits thaw the composer (need cancel/ok/error)"
     # ...including a notebook switch, which strands the run rather than ending it.
     switched = re.search(r'store\.on\("notebook:switched", \(\) => \{(.*?)\n  \}\)', js, re.DOTALL)
@@ -1372,6 +1597,16 @@ def test_both_steps_pills_open_the_trajectory_drawer():
     assert not re.search(r"\.ticker-row\s*\{", css), "dead CSS for a removed element"
 
 
+def _type_ramp(css: str) -> dict[str, float]:
+    """`--text-*` to its `rem` value, read from the stylesheet's own `:root`."""
+    ramp = {
+        name: float(value)
+        for name, value in re.findall(r"(--text-[\w-]+):\s*([\d.]+)rem", css)
+    }
+    assert ramp, "the type ramp is gone from :root"
+    return ramp
+
+
 def test_a_timeline_segment_cannot_clip_its_own_label():
     """`.seg` is a fixed-height box with `overflow: hidden` and three stacked lines. Left to the
     browser's ~1.5 default line-height they measured 74.3px inside a 72px box, so the MIDDLE line —
@@ -1390,13 +1625,17 @@ def test_a_timeline_segment_cannot_clip_its_own_label():
     for cls, size in (("seg-ic", None), ("seg-lab", None), ("seg-dur", None)):
         rule = re.search(rf"\.{cls}\s*\{{([^}}]*)\}}", css)
         assert rule, f".{cls} is gone"
-        font = re.search(r"font-size:\s*([\d.]+)rem", rule.group(1))
+        font = re.search(r"font-size:\s*(?:var\((--text-[\w-]+)\)|([\d.]+)rem)", rule.group(1))
         lh = re.search(r"line-height:\s*([\d.]+)", rule.group(1))
         assert font and lh, (
             f".{cls} must declare BOTH font-size and line-height — an undeclared line-height "
             f"defaults to about 1.5 and is what overflowed the box: {rule.group(1)}"
         )
-        total += float(font.group(1)) * 16 * float(lh.group(1))
+        #: The ramp is resolved rather than the arithmetic being dropped: these sizes are steps on
+        #: a scale now, and a test that can only read a literal would have quietly stopped checking
+        #: the moment they were tokenised — which is the failure mode this file exists to catch.
+        rem = float(font.group(2)) if font.group(2) else _type_ramp(css)[font.group(1)]
+        total += rem * 16 * float(lh.group(1))
 
     seg = re.search(r"\.seg\s*\{([^}]*)\}", css)
     pad = re.search(r"padding:\s*(\d+)px", seg.group(1))
@@ -1449,8 +1688,19 @@ def test_only_the_last_turn_offers_to_be_regenerated():
     ), "the pending row offers to redo an answer that does not exist yet"
     # `display` here is author CSS on a class that is NOT hidden-toggled, so invariant 36's pairing
     # does not apply — but it must stay that way, or the guard is needed.
-    js = (WEB / "app.js").read_text(encoding="utf-8")
-    assert ".turn-regenerate" not in js, "the class is hidden-toggled in JS now; it needs [hidden]"
+    #
+    # NARROWED from "the string never appears in app.js". That banned the class from any use at all,
+    # and the run guard legitimately names it in a `disabled` selector — a different mechanism, with
+    # none of invariant 36's hazard, which the blanket form could not tell apart. What matters is
+    # that nothing sets `hidden` on it.
+    js = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+    toggled = re.search(r"turn-regenerate[^\n;]{0,80}\.hidden\s*=", js) or re.search(
+        r"\.hidden\s*=[^\n;]{0,80}turn-regenerate", js
+    )
+    assert not toggled, (
+        "`.turn-regenerate` is hidden-toggled in JS now, so its author `display` rules need the "
+        "matching `[hidden]` rule invariant 36 requires"
+    )
 
 
 def test_regenerating_a_turn_goes_through_the_same_flow_as_asking():
@@ -1523,7 +1773,9 @@ def test_the_clear_conversation_control_appears_only_when_there_is_one():
     # Clearing while a question runs would delete the turns and then let `ask`'s own persist append
     # the answer to the empty list — the conversation comes back with one entry.
     pending = re.search(r'store\.on\("chat:pending", \(\{ pending \}\) => \{(.*?)\n  \}\);', js, re.DOTALL)
-    assert pending and "clearBtn.disabled = pending" in pending.group(1), (
+    # `composerHeld`: held while EITHER owner (the overview, a question) is live, not only the one
+    # that sent this event.
+    assert pending and "clearBtn.disabled = composerHeld" in pending.group(1), (
         "the clear control is live during an in-flight question"
     )
     # Destructive and irreversible, so it confirms — and names what SURVIVES, since losing sources
@@ -1633,9 +1885,16 @@ def test_an_unloadable_trajectory_drawer_is_sized_to_its_content():
 
 def test_a_steps_pill_on_a_traceless_run_does_not_open_an_empty_drawer():
     """A transport, a search box and an empty timeline wrapped around one sentence reads as a
-    broken drawer rather than a missing trace. The fetch already happens BEFORE the drawer is
-    shown, so the closed case can simply say so and leave the page alone — via `alert`, which is
-    how rename, save-settings and add-source already report an unfulfillable click.
+    broken drawer rather than a missing trace. The fetch happens BEFORE the drawer is shown, so the
+    closed case can leave the page alone.
+
+    **What it may no longer do is `alert()`.** That is what this test used to require, and two
+    independent reviews landed on the same objection: the pill is rendered on EVERY finished
+    artifact, so a run that failed before producing a trace still offered it, and the only possible
+    outcome of pressing it was a native dialog carrying a raw run UUID. The miss was one level up
+    from the message. A control that cannot do its job should stop claiming it can, so
+    `openTrajectory` reports whether it opened anything and the pill retires itself in place -
+    dimmed, disabled, saying so - on the first press rather than apologising on every press.
 
     Switching runs inside an ALREADY-OPEN drawer takes the other branch: it cannot close under the
     reader, so it clears every pane instead.
@@ -1646,8 +1905,21 @@ def test_a_steps_pill_on_a_traceless_run_does_not_open_an_empty_drawer():
 
     assert "if (trajEl.drawer.hidden)" in catch, "the two situations must be told apart"
     closed = catch[catch.index("if (trajEl.drawer.hidden)") : catch.index("trajEl.stat.textContent")]
-    assert "alert(" in closed and "return;" in closed, "a closed drawer must report and not open"
+    assert "return false;" in closed, "a closed drawer must report the miss to its caller"
     assert "trajShowDrawer" not in closed
+    assert "alert(" not in _strip_js_comments(closed), (
+        "a missing trace is not worth a modal (it carried the run id)"
+    )
+
+    # And the caller has to ACT on it, or the return value is a fact nobody reads.
+    pill_start = js.index("function renderTickerAffordance(")
+    pill = js[pill_start : js.index("  return wrapper;", pill_start)]
+    assert "await openTrajectory(" in pill and "is-absent" in pill, (
+        "the pill must retire itself when there is no trajectory behind it"
+    )
+    # Comments stripped: this file's own prose explains what `alert()` used to do here, and a
+    # substring check that reads a comment is checking the wrong thing.
+    assert "alert(" not in _strip_js_comments(pill)
 
 
 def test_a_reported_cap_with_no_usage_is_its_own_state():
@@ -1901,10 +2173,12 @@ def test_studio_regenerate_is_shown_only_when_there_is_something_to_regenerate()
     assert panel.index("showRegenerate(kind);") < panel.index("renderCached(kind, cache.get(kind));"), (
         "a finished run reveals the button before rendering the result"
     )
-    click = panel[panel.index('regenerateBtn.addEventListener("click"') :][:320]
+    click = panel[panel.index('regenerateBtn.addEventListener("click"') :][:480]
+    # `fetchKind(activeKind, { previous })`: the entry being replaced travels with the run, so a Stop
+    # or a failure can put it back instead of deleting a guide that exists only in this page.
     assert click.index("cache.delete(activeKind)") < click.index("showRegenerate(activeKind)") < click.index(
-        "fetchKind(activeKind)"
-    ), "the click drops the cache, re-decides the button, then runs"
+        "fetchKind(activeKind, { previous })"
+    ), "the click drops the cache, re-decides the button, then runs with the previous entry"
 
 
 def test_design_md_never_names_a_selector_the_code_no_longer_has():
@@ -1942,3 +2216,1288 @@ def test_design_md_never_names_a_selector_the_code_no_longer_has():
         f"DESIGN.md names {unmarked} as current, but no such class exists under web/. Either the "
         "class came back, or the paragraph needs to say it is superseded."
     )
+
+
+# --- The API token in the browser (AGENTS.md invariant 77) ---------------------------------------
+
+
+def test_the_api_helper_sends_the_token():
+    """`api()` is the single choke point for every request that CAN carry a header. If it stops
+    attaching one, every call in the app fails 401 at once — loud, so this is the cheap half."""
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    assert "opts.headers.Authorization = `Bearer ${token}`" in app
+
+
+def test_the_token_is_stripped_from_the_address_bar():
+    """It arrives in the URL and must not stay there: a token left in the address bar gets
+    bookmarked, pasted into a chat, and sent as a `Referer` to everything the page links out to.
+    `replaceState`, not `pushState`, so Back cannot walk onto it either."""
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    assert 'url.searchParams.delete("token")' in app
+    assert "window.history.replaceState(" in app
+    assert "window.history.pushState(" not in app
+
+
+def test_every_server_url_the_browser_fetches_itself_carries_the_token():
+    """The hazard only a source assertion can see, and the reason this lives beside invariant 36's.
+
+    `EventSource` and `<audio src>` cannot set request headers, so those URLs carry the token in
+    the query string via `withToken()`. A future call site that forgets produces a silent 401: the
+    live ticker just never ticks and the episode just never plays, with the answer itself still
+    arriving fine (the ticker is deliberately a secondary layer). Nothing else in this project can
+    catch that — there is no JS runtime in the suite, and the Python tests never execute `app.js`.
+
+    The rule asserted: a server path written in `app.js` is either an argument to `api()` (which
+    attaches the header) or wrapped in `withToken()`. Nothing else is allowed to reach the server.
+    """
+    lines = (WEB / "app.js").read_text(encoding="utf-8").splitlines()
+    offenders = []
+    for index, line in enumerate(lines):
+        if "`/notebooks/" not in line and "`/settings" not in line:
+            continue
+        if line.lstrip().startswith("//"):
+            continue
+        # Three lines of lookback: `api(` and `withToken(` sit on the line above in the wrapped
+        # multi-line call style this file uses throughout.
+        window = "\n".join(lines[max(0, index - 3) : index + 1])
+        if "api(" in window or "withToken(" in window:
+            continue
+        offenders.append(f"{index + 1}: {line.strip()}")
+    assert not offenders, (
+        "these server URLs reach the browser without a token, and will 401 silently: "
+        f"{offenders}"
+    )
+
+
+def test_a_forgotten_withtoken_would_actually_be_caught():
+    """The tripwire above is worthless if it cannot fail. This is the mutation, run against a COPY
+    of the source in memory — the same reason `test_cli.py`'s serve tests exist at all: three
+    mutations once survived all 51 tests because nothing asserted the wiring was wired."""
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    broken = app.replace(
+        "        withToken(\n"
+        "          `/notebooks/${encodeURIComponent(notebookId)}/runs/${encodeURIComponent(runId)}"
+        "/stream`\n"
+        "        )",
+        "        `/notebooks/${encodeURIComponent(notebookId)}/runs/${encodeURIComponent(runId)}"
+        "/stream`",
+        1,
+    )
+    assert broken != app, "the EventSource call site moved — update this mutation with it"
+    offenders = []
+    lines = broken.splitlines()
+    for index, line in enumerate(lines):
+        if "`/notebooks/" not in line and "`/settings" not in line:
+            continue
+        if line.lstrip().startswith("//"):
+            continue
+        window = "\n".join(lines[max(0, index - 3) : index + 1])
+        if "api(" in window or "withToken(" in window:
+            continue
+        offenders.append(index + 1)
+    assert offenders, "the unwrapped EventSource URL was not caught — the tripwire does nothing"
+
+
+# --- the Inbox surface -----------------------------------------------------------------------------
+
+
+def _strip_js_comments(source: str) -> str:
+    """Line and block comments removed. Every one of these checks bans a token, and a comment
+    EXPLAINING why it is banned would otherwise trip its own rule - which all three of these did on
+    their first run."""
+    without_block = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    return "\n".join(line.split("//", 1)[0] for line in without_block.splitlines())
+
+
+def _blank_js_comments(source: str) -> str:
+    """Comments replaced by SPACES rather than removed, so every offset and line number survives.
+
+    `_strip_js_comments` above is the right tool wherever the scan only needs the code; this one is
+    for a scan that REPORTS a line number, because dropping a block comment shifts every line after
+    it and the report then names the wrong one. Same reason for existing either way: a comment
+    explaining why a token is banned trips the rule that bans it.
+    """
+    blanked = re.sub(
+        r"/\*.*?\*/", lambda m: re.sub(r"[^\n]", " ", m.group(0)), source, flags=re.DOTALL
+    )
+    return "\n".join(
+        line.split("//", 1)[0].ljust(len(line)) if "//" in line else line
+        for line in blanked.splitlines()
+    )
+
+
+def _strip_css_comments(source: str) -> str:
+    return re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+
+
+def _inbox_js() -> str:
+    body = (WEB / "app.js").read_text(encoding="utf-8").split("// THE INBOX (Tier 0)", 1)[1]
+    return _strip_js_comments(body)
+
+
+def test_every_class_the_inbox_creates_has_a_rule():
+    """**A class with no rule fails silently, and in three different directions.**
+
+    Found on the first pass of this surface, all three by this check rather than by looking:
+    `.sr-only` did not exist, so the capture field's visually-hidden label was VISIBLE; `.intake-dot`
+    did not exist, so the running strip's indicator rendered as an empty span; and `.node-col` had no
+    `min-width: 0`, so every `text-overflow: ellipsis` inside a grid child silently did nothing.
+
+    None of those throw. None appear in a test that only checks behaviour. This is the same class of
+    hazard invariants 36 and 54 are pinned against: only a source assertion can see it.
+    """
+    import re
+
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+    js = _inbox_js()
+
+    created: set[str] = set()
+    for match in re.findall(r'elt\("[a-zA-Z0-9]+",\s*"([^"]+)"', js):
+        created.update(match.split())
+    for match in re.findall(r'classList\.(?:add|toggle|remove)\("([^"]+)"', js):
+        created.add(match)
+
+    # **And the MARKUP, which this check did not read for three rounds.** It scanned only classes
+    # `app.js` creates, so `#capture-pick` - written in `index.html`, the keyboard and touch route to
+    # a file - shipped with no rule at all and wore the UA's `buttonface`: measured 2.34:1 in Study,
+    # the one native-chrome element in the product, on the default screen and on the public
+    # playground page. A class is a class wherever it is written.
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    inbox_markup = html[html.index('id="view-inbox"') : html.index('id="view-notebook"')]
+    for match in re.findall(r'class="([^"]+)"', inbox_markup):
+        created.update(match.split())
+
+    styled = set(re.findall(r"\.([a-zA-Z][\w-]*)", css))
+    missing = sorted(name for name in created if name not in styled)
+    assert not missing, f"the Inbox creates these classes and nothing styles them: {missing}"
+
+
+def test_the_inbox_never_builds_markup_from_a_string():
+    """Invariant 55, on the surface that renders the most attacker-influenced text in the product: a
+    captured page's title, a model-written summary, and the full text of anything at all."""
+    js = _inbox_js()
+    for banned in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
+        assert banned not in js, f"the Inbox surface uses {banned}"
+
+
+def test_the_inbox_never_renders_a_remote_image():
+    """Invariant 51, which is also this surface's whole design brief. `og:image` is why there is no
+    thumbnail to recognise a node by, and why recall here is typographic instead. An `<img>` added
+    later would quietly undo both the privacy rule and the design."""
+    js = _inbox_js()
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+    inbox_css = _strip_css_comments(css.split("   THE INBOX (Tier 0)", 1)[1])
+    assert 'elt("img"' not in js and 'createElement("img")' not in js
+
+    # The rule is NO REMOTE FETCH, which is not the same as no background-image - an earlier version
+    # of this test banned the property outright and refused a chevron drawn as an inline data URI,
+    # which carries no request at all. Every `url()` on this surface has to be a `data:` URI.
+    for reference in re.findall(r"url\(([^)]*)\)", inbox_css):
+        assert reference.strip("\"' ").startswith("data:"), f"remote reference on the Inbox: {reference}"
+
+
+def test_the_reading_face_is_actually_used_on_the_surface_it_was_chosen_for():
+    """Literata was picked in Phase 1 for "content meant to be read at length" and then never
+    applied: `.reading-face` sat unused for three phases while DESIGN.md described a typographic
+    identity the browser never rendered. The Inbox's title and summary are that content."""
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+    inbox_css = css.split("   THE INBOX (Tier 0)", 1)[1]
+    for selector in (".node-title", ".node-summary", ".capture-input"):
+        # ANCHORED at the start of a line, so a descendant rule like
+        # `.node:hover .node-title { color: … }` is not mistaken for the element's own. The
+        # unanchored version read that hover rule and reported the reading face missing - a test
+        # failing on a correct change, which is the worst kind, because the reflex is to undo the
+        # change rather than the test.
+        block = re.split(rf"^{re.escape(selector)} \{{", inbox_css, maxsplit=1, flags=re.MULTILINE)
+        assert len(block) == 2, f"{selector} has no rule of its own"
+        assert "var(--serif)" in block[1].split("}", 1)[0], f"{selector} is not set in the reading face"
+
+
+def test_the_typefaces_are_self_hosted_and_shipped():
+    """A webfont fetched from a third party would make the READER's browser call out on every page
+    load, which is exactly what invariant 51 refuses for `og:image` - and this app ships in a
+    container verified with no network at all. The files have to be here, and the CSS has to point
+    at them rather than at a CDN."""
+    raw = (WEB / "style.css").read_text(encoding="utf-8")
+    css = _strip_css_comments(raw)
+    assert "fonts.googleapis.com" not in css and "fonts.gstatic.com" not in css
+    for name in ("literata.woff2", "literata-italic.woff2", "public-sans.woff2", "public-sans-italic.woff2"):
+        path = WEB / "fonts" / name
+        assert path.exists(), f"{name} is not shipped"
+        assert path.read_bytes()[:4] == b"wOF2", f"{name} is not a woff2"
+        assert f'url("/fonts/{name}")' in css, f"{name} is shipped but nothing loads it"
+    # Latin subset only, so a Han run never waits on a download that cannot render it.
+    assert css.count("unicode-range: U+0000-00FF") == 4
+
+
+def test_every_latin_face_is_paired_with_a_cjk_fallback():
+    """A Latin reading serif carries no Han glyphs. Without an explicit CJK serif beside it, the
+    interface's own zh-Hant strings drop back to a sans on the one surface that is supposed to be
+    set in a serif, and it reads as a rendering bug rather than a choice."""
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+    stacks = dict(re.findall(r"--(sans|serif|mono):\s*([^;]+);", css))
+    assert "PingFang TC" in stacks["sans"], "the sans stack has no CJK face"
+    assert "Songti TC" in stacks["serif"], "the reading serif has no CJK serif fallback"
+    # Traditional first: the interface language is zh-Hant, and an SC face draws Simplified forms.
+    assert stacks["sans"].index("PingFang TC") < stacks["sans"].find("Noto Sans TC")
+
+
+def test_no_accent_bar_wider_than_a_hairline():
+    """`border-left` wider than 1px as a section accent is the most overused touch in admin UIs and
+    reads as a rendering mistake at any width beyond a divider. Nine of them predated the Inbox,
+    including one on `.chat-overview`, the first element you see on entering a notebook, while the
+    Inbox's own stylesheet carried a comment citing the ban. Two were carrying an ACCENT and gave it
+    up for a background swatch; the rest are blockquote-shaped and keep the hairline the ban allows.
+    """
+    import re
+
+    css = _strip_css_comments((WEB / "style.css").read_text(encoding="utf-8"))
+    # LEFT and RIGHT only. An all-sides `border: 2px` is a frame, not a stripe, and the ban is about
+    # the stripe: a thick rule down one edge of a section, which is the admin-UI tell.
+    offenders = re.findall(r"border-(?:left|right):\s*(?:[2-9]|\d\d+)px[^;]*", css)
+    assert not offenders, f"accent bars wider than a hairline: {offenders}"
+
+def test_the_settings_page_renders_every_setting_the_server_stores():
+    """**A key with no row is a key the next Save deletes.**
+
+    `PUT /settings` is a full replacement, and the page builds its payload from the inputs it
+    RENDERED. So a setting the server stores and the page does not draw is not merely
+    unreachable - it is destroyed by the next legitimate save of anything else. That is exactly
+    what happened to `auto_distil`: `GET`/`PUT /settings` carried it from the day it was added,
+    `rlm_notebook/web/` never mentioned it, and an operator who hand-edited the settings file to
+    turn it on lost it the next time they changed a voice. An independent review reproduced the
+    whole loop through the UI.
+
+    Two registries in two languages, kept in sync by a tripwire rather than by sharing code - the
+    same shape invariant 28 uses for the guide task registries, and for the same reason: the browser
+    cannot import `config.py`.
+    """
+    from rlm_notebook.config import settings_state
+
+    js = (WEB / "app.js").read_text(encoding="utf-8")
+    rows = js[js.index("function settingRows()") : js.index("// The INTERFACE language row.")]
+    drawn = set(re.findall(r'key:\s*"([a-z_]+)"', rows))
+
+    stored = {key for key in settings_state(base_dir="/nonexistent-for-this-test") if key != "error"}
+    missing = sorted(stored - drawn)
+    assert not missing, (
+        f"the server stores {missing} and the settings page draws no row for them, so the next "
+        "Save will erase them (PUT /settings is a full replacement)"
+    )
+    # And the other way: a row for something the server does not store would silently do nothing.
+    extra = sorted(drawn - stored)
+    assert not extra, f"the settings page draws rows the server does not store: {extra}"
+
+def test_every_enter_handler_guards_against_an_ime_composition():
+    """**Enter COMMITS a candidate while an IME is composing.** Steal it and a reader typing in
+    注音 or 拼音 posts a half-formed word instead of finishing it. This interface's own language is
+    zh-Hant, so that is the default path, not an edge case.
+
+    It has no behavioural test and cannot easily have one — a composition is a real input-method
+    event sequence — and an independent reviewer proved the gap by DELETING the guard from the
+    capture field and watching the whole suite stay green. The CHANGELOG records auditing every
+    `Enter` handler and fixing three; none of them had a tripwire.
+
+    So this is a source assertion, and it is written as a RULE rather than a list: every handler
+    that acts on Enter must carry the guard, whichever handler that turns out to be. A new surface
+    with a new composer is exactly how the third one was missed.
+    """
+    js = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+
+    # A handler is the body from `keydown` to the end of its arrow function, found by brace depth
+    # rather than by a fixed line count: these vary from six lines to thirty.
+    unguarded = []
+    for match in re.finditer(r'addEventListener\("keydown"', js):
+        start = js.index("{", match.end())
+        depth, i = 0, start
+        while i < len(js):
+            if js[i] == "{":
+                depth += 1
+            elif js[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        body = js[start : i + 1]
+        # Only handlers that ACT on Enter. One that merely closes on Escape has nothing to guard.
+        acts_on_enter = re.search(r'key\s*[=!]==?\s*"Enter"', body)
+        if not acts_on_enter:
+            continue
+        # A handler that treats SPACE as activation is a button, not a composer. That is the
+        # discriminator, and it is not a convenience: a text field can never activate on Space
+        # (Space is a character), and an element that does is a `role="button"` being operated by
+        # keyboard - the copy-URL span and the studio resize grip are both this shape. Neither can
+        # be mid-composition, because neither accepts text.
+        if re.search(r'key\s*===?\s*" "', body):
+            continue
+        if "isComposing" not in body or "229" not in body:
+            unguarded.append(js[: match.start()].count("\n") + 1)
+
+    assert not unguarded, (
+        "these keydown handlers act on Enter with no IME-composition guard "
+        f"(app.js lines {unguarded}) - a reader typing Chinese would post a half-typed word. "
+        "Both checks matter: `isComposing` is the standard flag and `keyCode === 229` is the "
+        "fallback for browsers that do not set it during composition."
+    )
+
+
+def test_a_render_branch_never_reads_a_flag_nothing_writes():
+    """`renderTurn` grew an `else if (turn.failed)` branch with a whole visual state behind it -
+    a heading, a reason line, two CSS rules and a translation key - and for a while NOTHING set
+    `turn.failed`. Every one of those was unreachable, and the failure kept rendering as an ordinary
+    answer. It was not a typo: the write was lost when `app.js` was restored from a backup, and
+    nothing noticed, because dead code is silent by construction.
+
+    Narrow on purpose. This pins the specific reader/writer pair rather than trying to prove the
+    general property, which is dataflow.
+    """
+    js = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+    assert "turn.failed" in js, "the failed-turn branch is gone; delete its CSS and i18n key too"
+    assert re.search(r"\bpendingTurn\.failed\s*=\s*true", js), (
+        "renderTurn reads `turn.failed` and nothing sets it - the failed-turn state is unreachable"
+    )
+
+def test_no_rule_names_a_typeface_this_repo_does_not_ship():
+    """**Named everywhere, shipped nowhere — three times now.**
+
+    Literata and Public Sans were named throughout `style.css` and `DESIGN.md` with no font file in
+    the repo, so every machine without them rendered the product in its system sans. That was fixed
+    by shipping them. JetBrains Mono was the same defect one face over, and its FIX was wrong too:
+    the correction checked `--mono` (a plain stack, correct) and missed ten live rules that bypassed
+    the token and put `"JetBrains Mono"` first in their own family lists. A font nobody ships and
+    some readers have installed is worse than either shipping it or not naming it: the surface looks
+    right on the developer's machine and different everywhere else.
+
+    So the rule is mechanical. Any quoted family name in `style.css` must either have a file under
+    `web/fonts/` or be a generic/system stack. It does not care which face is fashionable.
+    """
+    css = _strip_css_comments((WEB / "style.css").read_text(encoding="utf-8"))
+    shipped = {
+        path.stem.split("-")[0].lower() for path in (WEB / "fonts").glob("*.woff2")
+    }
+    # Names that are not a downloadable face: system stacks, and the two CJK fallbacks that are
+    # deliberately the reader's own (invariant 39 - a Han run must not wait on a download).
+    system = {
+        "sf mono", "sf pro text", "helvetica neue", "segoe ui", "noto sans mono", "noto sans tc",
+        "noto sans sc", "pingfang tc", "pingfang sc", "microsoft jhenghei", "microsoft yahei",
+        "hiragino sans gb", "heiti tc", "apple color emoji", "segoe ui emoji",
+        # The CJK SERIF fallbacks, paired with Literata for the same reason as the sans ones: a Han
+        # run must take the reader's own face rather than wait on a download it cannot use, and
+        # Traditional is listed first because this interface's own language is zh-Hant.
+        "noto serif tc", "songti tc", "source han serif tc",
+        # ...and the one WINDOWS ships (the WebView2 shell has none of the three above by default).
+        "pmingliu", "mingliu",
+    }
+    # Only inside a `font-family` (and `--sans`/`--serif`/`--mono`) declaration. A blanket scan for
+    # quoted strings picks up every `content: "…"` in the file and reports CSS as a typeface.
+    declarations = re.findall(r"(?:font-family|--sans|--serif|--mono)\s*:\s*([^;]+);", css)
+    named = {
+        name.strip('"').lower()
+        for declaration in declarations
+        for name in re.findall(r'"([^"]+)"', declaration)
+    }
+    phantom = sorted(
+        name
+        for name in named
+        if " " in name or name.isalpha()
+        if name not in system
+        if not any(name.replace(" ", "") .startswith(face) for face in shipped)
+    )
+    assert not phantom, (
+        f"these typefaces are named in style.css and no file under web/fonts/ provides them: "
+        f"{phantom}. Either ship the face or do not name it — a font some readers happen to have "
+        f"installed renders one way for them and another for everyone else."
+    )
+
+def test_every_hover_revealed_control_has_a_touch_escape():
+    """**"Reveal on hover" is not a treatment, it is a hiding place** — `style.css` says exactly
+    that, next to the one control it then fixed. Two others kept `opacity: 0` at rest with no
+    escape: `.src-remove`, which is destructive and on every source row, and `.save-as-note`, which
+    is the only route into Notes. On a touch device a source could not be removed at all, and the
+    Notes copy instructed the reader to press a button they could never see.
+
+    A rule rather than a third patch: anything hidden by `opacity: 0` and revealed by `:hover` has
+    to be revealed by `any-hover: none` too, whichever control that turns out to be.
+    """
+    css = _strip_css_comments((WEB / "style.css").read_text(encoding="utf-8"))
+
+    hidden = {
+        selector.strip().lstrip(".")
+        for selector, body in _rules(css)
+        if re.search(r"opacity:\s*0\s*;", body)
+        for selector in selector.split(",")
+        if selector.strip().startswith(".") and " " not in selector.strip()
+    }
+    revealed_on_hover = {
+        token
+        for selector, body in _rules(css)
+        if ":hover" in selector and re.search(r"opacity:\s*1\s*;", body)
+        for token in re.findall(r"\.([a-zA-Z][\w-]*)", selector)
+    }
+    touch_safe = {
+        token
+        for selector, body in _rules(css)
+        if re.search(r"opacity:\s*1\s*;", body)
+        for token in re.findall(r"\.([a-zA-Z][\w-]*)", selector)
+        if "any-hover" in css[: css.index(selector)][-400:]
+    }
+
+    # ONE exemption, argued rather than waved through. `.studio-grip` is the drag handle's grip
+    # dots, and `.col-studio > .studio-resize` is `display: none` below 640px - the whole control is
+    # gone on a phone, because dragging a column's WIDTH is meaningless in a layout that has stacked
+    # the columns. A control that is absent needs no touch escape; one that is merely invisible
+    # does, and that is the distinction this list exists to keep honest.
+    exempt = {"studio-grip"}
+
+    needs = sorted((hidden & revealed_on_hover) - touch_safe - exempt)
+    assert not needs, (
+        f"these controls are hidden at rest and revealed only by hover, with no `any-hover: none` "
+        f"escape: {needs}. A pointer-less reader cannot produce the state that shows them."
+    )
+
+def test_every_reader_facing_failure_goes_through_readable_error():
+    """**A server sentence reaches the reader through ONE door, and that door cleans it.**
+
+    `readableError` turns a status code, an exception class, an OpenSSL source line, a run UUID, a
+    signal number or a shell incantation into something a person can act on. It was called at some
+    call sites and not others, so the same failure read correctly in the chat column and arrived
+    verbatim in the Studio: `502: worker for run 'reading-faac4924-…' produced no output (exit -9);
+    stderr:`. A 60MB drop rendered `413: upload declares 60000184 bytes…` while the translated
+    sentence written for exactly that sat unreachable.
+
+    Sixteen call sites are sixteen chances to forget. The four DISPLAY HELPERS clean their own
+    input instead, which is one place to get right, and this pins that: any helper that puts a
+    failure on screen must pass it through `readableError` inside itself.
+    """
+    js = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+    for helper in ("function notify(", "function showCaptureError(", "function nodeErrorBlock("):
+        start = js.index(helper)
+        body = js[start : js.index("\n}\n", start)]
+        assert "readableError(" in body, (
+            f"{helper} puts text on screen without cleaning it - a status code "
+            "or a run id will reach the reader through it"
+        )
+
+    # **CLEAN, THEN WRAP.** `showCaptureNote` is the plain display half and does NOT clean; it takes
+    # a sentence this file composed. It used to clean, and both of its callers handed it
+    # `t("inbox.captureFailed", ...)` - the raw error already folded into a translated sentence - so
+    # the cleaning ran on the WRAPPER and every strip inside `readableError` matched nothing. The
+    # note printed `收不進來：422: could not ingest: PdfiumError: …`. A string something else has
+    # already wrapped is the wrong string to clean, and this is the shape that says so.
+    wrapped = []
+    for m in re.finditer(r"showCaptureNote\(", js):
+        depth, i = 1, m.end()
+        while i < len(js) and depth:
+            depth += (js[i] == "(") - (js[i] == ")")
+            i += 1
+        arg = js[m.end() : i - 1]
+        # A sentence composed HERE is fine (`inbox.someRefused` names the reader's own files). A
+        # SERVER message is not, whether raw or already folded into a translated wrapper.
+        if ".message" in arg or "readableError" in arg:
+            wrapped.append(js[: m.start()].count("\n") + 1)
+    assert not wrapped, (
+        f"showCaptureNote is handed a server message at app.js:{wrapped} - use showCaptureError, "
+        "which cleans BEFORE it wraps"
+    )
+
+    # And nothing may assign a RAW `err.message` straight to something visible. The helpers above
+    # are the way; a direct `textContent =` bypasses all of them.
+    raw = [
+        js[: m.start()].count("\n") + 1
+        for m in re.finditer(r"\.textContent\s*=[^;]*\berr\.message\b", js)
+        if "readableError" not in js[m.start() : m.end()]
+    ]
+    assert not raw, f"a raw server message is assigned to visible text at app.js:{raw}"
+
+
+def test_the_two_failure_headings_use_the_same_colour_token():
+    """**One rule, two elements, and it kept being applied to one of them.**
+
+    `.node-error-head` (Inbox) and `.turn-failed-head` (chat) are the same element on the two
+    surfaces: a bold sans heading sitting on a tinted error block, saying the thing failed. The
+    Inbox's was measured on that block rather than on the page, came out 4.27 / 4.37 against AA's
+    4.5, and was moved from `--bad` to `--text` with the reasoning written into the rule. The chat's
+    was left on `--bad`, at the same two numbers, and an independent review re-measured and
+    re-reported it a round later.
+
+    This is the recurring shape in this project's review history: a rule found, argued, written
+    down, and applied in exactly one of the places it applies. Pairing them is what makes the next
+    fix reach both.
+    """
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+    colours = {}
+    for name in (".node-error-head", ".turn-failed-head", ".failure-head"):
+        # A GROUPED selector counts: these three share one rule now, and a pattern that only
+        # matched a selector alone on its line reported the shared one as having no rule at all.
+        body = None
+        for rule in re.finditer(r"([^{}]*)\{([^{}]*)\}", css):
+            names = {part.strip() for part in rule.group(1).split(",")}
+            if name in names:
+                body = rule.group(2)
+        assert body, f"{name} has no rule in style.css"
+        found = re.findall(r"^\s*color:\s*([^;]+);", body, re.MULTILINE)
+        assert found, f"{name} sets no colour, so it inherits one nobody chose for this surface"
+        colours[name] = found[-1].strip()
+    assert len(set(colours.values())) == 1, (
+        f"the failure headings disagree: {colours}. They all sit on a tinted error block where "
+        "`--bad` measures 4.27 / 4.37, under AA - the border and the wash already carry the colour."
+    )
+
+
+#: **`_js_regex` and the test that used it are GONE, and that deletion is the point.**
+#:
+#: They re-compiled `readableError`'s regex LITERALS with Python's `re` and asserted that each one
+#: matched a sample. The function itself was never called. Replacing its whole body with
+#: `return String(text || "")` left all 917 tests green - while the shipped function was returning
+#: the EMPTY STRING for two of the commonest provider failures, blaming a website's HTTP 403 on the
+#: reader's API key, and truncating any message containing a `[`.
+#:
+#: Pinning a function's inputs is not testing the function. `tests/test_readable_error.py` RUNS it,
+#: through node, against strings captured from a real server.
+
+
+def test_the_capture_picker_offers_exactly_what_the_server_accepts():
+    """**A file picker that offers a type the server refuses is a misleading affordance**, on the
+    one screen whose whole promise is "throw anything in".
+
+    `#capture-file` advertised `.markdown`, `.csv` and `.rst` alongside the three that work, so
+    choosing one from that very control came back `422 … unsupported file type '.csv' — expected
+    one of ['.md', '.pdf', '.txt']`. It also disagreed with `#source-file` one panel over, which
+    had the right list all along - two pickers for the same upload path, two different answers.
+
+    Read from `ingest._ALLOWED_UPLOAD_SUFFIXES` rather than pinned here, because a list copied into
+    a test is a third place to drift.
+    """
+    from rlm_notebook.ingest import _ALLOWED_UPLOAD_SUFFIXES
+
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    for element in ("capture-file", "source-file"):
+        tag = re.search(rf'<input[^>]*id="{element}"[^>]*>', html, re.DOTALL)
+        assert tag, f"#{element} is gone from index.html"
+        accept = re.search(r'accept="([^"]*)"', tag.group(0))
+        assert accept, f"#{element} offers no `accept`, so the picker shows every file on the disk"
+        offered = {x.strip().lower() for x in accept.group(1).split(",") if x.strip()}
+        assert offered == set(_ALLOWED_UPLOAD_SUFFIXES), (
+            f"#{element} offers {sorted(offered)} but the server takes "
+            f"{sorted(_ALLOWED_UPLOAD_SUFFIXES)} - every difference is a file the reader can pick "
+            "and then be refused"
+        )
+
+
+def test_every_epoch_timestamp_is_multiplied_before_it_becomes_a_date():
+    """**The server sends epoch SECONDS; `new Date()` takes milliseconds.**
+
+    `facetLabels`' tie-breaker rung read `new Date(b.updated_at)` and every notebook in the product
+    resolved to 1970-01-22 - a date 56 years wrong, byte-identical across notebooks, printed by the
+    one rung that exists BECAUSE the three above it tied. So the disambiguator disambiguated
+    nothing, and was long enough that the rail's 13rem clamp ellipsised it away as well.
+
+    Its two siblings, `relativeTime` and `dayLabel`, both multiply. One of three getting it wrong is
+    not a thing review catches by reading - the wrong version is one character shorter than the
+    right one and produces a plausible-looking date.
+    """
+    js = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+    # The fields the API serves as epoch seconds, plus the local name they are passed under.
+    epoch = re.compile(r"\b(?:updated_at|created_at|epochSeconds|epoch_seconds)\b")
+    bad = []
+    for m in re.finditer(r"new Date\(", js):
+        depth, i = 1, m.end()
+        while i < len(js) and depth:
+            depth += (js[i] == "(") - (js[i] == ")")
+            i += 1
+        arg = js[m.end() : i - 1]
+        if epoch.search(arg) and "1000" not in arg:
+            bad.append((js[: m.start()].count("\n") + 1, arg.strip()[:60]))
+    assert not bad, (
+        f"an epoch-SECONDS value is handed straight to `new Date()` at app.js:{bad} - "
+        "the result is January 1970, and it looks like a real date"
+    )
+
+
+def test_the_facet_label_ladder_cannot_run_out_of_rungs():
+    """**A disambiguating ladder whose last rung can still tie has not disambiguated anything.**
+
+    `facetLabels` exists because two notebooks with the same derived sentence must still be told
+    apart in the rail. Every rung it had read a PROPERTY - the label, the title, the source count,
+    the timestamp - and properties can be equal: three notebooks promoted from one source in the
+    same minute matched on all four, and the rail rendered three byte-identical entries. The ladder
+    reached its end and gave up silently, which is the failure it was written to prevent.
+
+    So the last rung must be one that CANNOT tie. An ordinal is the only such suffix, and it is not
+    the notebook id - invariant 37 keeps the handle off a label. This pins the property rather than
+    the implementation: run the real ladder over a worst case and require distinct labels.
+    """
+    js = (WEB / "app.js").read_text(encoding="utf-8")
+    start = js.index("function facetLabels(")
+    body = js[start : js.index("\n}\n", start)]
+    # The terminal rung takes the index within the tied group; without that third argument it
+    # cannot number anything, and the loop must pass it.
+    assert re.search(r"\(b, label, at\)", body), (
+        "facetLabels has no rung that reads its position within the tied group, so its last rung "
+        "reads a property - and properties tie"
+    )
+    assert "forEach((b, at)" in body, (
+        "the ladder's loop does not hand each tied member its index, so a terminal ordinal rung "
+        "cannot be written"
+    )
+    # And the terminal rung must be LAST. A property rung after it could re-tie the labels it had
+    # just separated.
+    rungs = body[body.index("const rungs = [") : body.index("\n  ];")]
+    assert rungs.rindex("(b, label, at)") > rungs.rindex("relativeTime("), (
+        "the ordinal rung is not the last one - a property rung after it can tie again"
+    )
+
+
+def test_every_row_that_opens_something_has_a_real_button_to_open_it():
+    """**A row you can only open with a mouse is a row a keyboard user cannot open.**
+
+    This project has three list rows that expand or reveal on click, and it learned the lesson once
+    per row instead of once. The Inbox node got `button.node-open` after round 3 found the same
+    thing; the references row got `button.ref-card-head`; the SOURCE row was still a bare `<li>`
+    with a click handler two rounds later, and the only focusable control in it was the destructive
+    `✕`. A keyboard user could delete a source and had no way to read one - and reading one is
+    `GET /notebooks/{id}/sources/{source_id}`, one of the three deliberate whole-document exposures
+    (invariant 31), so the mouse-only route was the entire feature.
+
+    Pinned per row rather than by a generic "anything with a click handler must be focusable" scan,
+    because the honest rule is not that the ROW must be focusable - the row stays a plain element so
+    its prose can still be selected - it is that a real control inside it must do the same thing.
+    """
+    js = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+    rows = {
+        "renderSourceItem": "src-open",
+        "renderNode": "node-open",
+        "renderReferenceView": "ref-card-head",
+    }
+    for fn, control in rows.items():
+        start = js.index(f"function {fn}(")
+        body = js[start : js.index("\n}\n", start)]
+        assert f'"{control}"' in body, f"{fn} no longer builds a `{control}` control"
+        # It has to BE a button. A div with a class name is not reachable by Tab.
+        built = re.search(
+            rf'(?:elt\("button",\s*"{control}"|createElement\("button"\)[\s\S]{{0,400}}?'
+            rf'className = "{control}")',
+            body,
+        )
+        assert built, (
+            f"{fn}'s `{control}` is not created as a <button> - only a real button is in the tab "
+            "order, and this row's whole purpose is reached by pressing it"
+        )
+
+
+def test_every_run_status_mount_can_actually_end():
+    """**A status that starts and never ends is worse than no status.**
+
+    `runStatus` lights the header's run dot on mount (`noteRunStarted`) and puts it out only from
+    `finish()`. Four of the five mounts paired themselves with `openTicker` and a `finish()` in the
+    flow that awaits the result. The fifth, `reattachInFlightRuns`, had neither: after a reload the
+    recovered row counted upward for as long as the tab was open while the worker had exited and
+    `GET .../runs` had gone empty, and its Stop - still on screen, because `is-done` only stills the
+    dot - answered 404 and reported "it may still be going". The run dot then leaked for the
+    session, because `finish()` is the only route to `noteRunFinished`.
+
+    Both halves were separately tested: one test asserted the row MOUNTS, nothing asserted it ever
+    ends. That is the composition gap this project keeps finding, so the rule is per-mount.
+    """
+    js = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+    mounts = [m.start() for m in re.finditer(r"= runStatus\(\{", js)]
+    assert len(mounts) >= 5, f"expected every runStatus mount to be found, got {len(mounts)}"
+    for at in mounts:
+        # The enclosing function, and then the rest of it: whatever ends this status has to be
+        # inside the same flow that started it.
+        fn_start = js.rindex("\nasync function ", 0, at) if "\nasync function " in js[:at] else 0
+        plain = js.rindex("\nfunction ", 0, at)
+        fn_start = max(fn_start, plain)
+        name = re.match(r"\n(?:async )?function (\w+)", js[fn_start:]).group(1)
+        # Where the enclosing function ends. Nested closures keep their own indentation, so the
+        # first column-zero `}` after the mount is the boundary.
+        end = js.index("\n}\n", at)
+        flow = js[fn_start:end]
+        assert "status.finish()" in flow, (
+            f"{name} mounts a runStatus and never calls finish() - the row counts forever, its "
+            "Stop 404s, and the header's run dot never goes out"
+        )
+
+
+def test_every_live_stream_can_be_closed_by_someone_who_did_not_open_it():
+    """**A stream with no close handle is a socket leak waiting for a caller that does not await.**
+
+    `openTicker` returned only a promise and kept its `EventSource` in a closure. That is fine for
+    the four callers that await a request and receive a terminal event — and a real leak for
+    `reattachInFlightRuns`, which opens one per RECOVERED run on every notebook open and awaits
+    nothing. Measured at six opens: the page could no longer make ANY request to its own server
+    (`fetch` stalled past eight seconds, six established sockets, Chrome's per-origin HTTP/1.1 cap)
+    while `curl` answered the same server in two milliseconds. A run outliving a few navigations is
+    not exotic; it is the case the recovery exists for.
+
+    Two halves, both pinned: every stream is REGISTERED so a handle exists, and the one caller that
+    cannot rely on a terminal event CLOSES what it opened.
+    """
+    js = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+
+    sources = [m.start() for m in re.finditer(r"new EventSource\(", js)]
+    assert len(sources) == 1, (
+        f"{len(sources)} places construct an EventSource; there must be exactly one, inside "
+        "`openTicker`, or a stream exists that nothing can close"
+    )
+    start = js.index("function openTicker(")
+    opener = js[start : js.index("\n}\n", start)]
+    assert sources[0] > start and "tickerSources.set(" in opener, (
+        "openTicker does not register its stream, so no caller that did not open it can end it"
+    )
+
+    start = js.index("async function reattachInFlightRuns(")
+    reattach = js[start : js.index("\n}\n", start)]
+    assert "openTicker(" in reattach, "the recovered row no longer watches the run it recovered"
+    assert "closeTicker(" in reattach, (
+        "reattachInFlightRuns opens a stream per recovered run and never closes one - it awaits no "
+        "request, so nothing else will"
+    )
+
+
+def test_every_aria_modal_surface_actually_behaves_like_one():
+    """**`aria-modal="true"` is a promise: take focus, inert the rest, trap Tab, give focus back.**
+
+    Round two found the Settings dialog making that claim and keeping none of it — eight Tabs still
+    walked the page behind the scrim — and the fix built `openModal`/`closeModal`/`trapTab`/
+    `inertEverythingExcept`. The Trajectory drawer, which invariant 70 calls "where a run's
+    reasoning lives", was never wired to any of it: it took no focus, inerted nothing, and six Tabs
+    reached the wordmark, the notebook picker, Settings, the URL field and the destructive ✕ that
+    removes a source. `aria-modal` makes that worse than an honest non-modal, because it hides the
+    page behind from a screen reader's virtual cursor while leaving it reachable by Tab.
+
+    So the rule is per-surface, found from the MARKUP rather than from a list kept here: anything
+    that claims `aria-modal` has to be wired, and a new one cannot be added without appearing.
+    """
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    js = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+
+    claimed = re.findall(r'<\w+[^>]*id="([\w-]+)"[^>]*aria-modal="true"', html)
+    claimed += re.findall(r'<\w+[^>]*aria-modal="true"[^>]*id="([\w-]+)"', html)
+    claimed = sorted(set(claimed))
+    assert claimed, "no element claims aria-modal any more - has the markup changed?"
+
+    # Which helper pair each surface is wired to. A surface is not always addressed by its own id -
+    # the source viewer's `.modal` carries the attribute while app.js works with the overlay around
+    # it - so this names the pair rather than guessing at the DOM relationship, and a NEW
+    # `aria-modal` element fails here until somebody says which pair it uses.
+    wired = {
+        "settings-modal": "openModal",
+        "source-viewer-modal": "openModal",
+        "confirm-modal": "openModal",
+        "traj-drawer": "trajTakeFocus",
+    }
+    unknown = [e for e in claimed if e not in wired]
+    assert not unknown, (
+        f"these claim aria-modal and nothing here says how they keep it: {unknown}. Wire them to "
+        "openModal/closeModal (which inert the page, trap Tab and give focus back) or to a pair "
+        "that does the same, then name them above."
+    )
+    for helper in ("openModal(", "closeModal(", "trapTab(", "inertEverythingExcept("):
+        assert helper in js, f"{helper} is gone; every aria-modal surface depends on it"
+
+    # **The BEHAVIOUR is deliberately NOT checked here**, and the attempt to check it from source
+    # text is what this replaces: asserting that `trajTakeFocus` contains the strings
+    # `inertEverythingExcept(`, `trapTab(` and `.focus(` passed just as happily when the whole
+    # function body was `if (true) return;` - an independent review proved exactly that, one round
+    # after this project deleted a `readableError` test for the same reason.
+    # `tests/test_web_behaviour.py` RUNS it against a fake DOM.
+    #
+    # What survives here is the half a source assertion can see and the harness cannot: a NEW
+    # `aria-modal` element in the markup has to be named in `wired` above before this passes.
+
+
+def test_no_capture_control_is_re_enabled_without_asking_whether_there_is_anything_to_send():
+    """**"A small lie told on first paint", made permanent.**
+
+    `syncCaptureSend` exists because a primary button saturated over an empty field promises an
+    action it will not perform. The TEXT path was fixed and the FILE path was not: `captureFiles`
+    set `send.disabled = false` directly, twelve lines below the comment recording that exact fix,
+    so after any drop or file pick the send button stayed fully enabled over an empty textarea for
+    the rest of the session and did nothing when pressed.
+
+    The rule is not "call the sync somewhere" - it is that NOTHING assigns this button's disabled
+    state by hand, because a hand-written `false` cannot know whether the field is empty.
+    """
+    js = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+    direct = [
+        js[: m.start()].count("\n") + 1
+        for m in re.finditer(r"\bsend\.disabled\s*=\s*(?:false|true)\b", js)
+        # Disabling on the way IN is fine and is not what this is about; only the re-enable can lie.
+        if "= false" in m.group(0)
+    ]
+    assert not direct, (
+        f"a capture control is re-enabled by hand at app.js:{direct} - use syncCaptureSend(), "
+        "which is the only thing that knows whether the field has anything in it"
+    )
+
+
+def test_no_fullwidth_punctuation_leaks_into_an_english_string():
+    """**U+FF0B is a FULLWIDTH plus**: it belongs in a CJK run and reads as a stray wide glyph in an
+    English one. It was fixed in `index.html` and left in `app.js`, where it labels the SAME
+    affordance - and at 375 the facet rail is hidden, so the `app.js` one is the only route to a new
+    notebook on a phone. The two sites, one rule, one of them done: this project's recurring shape.
+
+    Scoped to the English DEFAULTS in `app.js`/`index.html`; `i18n.js`'s zh-Hant table is where
+    fullwidth punctuation is correct.
+    """
+    fullwidth = {"＋": "＋", "：": "：", "，": "，", "（": "（", "）": "）"}
+    bad = []
+    for name in ("app.js", "index.html"):
+        for line_no, line in enumerate((WEB / name).read_text(encoding="utf-8").splitlines(), 1):
+            # A line carrying CJK is a deliberate bilingual default and keeps its own punctuation.
+            if any("一" <= ch <= "鿿" for ch in line):
+                continue
+            for code, glyph in fullwidth.items():
+                if code in line:
+                    bad.append(f"{name}:{line_no} {glyph}")
+    assert not bad, f"fullwidth punctuation in an English string: {bad}"
+
+
+def test_the_toast_rail_is_outside_the_layout_every_overlay_inerts():
+    """**`inert` is INHERITED, so where the toast rail sits decides whether it survives.**
+
+    `inertEverythingExcept` walks from an open panel up to `<body>`, inerting siblings at each
+    level, and `ALWAYS_LIVE` spares `#notices` when it MEETS it. While `#notices` lived inside
+    `.layout` it was never on that walk for a body-level panel: the Trajectory drawer inerted
+    `.layout` and took the rail down with it, so a toast raised while the drawer was open rendered,
+    could not be dismissed, and was out of the accessibility tree — and `notify` defaults to
+    `life = 0` for a bad tone, so it did not expire either. The exemption looked applied and
+    reached nothing.
+
+    This also pins the premise of `tests/web_dom_harness.mjs`, whose tree has to match the markup or
+    it answers a question nobody asked. That is not hypothetical: the first version of that harness
+    modelled `inert` as non-inherited AND put `#notices` inside `.layout`, and the two mistakes
+    cancelled out into a green test over a broken product.
+    """
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    rail = html.index('id="notices"')
+    layout_open = html.index('<div class="layout">')
+    # The layout closes before the body-level panels; the rail must be on the far side of it.
+    drawer = html.index('id="traj-drawer"')
+    assert layout_open < drawer, "the markup no longer nests the way this test reads it"
+    assert rail > html.index('id="traj-backdrop"') or rail > layout_open, "unexpected markup order"
+
+    # The real check: how many `</div>`-closing levels deep is it? Simpler and exact — the rail must
+    # appear AFTER the layout's own closing, which is where the body-level panels start.
+    before_rail = html[:rail]
+    assert before_rail.count("<div") - before_rail.count("</div>") <= 1, (
+        "#notices is nested inside the layout, so any body-level overlay inerts it by inheritance "
+        "and `ALWAYS_LIVE` can never reach it"
+    )
+
+
+def test_the_trajectory_trigger_is_recorded_before_the_fetch():
+    """**`openTrajectory` awaits, and the control that was pressed does not survive the await.**
+
+    `trajTakeFocus` reads `document.activeElement` when the drawer appears — which is after the
+    trajectory fetch, by which time a chat re-render has replaced the Steps pill, so what got
+    recorded was `<body>`. Closing then called `focus()` on `<body>`: the reader is ejected from the
+    focus order with no indicator and the next Tab restarts at the wordmark.
+
+    This is a SOURCE-ORDER check and says so: the harness drives `trajTakeFocus` directly and never
+    runs `openTrajectory`, so it cannot see where the recording happens. What a source assertion CAN
+    see is that the assignment precedes the first `await` — which is the whole property.
+    """
+    js = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+    start = js.index("async function openTrajectory(")
+    body = js[start : js.index("\n}\n", start)]
+    assert "trajOpenedFrom" in body, (
+        "openTrajectory no longer records the control that opened the drawer, so `trajTakeFocus` "
+        "falls back to whatever is focused after the fetch - which is `<body>`"
+    )
+    assert body.index("trajOpenedFrom") < body.index("await "), (
+        "the trigger is recorded AFTER the first await, by which time a re-render has replaced it"
+    )
+
+
+def test_the_trajectory_renders_before_it_shows_and_focuses():
+    """The other half of the same drawer, and round ten shipped it with nothing pinning it.
+
+    `trajShowDrawer` focuses the drawer's first focusable; `renderTrajectory` then sets
+    `trajEl.run.hidden = runIds.length < 2`, and every persisted "Steps" pill opens with exactly one
+    run id. Focus first and the picker is hidden a moment later, which blurs it to `<body>` — under
+    an `aria-modal` that hides the page behind from a screen reader the whole time.
+
+    A SOURCE-ORDER check for the same reason as the test above: the harness drives `trajTakeFocus`
+    directly and never runs `openTrajectory`. What the order COSTS is executed next door, in
+    `test_web_behaviour.py::test_the_drawer_renders_before_it_takes_focus`, which reproduces the
+    wrong order through the shipped function and lands on `<body>`.
+    """
+    js = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+    start = js.index("async function openTrajectory(")
+    body = js[start : js.index("\n}\n", start)]
+    assert "renderTrajectory(" in body and "trajShowDrawer()" in body, (
+        "openTrajectory no longer renders and shows the drawer; this test has stopped testing it"
+    )
+    assert body.rindex("renderTrajectory(") < body.rindex("trajShowDrawer()"), (
+        "the drawer is shown (and focused) BEFORE it is rendered, so `renderTrajectory` hides the "
+        "just-focused `#traj-run` on every single-run trace and focus falls to `<body>`"
+    )
+
+
+def test_a_failed_answer_offers_the_same_retry_a_failed_capture_does():
+    """**Two tiers answering the same event differently.**
+
+    The chat's failure branch rendered a heading, the reason and the steps pill and stopped — and
+    the composer has already cleared by then, so the reader retyped their question by hand after a
+    failure they did not cause. The Inbox's failed row has offered "Try again" since it shipped.
+
+    The same factory as the successful branch, deliberately: `.turn-regenerate` is hidden by a
+    stylesheet rule on any turn but the last, so a mid-thread failure cannot offer to redo an answer
+    that later turns were built on. A second, bespoke button would not inherit that.
+    """
+    js = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+    start = js.index("  } else if (turn.failed) {")
+    branch = js[start : js.index("\n  } else {", start)]
+    assert "regenerateTurnButton(" in branch, (
+        "a failed answer offers no way to try again, while a failed capture does"
+    )
+    assert "turn-failed-why" in branch, "the failure branch no longer shows the reason"
+
+
+def test_every_endpoint_the_app_calls_has_a_playground_route():
+    """**The playground is the product's front door, and its own guard does not run in CI.**
+
+    `playground/smoke.mjs` extracts every `api("…")` path out of `app.js` and drives it through the
+    shim's router precisely so an endpoint added to the app cannot silently 404 on the static page.
+    `.github/workflows/ci.yml` runs neither `build.py` nor `smoke.mjs`, so the guard was only as
+    good as somebody remembering — and nobody did: round twelve added `POST /inbox/distil/dismiss`
+    to `api.py` and `app.js` and not to the shim, which an independent review found by running the
+    smoke test by hand.
+
+    This is the same correspondence, checked from the source in CI. It cannot replace the smoke
+    test — that one executes the router and this reads a list — but it catches the drift that
+    actually happens, which is a new endpoint nobody mirrored.
+    """
+    app = _blank_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+    shim = (Path(__file__).resolve().parents[1] / "playground" / "src" / "shim.js").read_text(
+        encoding="utf-8"
+    )
+
+    # `api("…")` / `api(`…`)`, with the method from an adjacent `method:` — smoke.mjs's own regex.
+    called = set()
+    for m in re.finditer(r"api\(\s*(?:`([^`]*)`|\"([^\"]*)\")\s*(?:,\s*\{([^}]*)\})?", app):
+        raw = (m.group(1) or m.group(2) or "").replace("${", "\x00").split("\x00")[0]
+        raw = re.sub(r"\$\{[^}]*\}", "X", (m.group(1) or m.group(2) or ""))
+        if not raw.startswith("/"):
+            continue
+        method = re.search(r'method:\s*"(\w+)"', m.group(3) or "")
+        called.add((method.group(1) if method else "GET", raw))
+    assert len(called) > 15, f"the extractor stopped matching; it found {len(called)}"
+
+    # Every `route(METHOD, "pattern")` the shim registers, plus the write-list tuples.
+    #: Three spellings, because the shim uses all three: a plain string, a template literal, and
+    #: the bare `NB` constant (`route("GET", NB, …)`), which is a notebook path on its own.
+    patterns = [
+        (m.group(1), m.group(2) if m.group(2) is not None else m.group(3) or "${NB}")
+        for m in re.finditer(
+            r'route\(\s*"(\w+)"\s*,\s*(?:"([^"]*)"|`([^`]*)`|NB\b)', shim
+        )
+    ]
+    patterns += [
+        (m.group(1), m.group(2)) for m in re.finditer(r'\[\s*"(\w+)"\s*,\s*"([^"]*)"\s*\]', shim)
+    ]
+    # `NB` is the shim's own shorthand for a notebook path segment.
+    compiled = [
+        (method, re.compile("^" + pattern.replace("${NB}", "/notebooks/([^/]+)") + "$"))
+        # `NB` is a JS const, so a pattern using it arrives here as `${NB}` from the template
+        # literal above; a plain string pattern has no placeholder to expand.
+        for method, pattern in patterns
+    ]
+
+    unrouted = sorted(
+        f"{method} {path}"
+        for method, path in called
+        # `X` stands in for an interpolated segment, exactly as smoke.mjs fills it.
+        #: The QUERY STRING is not part of a route: the shim matches on the path and reads `u`
+        #: for the rest, exactly as the real server's handler reads its parameters.
+        if not any(
+            m == method and rx.match(path.split("?")[0].replace("X", "seg"))
+            for m, rx in compiled
+        )
+    )
+    assert not unrouted, (
+        "the app calls an endpoint the playground shim does not route, so the static page answers "
+        "`no playground route` where the real app works:\n  " + "\n  ".join(unrouted)
+    )
+
+
+def test_the_page_declares_a_doctype():
+    """**Without one the whole product renders in quirks mode**, and it did.
+
+    Measured in Chrome, same page, same viewport, the doctype the only change:
+    `document.compatMode` `BackCompat` → `CSS1Compat`, `document.scrollingElement` `body` →
+    `documentElement`, and every vertical position on the reading surface off by 8px
+    (`#stream` 321 → 313, `.node` 337 → 329). Nothing was broken today — there is no `<img>` or
+    `<table>` in the markup and `* { box-sizing: border-box }` neutralises the legacy box model —
+    but this is a product whose design record measures characters-per-line and contrast to two
+    decimals, and `scrollingElement` is the wrong element for any future code that touches it.
+
+    It has to be the very FIRST thing in the file: a comment or a blank line before it is fine to a
+    parser, but anything that is content is not, and `playground/build.py` copies this file.
+    """
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    assert html.lstrip().lower().startswith("<!doctype html>"), (
+        "index.html has no doctype, so every browser renders the app in quirks mode: "
+        f"it starts {html.lstrip()[:60]!r}"
+    )
+    # `<meta charset>` must still land inside the first 1024 bytes or a browser sniffs instead.
+    assert html.index("charset") < 1024
+
+
+def test_no_role_is_declared_without_the_contract_it_promises():
+    """**`role="tablist"` and `role="listbox"` were declared and never fulfilled.**
+
+    `aria-selected` did not appear ONCE anywhere in the product. The four Studio tabs all reported
+    "not selected", so which of Studio / Podcast / References / Notes was showing was conveyed by an
+    underline and nothing else; the notebook menu declared `role="listbox"` with `role="option"` on
+    `<button>`s that had a rename button as a sibling, which is not a valid listbox in any assistive
+    technology. SC 4.1.2 Name, Role, VALUE — the same class round twelve fixed for the citation
+    span, one element short of the two controls the right column and all notebook switching depend
+    on. Claiming a role and keeping none of its contract is worse than claiming none.
+
+    This pins the MARKUP contract, which is what a fifth tab would break. The runtime half — that
+    `show()` moves `aria-selected` and the roving `tabindex` — was verified in a browser and is
+    covered by the `show()` source below.
+    """
+    markup = (WEB / "index.html").read_text(encoding="utf-8")
+    js = _blank_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+
+    tabs = re.findall(r"<button[^>]*role=\"tab\"[^>]*>", markup)
+    assert len(tabs) >= 4, f"the scanner stopped finding tabs: {len(tabs)}"
+    for tab in tabs:
+        assert 'aria-selected="' in tab, f"a tab that never says whether it is selected: {tab[:120]}"
+        assert 'aria-controls="' in tab, f"a tab that names no panel: {tab[:120]}"
+        assert re.search(r'\bid="[^"]+"', tab), f"a tab a panel cannot point back at: {tab[:120]}"
+
+    # `section` too: the phone's panel switch controls the three notebook COLUMNS, which are sections.
+    panels = re.findall(r'<(?:div|section)[^>]*role="tabpanel"[^>]*>', markup)
+    #: NOT one panel per tab: the Guide strip is four tabs over ONE body, which `showKind` re-points
+    #: `aria-labelledby` at as it switches. What has to hold is that every reference RESOLVES, in
+    #: both directions — a count was only ever a proxy for that.
+    assert panels, "the tabpanels are gone"
+    for panel in panels:
+        assert 'aria-labelledby="' in panel, f"a tabpanel with no name: {panel[:120]}"
+    controlled = {re.search(r'aria-controls="([^"]+)"', tab).group(1) for tab in tabs}
+    panel_ids = {re.search(r'\bid="([^"]+)"', panel).group(1) for panel in panels}
+    assert controlled <= panel_ids, (
+        f"a tab points at something that is not a tabpanel: {sorted(controlled - panel_ids)}"
+    )
+
+    # Every `aria-controls` resolves, and every panel points back at a real tab.
+    for attr in re.findall(r'aria-controls="([^"]+)"', markup):
+        assert f'id="{attr}"' in markup, f"aria-controls names {attr!r}, which does not exist"
+    for attr in re.findall(r'aria-labelledby="([^"]+)"', markup):
+        assert f'id="{attr}"' in markup, f"aria-labelledby names {attr!r}, which does not exist"
+
+    # The invalid listbox is gone and must not come back — an option may not be an interactive
+    # element and may not have interactive siblings, which is exactly what that menu is made of.
+    assert 'role="listbox"' not in markup and 'role="option"' not in markup
+    #: `createElement("option")` is a real `<option>` in a real `<select>` and is fine; what is
+    #: banned is SETTING the role on something that is not one, which is how this got here.
+    assert not re.search(r'setAttribute\(\s*"role"\s*,\s*"(option|listbox)"', js), (
+        "role=option/listbox is being set from script instead of in the markup"
+    )
+
+    # A tablist is ONE tab stop with arrow keys inside it, not four.
+    assert "aria-selected" in js, "nothing ever updates the selected tab"
+    assert "ArrowRight" in js and "ArrowLeft" in js, "a tablist with no roving is half a tablist"
+
+
+def test_type_and_spacing_come_from_a_scale_rather_than_a_literal():
+    """**The colour system was tokenised and argued to three decimals; the other two axes were not
+    tokenised at all.**
+
+    24 distinct `rem` font sizes and 29 distinct `rem` spacing values had accumulated — ten of the
+    font sizes between 0.68 and 0.85rem, steps of 0.16-0.32px that nobody can perceive and that
+    guaranteed no two labels in different components ever agreed. Inside the SAME Inbox failure
+    banner: `.distil-error` at 0.78 with `.distil-error-count` at 0.76. The strongest evidence it
+    was drift rather than a decision is that the Inbox rebuild reached for a scale and, finding
+    none, defined `--ib-gap` scoped to itself.
+
+    This is the rule that keeps it from coming back, and it is a rule about LITERALS: a new
+    component may use any step it likes and may not invent a value between two of them.
+    """
+    css = _strip_css_comments((WEB / "style.css").read_text(encoding="utf-8"))
+    assert "--text-xs:" in css and "--space-3:" in css, "the scales are gone"
+
+    #: A CUSTOM-PROPERTY declaration is where a literal belongs — that is what defining a scale is,
+    #: and a surface is free to name its own rhythm in terms of one (`--ib-gap: var(--space-5)`).
+    #: Every other declaration has to name a step. Scanned by LINE rather than by slicing at the
+    #: first `}`, which lands somewhere unrelated the moment a media query or a font stack moves.
+    body = "\n".join(
+        line for line in css.splitlines() if not re.match(r"\s*--[\w-]+\s*:", line)
+    )
+
+    stray_type = re.findall(r"font-size:\s*([\d.]+rem)", body)
+    assert not stray_type, (
+        "a font-size that is not a step on the ramp — pick the nearest `--text-*` or add a step "
+        f"with an argument for it: {sorted(set(stray_type))}"
+    )
+
+    props = r"(?:padding|margin|gap|row-gap|column-gap)(?:-(?:top|right|bottom|left|inline|block))?"
+    stray_space = []
+    for m in re.finditer(rf"\b({props}):\s*([^;{{}}]+);", body):
+        stray_space += [f"{m.group(1)}: {v}" for v in re.findall(r"[\d.]+rem", m.group(2))]
+    assert not stray_space, (
+        "a spacing value that is not a step on the scale — pick the nearest `--space-*`: "
+        f"{sorted(set(stray_space))}"
+    )
+
+    # The ramp stays a RAMP: strictly ascending, so "the next size up" is always well defined.
+    ramp = [v for _, v in sorted(_type_ramp(css).items(), key=lambda kv: kv[1])]
+    assert ramp == sorted(set(ramp)), f"the type ramp has a duplicate or is unordered: {ramp}"
+    assert len(ramp) <= 10, f"{len(ramp)} type steps is a list, not a ramp"
+
+
+def test_no_stylesheet_rule_styles_a_class_the_markup_never_creates():
+    """**Three rules styled `.tab-icon` and nothing in the product had ever been given that class.**
+
+    The round-thirteen ARIA pass rewrote the four Studio tab buttons to add `id`/`aria-controls`/
+    `aria-selected` and dropped their `<span class="tab-icon">✦︎</span>` in the same edit. The CSS
+    that turns the collapsed rail into an ICON strip survived, so collapsing it — Enter on the
+    focused splitter, a double-click on the grip, or any drag under 170px, all persisted to
+    localStorage — produced four blank 32px squares: Guide, Podcast, References and Notes gone, with
+    no glyph, no label and no visible way back.
+
+    `DESIGN.md` §10 already records this exact shape once (`.distil-btn` "appeared here and in a
+    focus rule, and matched nothing in either place"), and nothing failed on either. A class is a
+    contract between two files; this checks both ends still exist.
+    """
+    css = _strip_css_comments((WEB / "style.css").read_text(encoding="utf-8"))
+    markup = (WEB / "index.html").read_text(encoding="utf-8")
+    js = (WEB / "app.js").read_text(encoding="utf-8")
+    i18n = (WEB / "i18n.js").read_text(encoding="utf-8")
+    written = markup + js + i18n
+
+    #: Classes a RULE selects on. Pseudo-classes, ids, elements and attribute selectors are other
+    #: things; this is only about `.name`.
+    styled = set()
+    for selector, _ in _rules(css):
+        styled.update(re.findall(r"\.([A-Za-z][\w-]*)", selector))
+
+    #: A class the product never writes — in markup, in `elt("div", "name")`, in `classList.add`,
+    #: in a template, or in a translated string. Searched as a WORD so `.node` does not match
+    #: `node-title`.
+    def is_written(name: str) -> bool:
+        if re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", written):
+            return True
+        #: Built at run time — `` `notice-${tone}` ``, `` `kind-${event.kind}` ``. A literal search
+        #: cannot see those, and pretending it can would make this test demand that every dynamic
+        #: class be spelled out somewhere, which is worse than the drift it catches.
+        parts = name.split("-")
+        return any(
+            f"{'-'.join(parts[:i])}-${{" in js for i in range(1, len(parts))
+        )
+
+    orphans = sorted(name for name in styled if not is_written(name))
+    assert not orphans, (
+        "these classes are styled and never created, so the rules are dead and whatever they were "
+        f"drawing is missing: {orphans}"
+    )
+
+
+def test_the_client_only_reads_guide_fields_the_schema_declares():
+    """**`event.what` existed exactly once in the product and the server has never sent it.**
+
+    Copy on a Timeline therefore produced a list of bare dates with every event's text dropped —
+    and the harness fixture had been written to match that line rather than the wire, so the
+    assertion passed on an input the server cannot produce. A fixture written against the
+    implementation tests that the implementation agrees with itself.
+
+    So this reads the SCHEMA. Every `event.x` / `item.x` / `utterance.x` in `app.js` must be a field
+    the corresponding pydantic model declares, which is the one direction a fixture cannot fake.
+    """
+    from rlm_notebook import schema
+
+    whole = _blank_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+
+    def _body(name):
+        at = whole.index(f"function {name}(")
+        return whole[at : whole.index("\n}\n", at)]
+
+    #: Scoped to the functions that CONSUME each payload, and no wider. `event` is also what every
+    #: DOM handler in this file calls its argument, so a whole-file scan reads `event.key` and
+    #: `event.preventDefault` as timeline fields — noisy enough that the test would get switched
+    #: off, and a test that gets switched off is worse than none. That is why
+    #: `renderPodcastUtterance` appears under `utterance` only: the single `event.` inside it is a
+    #: click handler's DOM event, not a timeline entry.
+    #: `citations` is attached by `api.py`'s response models rather than by the guide schema
+    #: itself, and `verified`/`reason` likewise — they are on the wire, just not on these classes.
+    added_by_the_api = {"citations", "verified", "reason"}
+    for prefix, model, functions in (
+        ("event", schema.TimelineEvent, ("renderGuideContent", "guideMarkdown")),
+        ("item", schema.FAQItem, ("renderGuideContent", "guideMarkdown")),
+        ("utterance", schema.Utterance, ("renderPodcastUtterance",)),
+    ):
+        js = "".join(_body(name) for name in functions)
+        declared = set(model.model_fields) | added_by_the_api
+        read = set(re.findall(rf"\b{prefix}\.([a-z_][\w]*)\b", js))
+        # Method calls and array helpers are not fields.
+        read -= {"map", "forEach", "filter", "join", "length", "trim", "slice", "push"}
+        unknown = sorted(read - declared)
+        assert not unknown, (
+            f"`app.js` reads {prefix}.{{{', '.join(unknown)}}}, which {model.__name__} does not "
+            f"declare — the server never sends it, so whatever reads it gets `undefined`. "
+            f"Declared: {sorted(model.model_fields)}"
+        )
+
+
+def test_the_copy_headings_match_the_guide_tabs_they_came_from():
+    """`GUIDE_KIND_LABELS` is the English heading on a copied guide, and English has no dictionary —
+    its words live in `index.html`. A second list drifts, so this makes the two fail together."""
+    js = (WEB / "app.js").read_text(encoding="utf-8")
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    literal = re.search(r"const GUIDE_KIND_LABELS = \{(.*?)\};", js).group(1)
+    labels = dict(re.findall(r'(\w+): "([^"]+)"', literal))
+    for kind, label in labels.items():
+        tab = re.search(rf'id="gtab-{kind}"[^>]*>(.*?)</button>', html, re.DOTALL)
+        assert tab, f"no #gtab-{kind} in index.html"
+        visible = re.sub(r"<[^>]+>", "", tab.group(1))
+        assert label in visible, f"#gtab-{kind} reads {visible.strip()!r}, the Copy heading says {label!r}"
+    assert set(labels) == set(re.findall(r'id="gtab-(\w+)"', html))
+
+
+def test_the_touch_escape_comes_after_every_rule_it_overrides():
+    """**The touch escape existed and lost the cascade.** `@media (any-hover: none) { .save-as-note
+    { opacity: 1 } }` sat mid-file, and a later `.save-as-note { opacity: 0 }` — same specificity —
+    beat it, so on a phone the only route into Notes measured opacity 0 in a real browser while
+    `test_every_hover_revealed_control_has_a_touch_escape` passed. A media query adds no
+    specificity; source ORDER decides a tie, and that is a property of this file a test can read.
+    """
+    css = _strip_css_comments((WEB / "style.css").read_text(encoding="utf-8"))
+    block = re.search(r"@media \(any-hover: none\) \{(.*?)\n\}", css, re.DOTALL)
+    assert block, "no touch escape at all"
+    revealed = set(re.findall(r"\.([a-zA-Z][\w-]*)", block.group(1).split("{")[0]))
+    assert revealed, "the touch escape names no controls"
+    after = css[block.end():]
+    late = [
+        selector.strip()
+        for selector, body in _rules(after)
+        if re.search(r"opacity:\s*0\s*;", body)
+        for selector in selector.split(",")
+        if selector.strip().lstrip(".") in revealed
+    ]
+    assert not late, f"these rules come AFTER the touch escape and override it on a phone: {late}"
+
+
+def test_no_nodelist_is_called_with_an_array_only_method():
+    """**A NodeList has `forEach` and nothing else of Array's.** `markRunning` called `tabs.find(...)`
+    on `document.querySelectorAll(...)`, which throws — and it ran before the request was sent, so
+    every Studio guide would have stalled at "Starting" forever. 1040 tests stayed green; a real
+    browser caught it. Any name bound to `querySelectorAll` must be spread before `find`/`map`/...
+    """
+    js = _blank_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
+    array_only = r"find|findIndex|filter|map|some|every|reduce|indexOf|includes|slice|at"
+    bindings = list(re.finditer(r"\b(?:const|let|var)\s+(\w+)\s*=\s*[\w.]*querySelectorAll\(", js))
+    misuse = []
+    for binding in bindings:
+        # SCOPED to the rest of the enclosing top-level function: `tabs` is a NodeList in one
+        # function and a spread Array in several others.
+        end = js.find("\n}\n", binding.end())
+        scope = js[binding.end() : end if end != -1 else len(js)]
+        name = binding.group(1)
+        misuse += [f"{name}.{m}" for m in re.findall(rf"(?<![.\w]){name}\.({array_only})\(", scope)]
+    assert bindings, "the scan found no querySelectorAll bindings at all — it is not reading app.js"
+    assert not misuse, f"NodeList used as an Array (spread it first, `[...x]`): {misuse}"

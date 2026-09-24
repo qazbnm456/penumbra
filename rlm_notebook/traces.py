@@ -3,8 +3,8 @@
 Until this slice there was no retention policy anywhere in this project — files accumulated
 forever, stated as a known gap in AGENTS.md invariant 29 and in `api.citation_turn`'s docstring.
 They are also the one artifact here that can contain FULL ingested source text (the model echoes
-spans of the corpus into its REPL output while reading it), so "keeps everything, forever, with no
-authentication in front of it" (invariant 25) is a worse default than it would be for, say, logs.
+spans of the corpus into its REPL output while reading it), so "keeps everything, forever, for
+every holder of the API token" (invariant 25) is a worse default than it would be for, say, logs.
 
 Host-side housekeeping only: no `dspy`/`rlm_harness` import, nothing model-facing — the same posture
 `tts.py` takes, so importing this from `api.py` doesn't reopen invariant 21.
@@ -146,6 +146,24 @@ _BULKY_INPUTS = frozenset({"sources", "sources_excerpt", "history", "questions",
 _INPUT_MAX = 200
 
 
+def _effective_max_tokens(config: object) -> int | None:
+    """What `setup()` will actually hand the models: the requested value, clamped to the lower of
+    the two seats' own ceilings. Falls back to the requested value when the clamp cannot be
+    consulted, because a trace must never fail to be written over a metadata lookup.
+    """
+    wanted = getattr(config, "max_tokens", None)
+    if not isinstance(wanted, int):
+        return wanted
+    try:
+        from .config import _max_tokens_for
+
+        main = getattr(config, "main_model", "") or ""
+        sub = getattr(config, "sub_model", "") or main
+        return min(_max_tokens_for(main, wanted), _max_tokens_for(sub, wanted))
+    except Exception:  # noqa: BLE001 - a trace is worth more than a precise budget note
+        return wanted
+
+
 def run_meta(task: str, config: object, kwargs: dict) -> dict:
     """What a run was CONFIGURED with and what it was ASKED to do, stamped once at the top of its
     own trace (invariant 70). The Trajectory drawer's "Initial state" panel is built from this.
@@ -164,7 +182,12 @@ def run_meta(task: str, config: object, kwargs: dict) -> dict:
         "main_model": getattr(config, "main_model", None),
         "sub_model": getattr(config, "sub_model", None),
         "max_iterations": getattr(config, "max_iterations", None),
-        "max_tokens": getattr(config, "max_tokens", None),
+        # **The budget the run ACTUALLY had, not the one that was asked for.** `config.max_tokens`
+        # is the operator's requested value; `setup()` clamps it to what the models accept and
+        # every real call uses the clamped number. The Trajectory drawer's Initial-state panel
+        # exists to answer "how much rope did it have", and it was answering 32768 for a run that
+        # had 16384 — the one artifact designed for the question, giving the wrong number.
+        "max_tokens": _effective_max_tokens(config),
         "max_retries": getattr(config, "max_retries", None),
     }
     sources = kwargs.get("sources") or kwargs.get("sources_excerpt")

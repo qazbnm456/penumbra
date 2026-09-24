@@ -1,8 +1,12 @@
 # Invariant 31 — The source text endpoint is a new exposure
 
 **`GET /notebooks/{id}/sources/{source_id}` returns a source's FULL text — a materially
-different exposure than every other endpoint except the trace pair (invariant 29).** Before it,
-no caller could read more of a source than a citation's short `quote`. It reuses
+different exposure, shared now with the trace pair (invariant 29) and with Tier 0's
+`GET /inbox/{node_id}/source`, whose own docstring names this file.** Before the first of them, no
+caller could read more of a source than a citation's short `quote`; the count in this sentence was
+“every other endpoint except” one, and it went stale the moment the Inbox shipped a second full-text
+reader. What does not change is the rule: an endpoint that hands back whole documents is a decision,
+said out loud, not one more getter. It reuses
 `corpus.Corpus.get(source_id)` — the SAME lookup `citations.py` already performs on every
 request — rather than a second hand-rolled scan. Invariant 25's posture covers this in spirit
 (the model already has the whole corpus), but the SURFACE is new and worth its own line.

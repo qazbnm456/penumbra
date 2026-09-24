@@ -643,7 +643,7 @@ def test_a_rejection_verdict_can_carry_the_models_own_coordinate():
 
     NOT a new hole and not tightened: the model needs its real coordinate back to fix the citation,
     and a trace is already the one artifact here that can hold full ingested source text in front of
-    an API with no authentication (invariants 25 and 29). What was wrong was the sentence.
+    an API with no authorization (invariants 25 and 29). What was wrong was the sentence.
     """
     import json
     import tempfile

@@ -26,6 +26,17 @@ jobs:
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           enable-cache: true
+      # `tests/test_readable_error.py` RUNS the shipped `readableError` out of `app.js` through
+      # node, because the test it replaced re-compiled that function's regex literals with Python's
+      # `re` and never called it - and duly stayed green while the function returned the empty
+      # string for the commonest provider failures. Pinned here rather than left to the runner
+      # image's default, and the test FAILS rather than skips when node is missing: a test that
+      # vanishes when a tool is absent makes a local run greener than CI, which is the trap
+      # AGENTS.md's Verify section is about.
+      - name: Install node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
       - name: Sync
         # --extra api: so tests/test_api.py (which imports rlm_notebook.api at module scope) is
         # actually collected and run, not silently skipped. The `api` extra is opt-in for END

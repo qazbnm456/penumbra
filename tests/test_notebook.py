@@ -611,7 +611,7 @@ def test_a_new_source_never_reuses_a_removed_sources_id():
 
     Same shape as the note-id collision invariant 32 documents, one field over.
     """
-    from rlm_notebook.notebook import append_sources, next_source_id, remove_source
+    from rlm_notebook.notebook import append_sources, remove_source
     from rlm_notebook.schema import Notebook, Source, SourceBlock
 
     def src(index: int, text: str) -> Source:
@@ -622,14 +622,16 @@ def test_a_new_source_never_reuses_a_removed_sources_id():
             blocks=[SourceBlock(locator="whole", text=text)],
         )
 
-    notebook = Notebook(id="x", sources=[src(1, "one"), src(2, "two"), src(3, "three")])
+    notebook = Notebook(id="x")
+    append_sources(notebook, [src(1, "one"), src(2, "two"), src(3, "three")])
+    assert [s.id for s in notebook.sources] == ["s1", "s2", "s3"]
     remove_source(notebook, "s2")
     assert [s.id for s in notebook.sources] == ["s1", "s3"]
 
-    assert next_source_id(notebook) == "s4"  # NOT s3, which is still alive
     append_sources(notebook, [src(99, "brand new")])
     ids = [s.id for s in notebook.sources]
     assert len(ids) == len(set(ids)), ids
+    assert ids == ["s1", "s3", "s4"]
     # ...and the surviving source still resolves to its OWN text.
     assert next(s for s in notebook.sources if s.id == "s3").blocks[0].text == "three"
 
@@ -640,6 +642,143 @@ def test_a_new_source_never_reuses_a_removed_sources_id():
         remove_source(notebook, "s99")
     # Remaining ids are never renumbered by a removal (invariant 12).
     assert [s.id for s in notebook.sources] == ["s1", "s3", "s4"]
+
+
+def test_removing_the_HIGHEST_source_does_not_free_its_id():
+    """The half `max(live ids) + 1` never covered, and the reason `source_seq` is persisted.
+
+    Both tests written for invariant 12 removed a MIDDLE source, where the max is unchanged and the
+    old rule happens to be right. Remove the TOP one and its id is free again — the next source
+    takes it, and a citation saved against the old `s3` verifies TRUE (invariant 5 checks that a
+    coordinate exists, never that it still means the same thing) while opening text that never
+    contained the quote. `api.py` also drops the Inbox membership rows for a removed source on the
+    stated promise that its id "will never come back".
+    """
+    from rlm_notebook.notebook import append_sources, next_source_id, remove_source
+    from rlm_notebook.schema import Notebook, Source, SourceBlock
+
+    def src(origin: str, text: str) -> Source:
+        return Source(
+            id="s0", kind="text", origin=origin, blocks=[SourceBlock(locator="whole", text=text)]
+        )
+
+    notebook = Notebook(id="x")
+    append_sources(notebook, [src("a", "one"), src("b", "two"), src("c", "three")])
+    remove_source(notebook, "s3")
+    appended = append_sources(notebook, [src("d", "brand new")])
+    assert appended[0].id == "s4", "s3 was allocated once and must never be allocated again"
+    assert [s.id for s in notebook.sources] == ["s1", "s2", "s4"]
+
+    # The mark only ever RISES, so it survives emptying the notebook completely.
+    for source_id in ["s1", "s2", "s4"]:
+        remove_source(notebook, source_id)
+    assert next_source_id(notebook) == "s5"
+
+
+def test_a_notebook_saved_before_source_seq_recovers_its_mark_from_what_it_cites():
+    """No migration step: `source_seq` defaults to None on every notebook already on disk, and the
+    first allocation recovers a mark from the ids the FILE still references — which is where the
+    damage would land, since an id nothing points at is harmless to reuse.
+
+    Deliberately weaker than the counter (it cannot see the Inbox's membership rows, which live in
+    another store), which is why it is only the fallback for a file written before the field.
+    """
+    from rlm_notebook.notebook import append_sources, next_source_id
+    from rlm_notebook.schema import (
+        Answer,
+        ChatTurn,
+        Citation,
+        Notebook,
+        Overview,
+        Podcast,
+        Source,
+        SourceBlock,
+    )
+
+    def src(source_id: str) -> Source:
+        return Source(
+            id=source_id, kind="text", origin=source_id, blocks=[SourceBlock(locator="w", text="t")]
+        )
+
+    def loaded(**kwargs) -> Notebook:
+        notebook = Notebook(id="x", sources=[src("s1")], **kwargs)
+        assert notebook.source_seq is None, "the point of the fallback"
+        return notebook
+
+    cited = loaded(
+        turns=[
+            ChatTurn(
+                question="q",
+                answer=Answer(
+                    text="t", citations=[Citation(source_id="s7", locator="w", quote="gone")]
+                ),
+            )
+        ]
+    )
+    assert next_source_id(cited) == "s8"
+
+    assert next_source_id(loaded(overview=Overview(text="o", source_ids=["s4"]))) == "s5"
+    assert (
+        next_source_id(
+            loaded(overview=Overview(text="o", citations=[Citation(source_id="s6", locator="w", quote="q")]))
+        )
+        == "s7"
+    )
+    assert next_source_id(loaded(podcast=Podcast(source_ids=["s9"]))) == "s10"
+
+    # Nothing referenced: the old behaviour, and correct — an id no saved artifact points at cannot
+    # be silently repointed by being reused.
+    plain = loaded()
+    assert next_source_id(plain) == "s2"
+    # And once recovered, the mark is authoritative: a second allocation never repeats the first.
+    assert next_source_id(plain) == "s3"
+    append_sources(plain, [src("new")])
+    assert [s.id for s in plain.sources] == ["s1", "s4"]
+
+
+def test_every_persisted_source_id_field_is_covered_by_the_recovery_scan():
+    """A tripwire, for the one way the fallback above rots: a new artifact that stores a source id.
+
+    `_ever_referenced` walks a hand-written list of paths. Add `Notebook.digest.source_ids` and the
+    scan keeps passing while quietly covering less, which is worse than not having it — so this
+    walks the schema instead and fails if it finds a source-id field the list does not name.
+    """
+    from pydantic import BaseModel
+
+    from rlm_notebook.notebook import _SOURCE_ID_FIELDS
+    from rlm_notebook.schema import Notebook
+
+    found: set[tuple[str, ...]] = set()
+
+    def walk(model: type[BaseModel], path: tuple[str, ...], seen: frozenset) -> None:
+        if model in seen:
+            return
+        seen = seen | {model}
+        for name, field in model.model_fields.items():
+            here = (*path, name)
+            if name in ("source_id", "source_ids"):
+                found.add(here)
+            for candidate in _models_in(field.annotation):
+                walk(candidate, here, seen)
+
+    def _models_in(annotation) -> list[type[BaseModel]]:
+        import typing
+
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            return [annotation]
+        return [
+            inner
+            for arg in typing.get_args(annotation) or ()
+            for inner in _models_in(arg)
+        ]
+
+    walk(Notebook, (), frozenset())
+    assert found, "the walk found nothing — it has stopped testing anything"
+    assert found == set(_SOURCE_ID_FIELDS), (
+        "a source-id field the recovery scan does not read:\n"
+        f"  schema has:  {sorted(found)}\n"
+        f"  scan covers: {sorted(_SOURCE_ID_FIELDS)}"
+    )
 
 
 

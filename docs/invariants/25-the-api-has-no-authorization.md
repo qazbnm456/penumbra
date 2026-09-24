@@ -1,21 +1,31 @@
-# Invariant 25 — The API has no authentication
+# Invariant 25 — The API has no authorization
 
-**This API has NO authentication or authorization of any kind.** Any caller can create, extend,
+> **The AUTHENTICATION half of this invariant is superseded by [invariant
+> 77](77-the-local-api-token.md).** Every request now needs a token. This file was called
+> "the API has no authentication" and was renamed rather than left to say something false.
+>
+> **Everything below still holds.** Authentication and authorization are different questions, and
+> only the first one was answered: the token authenticates THE APPLICATION, not a person, so every
+> caller holding it remains fully privileged over every notebook and over global settings. The
+> loopback default is likewise unchanged — invariant 77 is a second layer, not a licence to drop
+> the first.
+
+**This API has NO authorization of any kind.** Any caller who holds the token can create, extend,
 query, `ask`/`guide` against, cancel a run for, RENAME, or irreversibly DELETE from any
 `notebook_id` — THREE deletes, not one: a source (`DELETE .../sources/{id}`), a note
 (`DELETE .../notes/{id}`) and the whole conversation (`DELETE .../turns`) — and can mutate GLOBAL
 state through `PUT /settings` (invariant 41). There is no concept of an owner. Meant for local or
 otherwise fully-trusted-network use only; do not expose it to an untrusted network without adding
-auth first. Both `api.py`'s module docstring and `README.md` say so — don't let that warning
-quietly disappear in a later edit.
+real per-user auth first. Both `api.py`'s module docstring and `README.md` say so — don't let that
+warning quietly disappear in a later edit.
 
-**SO THE BINDING IS THE ACCESS CONTROL, AND IT LIVES IN CODE.** `rlm-notebook serve`
-(`cli._cmd_serve`) binds `127.0.0.1` by default. With no authentication, which interface the
-server listens on is not a deployment detail beside the real access control — it IS the access
-control, entirely, and a rule that important cannot live only in a paragraph somebody has to read.
-Before it, the documented way to start the server was `uvicorn rlm_notebook.api:app`, whose own
-default is loopback but which invites a `--host 0.0.0.0` nobody warns about; `api.py`'s module
-docstring named exactly that command, and FastAPI serves that docstring at `/docs`.
+**SO THE BINDING IS STILL PART OF THE ACCESS CONTROL, AND IT LIVES IN CODE.** `rlm-notebook serve`
+(`cli._cmd_serve`) binds `127.0.0.1` by default. It used to be the access control ENTIRELY; with
+invariant 77 it is one of two layers, and it is the layer that decides who can even try. A rule
+that important cannot live only in a paragraph somebody has to read. Before it, the documented way
+to start the server was `uvicorn rlm_notebook.api:app`, whose own default is loopback but which
+invites a `--host 0.0.0.0` nobody warns about; `api.py`'s module docstring named exactly that
+command, and FastAPI serves that docstring at `/docs`.
 
 A non-loopback `--host` is ALLOWED, not refused. A genuinely trusted network is a use this
 invariant already sanctions, and refusing would be the CLI overruling an operator who knows their
@@ -38,8 +48,8 @@ on every start, and it is not wrong to: a bare `-p 8000:8000` really does put th
 interface of the host.
 
 `GET /notebooks` makes every id enumerable without knowing it, and `NotebookSummary.title` is
-model-authored prose derived from a corpus excerpt (invariant 37) — so an unauthenticated caller
-enumerating it gets a one-line summary of every notebook's subject matter. Inside the same
+model-authored prose derived from a corpus excerpt (invariant 37) — so any caller holding the token
+and enumerating it gets a one-line summary of every notebook's subject matter. Inside the same
 accepted posture, but no longer "metadata only".
 
 ---

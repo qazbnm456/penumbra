@@ -23,8 +23,8 @@ however that name resolves — so it never sees the resolved address, and the DN
 the only layer that does. The first version of this invariant claimed "no value makes a loopback or
 cloud-metadata URL fetchable ... that check is syntactic", which was true only for literal-IP hosts
 and false for exactly the threat the guard exists to stop. Under `0.0.0.0/0` a public-looking
-hostname resolving to `127.0.0.1` was fetchable end to end, on an API with no authentication
-(invariant 25).
+hostname resolving to `127.0.0.1` was fetchable end to end, on an API with no authorization
+behind its token (invariant 25).
 
 **The test that "pinned" it was vacuous, and that is the more useful half of the lesson.** It used
 literal-IP URLs, which `is_safe_url` rejects before `resolved_host_is_safe` is consulted — so it

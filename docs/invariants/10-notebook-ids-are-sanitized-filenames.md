@@ -10,7 +10,7 @@ blow past a path-component length limit.
 Arabic, Cyrillic and emoji character, so a notebook named in Chinese reduced to the empty string
 and was rejected. The id is NFC-normalized before hashing (two spellings reach the same file)
 and encoded with `surrogatepass` — load-bearing, because `api._derive_run_id` calls `slug()`
-OUTSIDE every error wrapper, which would make a raising `slug` an unauthenticated 500. It
+OUTSIDE every error wrapper, which would make a raising `slug` a bare HTTP 500. It
 affects the FILENAME only: `Notebook.id` stores what the user typed and
 `list_notebook_summaries` reports that stored value, so non-Latin names round-trip. A genuinely
 empty or whitespace-only id still raises.

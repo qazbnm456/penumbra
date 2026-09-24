@@ -8,7 +8,8 @@ rename the failure semantics of a model call for no reason. `naming.normalize_ti
 `clean_title` because the two callers need OPPOSITE things from an unusable value: generation falls
 back to a derived label (a notebook must end up with one), a rename returns 422, because silently
 substituting a derived title for what someone typed would be the UI lying. It still normalises,
-because this API has no authentication and "a person typed it" is not a provenance claim.
+because this API authenticates the APP rather than a person (invariants 25 and 77), so "a person
+typed it" is not a provenance claim.
 
 **A model-authored title is NOT unique, so the picker orders by file mtime.** Since invariant 37
 stopped showing the id anywhere, "which one did I touch last" is the only thing left to tell two

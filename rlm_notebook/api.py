@@ -20,7 +20,8 @@ dropdown values), `PUT /notebooks/{id}/title` (rename — a separate VERB from g
 invariant 53), `DELETE /notebooks/{id}/sources/{source_id}`, `DELETE /notebooks/{id}/turns` (clear
 the conversation), `POST /notebooks/{id}/runs/{run_id}/cancel` (cancel ONE run, invariant 47) and
 `GET /notebooks/{id}/runs/{run_id}/trajectory` (the drawer's decomposition). Note the three
-DELETEs and the global `PUT /settings`: all unauthenticated, like everything else here. `/audio` is two
+DELETEs and the global `PUT /settings`: a token holder can reach all of them, because holding the
+token is the only privilege level there is. `/audio` is two
 host-side steps, not one: `GeneratePodcastScript` runs in the same isolated subprocess `ask`/`guide`
 already use, and TTS synthesis (`tts.py`) runs AFTER that subprocess returns, in-process here — see
 `audio()`'s own docstring for why that split is safe and doesn't touch `worker.py`/`runner.py`
@@ -40,17 +41,37 @@ spawning the subprocess (a hard uniqueness gate, mapped to a 409 on collision �
 unlikely, concern once a client partly controls the id). See AGENTS.md invariant 29 for why a
 reasoning-trace SSE endpoint was originally deferred as unbuildable, and what changed.
 
+**The Inbox (Tier 0)** is a second, separate surface: `GET /inbox` (the paged listing, plus an
+`undistilled` count so a summary pass's cost is knowable before it runs), `POST /inbox` (capture —
+http(s) URLs and pasted text, NEVER a local path, invariant 26), `POST /inbox/upload` (a file's raw
+bytes, capped from `Content-Length` before the body is parsed, invariant 30), `GET /inbox/status`,
+`POST /inbox/cancel`, `POST /inbox/distil` (the summary pass, which SPENDS — invariant 80),
+`GET /inbox/{node_id}`, `GET /inbox/{node_id}/source` (its FULL text — the same materially-different
+exposure invariant 31 records, one tier down), `DELETE /inbox/{node_id}` and
+`POST /inbox/{node_id}/promote` (copy it into a notebook as a real, citable source; the node is not
+consumed). Nothing here ever assembles a corpus blob, which is how thousands of captured nodes
+coexist with invariant 8's cap on a notebook (invariant 78).
+
 This module also serves the web UI (`rlm_notebook/web/`, a zero-build static HTML/CSS/JS app) at
 `/`, mounted AFTER every API route below so the API always wins on a path collision.
 
-**This API has NO authentication or authorization of any kind** (AGENTS.md invariant 25) — any
-caller can create/extend/query/ask/cancel any `notebook_id`. It is meant for local/trusted-network
-use only (the same posture ctx-distillery's studio takes); do not expose it to an untrusted network
-without adding auth first, which this slice does not attempt. The trace stream and citation-turn
+**Every request needs the API token** (AGENTS.md invariant 77, `auth.py`) — present it as
+`Authorization: Bearer <token>`, or as a `?token=` query parameter where a header is impossible
+(`EventSource`, `<audio src>`, a download link). `rlm-notebook serve` prints the token it minted;
+`RN_API_TOKEN` supplies one instead. The static web assets are the only thing served without it,
+because the page that reads the token has to load first.
+
+**There is still NO AUTHORIZATION of any kind** (AGENTS.md invariant 25, whose authentication half
+invariant 77 supersedes) — the token authenticates THE APPLICATION, not a person, and any caller
+holding it can create/extend/query/ask/cancel/delete any `notebook_id` and rewrite global settings.
+It remains meant for local/trusted-network use; the token is what makes "local" mean "this app"
+rather than merely "this machine", which matters because any page in the user's browser can also
+reach 127.0.0.1. The trace stream and citation-turn
 lookup endpoints are a MATERIALLY DIFFERENT exposure than every other endpoint here — unlike
 `GET /notebooks/{id}` (metadata only) or `ask`/`guide` (model-authored prose and short citation
 quotes), a trace can contain full ingested source text the model echoed while reading it. Treat
-this as a sharper version of the same no-auth posture, not a new category of risk this project
+this as a sharper version of the same no-authorization posture, not a new category of risk this
+project
 hasn't already accepted, but never let documentation imply the trace endpoints are as low-exposure
 as the rest. Trace files are pruned on a retention policy (`traces.py`) rather than kept forever,
 which bounds how long that exposure lasts — it does not remove it.
@@ -60,45 +81,55 @@ which re-reads the file under a per-notebook lock and applies only this request'
 a snapshot read before a long-running step — a model run, an ingestion — silently destroyed
 whatever else was written meanwhile; see AGENTS.md invariant 34.
 
-Run it with: `rlm-notebook serve` (needs the `api` extra). It binds 127.0.0.1 by default,
-which given the paragraph above is the whole access-control story; `--host` opts out of that
-and says so when it does.
+Run it with: `rlm-notebook serve` (needs the `api` extra). It binds 127.0.0.1 by default and
+requires the token on every request; `--host` opts out of the first of those and says so when it
+does. The `Host` header is also checked against DNS rebinding (`auth.host_is_allowed`).
 """
 
 #: THIS DOCSTRING IS SERVED. `FastAPI(description=__doc__)` below puts it on `/docs`, so it is
 #: read by API consumers and not only by whoever opens this file. It used to end by naming the raw
 #: uvicorn invocation, which routed every one of those readers around `serve`'s loopback default —
-#: the one thing standing between an unauthenticated API and the network. Explanations for a code
+#: at the time the one thing standing between an unauthenticated API and the network. Explanations
+#: for a code
 #: reader belong in a comment like this one, which `__doc__` does not carry.
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import collections
 import contextlib
 import json
 import logging
 import os
 import signal
+import sys
 import tempfile
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from python_multipart.exceptions import MultipartParseError
+from starlette.formparsers import MultiPartException
 
-from . import runner
+from . import auth, distill, inbox, intake, runner
 from .audio import GeneratePodcastScript
 from .citations import locate_answer_spans, strip_markers, verify_citations
 from .config import (
     NotebookConfig,
+    auto_distil_enabled,
+    auto_distil_max_per_batch,
+    max_corpus_chars,
     max_trace_files,
     max_upload_bytes,
     output_language,
     settings_state,
+    setup,
     trace_retention_seconds,
     tts_voice_map,
     write_settings,
@@ -114,6 +145,7 @@ from .notebook import (
     clear_audio,
     corpus_of,
     delete_note,
+    delete_notebook,
     existing_origins,
     find_audio,
     history_text,
@@ -136,6 +168,7 @@ from .schema import (
     ChatTurn,
     Citation,
     KeyInsight,
+    Node,
     Notebook,
     Overview,
     Podcast,
@@ -189,11 +222,141 @@ async def _lifespan(_app: FastAPI):
     every other bad `RN_*` value (invariant 9): loud beats silently doing something else."""
     trace_retention_seconds()
     max_trace_files()
+    # Read HERE so a malformed value refuses startup, which is what `config.auto_distil_max_per_batch`
+    # and `.env.example` both promise. Its only other caller is the intake worker's idle hook, and a
+    # `SystemExit` raised there ended the worker thread silently — `threading` swallows it without a
+    # traceback, so captures just stopped being parsed. Loud at boot beats silent at run time; the
+    # same reasoning the trace-retention reads above already use.
+    auto_distil_max_per_batch()
+    # Same reason once more: `GET /inbox` is the default screen, so a typo here is a 500 on the
+    # first thing anyone loads. The handler converts it (invariant 24) — this makes it loud at
+    # boot instead, which is the difference between "the server told me the variable is wrong" and
+    # "the Inbox is broken".
+    max_corpus_chars()
+    _announce_minted_token()
     await _prune_traces()
+    # The Inbox's recovery pass, and the ONLY place it can run: a state that names a live owner is a
+    # lie once the process that owned it is gone, and nothing but startup knows that has happened.
+    # `resume_interrupted` resets both owned states through `inbox.reset_interrupted_states` and
+    # re-queues whatever was still waiting (invariants 78/79/80).
+    await asyncio.to_thread(_inbox_queue().resume_interrupted)
     yield
+    # A SHORT timeout, and the boolean is read rather than ignored. `_JOIN_TIMEOUT` defaults to two
+    # minutes because an in-flight OCR pass cannot be interrupted — blocking an ASGI shutdown that
+    # long is worse than abandoning a parse, and the worker is a daemon thread so the process
+    # collects it either way. An abandoned node stays `parsing` and the next startup recovers it,
+    # which is exactly what that state is for.
+    #: **Quitting used to leave every in-flight run SPENDING, with nothing able to reach it.**
+    #: The worker is spawned `start_new_session=True` (invariant 22, so `killpg` can take its Deno
+    #: grandchild with it) — and that same flag puts it in a DIFFERENT session, so the terminal's
+    #: Ctrl-C and a terminal close's SIGHUP never reach it either. Reproduced against the shipped
+    #: `serve`: the first Ctrl-C made the server wait for the whole run, and the second left the
+    #: worker and its `deno` child reparented to init (`ppid 1`), billing until their own wall-clock
+    #: backstop — `run_timeout_seconds` × `PODCAST_TIMEOUT_FACTOR["long"]`, which is 1500s on the
+    #: API path and **9000s on the subscription path**. No `/cancel`, no UI, no signal; a restarted
+    #: server knows nothing about it. Invariant 47 failing at the one moment the reader has decided
+    #: to stop everything, in a product whose Tier 0 design (80) rests on never spending unasked.
+    #:
+    #: `killpg`, which invariant 22 already provides, over a SNAPSHOT: cancelling mutates the maps
+    #: through the `finally` in `_run_isolated`.
+    for run in list(_ACTIVE_RUNS.values()):
+        with contextlib.suppress(Exception):
+            run.cancel()
+    _ACTIVE_RUNS.clear()
+    if not await asyncio.to_thread(_inbox_queue().stop, timeout=5.0):
+        _log.info("intake: a capture was still parsing at shutdown; it will resume on next start")
 
 
 app = FastAPI(title="rlm-notebook API", description=__doc__, lifespan=_lifespan)
+
+
+#: Set once the minted token has been printed, so a `--reload` restart or a test that enters
+#: several `TestClient` context managers does not repeat it.
+_TOKEN_ANNOUNCED = False
+
+
+def _announce_minted_token() -> None:
+    """Print a token this process made up, because otherwise nobody can use the server.
+
+    Only when it was MINTED: whoever set `RN_API_TOKEN` already knows the value, and printing a
+    token supplied by the environment would copy an operator's secret into the logs for nothing.
+
+    `serve` prints its own (better) version of this with usage instructions, and reaches this path
+    never — it puts the token INTO the environment before starting uvicorn, precisely so the two
+    processes agree under `--reload`. This exists for `uvicorn rlm_notebook.api:app` run by hand.
+
+    stderr, not stdout, for the reason `cli._cmd_serve` already records: stdout is block-buffered
+    off a TTY, so on the containerised path this line would never reach `docker logs`.
+    """
+    global _TOKEN_ANNOUNCED
+    if _TOKEN_ANNOUNCED or not auth.token_is_minted():
+        return
+    _TOKEN_ANNOUNCED = True
+    print(
+        f"rlm-notebook: API token for this process: {auth.api_token()}\n"
+        "  send it as `Authorization: Bearer <token>`, or append "
+        f"`?{auth.QUERY_PARAM}=<token>` to the URL.",
+        file=sys.stderr,
+    )
+
+
+def _presented_token(request: Request) -> str | None:
+    """The token this request carries, from a header if it could set one and the query string if it
+    could not. See `auth.py`'s module docstring for why the query string has to be accepted at all:
+    `EventSource`, `<audio src>` and a download `href` cannot send headers, and the live trace
+    stream (invariant 29) and the persisted episode (invariant 42) are reached by exactly those.
+    """
+    scheme, _, value = (request.headers.get("authorization") or "").partition(" ")
+    if scheme.lower() == "bearer" and value.strip():
+        return value.strip()
+    return request.query_params.get(auth.QUERY_PARAM)
+
+
+@app.middleware("http")
+async def _require_api_token(request: Request, call_next):
+    """Authentication for every request this server answers (AGENTS.md invariant 77).
+
+    **Deny by default.** Anything not in `auth.PUBLIC_PATHS` — which is the static mount's own
+    files, computed from the directory — needs a valid token. A route added later is therefore
+    protected by default rather than by somebody remembering, which is the distinction invariant 24
+    already draws between a rule and a list of the places it currently applies.
+
+    A middleware rather than a per-route dependency for the same reason: `dependencies=[Depends(...)]`
+    on each route is one chance to forget PER ROUTE, and the failure is silent and invisible in the
+    response. This sentence used to name a number — "twenty-five routes exist today" — and the Inbox
+    slice took it past that without anybody noticing (and the number written here then rotted too,
+    #: which is the joke making its own point), which is the argument for the middleware
+    making itself. A count is a fact that rots; the shape is the thing that does not.
+
+    It never touches the request BODY, so the pre-parse `Content-Length` cap invariant 30 requires
+    still happens in the handler, before FastAPI has read anything.
+    """
+    if request.url.path in auth.PUBLIC_PATHS:
+        return await call_next(request)
+    if not auth.host_is_allowed(request.headers.get("host")):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": (
+                    "refused: the Host header is a DNS name, which is what a DNS rebinding attack "
+                    "against this loopback server would look like. Reach it by IP address, or set "
+                    "RN_ALLOWED_HOSTS if this name is genuinely yours."
+                )
+            },
+        )
+    if not auth.token_matches(_presented_token(request)):
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": (
+                    "missing or invalid API token. `rlm-notebook serve` prints the token it "
+                    "minted; present it as `Authorization: Bearer <token>` or, where headers are "
+                    "impossible, as a `?token=` query parameter."
+                )
+            },
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return await call_next(request)
 
 #: In-flight runs, keyed by notebook id — a SINGLE-PROCESS in-memory map, and ONE SLOT per
 #: notebook id. Two known, documented limitations (AGENTS.md invariant 23), neither a silent bug:
@@ -207,6 +370,64 @@ app = FastAPI(title="rlm-notebook API", description=__doc__, lifespan=_lifespan)
 #: id," not a corruption risk. A per-run-id (rather than per-notebook-id) registry would remove
 #: this limitation; deferred, not implemented here.
 _ACTIVE_RUNS: dict[str, runner.Run] = {}
+
+#: Notebooks with HOST-SIDE work in flight, keyed by SLUG and counted rather than flagged (two
+#: concurrent audio requests on one notebook must not have the first's exit clear the second's
+#: mark). `_ACTIVE_RUNS` tracks a SPAWNED SUBPROCESS and nothing else, so it empties the instant
+#: `_run_isolated` returns — and `audio`'s longest phase, TTS synthesis, runs entirely after that
+#: point. `DELETE /notebooks/{id}` read only `_ACTIVE_RUNS`, so it answered "deleted" while an
+#: episode was being synthesized, and the handler then wrote the mp3 back beside the deleted
+#: notebook: an orphan that `GET .../audio/file` would serve to whatever notebook next took that
+#: id. The guard is about WORK, not about spawns.
+_BUSY: collections.Counter[str] = collections.Counter()
+
+
+async def _abandonable(fn, *args):
+    """Run a LONG host-side call (TTS synthesis, fetching, PDF parsing, OCR) off the event loop on a
+    DAEMON thread, so a server that is quitting does not wait for it.
+
+    **One Ctrl-C did not quit during synthesis.** `asyncio.to_thread` uses the loop's default
+    executor, and `asyncio.run` joins that executor on the way out (for up to 300s) however the
+    request was cancelled — measured: a 40s synthesis kept the process alive 38s after SIGINT, and
+    repeating Ctrl-C changed nothing. A thread cannot be cancelled, but a daemon thread is not
+    waited for. Only for calls whose output lives in memory or a temp file: abandoning one loses
+    nothing persisted. A notebook WRITE stays on `asyncio.to_thread`, because a write should finish.
+    """
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+
+    def _settle(result, exc):
+        if future.done():  # the request was cancelled while this ran
+            return
+        if exc is not None:
+            future.set_exception(exc)
+        else:
+            future.set_result(result)
+
+    def _work():
+        try:
+            result, exc = fn(*args), None
+        except BaseException as caught:  # noqa: BLE001 - handed to the awaiting coroutine verbatim
+            result, exc = None, caught
+        with contextlib.suppress(RuntimeError):  # the loop closed first: nobody is waiting
+            loop.call_soon_threadsafe(_settle, result, exc)
+
+    threading.Thread(target=_work, name=f"rlm-{getattr(fn, '__name__', 'work')}", daemon=True).start()
+    return await future
+
+
+@contextlib.contextmanager
+def _working_on(notebook_id: str):
+    """Hold a notebook against deletion for the whole request, not just its spawned run."""
+    key = slug(notebook_id)
+    _BUSY[key] += 1
+    try:
+        yield
+    finally:
+        _BUSY[key] -= 1
+        if _BUSY[key] <= 0:
+            del _BUSY[key]
+
 
 #: A SEPARATE, run-id-keyed map of in-flight subprocesses — deliberately NOT reused from
 #: `_ACTIVE_RUNS` above. `stream_run`'s cancelled-run liveness check needs a per-RUN signal, and
@@ -264,6 +485,19 @@ def _invalid_notebook_id(notebook_id: str, exc: ValueError) -> HTTPException:
     `TestClient` request (`POST /notebooks/!!!/ask` etc.) before this fix, on all four endpoints
     that touch a notebook by id."""
     return HTTPException(400, f"invalid notebook id {notebook_id!r}: {exc}")
+
+
+def _notebook_exists(notebook_id: str) -> bool:
+    """Whether the file is on disk, with an invalid id answered `False` rather than raised.
+
+    `notebook_path` raises `ValueError` for an id `slug` reduces to nothing (invariant 27's second
+    arm), and callers use this BEFORE their own validation — reporting that here would turn a 400
+    with a useful sentence into a raw 500 from a different place in the handler.
+    """
+    try:
+        return notebook_path(notebook_id).exists()
+    except ValueError:
+        return False
 
 
 async def _mutate_or_http(notebook_id: str, apply, *, create: bool) -> Notebook:
@@ -375,6 +609,14 @@ def _citation_responses(citations: list[Citation], corpus, prose: str) -> list[C
 
 class NotebookSummary(BaseModel):
     id: str
+    #: The FILENAME token this notebook lives under (`notebook.slug`), which is also the key
+    #: `inbox.NodeMembership` is written with. Without it the client had no way to join the two:
+    #: memberships name the slug and this listing named the id, so every node filed into a notebook
+    #: whose id differs from its slug — anything from `--notebook "reading list"`, and every CJK
+    #: name, which is what invariant 10's hash fallback exists for — rendered as "In a deleted
+    #: notebook" while that notebook sat live in the picker three lines above it. `NotebookResponse`
+    #: has carried this field all along; the summary did not.
+    slug: str
     #: The model-authored title, when one exists. NOT unique — a user hit three notebooks with
     #: near-identical generated names and asked whether they can collide. They can, which is why
     #: `updated_at` is here too: with the id no longer shown anywhere (invariant 37), "which one did
@@ -405,13 +647,22 @@ class SettingsRequest(BaseModel):
     the handler's own validator can see them, and combined with full-replacement semantics that made
     a request carrying only a typo'd key silently WIPE every setting. Found by a live check against
     a running server — `write_settings` received `{}` and dutifully cleared the file — after a test
-    asserting "nothing outside the three settings is ever persisted" had passed while missing it."""
+    asserting "nothing outside the settings page's own keys is ever persisted" had passed while
+    missing it. (There were three when that was written and there are four; the count is not the
+    point, and naming one is how this sentence went stale.)"""
 
     model_config = ConfigDict(extra="forbid")
 
     output_language: str | None = None
     tts_voice_host_a: str | None = None
     tts_voice_host_b: str | None = None
+    #: `"on"` / `"off"` (invariant 80). Added to `config._SETTING_PATTERNS` and `settings_state`
+    #: without this, so `GET /settings` reported it while `PUT` refused it with a 422 — and because
+    #: this model is a FULL replacement, the only remaining way to set it (hand-editing
+    #: `notebooks/.settings`) was wiped by the next legitimate save. Four other files claimed it was
+    #: settable from the page. A setting that one half of the pair knows about is worse than one
+    #: neither does.
+    auto_distil: str | None = None
 
 
 @app.get("/settings")
@@ -422,7 +673,8 @@ async def get_settings() -> dict:
     Trace retention, the upload cap and every model/credential variable are deliberately absent, and
     that is not the same filter as "non-secret": lowering `RN_TRACE_RETENTION_DAYS` DELETES trace
     files that can hold ingested source text, and raising `RN_MAX_UPLOAD_BYTES` is a straight DoS
-    lever. Moving a safety bound onto an unauthenticated page (invariant 25) is the same mistake as
+    lever. Moving a safety bound onto a page every token holder can write (invariant 25) is the
+    same mistake as
     moving a key onto it, just quieter. `RN_BASE_URL` is the sharpest case: `config.setup` hands it
     to `rlm_harness.configure` alongside `api_key`, so a writable base_url exfiltrates the key on the
     next run without anyone ever reading it.
@@ -443,7 +695,57 @@ class SettingsChoices(BaseModel):
 
     output_languages: list[str]
     voices: list[str]
+    #: A READABLE label for each id in `voices`, as `{id: label}`.
+    #:
+    #: The page listed 32 raw vendor SKUs - `ar-SA-HamedNeural`, `de-DE-FlorianMultilingualNeural` -
+    #: as reader-facing labels, directly under an output-language select that correctly reads
+    #: "Arabic / Brazilian Portuguese". The same screen answered the question one row above the
+    #: place it got it wrong. The ID stays the value (invariant 43: the provider owns its cast, and
+    #: a voice id is what `synthesize` is handed); only what a person reads changes.
+    voice_labels: dict[str, str] = {}
     provider: str
+
+
+def _one_name_per_language(names: list[str]) -> list[str]:
+    """Collapse synonyms so the dropdown offers each language ONCE.
+
+    It offered Chinese, Mandarin, Simplified Chinese and Traditional Chinese as four rows. Three of
+    them are one thing: `chinese`, `mandarin` and `simplified chinese` all resolve to the same
+    `zh-CN` pair, and only `traditional chinese` is different. The filter above already drops the
+    BCP-47 aliases (`zh`, `zh-tw`) for exactly this reason — "a dropdown offering both English and
+    En reads as a bug" — and an English-language synonym is the same bug spelled out.
+
+    **Which name survives is invariant 39's question, not a style preference.** Naming a language
+    buys neither its SCRIPT nor its IDIOM, so a bare "Chinese" is the value that invariant exists to
+    warn about: it leaves the reader's script undecided on a setting that decides what every answer
+    in the product is written in. Two rules, in order:
+
+      1. A name another offered name ENDS WITH is dropped, because the longer one is the same
+         language with the ambiguity removed ("Simplified Chinese" ends with "Chinese").
+      2. If a synonym group still has more than one name, the longest wins. "Mandarin" is not a
+         qualifier of anything, so only this second rule removes it.
+
+    Grouped by the VOICE PAIR, which is the only machine-checkable statement that two names mean the
+    same thing. A name with no pair is its own group and always survives — `output_language` is
+    global (it drives chat and every guide artifact), so a language this build cannot SPEAK must
+    still be offerable as one it can WRITE.
+    """
+    from .tts import default_voices_for
+
+    groups: dict[object, list[str]] = {}
+    for index, name in enumerate(names):
+        # `index` keys a singleton group, so an unmatched name can never be merged with another.
+        groups.setdefault(default_voices_for(name) or index, []).append(name)
+
+    kept: list[str] = []
+    for members in groups.values():
+        survivors = [
+            name
+            for name in members
+            if not any(other != name and other.endswith(f" {name}") for other in members)
+        ]
+        kept.append(max(survivors or members, key=len))
+    return sorted(kept)
 
 
 @app.get("/settings/choices", response_model=SettingsChoices)
@@ -476,7 +778,9 @@ async def settings_choices() -> SettingsChoices:
     # and every guide artifact — so a server whose podcast cannot run at all must still be able to
     # set the language its prose comes out in.
     spoken = (known or _PROVIDERS["edge-tts"])().supported_languages()
-    languages = sorted({key.title() for key in spoken if "-" not in key and len(key) > 3})
+    languages = _one_name_per_language(
+        sorted({key.title() for key in spoken if "-" not in key and len(key) > 3})
+    )
 
     if provider == "chatterbox":
         voices = sorted(_SHIPPED_VOICES) + [BUILTIN_VOICE]
@@ -484,7 +788,49 @@ async def settings_choices() -> SettingsChoices:
         voices = sorted({voice for pair in _LANGUAGE_VOICES.values() for voice in pair})
     else:
         voices = []
-    return SettingsChoices(output_languages=languages, voices=voices, provider=provider)
+    return SettingsChoices(
+        output_languages=languages,
+        voices=voices,
+        voice_labels=_voice_labels(voices),
+        provider=provider,
+    )
+
+
+def _voice_labels(voices: list[str]) -> dict[str, str]:
+    """A readable label per voice id: the LANGUAGE it belongs to, the given name, and the role.
+
+    `zh-TW-YunJheNeural` becomes `Traditional Chinese - YunJhe (host A)`. Everything in that label
+    is already knowable from `_LANGUAGE_VOICES`, which maps a language name to its `(host_a, host_b)`
+    pair; the page was simply printing the key instead of the thing the key means.
+
+    The id remains the VALUE. Invariant 43 is that a provider owns its cast, and a voice id is what
+    `synthesize` is handed — a label that replaced it would be this page inventing a second naming
+    scheme for somebody else's voices, which is the mistake one tier up from the one being fixed.
+    """
+    from .tts import _LANGUAGE_VOICES
+
+    role_of: dict[str, tuple[str, int]] = {}
+    for language, pair in _LANGUAGE_VOICES.items():
+        # The spelled-out name, not a BCP-47 alias: both are keys, and "Traditional Chinese" is what
+        # a reader recognises where `zh-tw` is what a config file does.
+        if "-" in language or len(language) <= 3:
+            continue
+        for slot, voice in enumerate(pair):
+            if voice not in role_of or len(language) > len(role_of[voice][0]):
+                role_of[voice] = (language.title(), slot)
+
+    labels = {}
+    for voice in voices:
+        named = role_of.get(voice)
+        if not named:
+            labels[voice] = voice
+            continue
+        language, slot = named
+        # `zh-TW-YunJheNeural` -> `YunJhe`. The locale is already in the language half of the label
+        # and `Neural` is the vendor's product word, not a name.
+        given = voice.split("-")[-1].removesuffix("Neural") or voice
+        labels[voice] = f"{language} — {given} ({'host A' if slot == 0 else 'host B'})"
+    return labels
 
 
 @app.put("/settings")
@@ -493,8 +839,8 @@ async def put_settings(body: SettingsRequest) -> dict:
 
     **This is the API's first GLOBAL mutation** — every other mutator here is scoped to a
     `notebook_id`, and this one changes behaviour for notebooks the caller never named, persisting
-    it across restarts, with no authentication in front of it (invariant 25). That is the reason the
-    exposed surface is as narrow as it is.
+    it across restarts, for any caller holding the token and with no authorization behind it
+    (invariant 25). That is the reason the exposed surface is as narrow as it is.
 
     The validators are not decoration. `clean_language` bounds length and strips control characters
     but NOT the character set, and 40 characters is room for a persistent, server-wide instruction
@@ -518,7 +864,7 @@ async def list_notebooks() -> NotebookListResponse:
     """Every notebook that exists, for the web UI's notebook switcher. Reads the same
     `notebook.DEFAULT_NOTEBOOKS_DIR` constant every other notebook operation already uses — there is
     no separate config surface for this (checked: `NotebookConfig` has no notebooks-directory field
-    at all; see `docs/invariants/25-the-api-has-no-authentication.md`). Reports each notebook's own `id`
+    at all; see `docs/invariants/25-the-api-has-no-authorization.md`). Reports each notebook's own `id`
     field, never the slugged filename stem (`notebook.slug()` is lossy, so the two can differ for
     the same file). A corrupted notebook file is listed under `unreadable` by its filename stem
     rather than silently dropped or breaking the whole listing."""
@@ -527,6 +873,7 @@ async def list_notebooks() -> NotebookListResponse:
         notebooks=[
             NotebookSummary(
                 id=nb.id,
+                slug=slug(nb.id),
                 title=nb.title,
                 derived_title=nb.title or fallback_title([s.origin for s in nb.sources]),
                 source_count=len(nb.sources),
@@ -540,6 +887,12 @@ async def list_notebooks() -> NotebookListResponse:
 
 
 class SourcesRequest(BaseModel):
+    #: `extra="forbid"`, like every other request model here (`CaptureRequest`, `PromoteRequest`,
+    #: `SettingsRequest`, `RenameRequest`). Without it `{"source": [...]}` — the singular typo —
+    #: answered 200, CREATED the notebook and added nothing: a success for a request that did
+    #: nothing, which is the shape this project treats as worse than an error.
+    model_config = ConfigDict(extra="forbid")
+
     sources: list[str] = []
     #: Pasted text, ingested via `ingest.ingest_pasted_text` — a content-derived origin, never a
     #: path or URL, so this never touches invariant 26's local-path restriction at all.
@@ -729,6 +1082,9 @@ async def add_sources(notebook_id: str, body: SourcesRequest) -> NotebookRespons
         raise HTTPException(
             422, f"each entry in 'texts' must be non-empty pasted text (blank at index {blank_texts})"
         )
+    #: Whether the notebook was ALREADY on disk, captured before the slow phase below — see the
+    #: `create=not existed` call at the end of this handler for what it is for.
+    existed = _notebook_exists(notebook_id)
     try:
         snapshot = load_or_create(notebook_id)
     except ValidationError as exc:
@@ -740,7 +1096,7 @@ async def add_sources(notebook_id: str, body: SourcesRequest) -> NotebookRespons
     except ValueError as exc:
         raise _invalid_notebook_id(notebook_id, exc) from exc
     try:
-        ingested = await asyncio.to_thread(ingest_sources_for, snapshot, body.sources)
+        ingested = await _abandonable(ingest_sources_for, snapshot, body.sources)
     except SystemExit as exc:  # a malformed RN_FETCH_ALLOW_CIDRS, same shape as `_config()`'s
         raise HTTPException(500, f"server misconfigured: {exc}") from exc
     except (FetchError, ValueError, OSError) as exc:
@@ -754,8 +1110,21 @@ async def add_sources(notebook_id: str, body: SourcesRequest) -> NotebookRespons
         for text in body.texts
     ]
 
+    #: **`create` is "it was not there when we started", NOT a constant.** With `create=True` a
+    #: handler that had just spent minutes ingesting would RE-CREATE a notebook the reader deleted
+    #: while it worked — reproduced end to end: `DELETE` answered `{"deleted": true}`, removed the
+    #: file, and the notebook was back seconds later holding only the source that landed after it
+    #: was deleted, with its earlier sources, notes, turns, overview and podcast gone and its Inbox
+    #: membership rows already dropped. `delete_notebook`'s own docstring names that outcome as the
+    #: thing its 409 exists to prevent; the 409 only covers SPAWNED runs (`_ACTIVE_RUNS` is
+    #: populated after `start_run` returns), and ingestion — which this file elsewhere says "can
+    #: take minutes" — is the window it cannot see.
+    #:
+    #: A concurrent delete now makes this fail instead, which is the right way round: the reader
+    #: asked for the notebook to be gone, and losing one just-added source is a smaller loss than
+    #: resurrecting a notebook they deleted.
     notebook = await _mutate_or_http(
-        notebook_id, lambda nb: append_sources(nb, ingested + pasted), create=True
+        notebook_id, lambda nb: append_sources(nb, ingested + pasted), create=not existed
     )
     return _notebook_response(notebook)
 
@@ -774,9 +1143,14 @@ async def add_note_endpoint(notebook_id: str, body: NoteRequest) -> NotebookResp
     derives the id from `_next_note_id` on the notebook it's handed, and an id computed against a
     snapshot could collide with a note another request added meanwhile — exactly the two-live-notes-
     one-id failure invariant 32 already documents, arrived at from a different direction."""
+    #: Same rule as every other write site: lazy creation stays (a notebook really can start life
+    #: as a note, which is what this endpoint's own docstring promises), but a notebook DELETED
+    #: while this was in flight must not be re-created by it. See `add_sources` for the reproduction
+    #: — this is the same class, and it was the last write site still passing a constant.
+    existed = _notebook_exists(notebook_id)
     try:
         notebook = await _mutate_or_http(
-            notebook_id, lambda nb: add_note(nb, body.text), create=True
+            notebook_id, lambda nb: add_note(nb, body.text), create=not existed
         )
     except ValueError as exc:  # blank text — `add_note`'s own guard, not an id problem
         raise HTTPException(422, str(exc)) from exc
@@ -823,6 +1197,47 @@ async def clear_turns(notebook_id: str) -> NotebookResponse:
     return _notebook_response(await _mutate_or_http(notebook_id, _clear, create=False))
 
 
+@app.delete("/notebooks/{notebook_id}")
+async def delete_notebook_endpoint(notebook_id: str) -> dict:
+    """Delete a notebook, its audio and its Inbox membership rows.
+
+    **The product offered Forget for a node and ✕ for a source and had no way to remove a
+    NOTEBOOK.** Once one existed it was permanent from every surface — no endpoint, no CLI verb, no
+    control — and emptying it left "Untitled notebook · 0" in the facet rail forever. `app.js` even
+    ships the string "a deleted notebook" for a state nothing could reach.
+
+    **Refused while a run is in flight (409).** Deleting the file under a running worker would leave
+    it writing an answer into a notebook that no longer exists, and `mutate_notebook` would
+    helpfully re-create it — a notebook resurrected by its own deletion. Stop it first; the Stop the
+    reader already has is the one that ends it.
+
+    The nodes themselves survive: promotion COPIES into a notebook (invariant 78), so a node outlives
+    any notebook it was filed into. Only the membership rows go, and best-effort AFTER the file is
+    gone, exactly as `delete_source_endpoint` does — an index write must never undo a completed
+    notebook write.
+    """
+    #: **Compared by SLUG, because the file is keyed by slug and `_ACTIVE_RUNS` by the raw id.**
+    #: `"Reading List"` and `"Reading-List"` are two keys in that map and ONE file on disk, so a
+    #: delete spelled the other way walked straight past the guard and removed a notebook with a
+    #: run in flight. Reproduced: the same spelling answered 409 and the alias answered
+    #: `{"deleted": true}`.
+    target = slug(notebook_id)
+    if any(slug(active) == target for active in _ACTIVE_RUNS) or _BUSY[target]:
+        raise HTTPException(409, "something is running on this notebook — stop it first")
+    try:
+        existed = await asyncio.to_thread(delete_notebook, notebook_id)
+    except ValueError as exc:  # an id `slug` reduces to nothing (invariant 27's second arm)
+        raise HTTPException(400, str(exc)) from exc
+    if not existed:
+        raise HTTPException(404, f"no notebook {notebook_id!r}")
+    try:
+        forgotten = await asyncio.to_thread(inbox.forget_notebook, notebook_id)
+    except Exception:  # noqa: BLE001 - an index write must never undo a completed notebook write
+        _log.warning("could not drop the inbox memberships for %s", notebook_id)
+        forgotten = 0
+    return {"deleted": True, "memberships_dropped": forgotten}
+
+
 @app.delete("/notebooks/{notebook_id}/sources/{source_id}", response_model=NotebookResponse)
 async def delete_source_endpoint(notebook_id: str, source_id: str) -> NotebookResponse:
     """Remove one source. Same shape as deleting a note: existing notebook only (`create=False`).
@@ -844,6 +1259,15 @@ async def delete_source_endpoint(notebook_id: str, source_id: str) -> NotebookRe
         )
     except ValueError as exc:  # no such source — including one a concurrent request just removed
         raise HTTPException(404, str(exc)) from exc
+    # AFTER the notebook write succeeds, never before: a membership dropped for a removal that then
+    # failed would be the inverse of the bug. Tier 0 is an index of where things ended up, and an
+    # entry pointing at a source id invariant 50 guarantees will never come back is an index
+    # entry that is simply wrong. Best-effort: the Inbox is a separate store and a notebook edit
+    # must not fail because of it.
+    try:
+        inbox.forget_membership(notebook_id, source_id)
+    except Exception:  # noqa: BLE001 - an index write must never undo a completed notebook write
+        _log.warning("could not drop the inbox membership for %s/%s", notebook_id, source_id)
     return _notebook_response(notebook)
 
 
@@ -901,15 +1325,32 @@ async def upload_source(notebook_id: str, request: Request) -> NotebookResponse:
     if declared_size > cap:
         raise HTTPException(413, f"upload declares {declared_size} bytes, exceeding the {cap}-byte limit")
 
-    form = await request.form()
-    upload = form.get("file")
-    if upload is None or not hasattr(upload, "filename"):
+    form = await _form_or_400(request)
+    # `getlist`, THEN refuse. `form.get("file")` returns the LAST part, so a caller sending
+    # `-F file=@a.txt -F file=@b.pdf` had `a.txt` dropped without a word — and if `b.pdf` was
+    # malformed the whole request 422'd naming only the file that failed, so the one that would
+    # have worked was neither stored nor mentioned. `/inbox/upload` is the BATCH surface (invariant
+    # 30) and takes all of them; this one is single-file, which is a scope, not a licence to
+    # silently keep one. Dropping a file the caller chose is the thing a capture surface may never
+    # do quietly, so this says so instead.
+    uploads = [part for part in form.getlist("file") if hasattr(part, "filename")]
+    if len(uploads) > 1:
+        raise HTTPException(
+            422,
+            f"this endpoint takes one file and {len(uploads)} were sent "
+            "(POST /inbox/upload takes a batch); none were stored",
+        )
+    upload = uploads[0] if uploads else None
+    if upload is None:
         raise HTTPException(422, "expected a multipart 'file' field")
     data = await upload.read()
     if len(data) > cap:
         raise HTTPException(413, f"upload is {len(data)} bytes, exceeding the {cap}-byte limit")
     filename = upload.filename or "upload"
 
+    #: Whether the notebook was ALREADY on disk, captured before the slow phase below — see the
+    #: `create=not existed` call at the end of this handler for what it is for.
+    existed = _notebook_exists(notebook_id)
     try:
         snapshot = load_or_create(notebook_id)
     except ValidationError as exc:
@@ -930,14 +1371,18 @@ async def upload_source(notebook_id: str, request: Request) -> NotebookResponse:
         try:
             parsed = [
                 with_injection_flags(
-                    await asyncio.to_thread(ingest_uploaded_file, data, filename, "s0")
+                    await _abandonable(ingest_uploaded_file, data, filename, "s0")
                 )
             ]
-        except ValueError as exc:
+        except Exception as exc:
+            # Same reason as `/inbox/upload` above: a parser is third-party code and raises what it
+            # likes. `PdfiumError` is a `RuntimeError`, and catching only `ValueError` turned a
+            # malformed PDF into `Could not add source: 500: Internal Server Error`.
             raise HTTPException(422, f"could not ingest {filename!r}: {exc}") from exc
 
+    # Same as `add_sources`: a delete that landed while this was OCRing must not be undone here.
     notebook = await _mutate_or_http(
-        notebook_id, lambda nb: append_sources(nb, parsed), create=True
+        notebook_id, lambda nb: append_sources(nb, parsed), create=not existed
     )
     return _notebook_response(notebook)
 
@@ -970,7 +1415,8 @@ async def get_source(notebook_id: str, source_id: str) -> SourceDetailResponse:
 
     **Materially different exposure than every other endpoint here except the trace stream/
     citation-turn lookup, said explicitly rather than folded silently into "same as everything
-    else"** (AGENTS.md invariant 25's no-auth posture already covers this in spirit — the model
+    else"** (AGENTS.md invariant 25's no-authorization posture already covers this in spirit — the
+    model
     itself already has the whole corpus — but the ENDPOINT SURFACE returning full source text is
     new). Reuses `corpus.Corpus.get`, the same lookup `citations.py` already performs on every
     `ask`/`guide` request, rather than a second hand-rolled scan."""
@@ -1053,6 +1499,27 @@ class AudioOptions(RunOptions):
 _NO_AUDIO_OPTIONS = AudioOptions()
 
 
+#: Run ids a reader asked to STOP before anything had been spawned for them.
+#:
+#: **Without this, Stop reported success and stopped nothing.** A run is announced at a `None`
+#: placeholder before any pre-work (invariant 46), and `_resolve_language` — a real model round trip
+#: in its own subprocess — always happens on a notebook whose language is unresolved, which is every
+#: new one. Press Stop during that window and `cancel_run` found the placeholder, honestly reported
+#: "not spawned yet", and signalled nothing at all: the pre-work kept running, and about twenty
+#: seconds later the MAIN run spawned and burned a full model call with no indicator and no control
+#: anywhere on the page. Invariant 47 broken on the paid path, inside invariant 46's own window.
+#:
+#: An id lands here and `_run_isolated` refuses to spawn it. Cleared by `_announced`'s exit, so the
+#: set cannot grow and a later run reusing the id is unaffected.
+_CANCELLED_BEFORE_SPAWN: set[str] = set()
+
+#: Bound on the set above. Normally every id is consumed by `_run_isolated` within a request, but a
+#: handler whose PRE-WORK raises after a stop never gets there, and an unbounded set that only ever
+#: grows is a leak however slow. 512 is far above any real concurrency here (invariant 23: one
+#: in-memory map, one process) and far below anything worth worrying about.
+_MAX_CANCELLED_IDS = 512
+
+
 @contextlib.contextmanager
 def _announced(*run_ids: str):
     """Mark run ids as COMING before any pre-work, so a client that opened its ticker first keeps
@@ -1079,6 +1546,15 @@ def _announced(*run_ids: str):
         yield
     finally:
         for run_id in run_ids:
+            # **A CANCELLED id keeps BOTH its flag and its placeholder, and that is the whole fix.**
+            # The first version discarded the flag here, which runs when the `with` block exits -
+            # and every handler is `with _announced(id): await pre_work()` followed by
+            # `_run_isolated(..., id)`. So the flag was always erased one line before the only code
+            # that reads it. Each half had a test and passed; the composition, which is the only
+            # shape that exists in production, had none, and Stop stayed a silent no-op on the paid
+            # path for a whole round. `_run_isolated` consumes both when it refuses the spawn.
+            if run_id in _CANCELLED_BEFORE_SPAWN:
+                continue
             if _RUN_PROCESSES.get(run_id) is None:
                 _RUN_PROCESSES.pop(run_id, None)
 
@@ -1194,48 +1670,92 @@ async def _run_isolated(
     original error propagates — otherwise a failed spawn would permanently occupy that run id, and
     the client's natural retry of the same notebook+token pair would get a false 409 forever
     instead of the real underlying error."""
-    _TRACE_DIR.mkdir(parents=True, exist_ok=True)
-    trace_path = _TRACE_DIR / f"{run_id}.jsonl"
-    try:
-        fd = os.open(trace_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.close(fd)
-    except FileExistsError:
-        raise HTTPException(409, f"run id {run_id!r} is already in use — retry with a fresh run_id") from None
+    #: **Held for the whole run, per run.** `_ACTIVE_RUNS` has one slot per notebook and `/overview`
+    #: runs Summary and FAQ concurrently, so whichever finished first cleared the slot while the
+    #: other was still billing — and `DELETE /notebooks/{id}` answered `{"deleted": true}` with a
+    #: paid run in flight and no Stop left anywhere on the page. `_BUSY` is a COUNTER, so each run
+    #: holds the notebook on its own and the guard drops only when the last one is done.
+    with _working_on(notebook_id):
+        # **Checked BEFORE the trace file is created, let alone a process spawned.** A Stop pressed
+        # during the pre-work lands here (`_CANCELLED_BEFORE_SPAWN`), and without this the reader's
+        # press was purely decorative: the main run started anyway, twenty seconds later, unannounced
+        # and unstoppable. 499 rather than a 200-with-nothing, because the request DID NOT DO the thing
+        # it was asked to do and the client has to be able to tell.
+        if run_id in _CANCELLED_BEFORE_SPAWN:
+            # Consumed HERE, with the placeholder `_announced` deliberately left behind, so the id is
+            # free again the moment the refusal is delivered.
+            _CANCELLED_BEFORE_SPAWN.discard(run_id)
+            _RUN_PROCESSES.pop(run_id, None)
+            raise HTTPException(499, f"run {run_id!r} was stopped before it started")
 
-    # Reserve the run id BEFORE spawning, with a None placeholder meaning "starting". Registering
-    # only after `start_run` returned left a window — the whole `await`, i.e. a real subprocess
-    # spawn — in which the trace file already existed but nothing was tracked, and `stream_run`
-    # reads exactly that pair as "the writer has exited". A client opening its ticker alongside the
-    # request then got `run ended without a final event` immediately, for a run that was about to
-    # start perfectly well. Reproduced 3/3 the moment two guide runs were fired concurrently on one
-    # notebook (which interleaves the loop and widens the window); this is the same reservation
-    # window `traces._MIN_AGE_SECONDS` already exists to protect pruning from.
-    _RUN_PROCESSES[run_id] = None
+        _TRACE_DIR.mkdir(parents=True, exist_ok=True)
+        trace_path = _TRACE_DIR / f"{run_id}.jsonl"
+        try:
+            fd = os.open(trace_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+        except FileExistsError:
+            raise HTTPException(
+                409, f"run id {run_id!r} is already in use — retry with a fresh run_id"
+            ) from None
 
-    try:
-        run = await runner.start_run(run_id, _TRACE_DIR, dotted_task, kwargs, fresh=fresh)
-    except Exception:
-        _RUN_PROCESSES.pop(run_id, None)
-        trace_path.unlink(missing_ok=True)
-        raise
+        # Reserve the run id BEFORE spawning, with a None placeholder meaning "starting". Registering
+        # only after `start_run` returned left a window — the whole `await`, i.e. a real subprocess
+        # spawn — in which the trace file already existed but nothing was tracked, and `stream_run`
+        # reads exactly that pair as "the writer has exited". A client opening its ticker alongside the
+        # request then got `run ended without a final event` immediately, for a run that was about to
+        # start perfectly well. Reproduced 3/3 the moment two guide runs were fired concurrently on one
+        # notebook (which interleaves the loop and widens the window); this is the same reservation
+        # window `traces._MIN_AGE_SECONDS` already exists to protect pruning from.
+        _RUN_PROCESSES[run_id] = None
 
-    _ACTIVE_RUNS[notebook_id] = run
-    _RUN_PROCESSES[run_id] = run.process
-    try:
-        # `timeout` overrides the configured backstop for work that legitimately takes longer —
-        # only the podcast passes one (see `PODCAST_TIMEOUT_FACTOR`). It is a per-REQUEST value, not
-        # a second config knob: an operator who sets `RN_RUN_TIMEOUT_SECONDS` still moves every
-        # tier, because the factor multiplies whatever they chose.
-        return await runner.wait_result(run, timeout=timeout or config.run_timeout_seconds)
-    except runner.RunError as exc:
-        raise HTTPException(502, str(exc)) from exc
-    finally:
-        # Only clear OUR OWN run — a slow cancel/finish race could otherwise clobber a NEWER run
-        # that already replaced this one in _ACTIVE_RUNS for the same notebook_id.
-        if _ACTIVE_RUNS.get(notebook_id) is run:
-            del _ACTIVE_RUNS[notebook_id]
-        _RUN_PROCESSES.pop(run_id, None)
-        await _prune_traces()
+        try:
+            run = await runner.start_run(run_id, _TRACE_DIR, dotted_task, kwargs, fresh=fresh)
+        except BaseException:
+            #: **`BaseException`, and the difference is a client closing the tab.** `CancelledError` has
+            #: been a `BaseException` since 3.8, and Starlette's `BaseHTTPMiddleware` — which this app
+            #: uses — cancels the endpoint task when the client goes away. So a disconnect during the
+            #: spawn skipped this `except Exception` entirely and left the reservation behind:
+            #: `_RUN_PROCESSES[run_id] = None` forever, which keeps the empty trace file in
+            #: `_prune_traces`' protected set for the life of the process, and — because
+            #: `_derive_run_id` is deterministic for a caller-supplied token — makes that
+            #: (notebook, token) pair answer `409 run id is already in use` from then on. The docstring
+            #: a few lines up names exactly that outcome as the thing this cleanup exists to prevent.
+            #:
+            #: Both statements are idempotent and the exception is re-raised untouched, so widening the
+            #: catch cannot swallow a `KeyboardInterrupt` or a `SystemExit` — it only makes the cleanup
+            #: run for them too, which is what a reservation in a module-level map needs.
+            _RUN_PROCESSES.pop(run_id, None)
+            trace_path.unlink(missing_ok=True)
+            raise
+
+        _ACTIVE_RUNS[notebook_id] = run
+        _RUN_PROCESSES[run_id] = run.process
+        try:
+            # `timeout` overrides the configured backstop for work that legitimately takes longer —
+            # only the podcast passes one (see `PODCAST_TIMEOUT_FACTOR`). It is a per-REQUEST value, not
+            # a second config knob: an operator who sets `RN_RUN_TIMEOUT_SECONDS` still moves every
+            # tier, because the factor multiplies whatever they chose.
+            return await runner.wait_result(run, timeout=timeout or config.run_timeout_seconds)
+        except runner.RunError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        except BaseException:
+            #: **Whatever stops this await must also stop the WORKER.** The `finally` below forgets the
+            #: run — which is what makes it unreachable — so without this a cancellation leaves a paid
+            #: subprocess running that no endpoint, no UI and no restart can get to. `CancelledError` is
+            #: a `BaseException`, and shutdown is the reachable trigger (a plain client disconnect is
+            #: not: Starlette only surfaces `http.disconnect` when the app awaits `receive()`, which
+            #: this path does not). Re-raised untouched; `cancel()` is idempotent and swallows
+            #: `ProcessLookupError` when the run has already finished.
+            with contextlib.suppress(Exception):
+                run.cancel()
+            raise
+        finally:
+            # Only clear OUR OWN run — a slow cancel/finish race could otherwise clobber a NEWER run
+            # that already replaced this one in _ACTIVE_RUNS for the same notebook_id.
+            if _ACTIVE_RUNS.get(notebook_id) is run:
+                del _ACTIVE_RUNS[notebook_id]
+            _RUN_PROCESSES.pop(run_id, None)
+            await _prune_traces()
 
 
 async def _prune_traces() -> None:
@@ -1274,9 +1794,39 @@ async def _prune_traces() -> None:
 
 
 
+def _require_sources(notebook: Notebook, verb: str) -> None:
+    """Refuse a PAID run on a notebook with nothing to run it against.
+
+    **A helper because the same rule was written three times and missed twice.** `ask`,
+    `suggest_title` and `generate_overview` each grew their own copy; `guide` (four kinds) and
+    `audio` did not, so the four Studio guides and the Audio Overview — the most expensive action in
+    the product, `PODCAST_TIMEOUT_FACTOR["long"] = 5.0` over 60-90 accumulated utterances
+    (invariant 64) — each spawned a full model run whose corpus blob was the empty string. A
+    guaranteed-ungrounded artifact, paid for at the highest rate the product charges.
+
+    An independent review found it one round after the same argument had been written into `ask`:
+    the cheap tier (invariant 80, capture never pays for a summary) is careful with the reader's
+    money and the expensive one was not. Fixing the INSTANCE rather than the CLASS is what left
+    five more. One function now, and
+    `test_api.py::test_every_paid_endpoint_refuses_a_notebook_with_no_sources` fails on a sixth
+    handler that reaches `_run_isolated` without calling it.
+    """
+    if not notebook.sources:
+        raise HTTPException(422, f"cannot {verb} a notebook with no sources yet")
+
+
 @app.post("/notebooks/{notebook_id}/ask", response_model=AskResponse)
 async def ask(notebook_id: str, body: AskRequest, request: Request) -> AskResponse:
     notebook = _load_notebook_or_404(notebook_id)
+    #: **The one place a press could spend money for nothing.** `title` and `overview` both refuse a
+    #: source-less notebook; `ask` did not, and neither did the UI — so on an empty notebook the
+    #: Studio said "Add a source first, then generate this" while the composer 20px to its left
+    #: accepted a question and ran a full `AnswerQuestion` loop against an empty corpus, which can
+    #: only produce an ungrounded answer. In a BYOK product whose Tier 0 design rests on invariant
+    #: 80 ("capture never pays for a summary"), that asymmetry is the wrong way round: the cheap
+    #: tier is careful with the reader's money and the expensive one was not.
+    _require_sources(notebook, "answer a question about")
+
     corpus = corpus_of(notebook)
     config = _config()
     try:
@@ -1311,9 +1861,12 @@ async def ask(notebook_id: str, body: AskRequest, request: Request) -> AskRespon
     # snapshot that old silently destroyed every source and note added while the model was working
     # (reproduced live over HTTP before this slice — see the notebook-durability invariant).
     #
-    # `create=True` even though the 404 for a genuinely missing notebook already fired above: if
-    # the file somehow vanished DURING the run, recreating it is strictly better than raising and
-    # throwing away an answer that was already generated and paid for.
+    # **`create=False`, and that reverses an earlier decision on purpose.** This used to pass
+    # `create=True` reasoning that "if the file somehow vanished DURING the run, recreating it is
+    # strictly better than throwing away an answer already paid for" — written before a notebook
+    # could be deleted at all. Now that it can, "somehow vanished" has a deliberate cause, and
+    # resurrecting a notebook the reader deleted in order to hold one answer is the worse of the
+    # two losses. The 404 above still covers the genuinely-missing case.
     turn = ChatTurn(question=body.question, answer=answer, run_id=run_id)
 
     def _persist(nb: Notebook) -> None:
@@ -1324,7 +1877,7 @@ async def ask(notebook_id: str, body: AskRequest, request: Request) -> AskRespon
         else:
             nb.turns.append(turn)
 
-    await _mutate_or_http(notebook_id, _persist, create=True)
+    await _mutate_or_http(notebook_id, _persist, create=False)
 
     # Citations verify against the SNAPSHOT corpus — the blob the model actually read. Verifying
     # against sources it never saw would be a different (and weaker) claim. Invariant 11's
@@ -1358,7 +1911,8 @@ async def rename_notebook(notebook_id: str, body: RenameRequest) -> NotebookResp
 
     Runs `normalize_title` — the SAME normalisation the generated path uses (invariant 37), because
     a user-supplied title lands in exactly the same places (the header, the picker, an mp3 download
-    filename) and this API has no authentication (invariant 25), so "a person typed it" is not a
+    filename) and this API authenticates the APP rather than a person (invariants 25 and 77), so
+    "a person typed it" is not a
     provenance claim it can rely on. It REFUSES an unusable value rather than falling back to a
     derived one, which is the one way the two paths differ: substituting a title for what someone
     typed would be the UI lying about what it did.
@@ -1397,8 +1951,7 @@ async def suggest_title(
         return _notebook_response(notebook)
 
     origins = [s.origin for s in notebook.sources]
-    if not notebook.sources:
-        raise HTTPException(422, "cannot title a notebook with no sources yet")
+    _require_sources(notebook, "title")
 
     config = _config()
     run_id = _derive_run_id(notebook_id, body.run_id)
@@ -1464,8 +2017,7 @@ async def generate_overview(
     An FAQ failure persists the summary with no starter questions; a summary failure persists
     nothing, because there is no overview without it."""
     notebook = _load_notebook_or_404(notebook_id)
-    if not notebook.sources:
-        raise HTTPException(422, "cannot summarise a notebook with no sources yet")
+    _require_sources(notebook, "summarise")
 
     corpus = corpus_of(notebook)
     config = _config()
@@ -1522,6 +2074,7 @@ async def guide(
     if kind not in _GUIDE_TASKS:
         raise HTTPException(404, f"unknown guide kind {kind!r}; known: {sorted(_GUIDE_TASKS)}")
     notebook = _load_notebook_or_404(notebook_id)
+    _require_sources(notebook, "build a guide for")
     corpus = corpus_of(notebook)
     config = _config()
     try:
@@ -1627,108 +2180,126 @@ async def audio(
     `cli._cmd_audio` has no cancellation story for this phase either, so this isn't a regression,
     but it IS new that an API request's total latency now includes a real network TTS call
     serialized after an RLM run."""
-    notebook = _load_notebook_or_404(notebook_id)
-    corpus = corpus_of(notebook)
-    config = _config()
-    try:
-        blob = corpus.blob(max_chars=config.max_corpus_chars)
-    except CorpusTooLargeError as exc:
-        raise HTTPException(413, str(exc)) from exc
+    #: **Held for the WHOLE request, not just the spawned run.** Synthesis is the longest
+    #: phase here and it begins after `_run_isolated` has already cleared `_ACTIVE_RUNS`, so a
+    #: DELETE arriving mid-synthesis was answered `{"deleted": true}` — and the mp3 written a
+    #: few lines below then sat beside a notebook that no longer existed.
+    with _working_on(notebook_id):
+        notebook = _load_notebook_or_404(notebook_id)
+        _require_sources(notebook, "make an Audio Overview for")
+        corpus = corpus_of(notebook)
+        config = _config()
+        try:
+            blob = corpus.blob(max_chars=config.max_corpus_chars)
+        except CorpusTooLargeError as exc:
+            raise HTTPException(413, str(exc)) from exc
 
-    provider = _tts_provider(config)
+        provider = _tts_provider(config)
 
-    run_id = _derive_run_id(notebook_id, body.run_id)
-    with _announced(run_id):
-        # ANNOUNCED across the language call: that is the window a client's ticker sits in,
-        # and on a new notebook it is always a real model round trip (see `_announced`).
-        language = await _resolve_language(notebook, request, config, run_id)
-    # BEFORE the script run, not after: a language this provider has no id for, or a voice it does
-    # not know, can never produce audio, and finding that out afterwards wastes a real model call
-    # (invariant 19, extended from the provider NAME to the provider's own inputs).
-    try:
-        provider.validate(language, tts_voice_map(config, language, provider))
-    except TTSError as exc:
-        raise HTTPException(500, f"TTS provider misconfigured: {exc}") from exc
-    result = await _run_isolated(
-        notebook_id,
-        _dotted(GeneratePodcastScript),
-        {
-            "sources": blob,
-            "output_language": language or _DEFAULT_ARTIFACT_LANGUAGE,
-            "target_length": body.length,
-        },
-        config,
-        run_id,
-        fresh=body.fresh,
-        # A `long` episode cannot finish inside the backstop a chat turn needs — measured, see
-        # `PODCAST_TIMEOUT_FACTOR`. Scaling here rather than raising the global default keeps a
-        # runaway CHAT turn bounded at the value it always had.
-        timeout=config.run_timeout_seconds * PODCAST_TIMEOUT_FACTOR[body.length],
-    )
-    script = PodcastScript.model_validate(result)
-
-    utterances = [
-        AudioUtteranceResponse(
-            speaker=u.speaker,
-            text=_prose(u.text),
-            citations=_citation_responses(u.citations, corpus, _prose(u.text)),
+        run_id = _derive_run_id(notebook_id, body.run_id)
+        with _announced(run_id):
+            # ANNOUNCED across the language call: that is the window a client's ticker sits in,
+            # and on a new notebook it is always a real model round trip (see `_announced`).
+            language = await _resolve_language(notebook, request, config, run_id)
+        # BEFORE the script run, not after: a language this provider has no id for, or a voice it does
+        # not know, can never produce audio, and finding that out afterwards wastes a real model call
+        # (invariant 19, extended from the provider NAME to the provider's own inputs).
+        try:
+            provider.validate(language, tts_voice_map(config, language, provider))
+        except TTSError as exc:
+            raise HTTPException(500, f"TTS provider misconfigured: {exc}") from exc
+        result = await _run_isolated(
+            notebook_id,
+            _dotted(GeneratePodcastScript),
+            {
+                "sources": blob,
+                "output_language": language or _DEFAULT_ARTIFACT_LANGUAGE,
+                "target_length": body.length,
+            },
+            config,
+            run_id,
+            fresh=body.fresh,
+            # A `long` episode cannot finish inside the backstop a chat turn needs — measured, see
+            # `PODCAST_TIMEOUT_FACTOR`. Scaling here rather than raising the global default keeps a
+            # runaway CHAT turn bounded at the value it always had.
+            timeout=config.run_timeout_seconds * PODCAST_TIMEOUT_FACTOR[body.length],
         )
-        for u in script.utterances
-    ]
+        script = PodcastScript.model_validate(result)
 
-    if not script.utterances:
-        # A source with nothing worth discussing is a legitimate output (audio.py's instructions
-        # explicitly allow it) — same "don't try to synthesize silence" handling cli._cmd_audio
-        # already has, rather than calling synthesize() and getting a TTSError for an empty script.
-        #
-        # Still a REGENERATE, though: an independent audit found this arm returning early with the
-        # previous episode untouched, so `GET .../audio/file` kept serving audio for a script the
-        # notebook no longer had and the UI said there was none. Invariant 42's "replaced on
-        # regenerate" has to cover the empty case too.
+        utterances = [
+            AudioUtteranceResponse(
+                speaker=u.speaker,
+                text=_prose(u.text),
+                citations=_citation_responses(u.citations, corpus, _prose(u.text)),
+            )
+            for u in script.utterances
+        ]
+
+        if not script.utterances:
+            # A source with nothing worth discussing is a legitimate output (audio.py's instructions
+            # explicitly allow it) — same "don't try to synthesize silence" handling cli._cmd_audio
+            # already has, rather than calling synthesize() and getting a TTSError for an empty script.
+            #
+            # Still a REGENERATE, though: an independent audit found this arm returning early with the
+            # previous episode untouched, so `GET .../audio/file` kept serving audio for a script the
+            # notebook no longer had and the UI said there was none. Invariant 42's "replaced on
+            # regenerate" has to cover the empty case too.
+            await asyncio.to_thread(clear_audio, notebook_id)
+            await _mutate_or_http(notebook_id, lambda nb: setattr(nb, "podcast", None), create=False)
+            return AudioResponse(utterances=[], audio_base64=None)
+
+        voice_map = tts_voice_map(config, language, provider)
+        fd, tmp_name = tempfile.mkstemp(suffix=provider.suffix)
+        os.close(fd)
+        tmp_path = Path(tmp_name)
+        try:
+            offsets = await _abandonable(
+                provider.synthesize, spoken_script(script), voice_map, tmp_path, language
+            )
+            audio_bytes = tmp_path.read_bytes()
+        except TTSError as exc:
+            raise HTTPException(
+                502, f"podcast script generated, but audio synthesis failed: {exc}"
+            ) from exc
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+        # Persist the audio BEFORE the notebook record, so a crash between the two leaves an orphan
+        # file rather than a notebook pointing at audio that isn't there. An orphan is harmless only
+        # while the notebook still exists (the next generate overwrites it); if the notebook is gone,
+        # the `except` around the record write below removes it.
+        destination = audio_path(notebook_id, suffix=provider.suffix)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        # Clear every format first: switching providers between generations would otherwise leave the
+        # previous `.mp3` beside the new `.wav`, and `find_audio` would serve the stale one.
         await asyncio.to_thread(clear_audio, notebook_id)
-        await _mutate_or_http(notebook_id, lambda nb: setattr(nb, "podcast", None), create=False)
-        return AudioResponse(utterances=[], audio_base64=None)
+        await asyncio.to_thread(destination.write_bytes, audio_bytes)
 
-    voice_map = tts_voice_map(config, language, provider)
-    fd, tmp_name = tempfile.mkstemp(suffix=provider.suffix)
-    os.close(fd)
-    tmp_path = Path(tmp_name)
-    try:
-        offsets = await asyncio.to_thread(
-            provider.synthesize, spoken_script(script), voice_map, tmp_path, language
+        podcast = Podcast(
+            utterances=script.utterances,
+            offsets=offsets or [],
+            run_id=run_id,
+            source_ids=[s.id for s in notebook.sources],
         )
-        audio_bytes = tmp_path.read_bytes()
-    except TTSError as exc:
-        raise HTTPException(
-            502, f"podcast script generated, but audio synthesis failed: {exc}"
-        ) from exc
-    finally:
-        tmp_path.unlink(missing_ok=True)
+        try:
+            await _mutate_or_http(
+                notebook_id, lambda nb: setattr(nb, "podcast", podcast), create=False
+            )
+        except HTTPException:
+            #: The notebook went away between `_working_on` and here — the one interleaving the
+            #: guard cannot close, since DELETE checks and then deletes across an `await`. Take the
+            #: audio with it: `create=False` already refuses to resurrect the record, and an mp3
+            #: with no notebook is exactly the orphan `GET .../audio/file` would serve to whatever
+            #: notebook next claimed the id.
+            await asyncio.to_thread(clear_audio, notebook_id)
+            raise
 
-    # Persist the audio BEFORE the notebook record, so a crash between the two leaves an orphan file
-    # (harmless — it is overwritten on the next generate) rather than a notebook pointing at audio
-    # that isn't there.
-    destination = audio_path(notebook_id, suffix=provider.suffix)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    # Clear every format first: switching providers between generations would otherwise leave the
-    # previous `.mp3` beside the new `.wav`, and `find_audio` would serve the stale one.
-    await asyncio.to_thread(clear_audio, notebook_id)
-    await asyncio.to_thread(destination.write_bytes, audio_bytes)
-
-    podcast = Podcast(
-        utterances=script.utterances,
-        offsets=offsets or [],
-        run_id=run_id,
-        source_ids=[s.id for s in notebook.sources],
-    )
-    await _mutate_or_http(notebook_id, lambda nb: setattr(nb, "podcast", podcast), create=False)
-
-    return AudioResponse(
-        utterances=utterances,
-        audio_base64=base64.b64encode(audio_bytes).decode("ascii"),
-        offsets=offsets or [],
-        audio_suffix=provider.suffix,
-    )
+        return AudioResponse(
+            utterances=utterances,
+            audio_base64=base64.b64encode(audio_bytes).decode("ascii"),
+            offsets=offsets or [],
+            audio_suffix=provider.suffix,
+        )
 
 
 @app.get("/notebooks/{notebook_id}/audio/file")
@@ -1737,8 +2308,8 @@ async def get_audio_file(notebook_id: str) -> FileResponse:
 
     A materially different exposure than a metadata endpoint, and the fourth of its kind here after
     the trace stream, the citation-turn lookup and the full-source-text endpoint (invariants 29 and
-    31): with no authentication (invariant 25), anyone who can reach this server can play any
-    notebook's episode. Stated rather than folded silently into "same as everything else".
+    31): there is no authorization behind the token (invariant 25), so anyone holding it can play
+    any notebook's episode. Stated rather than folded silently into "same as everything else".
 
     A real file rather than a base64 blob, deliberately: the browser can range-request it, so
     seeking in a long episode does not re-download it, and reopening a notebook costs no
@@ -1764,6 +2335,35 @@ async def cancel(notebook_id: str) -> dict:
     return {"cancelled": run.run_id}
 
 
+@app.get("/notebooks/{notebook_id}/runs")
+async def list_in_flight_runs(notebook_id: str) -> dict:
+    """The runs this server currently has in flight for `notebook_id`.
+
+    **Without it, a page reload lost a run that kept spending.** The worker survives a reload — it
+    is a subprocess (invariant 21) — but the run id lived only in the page that started it, so after
+    F5 there was no indicator, no Stop, and no way to discover either: asking again simply started a
+    SECOND run on the same notebook. An independent review measured both halves. Invariant 47 says
+    every long-running action shows that it is running and offers a way to stop it, and a reload is
+    not an exemption from that; `POST .../runs/{run_id}/cancel` was already precise, it just had no
+    way of being told which id to name.
+
+    Read straight off `_RUN_PROCESSES`, which is the same single-process, in-memory map invariant 23
+    documents — so this inherits that limitation rather than introducing a new one, and a run
+    announced but not yet spawned is included, because it is exactly the one a reader most needs to
+    be able to stop (see `_CANCELLED_BEFORE_SPAWN`).
+
+    The DERIVED ids are filtered out: `{base}-lang` is pre-work belonging to `{base}`, and offering
+    it as a separate run to stop would be offering the same action twice.
+    """
+    prefix = f"{slug(notebook_id)}-"
+    runs = sorted(
+        run_id
+        for run_id in list(_RUN_PROCESSES)
+        if run_id.startswith(prefix) and not run_id.endswith("-lang")
+    )
+    return {"runs": runs}
+
+
 @app.post("/notebooks/{notebook_id}/runs/{run_id}/cancel")
 async def cancel_run(notebook_id: str, run_id: str) -> dict:
     """Cancel ONE run by id, rather than "whatever this notebook is doing" (`/cancel`, above).
@@ -1786,7 +2386,40 @@ async def cancel_run(notebook_id: str, run_id: str) -> dict:
         raise HTTPException(404, f"no in-flight run {run_id!r}")
     process = _RUN_PROCESSES[run_id]
     if process is None:
-        return {"cancelled": None, "run_id": run_id, "detail": "not spawned yet"}
+        # RESERVED but not yet spawned. Recording the stop is what makes it real: `_run_isolated`
+        # refuses to spawn an id in this set, so the run the reader stopped never starts.
+        if len(_CANCELLED_BEFORE_SPAWN) >= _MAX_CANCELLED_IDS:
+            # **The PLACEHOLDERS go with the flags.** `_announced`'s `finally` deliberately keeps
+            # both for a cancelled id, because `_run_isolated` is about to consume them — and if the
+            # handler raises in between, it never does, so both leak for the life of the process:
+            # `cancel_run` then answers "stopped before it started" for that id forever and
+            # `_prune_traces` protects its trace permanently. Clearing the flags without their
+            # placeholders would leave the worse half behind.
+            for stale in _CANCELLED_BEFORE_SPAWN:
+                if _RUN_PROCESSES.get(stale) is None:
+                    _RUN_PROCESSES.pop(stale, None)
+            _CANCELLED_BEFORE_SPAWN.clear()
+        _CANCELLED_BEFORE_SPAWN.add(run_id)
+        # And the PRE-WORK, which is a live subprocess under a DERIVED id the caller never saw.
+        # `_resolve_language` registers `{base}-lang`, so a Stop naming only the base id left a real
+        # model call running — the one that makes this window long enough to press Stop in.
+        also = [
+            other
+            for other, proc in list(_RUN_PROCESSES.items())
+            if proc is not None and other.startswith(f"{run_id}-")
+        ]
+        for other in also:
+            _CANCELLED_BEFORE_SPAWN.add(other)
+            try:
+                os.killpg(_RUN_PROCESSES[other].pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, AttributeError, KeyError):
+                pass
+        return {
+            "cancelled": run_id,
+            "run_id": run_id,
+            "also_cancelled": also,
+            "detail": "stopped before it started",
+        }
     # The WHOLE process group, exactly as `runner.Run.cancel` does and for the same reason
     # (invariant 22): a stuck Deno grandchild must not survive as an orphan.
     try:
@@ -1848,7 +2481,8 @@ def _translate_trace_event(event: dict) -> dict:
     **Exposure**: `detail` is the model's own prose, and a REPL step's reasoning can quote ingested
     source text. That is the same category invariant 29 already records for this stream — it is why
     the trace endpoints are called out as a materially different exposure than the rest of this
-    no-auth API. Deliberately NOT included: the step's `output`, which is where whole corpus spans
+    API, which has no authorization behind its token. Deliberately NOT included: the step's
+    `output`, which is where whole corpus spans
     actually land; its SIZE is reported instead, which is the part that tells a reader whether a
     step did much.
     """
@@ -2158,6 +2792,753 @@ class _RevalidatingStatics(StaticFiles):
         response = super().file_response(*args, **kwargs)
         response.headers.setdefault("Cache-Control", "no-cache")
         return response
+
+
+# --- The Inbox (Tier 0) -----------------------------------------------------------------------------
+#
+# ROUTE ORDER MATTERS HERE. Starlette matches in registration order, so every literal path
+# (`/inbox/status`, `/inbox/upload`, …) must be declared BEFORE `/inbox/{node_id}` or it is captured
+# as a node id. `node_blocks_path`'s pattern check means the worst case is a 404 rather than
+# something worse, but a 404 on `/inbox/status` is still a bug, and the ordering is the fix.
+
+
+async def _form_or_400(request: Request):
+    """`request.form()`, with a malformed body as a 400 rather than a raw plain-text 500.
+
+    Starlette raises `MultiPartException` and `python_multipart` raises `MultipartParseError`, and
+    NEITHER is an `HTTPException` — both escape the handler and become `Internal Server Error` with
+    no JSON body. Shared by both upload endpoints because this was a PRE-EXISTING gap on
+    `/notebooks/{id}/sources/upload` that the Inbox's uploader copied; fixing one and not the other
+    would leave the older, more-used one broken.
+    """
+    try:
+        return await request.form()
+    except (MultiPartException, MultipartParseError) as exc:
+        raise HTTPException(400, f"malformed multipart body: {exc}") from exc
+
+
+def _node_or_404(node_id: str) -> Node:
+    """Resolve a node id or raise the right 4xx — never a raw 500.
+
+    Invariant 27's rule, at Tier 0: a malformed id and a missing one are DIFFERENT answers.
+    `inbox.node_blocks_path` raises `ValueError` for anything that is not a minted id (invariant 77's
+    sibling finding: `remove_node("../../notebooks/mynb")` once deleted a live notebook file), and
+    that must be a 400 rather than escaping. A well-formed id that is simply not here is a 404.
+    """
+    if not inbox.is_node_id(node_id):
+        # Checked FIRST and explicitly: `get_node` is a SQL lookup, so a malformed id just misses
+        # and is indistinguishable from a missing one. Only `node_blocks_path` validates, and only
+        # the handlers that touch the file reach it — so without this, `DELETE /inbox/../../x` and
+        # `DELETE /inbox/<absent>` would give the same answer for very different reasons.
+        raise HTTPException(400, f"invalid node id {node_id!r}: not a node id")
+    try:
+        node = inbox.get_node(node_id)
+    except inbox.UNREADABLE_SOURCE as exc:
+        # **409 NAMING THE ROW, not 400 blaming the id.** A row whose JSON columns no longer parse
+        # made every per-node endpoint answer `400 invalid node id` — about an id that is perfectly
+        # valid. That is the same mis-blame this file fixed one endpoint over, where a broken NODE
+        # file was reported as a broken NOTEBOOK file, and it had the worse consequence: `DELETE`
+        # goes through this gate too, so the row could not be removed either. It is reachable
+        # through `delete_inbox_node`, which deliberately does not call this.
+        raise HTTPException(
+            409,
+            f"node {node_id!r} has an index row that cannot be read ({type(exc).__name__}) — "
+            "DELETE it, or fix the row by hand.",
+        ) from exc
+    if node is None:
+        raise HTTPException(404, f"no such node: {node_id!r}")
+    return node
+
+
+class CaptureRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: http(s) ONLY. A local path is refused here exactly as `add_sources` refuses one — see
+    #: `capture_into_inbox`'s docstring for why this is not inherited confidence.
+    urls: list[str] = []
+    texts: list[str] = []
+
+
+class PromoteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    notebook_id: str
+    #: Whether the caller MEANT to make a new notebook. Defaults False so a stale picker option —
+    #: or any caller naming a notebook it believes exists — gets a 404 instead of resurrecting one.
+    create: bool = False
+
+
+class DistilRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: Named by the caller, not defaulted to "everything". Invariant 80: the number of summaries is
+    #: knowable before the spend, and the cheapest honest way to guarantee that is to make the
+    #: caller say it. BOUNDED here rather than checked in the handler — an unbounded value reached
+    #: `sqlite3` and returned a plain-text `OverflowError` 500.
+    limit: int = Field(20, ge=1, le=500)
+
+
+#: The summary pass's own visible, stoppable state. Invariant 47 says every long-running action
+#: shows that it is running and offers a way to STOP it, and this was the one action in the product
+#: that spends the reader's money with no progress and no stop: `POST /inbox/distil` ran up to fifty
+#: sequential model calls inside the request, and the only feedback was a disabled button.
+#:
+#: Single-process and in-memory, the same documented limitation `_ACTIVE_RUNS` carries (invariant
+#: 23) and inherited rather than newly introduced.
+#:
+#: **`failed` and `error` are not decoration.** The first version of this state carried `done`,
+#: `total` and `running` only, `_run_distil_pass` ticked `done` once per ATTEMPTED node, and
+#: `distil_pending`'s return value was discarded — so the status could report nothing but success.
+#: An independent review pressed the button on a machine with no model credentials and watched the
+#: strip count to 2 / 2 and vanish while both nodes sat unchanged at `ready_undistilled` and the
+#: server logged `No LM is loaded` twice. A counter that only ever goes up is not progress, it is a
+#: claim the page cannot support (invariant 60), on the one action that spends the reader's money.
+#:
+#: `error` holds the LAST message rather than every message: fifty identical "No LM is loaded"
+#: lines say nothing the first does not, and the count beside it is what conveys the scale.
+_DISTIL: dict[str, object] = {
+    "running": False,
+    "done": 0,
+    "total": 0,
+    "failed": 0,
+    "error": "",
+    "cancel": False,
+}
+_DISTIL_GUARD = threading.Lock()
+
+
+#: Whether this PROCESS has an LM configured. Distillation is the only model call the API makes
+#: IN-PROCESS: every `RLMTask` goes through `runner.py`/`worker.py` (invariant 21) and `worker.py`
+#: calls `config.setup` on the way in, which is why `ask`, the guides, the podcast and
+#: `_resolve_language` all work. `distill.py` is a plain `dspy.Predict` (invariant 80) and runs on a
+#: thread inside the server, where NOTHING had ever called `setup`.
+#:
+#: **So the feature was dead in the shipped server, in every configuration.** An independent review
+#: pointed a correctly configured `RN_BASE_URL` at a stub and watched zero HTTP requests arrive
+#: while the log filled with `ValueError: No LM is loaded`. The suite did not catch it because
+#: every distillation test monkeypatches `distill.distil_source` — exactly the function whose real
+#: body could not work — so 869 tests were green over a feature that had never once run.
+#:
+#: Configured LAZILY, on first use, rather than at startup: `NotebookConfig.from_env()` raises
+#: `SystemExit` when `RN_MAIN_MODEL` is unset, and a browser-only reader with no credentials must
+#: still get a server that starts, an Inbox that captures and a UI that works. The cost of being
+#: wrong is now a sentence in the strip instead of a server that refuses to boot.
+_MODEL_GUARD = threading.Lock()
+_MODEL_CONFIGURED = False
+
+
+def _configure_in_process_model() -> None:
+    """Make `dspy` usable on THIS thread's process. Idempotent; raises with a readable message.
+
+    Only SUCCESS is remembered. A first attempt that failed because the operator had not set
+    `RN_MAIN_MODEL` must not poison every later one — they may well go and set it.
+
+    `SystemExit` is converted rather than propagated, for invariant 24's reason one layer out: it
+    is a `BaseException`, so `except Exception` around the pass would not catch it, the thread would
+    die silently, and the page would see a pass that simply stopped. Its argument IS the sentence
+    the operator needs (`from_env` raises `SystemExit("RN_MAIN_MODEL is not set — …")`), so it is
+    carried through rather than replaced.
+    """
+    global _MODEL_CONFIGURED
+    with _MODEL_GUARD:
+        if _MODEL_CONFIGURED:
+            return
+        try:
+            setup(NotebookConfig.from_env())
+        except SystemExit as exc:
+            raise RuntimeError(str(exc) or "no model is configured") from exc
+        _MODEL_CONFIGURED = True
+
+
+def _distil_snapshot() -> dict:
+    """The five fields, read WITHOUT taking `_DISTIL_GUARD`. **The caller must already hold it.**
+
+    Exists because `_DISTIL_GUARD` is a plain `threading.Lock` and `distil_inbox` needs a status
+    payload from inside its own critical section. Calling `_distil_status()` there re-acquired the
+    lock the same thread was holding and deadlocked the ASGI EVENT LOOP: the server stopped
+    answering anything, static page included, and survived both SIGINT and SIGTERM — only SIGKILL
+    ended it. It fired whenever a summary pass was asked for with nothing pending, which the shipped
+    UI reaches by design (`app.js` has a branch for `started: false`, with a comment recording that
+    it had already happened): a stale count, a second tab, auto-distil finishing first, or a node
+    deleted between the poll and the press.
+
+    A `RLock` would also have silenced it, and is deliberately NOT what was done — it would make the
+    next nested acquisition invisible rather than impossible. Splitting the read from the locking is
+    what removes the class.
+    """
+    return {
+        "running": bool(_DISTIL["running"]),
+        "done": int(_DISTIL["done"]),
+        "total": int(_DISTIL["total"]),
+        "failed": int(_DISTIL["failed"]),
+        "error": str(_DISTIL["error"]),
+    }
+
+
+def _distil_status() -> dict:
+    with _DISTIL_GUARD:
+        return _distil_snapshot()
+
+
+def _run_distil_pass(limit: int, language: str) -> None:
+    """The summary pass, on a worker thread, reporting as it goes.
+
+    `should_stop` is checked between nodes, so Stop ends the batch at a node boundary rather than
+    mid-call — a model call is a socket and could be abandoned, but abandoning it would pay for a
+    result nobody reads. Progress is counted the same way, which is why `done` moves in steps of one
+    and never lies about a node still in flight.
+    """
+    def should_stop() -> bool:
+        with _DISTIL_GUARD:
+            return bool(_DISTIL["cancel"])
+
+    def tick() -> None:
+        with _DISTIL_GUARD:
+            _DISTIL["done"] = int(_DISTIL["done"]) + 1
+
+    def failed(node_id: str, exc: Exception) -> None:
+        # The message reaches the reader verbatim. This is a self-hosted, BYOK tool with one
+        # operator, and "No LM is loaded" is the actionable sentence — the same reasoning by which
+        # the notebook surface already shows its own model errors in full rather than replacing
+        # them with "something went wrong".
+        with _DISTIL_GUARD:
+            _DISTIL["failed"] = int(_DISTIL["failed"]) + 1
+            _DISTIL["error"] = f"{type(exc).__name__}: {exc}"[:300]
+        _log.warning("distil: %s failed: %s", node_id, exc)
+
+    try:
+        # BEFORE the first node, not inside the loop: a missing model is one message, not fifty
+        # identical ones, and it costs nothing to discover it before claiming any node.
+        _configure_in_process_model()
+        distill.distil_pending(
+            limit=limit,
+            #: **The queue's RESOLVED directory, the same one the auto pass passes.** Without it
+            #: this fell back to `inbox.DEFAULT_INBOX_DIR` — the bare relative `inbox` — which is
+            #: re-resolved against the process cwd on every call, from a worker THREAD.
+            #: `IntakeQueue.__init__` resolves its path once and says at length why: hold a worker
+            #: inside `parse`, `chdir` elsewhere, release, and one node ends up split across two
+            #: directories. The manual pass is the one that reaches `inbox.update_node` from a
+            #: thread and it was the half still re-deriving. Latent today, nothing chdirs — and it
+            #: is the same asymmetry that comment was written to close, on the other half of the
+            #: same feature.
+            base_dir=_inbox_queue().base_dir,
+            language=language,
+            should_stop=should_stop,
+            on_node=tick,
+            on_error=failed,
+        )
+    except Exception as exc:  # noqa: BLE001 - the pass itself dying must still reach the page
+        # `distil_pending` raising (a corrupt index, a disk error) is not one node failing. Without
+        # this the thread dies, `running` is cleared by the `finally`, and the page sees a pass that
+        # simply stopped - indistinguishable from one that finished.
+        # `failed` is a count of NODES, and it is NOT bumped here. The first version wrote
+        # `max(1, failed)` so that something would show; pressing "Summarise 2" with no credentials
+        # then reported "1 could not be summarised" when nothing had been attempted at all. That is
+        # invariant 60's rule broken on the one action that spends money — a status line may not
+        # claim something the page is not doing. A pass that could not START is `failed: 0` with an
+        # `error`, which is a distinguishable state, and the page says so in different words.
+        with _DISTIL_GUARD:
+            _DISTIL["error"] = f"{type(exc).__name__}: {exc}"[:300]
+        _log.exception("distil: the pass itself failed")
+    finally:
+        with _DISTIL_GUARD:
+            _DISTIL.update({"running": False, "cancel": False})
+
+
+def _resume_auto_distil() -> None:
+    """Clear the Stop flag, because a NEW capture is the reader asking for the automatic pass again.
+
+    Stop suppresses every later automatic batch (see `_auto_distil_after_intake`), which would
+    otherwise mean one press turns auto-distil off until the process restarts. Throwing something
+    new into the Inbox is the deliberate act that turns it back on — the same shape as `submit`
+    treating a `failed` node's re-submission as the retry.
+    """
+    with _DISTIL_GUARD:
+        if not _DISTIL["running"]:
+            _DISTIL["cancel"] = False
+
+
+def _auto_distil_after_intake() -> None:
+    """The intake queue's idle hook. Runs the summary pass ONLY if the operator turned it on.
+
+    This lives here and not in `intake.py` on purpose: keeping every model call out of that module
+    is what makes invariant 80's default structural rather than merely intended — `intake.py`
+    imports nothing model-related at all. The policy is the API's, and it is bounded by
+    `auto_distil_max_per_batch`, which is environment-only (invariant 41's placement rule: the
+    toggle may be a settings-page setting, the bound may not).
+
+    **It YIELDS, and that is invariant 47 applied to a batch nobody pressed a button for.** This
+    runs on the queue's own worker thread, so while it is summarising, nothing is parsing — a
+    capture arriving mid-batch sat at `queued` for the entire batch, measured at 2.6s with one
+    stand-in call and a minute or more at the default of 20 real ones. `should_stop` (which until
+    now had no caller anywhere) is given two reasons to return: a new capture is waiting, or
+    somebody pressed Stop. Either way the batch ends at a node boundary and the hook runs again
+    when the queue is next idle, so nothing is lost.
+
+    `base_dir` comes from the QUEUE, not from the default: the queue resolves its directory once at
+    construction precisely so a `chdir` cannot split a node across two of them, and re-deriving a
+    relative path on that same thread would undo it.
+    """
+    if not auto_distil_enabled():
+        return
+    queue = intake.shared()
+    generation = queue.cancel_generation
+    limit = auto_distil_max_per_batch()
+
+    # **Through `_DISTIL`, exactly like the manual pass.** This used to call `distil_pending`
+    # directly, touching none of the shared state, and the consequences were all the same bug: an
+    # independent review measured THIRTEEN model calls while `GET /inbox/status` reported
+    # `{running: false, done: 0, total: 0}` and the strip stayed hidden. So the one pass that runs
+    # WITHOUT a press was the one with no progress, no Stop and no failure report — invariant 47
+    # inverted. It also meant `POST /inbox/distil`'s 409 guard could not see it, so a reader could
+    # start a second pass on top of a running one.
+    #
+    # `total` is the BOUND rather than a count of what exists: the auto path is capped per batch and
+    # yields to a waiting capture, so the honest number is what this batch may spend, not the
+    # backlog. `should_stop` keeps both of its existing reasons AND gains the shared cancel flag, so
+    # the strip's Stop reaches this pass too.
+    pending = inbox.count_nodes(state="ready_undistilled", base_dir=queue.base_dir)
+    total = min(limit, pending)
+    # `total` is also what `distil_pending` is CAPPED at below, not just what the strip announces.
+    # Passing the raw `limit` there let the pass re-list `ready_undistilled` when it actually ran
+    # and summarise anything captured in the meantime, so `done` climbed past `total` and the strip
+    # rendered `2 / 1`, then `3 / 1` — on the one action that spends the reader's money, which is
+    # the thing `_DISTIL` exists to report honestly. The extra nodes are not lost: the next idle
+    # fires another batch, which is exactly the per-batch bound invariant 80 asks for.
+    if not total:
+        return
+    with _DISTIL_GUARD:
+        if _DISTIL["running"]:
+            return
+        #: **A Stop has to reach the batch that starts NEXT, not only the one running.**
+        #: `cancel_pending` bumps `_cancel_generation` for exactly this reason, in as many words —
+        #: but this function read `queue.cancel_generation` at ENTRY, i.e. after the bump, so the
+        #: comparison in `should_stop` below could never be true for a batch that began afterwards;
+        #: and then the update here wrote `cancel: False`, wiping the flag the reader had just set.
+        #: Reproduced: Stop, and a paid batch started milliseconds later at the next idle with
+        #: `should_stop()` already false. `cancel_inbox_intake`'s own comment is "Stop means stop,
+        #: not stop-one-of-the-two".
+        #:
+        #: So the automatic pass REFUSES to start while the flag is set, and does not clear it. It
+        #: is cleared by a deliberate act — a manual press, or throwing something new in (see
+        #: `_resume_auto_distil`), both of which are the reader asking for spending again.
+        if _DISTIL["cancel"]:
+            return
+        _DISTIL.update(
+            {"running": True, "done": 0, "total": total, "failed": 0, "error": ""}
+        )
+
+    def tick() -> None:
+        with _DISTIL_GUARD:
+            _DISTIL["done"] = int(_DISTIL["done"]) + 1
+
+    def failed(node_id: str, exc: Exception) -> None:
+        with _DISTIL_GUARD:
+            _DISTIL["failed"] = int(_DISTIL["failed"]) + 1
+            _DISTIL["error"] = f"{type(exc).__name__}: {exc}"[:300]
+        _log.warning("auto-distil: %s failed: %s", node_id, exc)
+
+    def should_stop() -> bool:
+        with _DISTIL_GUARD:
+            stopped = bool(_DISTIL["cancel"])
+        return stopped or queue.has_pending_work() or queue.cancel_generation != generation
+
+    try:
+        # Same configuration the manual pass needs, and for the same reason: this runs on the intake
+        # queue's worker thread, which is inside the server process. Left out, the operator who
+        # turned the toggle on gets a log line per capture and no summaries, forever — and because
+        # `intake._maybe_idle` swallows everything a hook raises, that failure was invisible even in
+        # the status. It reaches the page now.
+        _configure_in_process_model()
+        distill.distil_pending(
+            limit=total,
+            base_dir=queue.base_dir,
+            should_stop=should_stop,
+            on_node=tick,
+            on_error=failed,
+        )
+    except Exception as exc:  # noqa: BLE001 - same contract as the manual pass
+        with _DISTIL_GUARD:
+            _DISTIL["error"] = f"{type(exc).__name__}: {exc}"[:300]
+        _log.exception("auto-distil: the pass itself failed")
+    finally:
+        with _DISTIL_GUARD:
+            _DISTIL.update({"running": False, "cancel": False})
+
+
+def _inbox_queue() -> intake.IntakeQueue:
+    queue = intake.shared()
+    queue.set_idle_hook(_auto_distil_after_intake)
+    return queue
+
+
+@app.get("/inbox")
+async def list_inbox(
+    state: str | None = None,
+    #: The product's actual promise, made queryable. Distillation produces a title, a summary, tags
+    #: and entities precisely so a node can be found by DESCRIPTION months later (invariant 80), and
+    #: until this parameter existed none of it could be read back. Bounded like every other input
+    #: here: an unbounded string reaches SQLite.
+    q: str | None = Query(None, max_length=200),
+    #: BOUNDED IN THE SIGNATURE, both of them. `min(limit, 200)` had no floor, and SQLite reads a
+    #: negative LIMIT as "no limit" — `?limit=-1` returned all 303 rows from a handler whose own
+    #: docstring says it has to stay cheap at thousands. And an out-of-range `offset` reached
+    #: `sqlite3` and came back as a plain-text `OverflowError` 500, not JSON.
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0, le=1_000_000),
+) -> dict:
+    """The Inbox listing — the application's front page, so it has to stay cheap at thousands of
+    nodes. Paged, and served from the SQLite index alone: no blocks are read (invariant 78 —
+    a listing of a thousand nodes must not carry a thousand corpora)."""
+    nodes = await asyncio.to_thread(
+        inbox.list_nodes, state=state, query=q, limit=limit, offset=offset
+    )
+    total = await asyncio.to_thread(inbox.count_nodes, state=state, query=q)
+    # NOT filtered by the query: this is what a summary pass would cost, and that is a fact about
+    # the Inbox rather than about what you happen to be looking at (invariant 80).
+    undistilled = await asyncio.to_thread(inbox.count_nodes, state="ready_undistilled")
+    try:
+        corpus_char_cap = max_corpus_chars()
+    except SystemExit as exc:  # a malformed RN_MAX_CORPUS_CHARS, same shape as `_config()`'s
+        # Invariant 24, on the DEFAULT screen. `SystemExit` inherits from `BaseException`, so
+        # Starlette's error middleware does not catch it: it escapes as a raw `text/plain` 500 and
+        # then ENDS THE SERVER PROCESS — one authenticated GET, on a typo in an env var that
+        # startup did not reject. Every other reader of a `_env_int` cap on a request path is
+        # already wrapped like this; this one was reached last and got missed.
+        raise HTTPException(500, f"server misconfigured: {exc}") from exc
+    return {
+        "nodes": [node.model_dump() for node in nodes],
+        "total": total,
+        #: Invariant 80: what a summary pass WOULD cost, before anyone asks for one.
+        "undistilled": undistilled,
+        #: The ceiling a node has to fit under to be USABLE once it is promoted (invariant 8).
+        #: Reported with the listing because the two caps are six times apart: 50MB of bytes may be
+        #: uploaded, 8M characters may be assembled into a corpus. A 30MB text file captures fine,
+        #: promotes fine, and then makes the notebook unusable at the first question — invariant 8
+        #: failing loudly, a long way from the decision that caused it. The row can say so before
+        #: the promotion instead.
+        "corpus_char_cap": corpus_char_cap,
+    }
+
+
+@app.get("/inbox/status")
+async def inbox_status() -> dict:
+    """What is happening, from the two things that can be happening. Reported side by side rather
+    than merged: parsing and summarising fail differently, cost differently, and stop differently,
+    and a single "busy" would let the page claim one while the other was true (invariant 60)."""
+    return {**_inbox_queue().status(), "distil": _distil_status()}
+
+
+@app.post("/inbox/cancel")
+async def cancel_inbox_intake() -> dict:
+    """Drop everything still waiting. The item being parsed RUNS TO COMPLETION — a native PDFium
+    parse cannot be interrupted without taking the process with it (invariant 79), so this reports
+    what it dropped rather than claiming the queue is now empty."""
+    dropped = await asyncio.to_thread(_inbox_queue().cancel_pending)
+    # Stop means stop, not stop-one-of-the-two. A reader pressing it while a summary pass is running
+    # is asking for that as well, and the pass ends at the next node boundary.
+    with _DISTIL_GUARD:
+        _DISTIL["cancel"] = True
+    return {"dropped": dropped, **_inbox_queue().status(), "distil": _distil_status()}
+
+
+@app.post("/inbox/distil/dismiss")
+async def dismiss_distil_error() -> dict:
+    """Clear the last summary pass's failure, because it is otherwise IMMORTAL.
+
+    `_DISTIL["error"]` is process state and nothing but the start of the next pass ever cleared it.
+    A failed batch therefore installed a banner above the stream for the life of the server — and
+    for EVERY visitor, not just the one who pressed the button: reproduced by pressing Summarise,
+    quitting the browser, and loading the front page in a brand-new profile, where `.distil-error`
+    was already rendered with no way to dismiss it. On the commonest first-run condition (BYOK, no
+    model configured yet) that is a permanent error banner on the default screen.
+
+    A server-side clear rather than one the page keeps to itself: the error lives on the server, so
+    a dismiss that only hid it locally would come back on the next reload, which is the bug.
+    """
+    with _DISTIL_GUARD:
+        if _DISTIL["running"]:
+            # A pass in flight owns these fields; clearing under it would hide a failure that is
+            # still accumulating. There is nothing stale to dismiss while it is running anyway.
+            raise HTTPException(409, "a summary pass is running")
+        _DISTIL["error"] = ""
+        _DISTIL["failed"] = 0
+        return {"dismissed": True, **_distil_snapshot()}
+
+
+@app.post("/inbox/distil")
+async def distil_inbox(body: DistilRequest, request: Request) -> dict:
+    """Summarise up to `limit` captured nodes. **This spends the reader's money** (invariant 80),
+    which is why it is a separate verb with an explicit number rather than something capture does.
+
+    Off the event loop, because `distil_source` refuses to run inside one — it uses `asyncio.run`,
+    and swallowing that would turn a wiring mistake into every node bouncing back with a log line
+    indistinguishable from an unreachable model."""
+    # Invariant 69's signal, from the one place that HAS it. `distil_pending` deliberately does not
+    # resolve a language itself — it runs with no request — so the caller that does supplies it
+    # (invariant 80's shortened ladder). `output_language()` still outranks this inside the pass.
+    language = request.headers.get("x-rlm-interface-language", "")
+
+    pending = await asyncio.to_thread(inbox.count_nodes, state="ready_undistilled")
+    total = min(body.limit, pending)
+    with _DISTIL_GUARD:
+        if _DISTIL["running"]:
+            raise HTTPException(409, "a summary pass is already running")
+        if total == 0:
+            # `_distil_snapshot`, NOT `_distil_status`: this thread already holds `_DISTIL_GUARD`,
+            # and re-entering it here wedged the entire server. See `_distil_snapshot`'s docstring.
+            return {"started": False, **_distil_snapshot()}
+        # `failed`/`error` are cleared HERE, at the start of a pass, and not in the `finally` that
+        # ends one: a reader needs the reason to survive the pass that produced it, or the page has
+        # a fraction of a second to notice it in.
+        _DISTIL.update(
+            {"running": True, "done": 0, "total": total, "failed": 0, "error": "", "cancel": False}
+        )
+
+    # Started, not awaited. Fifty sequential model calls inside a request is a request that times
+    # out, and a reader watching a disabled button learns nothing — `GET /inbox/status` carries the
+    # progress and `POST /inbox/cancel` stops it (invariant 47).
+    threading.Thread(
+        target=_run_distil_pass, args=(total, language), name="rlm-distil", daemon=True
+    ).start()
+    return {"started": True, **_distil_status()}
+
+
+@app.post("/inbox/upload")
+async def upload_into_inbox(request: Request) -> dict:
+    """Uploaded files' raw BYTES into the Inbox, one node each. Never a path (invariant 26).
+
+    This first line is what FastAPI serves at `/docs`, and it said "One file's raw BYTES" long
+    after this became the BATCH surface: `form.getlist("file")`, a per-file and running-total cap,
+    and partial success reported in `refused`.
+
+    The `Content-Length` cap is the FIRST thing this does, before FastAPI is allowed anywhere near
+    the body — the identical shape `upload_source` uses, and for the reason invariant 30 records: a
+    handler declaring `file: UploadFile = File(...)` has already had the whole multipart body parsed
+    for it, whatever the declared size.
+    """
+    try:
+        cap = max_upload_bytes()
+    except SystemExit as exc:
+        raise HTTPException(500, f"server misconfigured: {exc}") from exc
+    content_length = request.headers.get("content-length")
+    if content_length is None:
+        raise HTTPException(411, "Content-Length header is required for file uploads")
+    try:
+        declared_size = int(content_length)
+    except ValueError:
+        raise HTTPException(400, f"invalid Content-Length header {content_length!r}") from None
+    if declared_size > cap:
+        raise HTTPException(413, f"upload declares {declared_size} bytes, exceeding the {cap}-byte limit")
+
+    form = await _form_or_400(request)
+    # `getlist`, not `get`. `get` returns the LAST value for a repeated key, so a body with three
+    # `file` parts landed one node and dropped two with no message — under a response shape
+    # (`{"nodes": [...]}`) that specifically reads as "several are fine". Dropping a file the reader
+    # chose is the one thing a capture surface must never do quietly.
+    uploads = [item for item in form.getlist("file") if hasattr(item, "filename")]
+    if not uploads:
+        raise HTTPException(422, "expected a multipart 'file' field")
+
+    payloads: list[tuple[bytes, str]] = []
+    total = 0
+    for upload in uploads:
+        data = await upload.read()
+        total += len(data)
+        # DEFENCE IN DEPTH, and the justification here used to claim more than that: it said a
+        # caller "could otherwise split one oversized payload across several parts", which the
+        # `Content-Length` check above already makes impossible — the declared length covers the
+        # whole multipart body, parts and boundaries included, so anything past the cap in total is
+        # refused before a single part is read. Mutating this to `if False:` leaves the suite green
+        # and MUST, which is what a reviewer found. It stays because it is the check that would
+        # still hold if the pre-parse bound were ever moved or relaxed; it is not a second case.
+        if len(data) > cap or total > cap:
+            raise HTTPException(413, f"upload is {total} bytes, exceeding the {cap}-byte limit")
+        payloads.append((data, upload.filename or "upload"))
+
+    # **Every file is attempted, and the failures are REPORTED rather than thrown.** The first
+    # version let the first `ValueError` abort the loop: dropping `good-a.md`, `bad.docx` and
+    # `good-b.md` together stored the first, raised on the second, and lost the third with no record
+    # anywhere - under a 422 naming neither the file that survived nor the one that vanished. The
+    # comment directly above says dropping a file the reader chose is the one thing a capture
+    # surface must never do quietly, and this loop was doing exactly that.
+    #
+    # It is also invariant 79 one layer up. A capture always lands; a BATCH capture lands every item
+    # it can, and says which ones it could not.
+    def _store():
+        stored, refused = [], []
+        for data, filename in payloads:
+            try:
+                source = with_injection_flags(ingest_uploaded_file(data, filename, "s0"))
+                #: An UPLOAD: the origin is the filename the caller sent, which is not an
+                #: identity even when it is spelled like a URL — see `node_id_for`.
+                stored.append(inbox.add_node(source))
+            except Exception as exc:  # noqa: BLE001 - a parser may raise anything
+                # **`Exception`, not `(ValueError, OSError)`, and the difference was a 500 that lost
+                # data.** `pypdfium2.PdfiumError` subclasses `RuntimeError`, so a malformed `.pdf`
+                # went straight past this and out of `_store`: the request became a raw
+                # `500: Internal Server Error`, and every file ALREADY STORED in this batch was
+                # never reported, because the response that would have named them never happened.
+                # That is the exact failure the comment above says this loop fixed, arriving through
+                # a different exception type. `intake.py`'s worker already catches `Exception` for
+                # this reason, in as many words; the queue path got it and the upload paths did not.
+                refused.append({"filename": filename, "error": f"{type(exc).__name__}: {exc}"})
+        return stored, refused
+
+    nodes, refused = await _abandonable(_store)
+    # A 422 only when NOTHING landed. A batch where some files worked is a success with a report:
+    # failing the whole request would leave the reader unable to tell which half happened, and the
+    # nodes are already stored by then.
+    if not nodes and refused:
+        raise HTTPException(422, "could not ingest: " + "; ".join(r["error"] for r in refused))
+    # Same as the paste path: an upload is bytes in hand and never enters the queue, so the idle
+    # hook has to be asked for rather than waited on.
+    _resume_auto_distil()
+    _inbox_queue().nudge()
+    return {"nodes": [node.model_dump() for node in nodes], "refused": refused}
+
+
+@app.post("/inbox")
+async def capture_into_inbox(body: CaptureRequest) -> dict:
+    """Capture URLs and pasted text. Returns the nodes IMMEDIATELY, parsed or not (invariant 79).
+
+    **http(s) only, and this check is written here rather than inherited.** `intake.submit` accepts
+    a local path perfectly happily, because `ingest.ingest_one` does — which is correct for
+    `cli.py`, whose operator already trusts their own machine, and an arbitrary-file-read vector the
+    moment the same function sits behind an HTTP endpoint. Invariant 26 records that attack being
+    reproduced end to end (`POST {"sources": ["/etc/passwd"]}` read the file and echoed it back
+    through a citation that PASSED verification), and a second capture endpoint is exactly where it
+    comes back. Files arrive through `/inbox/upload` as opaque bytes instead.
+
+    Pasted text does not go through the queue: `parse_text` plus the injection scan is microseconds,
+    and queueing it would only delay a node the reader is watching for. `ingest_pasted_text` gives
+    it a content-derived origin, so pasting the same thing twice is one node (invariant 78).
+    """
+    if not body.urls and not body.texts:
+        raise HTTPException(422, "give at least one url or one text")
+    for value in body.urls:
+        if not is_url(value):
+            raise HTTPException(
+                422,
+                f"{value!r} is not an http(s) URL. This endpoint never reads a local path "
+                "(AGENTS.md invariant 26) — upload the file's bytes to /inbox/upload instead.",
+            )
+
+    queue = _inbox_queue()
+    # A new capture is the reader asking for the automatic summary pass again — see
+    # `_resume_auto_distil`, and `_auto_distil_after_intake` for why a Stop suppresses it until then.
+    _resume_auto_distil()
+    nodes = []
+    try:
+        for url in body.urls:
+            nodes.append(await asyncio.to_thread(queue.submit, url))
+        for text in body.texts:
+            if not text.strip():
+                continue
+            source = await asyncio.to_thread(
+                lambda t=text: with_injection_flags(ingest_pasted_text(t, "s0"))
+            )
+            #: PASTED text: `ingest_pasted_text` already builds a content-derived origin, so the
+            #: identity is the content either way. Left False so there is one rule, not two.
+            nodes.append(await asyncio.to_thread(inbox.add_node, source))
+    except (ValueError, OSError) as exc:
+        raise HTTPException(422, f"could not capture that: {type(exc).__name__}: {exc}") from exc
+    # Pasted text skipped the queue above, so nothing will ever report the queue idle on its
+    # account, and the auto-summary hook would never see it. See `IntakeQueue.nudge`.
+    queue.nudge()
+    return {"nodes": [node.model_dump() for node in nodes]}
+
+
+@app.get("/inbox/{node_id}")
+async def get_inbox_node(node_id: str) -> dict:
+    node = await asyncio.to_thread(_node_or_404, node_id)
+    memberships = await asyncio.to_thread(inbox.memberships_for, node_id)
+    return {"node": node.model_dump(), "notebooks": [m.model_dump() for m in memberships]}
+
+
+@app.get("/inbox/{node_id}/source")
+async def get_inbox_node_source(node_id: str) -> dict:
+    """A node's FULL text, every block.
+
+    **The same materially-different exposure invariant 31 records for the notebook equivalent**, one
+    tier down: every other Inbox endpoint returns metadata or a short summary, and this returns
+    whatever was captured. Stated rather than left to read as one more getter."""
+    await asyncio.to_thread(_node_or_404, node_id)
+    try:
+        source = await asyncio.to_thread(inbox.node_source, node_id)
+    except inbox.UNREADABLE_SOURCE as exc:
+        # Invariant 27's shape, one tier down and missing its second arm: `_node_or_404` covers the
+        # DB ROW, and the text lives in a separate file (invariant 78). A truncated or wrong-shape
+        # blocks file escaped as a bodyless `500 Internal Server Error`, so the page's error path
+        # had nothing to render. 409, like a corrupt notebook file: the id is fine, the thing
+        # behind it is not, and the fix is by hand.
+        raise HTTPException(
+            409,
+            f"node {node_id!r} has a stored text file that cannot be read "
+            f"({type(exc).__name__}) — fix or remove it by hand before continuing.",
+        ) from exc
+    if source is None:
+        raise HTTPException(404, f"node {node_id!r} has no stored text yet")
+    return {"source": source.model_dump()}
+
+
+@app.delete("/inbox/{node_id}")
+async def delete_inbox_node(node_id: str) -> dict:
+    """Forget a node. Sources already PROMOTED into notebooks stay — they were copied, and a
+    notebook silently losing a cited source because someone tidied their inbox would break
+    invariant 12's promise (`inbox.remove_node`).
+
+    **The one per-node endpoint that does NOT resolve the row first**, and that is the point:
+    removal is the RECOVERY for a row that cannot be read, and routing it through `_node_or_404`
+    made the unreadable row permanently unremovable — invisible to the listing, still counted
+    against every summary pass, and refused by the only verb that could have cleared it. `DELETE`
+    needs the id to be well-formed and nothing else; `remove_node` is a plain SQL delete that never
+    parses the row.
+    """
+    if not inbox.is_node_id(node_id):
+        raise HTTPException(400, f"invalid node id {node_id!r}: not a node id")
+    removed = await asyncio.to_thread(inbox.remove_node, node_id)
+    if not removed:
+        raise HTTPException(404, f"no such node: {node_id!r}")
+    return {"removed": removed}
+
+
+@app.post("/inbox/{node_id}/promote")
+async def promote_inbox_node(node_id: str, body: PromoteRequest) -> dict:
+    """Copy a node into a notebook as a real, citable `Source`. The node is NOT consumed."""
+    await asyncio.to_thread(_node_or_404, node_id)
+    try:
+        #: **The picker can name a notebook that is already gone.** Its options come from the list
+        #: fetched when the Inbox rendered, so a stale option is enough — no race needed — and
+        #: promoting through one re-created the notebook the reader had deleted, holding one source
+        #: and nothing else. `create` is what the CALLER meant: the UI mints a fresh `nb-<uuid8>`
+        #: when the reader picks "a new notebook" (invariant 37) and sends an existing id otherwise,
+        #: so `create` is exactly "this id is new to me", defaulting False for an API caller that
+        #: says nothing.
+        membership = await asyncio.to_thread(
+            inbox.promote_node, node_id, body.notebook_id, create=body.create
+        )
+    except FileNotFoundError as exc:
+        #: `create=False` and the notebook is gone — a stale picker option naming something the
+        #: reader has since deleted. A 404 says which case it is; re-creating it was the bug.
+        raise HTTPException(404, f"no notebook {body.notebook_id!r}") from exc
+    except inbox.UnreadableNodeText as exc:
+        # **FIRST, and narrow.** `promote_node` reads the NODE's text and then writes a NOTEBOOK,
+        # and `ValidationError` comes out of both — so the arm below was blaming a
+        # `notebooks/<id>.json` that parses perfectly well, and telling the operator to remove it.
+        # `inbox.promote_node` raises this only for the file it was actually reading at the time.
+        raise HTTPException(409, f"{exc} — fix or remove it by hand before continuing.") from exc
+    except ValidationError as exc:
+        raise HTTPException(
+            409,
+            f"notebooks/{body.notebook_id}.json exists but is not a valid notebook file "
+            f"({type(exc).__name__}) — fix or remove it by hand before continuing.",
+        ) from exc
+    except ValueError as exc:
+        # BOTH arms, per invariant 27: a bad notebook id and an origin collision are both 4xx, and
+        # an unhandled `ValueError` here would escape as a raw 500.
+        raise HTTPException(400, f"could not promote {node_id!r}: {exc}") from exc
+    return {"membership": membership.model_dump()}
 
 
 app.mount("/", _RevalidatingStatics(directory=Path(__file__).parent / "web", html=True), name="web")

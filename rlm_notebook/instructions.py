@@ -455,7 +455,7 @@ def make_grounded_validator(
         #
         # Not tightened, because the model needs its real coordinate back to fix it, and a trace is
         # already the one artifact here that can hold full ingested source text in front of an API
-        # with no authentication (invariants 25 and 29). This is inside that accepted posture; the
+        # with no authorization (invariants 25 and 29). This is inside that accepted posture; the
         # sentence that claimed otherwise was the defect.
         record_tool_call(
             validate.__name__,

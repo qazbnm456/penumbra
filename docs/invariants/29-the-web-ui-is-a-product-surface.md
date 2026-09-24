@@ -76,7 +76,7 @@ marker proves the REPL saw it, never that this occurrence is what the model reli
 "coordinate, not faithfulness" limit as invariant 5; and a `sub_call` event's `input` is
 truncated to 4000 characters upstream. **The trace endpoints are a MATERIALLY DIFFERENT exposure
 than metadata-only responses** — a trace can contain full ingested source text — inheriting
-invariant 25's no-auth posture as a sharper version of the same accepted risk.
+invariant 25's no-authorization posture as a sharper version of the same accepted risk.
 
 ---
 

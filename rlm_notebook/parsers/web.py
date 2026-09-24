@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 import trafilatura
 from rlm_harness.tools.fetch import is_safe_url, parse_cidrs, resolved_host_is_safe
 
-from ..config import fetch_allow_cidrs
+from ..config import fetch_allow_cidrs, max_upload_bytes
 from ..schema import Source, SourceBlock
 
 Fetcher = "Callable[[str], str]"  # documented shape; see parse_web's `fetcher` param
@@ -69,16 +69,36 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
 _opener = urllib.request.build_opener(_SafeRedirectHandler)
 
 
-def _default_fetcher(url: str, *, timeout: float = 15.0) -> str:
+def _fetch(url: str, *, timeout: float = 15.0) -> tuple[bytes, str]:
+    """The bytes and the declared content type, both of which the caller needs.
+
+    **Bounded.** The read used to be `resp.read()` with no argument, on an endpoint where any token
+    holder can paste any URL — one link to a large file was a memory spike the server had no say
+    in. `max_upload_bytes()` is the same bound an upload gets, for the same reason and with the same
+    independence from `NotebookConfig` (invariant 30): bytes arriving from outside in one request,
+    on a path that must work whether or not a model is configured. Read one byte PAST the cap, so
+    hitting it is distinguishable from a file that happens to be exactly that size.
+    """
     _check_safe(url)
+    cap = max_upload_bytes()
     req = urllib.request.Request(url, headers={"User-Agent": "rlm-notebook/0.1"})
     try:
         with _opener.open(req, timeout=timeout) as resp:
-            raw = resp.read()
+            raw = resp.read(cap + 1)
+            content_type = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
     except FetchError:
         raise
     except (urllib.error.URLError, TimeoutError) as exc:
         raise FetchError(f"fetch error for {url!r}: {exc}") from exc
+    if len(raw) > cap:
+        raise FetchError(f"{url!r} is larger than the {cap}-byte limit")
+    return raw, content_type
+
+
+def _default_fetcher(url: str, *, timeout: float = 15.0) -> str:
+    """The html-only seam the `fetcher=` parameter documents. Kept as-is so every existing caller
+    and every test fake keeps the shape it was written against."""
+    raw, _ = _fetch(url, timeout=timeout)
     return raw.decode("utf-8", errors="replace")
 
 
@@ -96,7 +116,7 @@ _PREVIEW_META = {
 #: `>` and every `<meta ` start position rescans the whole run. Cubic, measured end to end through
 #: `parse_web`: 6.5KB took 0.50s, 15.3KB took 12.98s, 19.7KB took 38.08s. `re` does NOT release the
 #: GIL — a watchdog thread saw a 14s hard pause — so `asyncio.to_thread` buys the event loop
-#: nothing. On a no-auth API (invariant 25) where any caller can paste any URL, and where
+#: nothing. On an API where any token holder can paste any URL (invariant 25), and where
 #: `_default_fetcher` reads a response of any size, that is a one-request freeze of the whole
 #: server. A WELL-FORMED 681KB page with 5000 meta tags parsed in 0.019s, because a real
 #: `<meta …>` closes its `>`; the pathological input is the only one these bounds cost anything on.
@@ -163,10 +183,62 @@ def extract_preview(html: str) -> dict[str, str]:
     return found
 
 
+#: Content types this parser knows how to read as something OTHER than a web page.
+#:
+#: **A URL is not a synonym for "an HTML page", and treating it as one made the most obvious act on
+#: a research inbox impossible.** `trafilatura.extract` ran unconditionally, so an arXiv PDF link
+#: came back `FetchError: no extractable text content` — a message that reads like the fetch failed
+#: rather than like the format was never tried. The same for an RFC `.txt` and a raw `.rst` on
+#: GitHub. Local PDF UPLOAD worked the whole time, which is what made it a routing bug rather than
+#: a missing feature.
+_PDF_TYPES = frozenset({"application/pdf", "application/x-pdf"})
+_PLAIN_TYPES = frozenset({"text/plain", "text/markdown", "text/x-markdown", "text/csv", "text/x-rst"})
+
+
+def _looks_like_pdf(raw: bytes, content_type: str) -> bool:
+    """Type first, magic bytes second. A server that mislabels a PDF as `application/octet-stream`
+    is common enough to be worth the five-byte check, and `%PDF-` cannot be mistaken for html."""
+    return content_type in _PDF_TYPES or raw[:5] == b"%PDF-"
+
+
 def parse_web(url: str, source_id: str, *, fetcher=None) -> Source:
-    """Ingest a web page. `fetcher` is an injection seam for tests (a fake returning canned HTML);
-    the default fetches over the real network with the SSRF guard applied first."""
-    html = (fetcher or _default_fetcher)(url)
+    """Ingest a URL: a web page, a PDF, or plain text, decided by what actually came back.
+
+    `fetcher` is an injection seam for tests (a fake returning canned HTML); when it is supplied the
+    reply is treated as html, which is the shape every existing caller was written against. The
+    default fetches over the real network with the SSRF guard applied first.
+    """
+    if fetcher is not None:
+        return _from_html(fetcher(url), url, source_id)
+
+    raw, content_type = _fetch(url)
+    if _looks_like_pdf(raw, content_type):
+        # Through a real file, because PDFium wants one — and through `parse_pdf`, so a PDF reached
+        # by URL gets the identical page-per-block treatment, the OCR ladder and the `_PDFIUM_LOCK`
+        # serialisation (invariant 3) that an uploaded one gets. Imported here rather than at module
+        # scope: `parsers/pdf.py` pulls in pypdfium2 and the OCR stack, and a text-only capture
+        # should not pay for them.
+        import tempfile
+
+        from .pdf import parse_pdf
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as handle:
+            handle.write(raw)
+            handle.flush()
+            source = parse_pdf(handle.name, source_id)
+        # `parse_pdf` names the temp file as the origin; the ORIGIN is the URL the reader pasted,
+        # and it is what dedupe and every citation coordinate key off.
+        return source.model_copy(update={"origin": url})
+
+    if content_type in _PLAIN_TYPES:
+        from .text import parse_text
+
+        return parse_text(raw.decode("utf-8", errors="replace"), source_id, origin=url)
+
+    return _from_html(raw.decode("utf-8", errors="replace"), url, source_id)
+
+
+def _from_html(html: str, url: str, source_id: str) -> Source:
     text = trafilatura.extract(html, url=url)
     if not text or not text.strip():
         raise FetchError(f"no extractable text content at {url!r}")

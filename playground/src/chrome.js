@@ -24,12 +24,39 @@
     return n;
   };
 
-  function button(label, title, onClick, cls) {
-    const b = el("button", `header-btn pg-btn ${cls || ""}`.trim(), label);
+  //: **A label that can be hidden without losing the control.** Every chrome button reads
+  //: "<glyph> <word>", and at phone width the row of them plus the app's own ⚙ and ◐ ran to x=480
+  //: against a 375 viewport: ★ GitHub, ⚙ and ◐ were sliced off the edge, inside a scroller with
+  //: `scrollbar-width: none` and therefore no affordance saying they were there. The earlier fix
+  //: was that scroller, on the argument that "hiding a button whose label is its only meaning is
+  //: worse than a scroll a thumb can do" — which is right about hiding and wrong about this: the
+  //: glyph is not decoration, it IS the icon, so splitting the two lets the word go and the control
+  //: stay. `aria-label` carries the whole label either way, because a button that has become a
+  //: glyph must still announce itself.
+  function label(node, text, title) {
+    const [ico, ...rest] = String(text).split(" ");
+    node.appendChild(el("span", "pg-ico", ico));
+    const word = rest.join(" ");
+    if (word) node.appendChild(el("span", "pg-label", word));
+    node.setAttribute("aria-label", title ? `${text}: ${title}` : text);
+    if (title) node.title = title;
+    return node;
+  }
+
+  function button(text, title, onClick, cls) {
+    const b = el("button", `header-btn pg-btn ${cls || ""}`.trim());
     b.type = "button";
-    b.title = title;
+    label(b, text, title);
     b.addEventListener("click", onClick);
     return b;
+  }
+
+  function link(text, title, href, cls) {
+    const a = el("a", `header-btn pg-btn ${cls || ""}`.trim());
+    a.href = href;
+    a.target = "_blank";
+    a.rel = "noopener";
+    return label(a, text, title);
   }
 
   // --- modal ------------------------------------------------------------------------------------
@@ -88,18 +115,23 @@
         location.reload();
       })
     );
-    const install = el("a", "header-btn pg-btn pg-btn-primary", PG.ui("install"));
-    install.href = `${REPO}#install-and-run`;
-    install.target = "_blank";
-    install.rel = "noopener";
-    install.title = PG.ui("installTip");
-    put(install);
-    const star = el("a", "header-btn pg-btn", PG.ui("github"));
-    star.href = REPO;
-    star.target = "_blank";
-    star.rel = "noopener";
-    star.title = PG.ui("githubTip");
-    put(star);
+    put(link(PG.ui("install"), PG.ui("installTip"), `${REPO}#install-and-run`, "pg-btn-primary"));
+    put(link(PG.ui("github"), PG.ui("githubTip"), REPO, "pg-btn-repo"));
+
+    //: **The honest label has to survive a phone.** `.pg-sim` is hidden below 900px to buy the row
+    //: its width, and the app hides `.wordmark` below 640px — which took the PLAYGROUND tag with
+    //: it. Between them, the one thing this page's README calls non-negotiable ("all honestly
+    //: labelled as simulated") was absent from the entire phone layout, on the surface most likely
+    //: to be opened from a link. A strip under the header costs no width in the row at all.
+    // `bar.parentElement`, not `closest(".header")`, for the reason the insertion point above is
+    // read the same way: naming a container is what breaks when the markup nests differently.
+    const header = bar.parentElement;
+    if (header && header.parentElement && !document.querySelector(".pg-strip")) {
+      const strip = el("div", "pg-strip");
+      strip.appendChild(el("span", "pg-sim-dot"));
+      strip.appendChild(el("span", null, PG.ui("simulatedLine")));
+      header.parentElement.insertBefore(strip, header.nextSibling);
+    }
 
     const foot = el("div", "pg-foot");
     foot.appendChild(el("span", null, PG.ui("footer")));
@@ -141,10 +173,33 @@
       scenarios[0];
     if (!pick) return;
     location.hash = `#${pick.id}`;
-    // Claim it for the tour BEFORE opening it, or the shim hands back a fully-populated notebook and
-    // step 1 has nothing to add.
+    // Claim it for the tour BEFORE anything opens it, or the shim hands back a fully-populated
+    // notebook and the sources step has nothing to add.
     if (typeof PG.beginTour === "function") PG.beginTour(pick.id);
-    if (typeof window.openNotebook === "function") await window.openNotebook(pick.id);
+
+    //: **AND THEN STOP, ON THE INBOX.** This used to open the notebook immediately, which is how
+    //: the tour came to have fifteen steps and not one of them about the screen the product now
+    //: opens on. A visitor was thrown straight into the three-column workspace and never saw
+    //: capture, the stream, Find, or a facet - the entire Tier 0 half of the product, and the
+    //: reason the redesign happened. The notebook is now reached the way a reader reaches it, by
+    //: pressing a facet, and that press is a step of the script.
+    //:
+    //: The hash still names the tour's notebook, because `PG.progress` is keyed by it and the
+    //: director reads it before any notebook is open.
+    //:
+    //: `refreshInbox` has already run: `app.js` boots into `showInbox()` on its own when there is
+    //: no `?nb=`, which is now the state this function leaves it in.
+    //
+    // Which facet row opens it, by POSITION. `renderFacets` paints `GET /notebooks` in order and
+    // writes no id onto the button, so the index is the only handle - and it is a stable one,
+    // because the shim answers that route from the same fixture the scenario list comes from.
+    try {
+      const list = await (await fetch("/notebooks")).json();
+      const at = (list.notebooks || []).findIndex((b) => b.id === pick.id);
+      if (at >= 0) PG.facetIndex = at + 1;
+    } catch {
+      // The step falls back to the header picker, which reaches every notebook too.
+    }
   }
 
   //: A capped episode still shows its WHOLE transcript, so its later lines point past the end of

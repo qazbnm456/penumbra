@@ -132,11 +132,17 @@
   //: `rlmnb-ui-lang` and `rlmnb-theme` are deliberately NOT here. Those are how the reader is
   //: LOOKING at the page rather than anything the tour teaches, and clearing them would undo the
   //: reader's own toggle every time they refreshed.
+  //:
+  //: `rlmnb-api-token` IS here, and it is the one key on this list that is not about the tour.
+  //: This page has no backend at all — every request is answered by the shim below — so a token
+  //: can do nothing here but sit in a public demo page's storage. It is workspace state, not a
+  //: reader preference, so the exemption above does not apply to it.
   const WORKSPACE_KEYS = [
     "rlmnb-studio-view",
     "rlmnb-studio-collapsed",
     "rlmnb-studio-width",
     "rlmnb-podcast-length",
+    "rlmnb-api-token",
   ];
   //: At MODULE SCOPE, and that is what makes it work without touching the DOM: `index.html` loads
   //: `shim.js` before `app.js`, so the keys are already gone by the time the workspace reads them
@@ -168,6 +174,21 @@
     for (const owned of tourOwns) stages.set(owned, blankStage());
   };
   PG.scenarios = async () => (await fixtures()).scenarios;
+
+  //: Whether this build HAS an Inbox to tour, read from the FIXTURE and not from the stream.
+  //: `skipIf` is polled and its effect is permanent (the director does `this.index += 1`), so a
+  //: predicate that counts `#stream .node` skips its step for good the first time it happens to be
+  //: sampled mid-re-render - and the step before these types into Find, which re-renders the
+  //: stream on every keystroke. "Open a row" vanished from the script every single run.
+  PG.hasInbox = false;
+  fixtures().then(
+    (f) => {
+      PG.hasInbox = (f.inbox || []).length > 0;
+    },
+    () => {
+      /* no fixtures is a broken build, not a tour decision to make here */
+    }
+  );
 
   //: Skipping a step must FULFIL it, not step over it. The stage is what every later step reads, so
   //: a skip that only advanced the script left the notebook empty and stranded everything
@@ -230,7 +251,8 @@
     };
   }
 
-  //: Settings are per-browser here. The real `PUT /settings` is a GLOBAL, unauthenticated mutation
+  //: Settings are per-browser here. The real `PUT /settings` is a GLOBAL mutation any token holder
+  //: can make
   //: (invariant 41); a playground that persisted it across visitors would be that hazard shipped on
   //: purpose, so it lives in memory and dies with the tab.
   let settings = {
@@ -256,6 +278,10 @@
       // rather than failing — which is why the smoke test asserts the shape and not just the 200.
       items.push({
         id: nb.id,
+        // The key a membership is written with. Recorded scenario ids are already slug-safe, so it
+        // equals the id here — but the field has to EXIST, or every filed node on the playground
+        // renders "In a deleted notebook" the way the real app did before `NotebookSummary` grew it.
+        slug: nb.id,
         title: nb.title,
         derived_title: nb.derived_title,
         source_count: nb.sources.length,
@@ -360,6 +386,14 @@
     nb.turns = [];
   }));
 
+  // Deleting a NOTEBOOK is refused rather than simulated. Every other write here edits the
+  // in-memory copy of a recorded scenario, which is fine because a reload restores it — but a
+  // playground that lets a visitor remove the three notebooks the tour is built from is a page that
+  // can be emptied by its first reader. A 501 says the same thing the capture writes say.
+  route("DELETE", NB, async () =>
+    json({ detail: "This is a recorded demo \u2014 the notebooks here are fixtures." }, 501)
+  );
+
   route("PUT", `${NB}/title`, async (m, req) => {
     const title = (await req.json()).title;
     return mutate(decodeURIComponent(m[1]), (nb) => {
@@ -369,6 +403,103 @@
   });
 
   route("POST", `${NB}/title`, async (m) => json(await notebook(decodeURIComponent(m[1]))));
+
+  // --- Tier 0, the Inbox ------------------------------------------------------------------------
+  //
+  // **The pivot broke this page and nothing noticed**, which is the failure `playground/README.md`
+  // claims is impossible ("It cannot rot into a mock-up of a UI we no longer ship"). The shim
+  // intercepted `/notebooks*` and `/settings*` only; the byte-copied `app.js` now boots into
+  // `showInbox()` and immediately asks for `/inbox`, so the demo's FIRST SCREEN rendered
+  // "（錯誤）404: File not found" under a tour pointing at a button that was not there. CI runs
+  // neither `build.py` nor `smoke.mjs`, so the only thing that would have caught it is a person
+  // opening the page.
+  //
+  // A READ-ONLY Inbox: the playground has no server, and capture, distillation and promotion all
+  // write. Anything that would mutate answers honestly rather than pretending, which is the same
+  // contract the rest of this shim already keeps.
+  const inboxNodes = () =>
+    fixtures().then((f) =>
+      (f.inbox || []).map((n, i) => ({
+        id: n.id || `nd-demo${i}`,
+        kind: n.kind || "text",
+        origin: n.origin || "pasted:demo",
+        state: n.state || "ready",
+        error: null,
+        title: n.title || null,
+        summary: n.summary || null,
+        tags: n.tags || [],
+        entities: n.entities || [],
+        preview: n.preview || {},
+        flags: [],
+        chars: n.chars || 0,
+        created_at: n.created_at || Date.now() / 1000,
+        updated_at: n.updated_at || Date.now() / 1000,
+      }))
+    );
+
+  route("GET", "/inbox", async (m, req, u) => {
+    const all = await inboxNodes();
+    const q = (u.searchParams.get("q") || "").trim().toLowerCase();
+    const terms = q ? q.split(/\s+/) : [];
+    const hit = (n) =>
+      terms.every((t) =>
+        [n.title, n.summary, (n.tags || []).join(" "), (n.entities || []).join(" "), n.origin]
+          .filter(Boolean)
+          .some((field) => String(field).toLowerCase().includes(t))
+      );
+    const rows = all.filter(hit);
+    const offset = Number(u.searchParams.get("offset") || 0);
+    const limit = Number(u.searchParams.get("limit") || 25);
+    return json({
+      nodes: rows.slice(offset, offset + limit),
+      total: rows.length,
+      undistilled: all.filter((n) => n.state === "ready_undistilled").length,
+      corpus_char_cap: 8000000,
+    });
+  });
+
+  route("GET", "/inbox/status", async () =>
+    json({
+      running: false,
+      current: null,
+      pending: 0,
+      distil: { running: false, done: 0, total: 0, failed: 0, error: "" },
+    })
+  );
+
+  route("GET", "/inbox/([^/]+)", async (m) => {
+    const node = (await inboxNodes()).find((n) => n.id === m[1]);
+    return node ? json({ node, notebooks: [] }) : notFound(`no node ${m[1]}`);
+  });
+
+  route("GET", "/inbox/([^/]+)/source", async (m) => {
+    const node = (await inboxNodes()).find((n) => n.id === m[1]);
+    if (!node) return notFound(`no node ${m[1]}`);
+    return json({ blocks: [{ locator: "whole", text: node.summary || node.origin }] });
+  });
+
+  // Everything that WRITES. The playground has no server; saying so is better than a 404 that
+  // reads like a bug in the app.
+  for (const [method, pattern] of [
+    ["POST", "/inbox"],
+    ["POST", "/inbox/upload"],
+    ["POST", "/inbox/distil"],
+    // Routes are anchored (`^…$`), so this needs its own entry — `/inbox/distil` does not cover it.
+    // Missing it was caught by `smoke.mjs`'s own route-coverage check, which CI does not run; the
+    // pytest beside it does now, so the next endpoint cannot drift the same way.
+    ["POST", "/inbox/distil/dismiss"],
+    ["POST", "/inbox/cancel"],
+    ["POST", "/inbox/([^/]+)/promote"],
+    ["DELETE", "/inbox/([^/]+)"],
+  ]) {
+    route(method, pattern, async () =>
+      json({ detail: "This is a recorded demo \u2014 capturing and filing need the real app." }, 501)
+    );
+  }
+
+  // Nothing is ever in flight on a static page. Answering honestly is what stops the UI's
+  // reattach-after-reload probe from reporting a dead route.
+  route("GET", `${NB}/runs`, async () => json({ runs: [] }));
 
   route("GET", "/settings", async () => json(settings));
   route("PUT", "/settings", async (m, req) => {
@@ -550,7 +681,11 @@
     const url = new URL(req.url, location.href);
     // Anything that is not one of OUR API paths is a real asset request (fixtures, audio) and goes
     // to the network untouched.
-    if (!url.pathname.startsWith("/notebooks") && !url.pathname.startsWith("/settings")) {
+    if (
+      !url.pathname.startsWith("/notebooks") &&
+      !url.pathname.startsWith("/settings") &&
+      !url.pathname.startsWith("/inbox")
+    ) {
       return realFetch(input, init);
     }
     for (const r of ROUTES) {

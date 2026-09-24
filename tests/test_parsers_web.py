@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from rlm_notebook.parsers import web
@@ -107,7 +109,12 @@ def test_default_fetcher_uses_the_guarded_opener_never_plain_urlopen(monkeypatch
     opened: list = []
 
     class _Response:
-        def read(self):
+        # `read(n)` and `headers`: the fetch is bounded now (it reads one byte past the cap so the
+        # limit is distinguishable from a file that size) and it reads the content type, because a
+        # URL is not a synonym for an HTML page.
+        headers: ClassVar[dict] = {"content-type": "text/html; charset=utf-8"}
+
+        def read(self, size=-1):
             return b"<html><body>ok</body></html>"
 
         def __enter__(self):
@@ -299,7 +306,7 @@ def test_a_hostile_page_cannot_stall_the_preview_scraper():
     """`re` does not release the GIL, so a slow match freezes the event loop and every other thread
     — `asyncio.to_thread` buys nothing. An independent security review measured the unbounded
     version taking 38s on a 19.7KB page of UNCLOSED `<meta` tags (cubic, and `_default_fetcher`
-    reads a response of any size), reachable by anyone who can paste a URL into this no-auth API.
+    reads a response of any size), reachable by anyone who can paste a URL into this API.
 
     Asserts a CONSTANT bound, not a fast one: the point is that the worst case stops depending on
     what the server was served. A generous ceiling on purpose — this must not flake on a loaded CI
@@ -319,3 +326,126 @@ def test_a_hostile_page_cannot_stall_the_preview_scraper():
     start = time.perf_counter()
     web.extract_preview(benign)
     assert time.perf_counter() - start < 1.0
+
+# --- a URL is not a synonym for an HTML page --------------------------------------------------
+
+
+def _canned(monkeypatch, body: bytes, content_type: str):
+    """Stand in for the network at the `_opener` seam, so `_fetch` itself is what runs."""
+    from rlm_notebook.parsers import web
+
+    monkeypatch.setattr(web, "resolved_host_is_safe", lambda *a, **k: True)
+
+    class _Response:
+        headers: ClassVar[dict] = {"content-type": content_type}
+        #: **`read(n)` HONOURS `n`, and that is the whole point of this stub.** It used to ignore
+        #: `size` and hand back the entire body, so `test_the_fetch_is_bounded` only ever exercised
+        #: the `len(raw) > cap` refusal that comes AFTER the read - and changing
+        #: `resp.read(cap + 1)` to `resp.read()` left the suite green. An independent review caught
+        #: that by mutation: the bound is stated as a property in
+        #: `docs/invariants/30-upload-and-paste-do-not-reopen-the-path-ban.md`, and without it any
+        #: token holder pasting a URL to a huge file makes the server read all of it into memory
+        #: before refusing. `asked` records what was requested so a test can assert the bound
+        #: itself rather than only its consequence.
+        asked: ClassVar[list] = []
+
+        def read(self, size=-1):
+            type(self).asked.append(size)
+            return body if size is None or size < 0 else body[:size]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(web._opener, "open", lambda req, timeout=None: _Response())
+    web._canned_response = _Response  # so a test can read what `read` was asked for
+    return web
+
+
+def test_a_pdf_url_is_parsed_as_a_pdf_not_refused_as_an_empty_page(monkeypatch, tmp_path):
+    """**The most obvious act on a research inbox was impossible.**
+
+    `trafilatura.extract` ran unconditionally on whatever came back, so pasting an arXiv PDF link
+    produced `FetchError: no extractable text content` — a message that reads like the fetch failed
+    rather than like the format was never tried. Local PDF UPLOAD worked the whole time, which is
+    what makes this a routing bug rather than a missing feature. An independent review found it by
+    pasting the single most likely link a reader of papers would paste.
+
+    `ingest.kind_for`'s own comment predicted this: it files a `.pdf` URL as `web` and says
+    `store_blocks` overwriting `kind` from the parsed `Source` is "defence against a future
+    `parse_web` that sniffs". This is that future.
+    """
+    from tests._pdf_fixtures import make_text_pdf
+
+    pdf_path = tmp_path / "paper.pdf"
+    make_text_pdf(pdf_path, ["The first page of the paper.", "The second page."])
+    web = _canned(monkeypatch, pdf_path.read_bytes(), "application/pdf")
+
+    source = web.parse_web("https://arxiv.org/pdf/1706.03762", "s1")
+    assert source.kind == "pdf"
+    # The ORIGIN is the URL the reader pasted, never the temp file PDFium was handed: dedupe and
+    # every citation coordinate key off it.
+    assert source.origin == "https://arxiv.org/pdf/1706.03762"
+    assert [block.locator for block in source.blocks] == ["page:1", "page:2"]
+    assert "first page" in source.blocks[0].text
+
+
+def test_a_mislabelled_pdf_is_still_read_as_a_pdf(monkeypatch, tmp_path):
+    """Magic bytes as well as the header. Serving a PDF as `application/octet-stream` is common
+    enough to be worth five bytes, and `%PDF-` cannot be mistaken for html."""
+    from tests._pdf_fixtures import make_text_pdf
+
+    pdf_path = tmp_path / "paper.pdf"
+    make_text_pdf(pdf_path, ["Mislabelled but still a PDF."])
+    web = _canned(monkeypatch, pdf_path.read_bytes(), "application/octet-stream")
+
+    source = web.parse_web("https://example.com/thing", "s1")
+    assert source.kind == "pdf"
+
+
+def test_a_plain_text_url_is_kept_verbatim(monkeypatch):
+    """An RFC `.txt` and a raw `.rst` on GitHub failed the same way a PDF did. `trafilatura` is for
+    extracting an article OUT of page furniture; plain text has no furniture to remove."""
+    web = _canned(monkeypatch, b"RFC 2544\n\nBenchmarking Methodology.\n", "text/plain")
+    source = web.parse_web("https://www.rfc-editor.org/rfc/rfc2544.txt", "s1")
+    assert source.kind == "text"
+    assert source.origin == "https://www.rfc-editor.org/rfc/rfc2544.txt"
+    assert "Benchmarking Methodology" in source.blocks[0].text
+
+
+def test_html_still_goes_through_trafilatura(monkeypatch):
+    """The path that already worked, pinned so the new branches cannot swallow it."""
+    web = _canned(
+        monkeypatch,
+        b"<html><head><title>T</title></head><body><article><p>Real content here, at length, so "
+        b"the extractor keeps it rather than treating it as boilerplate.</p></article></body></html>",
+        "text/html",
+    )
+    source = web.parse_web("https://example.com/a", "s1")
+    assert source.kind == "web"
+    assert [block.locator for block in source.blocks] == ["whole"]
+
+
+def test_the_fetch_is_bounded(monkeypatch):
+    """`resp.read()` with no argument, on an endpoint where any token holder can paste any URL, is
+    a memory spike the server has no say in. One byte past the cap, so the limit is distinguishable
+    from a file that happens to be exactly that size."""
+    import pytest as _pytest
+
+    from rlm_notebook import config
+
+    monkeypatch.setenv("RN_MAX_UPLOAD_BYTES", "64")
+    # Deliberately much larger than the cap: if the read were unbounded this would be the size of
+    # the spike, and the assertion below is what tells the two apart.
+    web = _canned(monkeypatch, b"x" * 100_000, "text/plain")
+    assert config.max_upload_bytes() == 64
+    with _pytest.raises(web.FetchError, match="larger than"):
+        web.parse_web("https://example.com/big", "s1")
+    # THE BOUND ITSELF, not just the refusal that follows it. `read()` with no argument would also
+    # end in "larger than" - which is exactly why this test passed over `resp.read()`.
+    assert web._canned_response.asked == [65], (
+        f"the fetch asked for {web._canned_response.asked} bytes; it must ask for the cap plus one "
+        "(65) so a file exactly at the cap is still distinguishable from one over it"
+    )

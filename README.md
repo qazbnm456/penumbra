@@ -5,13 +5,22 @@ ones), and YouTube video captions — and uses an RLM
 ([`rlm-harness`](https://github.com/qazbnm456/rlm-harness)) to answer questions grounded in them, with a
 citation you can check back against the original text yourself.
 
-**Status: twenty-four slices in.** Ingestion (text/web/PDF/YouTube captions, with local hybrid OCR
-for scanned pages), citation-grounded chat, a persistent multi-turn notebook, notes that can be
-promoted into citable sources, a Notebook Guide (summary/FAQ/timeline/key-insight generation), and
-an Audio Overview (two-host podcast script + synthesized speech, with a subtitle-style transcript)
-are all driveable from the command line — and also from an HTTP API (`ask`/`guide`/`audio`, each
-run isolated in its own cancellable subprocess) and a full browser web UI (source management, chat,
-a Studio panel, a podcast player, and a live reasoning ticker — see "Web UI" below).
+**The front door is an Inbox.** Throw anything in — a link, a thought, a dropped file — without
+deciding where it goes. Each capture lands immediately as a *node* in one reverse-chronological
+stream, whether or not it could be parsed; a separate, opt-in pass distils each one into a title, a
+summary and tags so you can find it again months later by describing it. When a handful of nodes
+turn out to be about the same thing, you promote them into a **notebook** — one facet of yourself —
+and that is where the citation-grounded chat, the Guide and the Audio Overview live. Two tiers: an
+Inbox you never have to tidy, and notebooks you curate on purpose.
+
+**Status: twenty-five slices in.** Ingestion (text/web/PDF/YouTube captions, with local hybrid OCR
+for scanned pages — a URL is sniffed, so a link to a PDF is read as a PDF), citation-grounded chat,
+a persistent multi-turn notebook, notes that can be promoted into citable sources, a Notebook Guide
+(summary/FAQ/timeline/key-insight generation), and an Audio Overview (two-host podcast script +
+synthesized speech, with a subtitle-style transcript) are all driveable from the command line — and
+also from an HTTP API (`ask`/`guide`/`audio`, each run isolated in its own cancellable subprocess)
+and a full browser web UI. The Inbox is the web UI's default screen and is reachable over HTTP at
+`/inbox/*`; it has no command-line surface.
 
 A notebook names itself, model-authored prose follows the READER's language rather than the
 documents', a settings page carries the presentation settings, and models can run on a Claude
@@ -39,6 +48,8 @@ Not on PyPI yet, hence the repository URL. Drop `[api]` if you only want the CLI
 
 ```bash
 brew install deno         # REQUIRED. Every live run executes in a Deno-hosted pyodide sandbox
+brew install node         # REQUIRED TO RUN THE TESTS. Two files execute the web UI's own
+                          # functions rather than asserting on its source text; see AGENTS.md
 brew install tesseract    # optional. The OCR fallback for scanned PDFs; RapidOCR is primary and
                           # ships as a normal dependency, so this only widens coverage
 ```
@@ -61,9 +72,10 @@ docker run --rm -p 127.0.0.1:8000:8000 -v "$PWD/data:/data" --env-file .env rlm-
 ```
 
 **Publish the port to loopback, as above.** A bare `-p 8000:8000` puts an API with no
-authentication on every interface of your machine. The volume matters too: `notebooks/`, `traces/`
-and `audio/` are relative to the working directory, so without it a removed container takes the
-notebooks with it.
+authorization behind its token on every interface of your machine. The volume matters too: `notebooks/`, `traces/`
+and `inbox/` are relative to the working directory, so without it a removed container takes the
+notebooks — and your whole capture history — with it. A generated episode lives at
+`notebooks/audio/`, inside the first of the three rather than beside them.
 
 ### To develop it
 
@@ -171,26 +183,59 @@ language too.
 
 ## HTTP API
 
-**No authentication of any kind.** Any caller that can reach this API can create, read, `ask`
-against, cancel, RENAME or irreversibly DELETE any notebook id — sources, notes and the whole
-conversation each have a live `DELETE` — and can change GLOBAL behaviour for notebooks it never
-named through `PUT /settings`. There is no concept of an owner. Run it only on `localhost` or an
-otherwise fully-trusted network; do not expose it to the internet or a shared network as-is.
+**Every request needs a token, and there is no authorization behind it.** `rlm-notebook serve`
+mints a token at startup and prints it; send it as `Authorization: Bearer <token>`, or as a
+`?token=` query parameter where a header is impossible (the browser's `EventSource` and `<audio>`
+cannot set one). `RN_API_TOKEN` supplies your own instead. The web assets are the only thing served
+without it, because the page that reads the token has to load first.
+
+The token authenticates the APPLICATION, not a person — so any caller holding it can create, read,
+`ask` against, cancel, RENAME or irreversibly DELETE any notebook id (sources, notes and the whole
+conversation each have a live `DELETE`) and can change GLOBAL behaviour for notebooks it never named
+through `PUT /settings`. There is no concept of an owner. Run it only on `localhost` or an otherwise
+fully-trusted network; do not expose it to the internet or a shared network as-is.
+
+The token exists because "reachable only from this machine" is not the same property as "reachable
+only by this app": every browser you have open is also on this machine, and any page in it can POST
+to `127.0.0.1`. A `Host` header that is a DNS name is refused for the same reason (DNS rebinding);
+`RN_ALLOWED_HOSTS` is the carve-out if you reach the server by a name that is genuinely yours.
 
 ```bash
 rlm-notebook serve                      # binds 127.0.0.1:8000 — loopback, deliberately
 rlm-notebook serve --host 0.0.0.0       # allowed, and it warns, because of the paragraph above
 ```
 
-`serve` binds loopback by DEFAULT rather than by convention: with no authentication, which
-interface it binds is the entire access-control story, so it belongs in the code. It starts
+`serve` binds loopback by DEFAULT rather than by convention: the token and the binding are the two
+layers of access control, and neither belongs only in a paragraph somebody has to read. It starts
 without a model configured, on purpose, since the settings page exists for exactly that operator.
 From a source checkout: `uv run rlm-notebook serve` after `uv sync --extra api`.
 
 ```bash
-# --source accepts URLs only here (not local paths — see AGENTS.md invariant 26); use the CLI
+# EVERY call below needs the token. Export it once and the examples stay readable:
+# A SHELL variable, deliberately not named RN_API_TOKEN: that one is read by the SERVER, and
+# exporting it in the client's shell is one copy-paste away from pinning the server's token too.
+export RLMNB_TOKEN="<the token rlm-notebook serve printed>"
+curl -H "Authorization: Bearer $RLMNB_TOKEN" localhost:8000/notebooks
+
+# TIER 0 — the Inbox. Capture is cheap and makes NO model call (invariant 80); the summary pass is
+# a separate verb that names its own number. A capture always lands, parsed or not (79).
+curl -X POST localhost:8000/inbox -H "Content-Type: application/json" \
+    -d '{"urls": ["https://example.com/article"], "texts": ["a thought worth keeping"]}'
+curl -F file=@notes.md localhost:8000/inbox/upload        # bytes only; a local PATH is still refused
+curl -X GET  "localhost:8000/inbox?q=design&limit=25"     # search the distilled fields
+curl -X GET  localhost:8000/inbox/status                  # what is parsing, what is summarising
+curl -X POST localhost:8000/inbox/distil -H "Content-Type: application/json" \
+    -d '{"limit": 20}'                                    # SPENDS: up to 20 summaries, your key
+curl -X POST localhost:8000/inbox/cancel                  # stop both, at the next item boundary
+curl -X GET  localhost:8000/inbox/nd-0123456789abcdef     # one node, plus where it has been filed
+curl -X POST localhost:8000/inbox/nd-0123456789abcdef/promote -H "Content-Type: application/json" \
+    -d '{"notebook_id": "mynb"}'                          # Tier 0 -> Tier 1
+curl -X DELETE localhost:8000/inbox/nd-0123456789abcdef
+
+# TIER 1 — notebooks. --source accepts URLs only here (not local paths — see AGENTS.md invariant 26); use the CLI
 # above for a local file. -H is required — a POST body with no Content-Type: application/json
-# gets rejected with a 422, not silently accepted.
+# gets rejected with a 422, not silently accepted. The Authorization header is omitted from here
+# on for readability; add it to every one of them.
 curl -X POST localhost:8000/notebooks/mynb/sources -H "Content-Type: application/json" \
     -d '{"sources": ["https://example.com/article"]}'
 curl -X POST localhost:8000/notebooks/mynb/ask -H "Content-Type: application/json" \
@@ -200,7 +245,7 @@ curl -X POST localhost:8000/notebooks/mynb/audio         # podcast script + base
 curl -X GET  localhost:8000/notebooks/mynb/audio/file    # ...and the persisted episode as a file
 curl -X POST localhost:8000/notebooks/mynb/overview      # the chat overview, persisted on the notebook
 curl -X POST localhost:8000/notebooks/mynb/title         # let the model name the notebook
-curl -X GET  localhost:8000/settings                     # output language + the two podcast voices
+curl -X GET  localhost:8000/settings                     # language, podcast voices, auto-summary
 curl -X PUT  localhost:8000/settings -H "Content-Type: application/json" \
     -d '{"output_language": "Traditional Chinese"}'      # replaces ALL settings; env still wins
 curl -X POST localhost:8000/notebooks/mynb/cancel        # cancel that notebook's in-flight run
@@ -264,11 +309,22 @@ run's trace and anything written in the last hour are never touched.
 
 ## Web UI
 
-Once `rlm-notebook serve` is running, open `http://127.0.0.1:8000/` in a browser: a real end-user
-product surface (source management — URL, pasted text, or file upload — citation-grounded chat, a
-Studio panel with Guide tabs, a podcast player, and Notes, and a live "what is the model doing
-right now" reasoning ticker), not a developer trace console. Zero build step — it's served
-directly out of `rlm_notebook/web/` by the same FastAPI app. Clicking a citation in an answer
+Once `rlm-notebook serve` is running, open the address **uvicorn** prints with
+`?token=<the token rlm-notebook printed>` appended; the page stores it and strips it from the
+address bar. Every request needs it (invariant 77). `rlm-notebook serve` deliberately prints the
+token and not a URL — an address announced before the bind is one an occupied port then fails to
+serve, so uvicorn prints that half once it is true, and the two are combined by whoever reads them. The first screen is the **Inbox**: a capture field, one
+reverse-chronological stream of everything you have thrown in, a rail of your notebooks down the
+left, and a search box that reads the distilled titles, summaries, tags and entities as well as the
+origin — the URL is often the one word you do remember. Several words AND together; a query with no
+spaces (Chinese) stays one substring, which is the only correct behaviour for a script with no word
+boundaries. A row opens in place.
+Opening a notebook is the second screen, and everything the product could already do lives there —
+source management (URL, pasted text, or file upload), citation-grounded chat, a Studio panel with
+Guide tabs, a podcast player, Notes, and a live "what is the model doing right now" reasoning
+ticker. The address bar follows you, so a notebook can be bookmarked and Back goes back to the
+Inbox. In a narrow window (or at high zoom) the notebook's three areas become Sources · Chat ·
+Studio tabs, one at a time. Zero build step — it's served directly out of `rlm_notebook/web/` by the same FastAPI app. Clicking a citation in an answer
 lights up its entry in the References panel — number, source, provenance chip, use count and the
 passage — and clicking a row in Sources opens the full original text in a viewer. That is
 NotebookLM's most basic closed loop, and it is a transparency mechanism, never a stronger
@@ -276,9 +332,16 @@ faithfulness claim than `citations.py` itself already makes. Every Chat answer c
 saved as a note, and every note can later be promoted into a real, citable source — NotebookLM's
 own research loop of reading, noting, and deepening a notebook over successive turns. A generated
 podcast plays in-page (and downloads) with a subtitle-style transcript: a timecode per line, click
-a line to seek to it, and the line being spoken is highlighted as it plays. A ⚙ settings page
-carries the output language and the two podcast voices (presentation settings only — no keys, no
-safety bounds). See `rlm_notebook/web/DESIGN.md` and AGENTS.md invariants 29-58, plus 70-72 for the
+a line to seek to it, and the line being spoken is highlighted as it plays. The artifact leaves
+the product three ways, each carrying the same numbered references the panel shows (an unverified
+citation says so): **Copy** on any answer, the overview or a Guide tab puts Markdown on the
+clipboard; **Export** above the chat downloads the whole notebook (sources, overview,
+conversation, notes) as one `.md` file; and printing (Cmd/Ctrl+P) drops the application chrome
+and appends the reference list the printed marks point at. A ⚙ settings page
+carries the interface language, the output language, the two podcast voices, and whether new
+captures are summarised automatically — no keys and no safety bounds, which is the line invariant 41
+actually draws. Summarising is OFF by default and every summary is a model call on your own key, so
+a two-hundred-bookmark import costs nothing until you say so. See `rlm_notebook/web/DESIGN.md` and AGENTS.md invariants 29-58, plus 70-72 for the
 Trajectory drawer, where a run's reasoning lives: every planner turn in the model's own
 words, a tool timeline scaled to real elapsed time, the token budget, and what the
 validator rejected before accepting the answer.
@@ -289,9 +352,10 @@ This is not the whole design. In particular: there is no provider-swappable LLM 
 beyond what `rlm-harness`'s own environment variables already give you, no generated Video Overview,
 no directly-uploaded audio/video file ingestion or full audio transcription (YouTube's own
 CAPTIONS are supported — see above — but that's captions only, never a transcribed audio track),
-no ATLAS rubric/eval/RL-export member (unlike this project's sibling tools), no authentication of
-any kind on the HTTP API (see above), and no desktop app packaging (Tauri is the intended eventual
-shell, not yet built). Those are follow-up work.
+no ATLAS rubric/eval/RL-export member (unlike this project's sibling tools), no accounts and no
+AUTHORIZATION on the HTTP API (one shared token authenticates the app, and every holder of it is
+fully privileged — see above), and no desktop app packaging (Tauri is the intended eventual shell,
+not yet built). Those are follow-up work.
 
 ## Licensing
 

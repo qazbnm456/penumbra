@@ -390,7 +390,8 @@ _CHATTERBOX_LANGUAGES: dict[str, str] = {
 
 #: The two shipped reference clips, resolved to real paths at call time. A voice NAME rather than a
 #: path is what reaches `config` and the settings page, deliberately: a path arriving through the
-#: unauthenticated settings file (invariant 25/41) would be a brand-new arbitrary-file-read surface,
+#: settings file, which any token holder can write (invariant 25/41), would be a brand-new
+#: arbitrary-file-read surface,
 #: which invariant 26 spent a whole slice closing on the ingestion side. An operator can still point
 #: at their own clip, but only through the ENVIRONMENT, never through the settings file.
 _VOICE_DIR = Path(__file__).parent / "voices"

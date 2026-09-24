@@ -28,8 +28,13 @@ BYTE-FOR-BYTE out of `rlm_notebook/web/`, and the demo runs them. Consequences:
 
 - A screenshot of the playground is a screenshot of the product. It cannot flatter it.
 - It cannot rot into a mock-up of a UI we no longer ship — the next build takes whatever the app
-  currently is.
-- New product features appear in the demo for free. The maintenance cost is a rebuild.
+  currently is. **Except through the SHIM**, which is the one part not copied from the product, and
+  that is exactly how it rotted once: the Inbox pivot moved the front door, `shim.js` still answered
+  only `/notebooks*` and `/settings*`, and the demo's first screen became a 404 under a guided tour
+  pointing at a button that was not there. CI runs neither `build.py` nor `smoke.mjs`, so the shim's
+  route list is the thing to check whenever the app learns an endpoint.
+- New product features appear in the demo for free, as long as they need no route the shim does not
+  have. The maintenance cost is a rebuild, plus that list.
 
 ## How it works: three interception points
 

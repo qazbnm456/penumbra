@@ -12,10 +12,15 @@
 # Run:    docker run --rm -p 127.0.0.1:8000:8000 \
 #           -v "$PWD/data:/data" --env-file .env rlm-notebook
 #
-# PUBLISH THE PORT TO LOOPBACK, as above. This API has NO AUTHENTICATION of any kind (invariant
-# 25): anyone who can reach it can read every notebook's full source text and reasoning traces,
-# delete sources, and change settings for notebooks they never named. A bare `-p 8000:8000`
-# publishes it on every interface of the host.
+# PUBLISH THE PORT TO LOOPBACK, as above. Every request needs the API token (invariant 77), which
+# the container prints to its own logs on startup — read it with `docker logs`, or pin it yourself
+# with `RN_API_TOKEN` in the --env-file, which is what you want if the container restarts. Behind
+# that token there is NO AUTHORIZATION (invariant 25): any holder can read every notebook's full
+# source text and reasoning traces, delete sources, and change settings for notebooks they never
+# named. A bare `-p 8000:8000` publishes it on every interface of the host.
+#
+# The container binds 0.0.0.0, so requests arrive with whatever Host the client sent. Reaching it
+# at `localhost:8000` or by IP works; reaching it by a DNS NAME needs RN_ALLOWED_HOSTS.
 
 # 3.13. This was pinned to 3.12 while `rapidocr-onnxruntime` capped itself at `<3.13`; the switch to
 # `rapidocr` (which declares `>=3.8,<4` and was verified running on 3.13 and 3.14) lifted that.
@@ -54,7 +59,8 @@ COPY rlm_notebook ./rlm_notebook
 # (invariant 43), which is not what an image anybody pulls should carry.
 RUN pip install --no-cache-dir '.[api]'
 
-# `notebooks/`, `traces/` and `audio/` are relative paths resolved against the working directory
+# `notebooks/`, `traces/` and `inbox/` are relative paths resolved against the working directory
+# (a generated episode lives at `notebooks/audio/`, inside the first of them, not beside it)
 # (invariant 34), so the workdir IS where a reader's data lives. Mount it, or the container losing
 # its filesystem loses their notebooks.
 WORKDIR /data
@@ -77,5 +83,5 @@ ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
 # 0.0.0.0 inside the container, because the container boundary is what makes that safe. Which
 # INTERFACE OF THE HOST it reaches is decided by `-p`, which is why the run command above binds it
-# to loopback. `serve` prints its no-authentication warning either way, and it is not wrong to.
+# to loopback. `serve` prints its non-loopback warning either way, and it is not wrong to.
 CMD ["rlm-notebook", "serve", "--host", "0.0.0.0", "--port", "8000"]

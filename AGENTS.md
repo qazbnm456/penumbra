@@ -37,11 +37,26 @@ new history in the CHANGELOG and new argument in `docs/invariants/`, not here.
   greener than CI. **`tests/test_runner.py` does NOT** — it has no `importorskip`, imports only
   stdlib plus `rlm_notebook.runner` (verified to import with `fastapi`/`starlette`/`httpx`/`uvicorn`
   blocked), so its 9 tests — invariant 22's `killpg` grandchild tripwire among them — run on a bare
-  `uv sync`. CI names only `tests/test_api.py` for the extra; this line used to name both. **The
+  `uv sync`. CI syncs the extra ONCE for the whole run (`uv sync --extra api`) and its comment names
+  `tests/test_api.py` as the reason; `test_api_inbox.py` and `test_distil_live.py` `importorskip` it
+  too and are covered by the same sync, so the list in that comment is an example and not a
+  register. **The
   same trap runs the OTHER way for `chatterbox`**, which CI does NOT sync: a local venv with that
   extra installed is greener than CI. Nothing in the suite may `importorskip` a package that ships
   only in an extra CI skips — `tests/test_tts.py` fakes `chatterbox.mtl_tts` AND `soundfile`
   through `sys.modules`. Verify with a meta-path blocker, not by trusting a docstring.
+- **`node` must be on PATH, and the suite FAILS without it rather than skipping.** Two files shell
+  out to it — `tests/test_readable_error.py` and `tests/test_web_behaviour.py` — because they run
+  functions out of `rlm_notebook/web/app.js` rather than asserting on its text. That is not a
+  convenience: the test they replaced re-compiled `readableError`'s regex LITERALS with Python's
+  `re` and never called it, so replacing the whole function body with `return text` left 917 tests
+  green while the shipped function returned the empty string for the commonest provider failures.
+  A source-text assertion cannot see reachability, and an independent review defeated two more of
+  them the round after. Hide `node` and **every test in both files FAILS and none is skipped** —
+  deliberately, for the reason the `importorskip` trap above gives: a test that vanishes with a missing tool makes a
+  local run greener than CI. CI installs it with `actions/setup-node`. (A COUNT was written here
+  and rotted within the same slice that added the second file, which is the argument for naming the
+  property instead.)
 - A LIVE run additionally needs real model credentials and a Deno sandbox (`brew install deno`).
   Don't run it in CI; it costs money.
 - Before claiming done, actually run both commands and paste the output.
@@ -52,9 +67,15 @@ What exists: ingestion (text / web / PDF with local hybrid OCR / YouTube caption
 chat, a persistent multi-turn `Notebook` (one JSON file, no database), a Notebook Guide
 (`guide.py` — summary/faq/timeline/insight), an Audio Overview (`audio.py` script + `tts.py`
 synthesis), an HTTP API (`api.py`, the `api` extra) with a live reasoning-trace stream and a
-Trajectory drawer, and a web UI (`rlm_notebook/web/`) that is a real end-user product surface.
+Trajectory drawer, and a web UI (`rlm_notebook/web/`) that is a real end-user product surface —
+including the only ways an artifact leaves it: Copy (Markdown) on an answer, the overview or a
+Guide tab, a whole-notebook Markdown Export, and a print stylesheet that appends the reference list.
 The API is the only place a run is subprocess-isolated (`runner.py`/`worker.py`); `cli.py` runs
-synchronously in-process.
+synchronously in-process. `inbox.py` is Tier 0 — a global capture Inbox (SQLite index +
+`inbox/nodes/<id>.json`) whose nodes are promoted into notebooks (invariant 78) — and `intake.py` is
+its serial capture queue (79); `distill.py` is the separate summary pass (80). All three are
+reachable over HTTP at `/inbox/*` AND from the web UI, where the Inbox is now the DEFAULT screen and
+a notebook is a place you go into. `cli.py` still cannot reach any of it.
 
 `rlm-notebook serve` starts the API and that web UI, binding loopback by default (invariant 25).
 A `Dockerfile` carries the two system binaries no Python manifest can express, `deno` (every live
@@ -66,10 +87,17 @@ either — `.github/workflows/ci.yml` is pytest and ruff only.
 **Still unbuilt — do not assume any of these exist because a design discussion mentioned them:**
 the four Studio guide kinds are NOT cached onto a notebook (only the overview is — invariant 38);
 no guide artifact is citable as a source for a later `ask` without being promoted through a note
-(32); there is no multi-worker `uvicorn` deployment story for `_ACTIVE_RUNS`/`_RUN_PROCESSES` (the
-notebook FILE is safe across processes, those in-memory maps are not); the HTTP API has NO
-authentication of any kind (25); Word/Slides/Docs native-format parsing and full audio
-transcription (as opposed to YouTube captions, which ship) are undone.
+(32); there is no multi-worker `uvicorn` deployment story for the in-memory maps — `_ACTIVE_RUNS`,
+`_RUN_PROCESSES`, `_BUSY`, `_DISTIL`, `_CANCELLED_BEFORE_SPAWN`, `intake._SHARED` and `inbox._INITIALIZED`
+(the notebook FILE and the Inbox DB are safe across processes; none of those maps are); the HTTP API has ONE
+SHARED TOKEN and no accounts, sessions or per-user authorization behind it (25, 77); the Inbox
+(78, 79, 80) has no `cli.py` surface — `api.py` serves `/inbox/*` and the web UI renders it, but
+`rlm-notebook` on the command line cannot reach it; `cli.py` has no notebook-management verbs at all — no list, no rename, no delete (the API and the
+web UI have all three); folders and archives are not capturable at all,
+because invariant 26 keeps local PATHS out of the API and the native shell that would supply them is
+unbuilt; the Tauri desktop shell and the browser extension are both unbuilt, so every capture today
+is a paste, a drop or an upload into a browser tab; Word/Slides/Docs native-format parsing and full
+audio transcription (as opposed to YouTube captions, which ship) are undone.
 
 ## Invariants — do not break
 
@@ -216,10 +244,10 @@ indexed section held steady at ~5,100 tokens while an un-indexed section beside 
     is the invariant, NOT the current list of places it applies.
     ([why](docs/invariants/24-systemexit-never-escapes-a-handler.md))
 
-25. **This API has NO authentication or authorization of any kind, so `rlm-notebook serve` binds
-    127.0.0.1 and a non-loopback `--host` warns.** Which interface it binds is the whole access-control
-    story, which is why that default is in code rather than only in a warning in `README.md`.
-    ([why](docs/invariants/25-the-api-has-no-authentication.md))
+25. **This API has NO AUTHORIZATION of any kind — its authentication half is now invariant 77 — so
+    `rlm-notebook serve` still binds 127.0.0.1 and a non-loopback `--host` still warns.** The token
+    authenticates the APP, not a person, so every holder stays fully privileged over every notebook.
+    ([why](docs/invariants/25-the-api-has-no-authorization.md))
 
 26. **`add_sources` accepts ONLY http(s) URLs, never a local file path — unlike `cli.py`'s `--source`.** The
     full attack was reproduced end to end — `POST {"sources": ["/etc/passwd"]}` read the file and echoed it
@@ -242,14 +270,14 @@ indexed section held steady at ~5,100 tokens while an un-indexed section beside 
     never-`innerHTML` rule; assets live under `rlm_notebook/web/` or they vanish from the wheel.
     ([why](docs/invariants/29-the-web-ui-is-a-product-surface.md))
 
-30. **`POST /notebooks/{id}/sources/upload` and `add_sources`'s `texts` field never reopen invariant 26's
-    local-path ban.** The size cap must be checked BEFORE FastAPI parses the body, and `max_upload_bytes()`
-    is deliberately not a `NotebookConfig` field.
+30. **No upload surface reopens invariant 26's local-path ban — `sources/upload`, `add_sources`'s
+    `texts`, `/inbox/upload`, and the fetch inside `parse_web`.** The size cap is checked BEFORE
+    FastAPI parses the body, and `max_upload_bytes()` is deliberately not a `NotebookConfig` field.
     ([why](docs/invariants/30-upload-and-paste-do-not-reopen-the-path-ban.md))
 
-31. **`GET /notebooks/{id}/sources/{source_id}` returns a source's FULL text — a materially different
-    exposure than every other endpoint except the trace pair (invariant 29).** Before it, no caller could
-    read more of a source than a citation's short `quote`.
+31. **An endpoint that returns a whole document is a DECISION, said out loud — there are three:
+    `sources/{source_id}`, the trace pair (29), and `/inbox/{node_id}/source`.** Before the first,
+    no caller could read more of a source than a citation's short `quote`.
     ([why](docs/invariants/31-the-source-text-endpoint-is-a-new-exposure.md))
 
 32. **Notes (`schema.Note`, `Notebook.notes`) are freeform, uncited text — grounded and citable only once
@@ -300,8 +328,9 @@ indexed section held steady at ~5,100 tokens while an un-indexed section beside 
     synthesis one.
     ([why](docs/invariants/40-language-decides-the-podcast-voice.md))
 
-41. **The settings page exposes PRESENTATION settings only, and "non-secret" was the wrong filter.** Moving
-    a safety BOUND onto an unauthenticated page is the same mistake as moving a key there, just quieter.
+41. **No safety BOUND goes on the settings page, which is what "presentation only" is really
+    protecting.** Moving a bound onto a page every token holder can write is the same mistake as
+    moving a key there; a behaviour TOGGLE whose bound stays in the environment is not (80).
     ([why](docs/invariants/41-settings-expose-presentation-only.md))
 
 42. **A generated Audio Overview from the API is PERSISTED — one file per notebook, served as a real file.**
@@ -330,8 +359,8 @@ indexed section held steady at ~5,100 tokens while an un-indexed section beside 
     ([why](docs/invariants/46-run-ids-are-announced-before-any-pre-work.md))
 
 47. **Every long-running action shows that it is running and offers a way to STOP it, and no action starts
-    without an explicit press.** Stop cancels by RUN ID, because `/overview` fires two runs and
-    `_ACTIVE_RUNS` holds one slot per notebook.
+    without an explicit press.** A Tier 1 Stop names a RUN ID and reaches a run that has not spawned
+    yet; Tier 0's is global because nothing there can be ambiguous.
     ([why](docs/invariants/47-every-long-run-is-visible-and-stoppable.md))
 
 48. **The INTERFACE language (`web/i18n.js`) is a browser preference, deliberately separate from the OUTPUT
@@ -348,9 +377,10 @@ indexed section held steady at ~5,100 tokens while an un-indexed section beside 
     stays in the source's words, so `answer.indexOf(quote)` could no longer find anything.
     ([why](docs/invariants/49-answer-span-is-the-model-pointing-at-itself.md))
 
-50. **A source can be REMOVED now, which ended append-only id numbering — and the survivors are never
-    renumbered.** `len(sources) + 1` was correct only while sources were append-only; the moment removal
-    existed it produced two live sources under one id.
+50. **A source can be REMOVED now, which ended append-only id numbering — the survivors are never
+    renumbered, and an id is never allocated twice.** `max(live ids) + 1` fixed only the MIDDLE of the
+    range: removing the HIGHEST source frees its id, and the citation saved against it then reads
+    `verified: true` against different text. The mark is persisted and only rises.
     ([why](docs/invariants/50-removal-ended-append-only-source-ids.md))
 
 51. **`Source.preview` is display-only page metadata, scraped from html already in hand, and it NEVER
@@ -484,3 +514,26 @@ indexed section held steady at ~5,100 tokens while an un-indexed section beside 
     public hostname with a RESERVED address, so full strictness refuses every ingestion on that machine —
     the guard is not wrong, it just cannot see that the operator's own resolver is lying to it.
     ([why](docs/invariants/76-the-ssrf-carve-out-for-fake-ip-resolvers.md))
+
+77. **Every request needs the API token (`auth.py`); the static assets are the only exception, and a
+    `Host` header that is a DNS name is refused.** "Reachable only from this machine" is not the same
+    property as "reachable only by this app" — every browser the user runs is also on this machine.
+    ([why](docs/invariants/77-the-local-api-token.md))
+
+78. **The Inbox (`inbox.py`) is an INDEX, not a corpus: nothing at Tier 0 ever assembles a blob, and
+    every write to it is a SQL DELTA (`update_node`; there is deliberately no `save_node`).** The
+    8,000,000-character cap governs a notebook (8); an inbox aimed at thousands of nodes coexists with
+    it only by never building one.
+    ([why](docs/invariants/78-the-inbox-is-an-index-not-a-corpus.md))
+
+79. **A capture always lands: submitting creates a `queued` node BEFORE anything is fetched, a parse
+    failure is a `failed` node that keeps its message, and intake (`intake.py`) runs ONE item at a
+    time.** A worker that dies on one bad link turns every later capture into a permanent `queued` —
+    which looks exactly like still working.
+    ([why](docs/invariants/79-a-capture-always-lands.md))
+
+80. **Capture makes NO model call unless the operator turned that on: distillation (`distill.py`) is a
+    separate pass, off by default, bounded by an environment-only cap, and a failed summary leaves the
+    node at `ready_undistilled` rather than costing the capture.** BYOK plus "just throw everything
+    in" means distilling at intake by default silently spends 200 calls on a 200-bookmark import.
+    ([why](docs/invariants/80-capture-never-pays-for-a-summary.md))

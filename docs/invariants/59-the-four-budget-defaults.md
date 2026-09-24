@@ -52,6 +52,28 @@ backstop; **the CLI path has none at all**.
 produce a valid 'script' after 1 attempts` names the symptom; the chain names the cause, and the cause
 was being discarded at exactly the boundary where a person starts reading.
 
+**The number is a REQUEST, and the provider has the last word.** Everything above argues 32768 from
+the distribution of replies this product gets back. That argument is silent about a second limit
+entirely: the model's own completion ceiling, which for most models people actually run is lower.
+`openai/gpt-4o` and `gpt-4o-mini` stop at 16384, `gpt-4-turbo` and `claude-3-opus` at 4096,
+`gemini-2.0-flash` and `deepseek-chat` at 8192. OpenAI refuses an oversized `max_tokens` **before it
+validates the key**, so the request never leaves the machine — ask, guide, overview, title and
+podcast all answered 502 with `max_tokens is too large: 32768`, and a valid key changed nothing. An
+operator following this repo's own `.env.example`, which names `openai/gpt-4o` as the worked
+example, got a product in which nothing worked at all.
+
+`config._max_tokens_for` clamps to `litellm.get_model_info(model)["max_output_tokens"]` when that is
+lower, and **logs both numbers once per model per process** rather than correcting silently —
+invariant 9's rule, that a silent override makes an operator's belief about their own run false,
+applies here too. A model litellm has no entry for keeps the operator's value untouched: the
+metadata is a convenience, not an authority, and refusing to run because a table has no row would
+break every self-hosted and proxied setup this product is aimed at.
+
+Lowering the DEFAULT instead was the obvious alternative and is worse: it would give every
+large-context model a cap chosen for the smallest one, which is the exact failure the 32768 was
+raised to fix. The bug survived seven review rounds because it is invisible to anyone whose own
+model has a ≥32k output ceiling.
+
 ---
 
 One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)

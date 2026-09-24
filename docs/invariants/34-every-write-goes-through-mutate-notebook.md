@@ -35,11 +35,11 @@ and appending in one breath is exactly what forces a caller to hold a snapshot a
   exposed to this (its snapshot holds only already-persisted sources).
 - **`mutate_notebook` checks the `create=False` miss BEFORE taking the lock as well as inside
   it.** Entering `notebook_lock` creates its sidecar file, so without the pre-check every 404-ing
-  unauthenticated request leaves a permanent zero-byte file behind. The check INSIDE the lock is
+  request leaves a permanent zero-byte file behind. The check INSIDE the lock is
   what makes it correct; the outer one only keeps a miss from writing anything.
 
 **Trace retention (`traces.py`)** — `traces/{run_id}.jsonl` is the one artifact here that can
-contain FULL ingested source text, in front of an API with no authentication. `prune_traces`
+contain FULL ingested source text, in front of an API with no authorization. `prune_traces`
 sweeps by age (`RN_TRACE_RETENTION_DAYS`, 7) and count (`RN_MAX_TRACE_FILES`, 500), `0` disabling
 either, at startup and after every run.
 

@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -328,6 +329,47 @@ def redact_traces(fixtures: dict) -> int:
     return redacted
 
 
+def inbox_rows(fixtures: dict) -> list[dict]:
+    """One Inbox node per real source, newest first.
+
+    A source already carries everything a distilled node shows: an origin, a kind, a title through
+    its preview, and text to cut a summary from. So the river is the same material the notebooks are
+    made of, seen one tier down - which is exactly what the two-tier model claims, and what a page
+    demonstrating it should show.
+    """
+    rows: list[dict] = []
+    for index, (nb_id, response) in enumerate(fixtures["notebooks"].items()):
+        texts = fixtures["sources"].get(nb_id, {})
+        for order, source in enumerate(response.get("sources") or []):
+            stored = texts.get(source["id"]) or {}
+            body = " ".join(
+                " ".join(block.get("text", "") for block in stored.get("blocks", [])).split()
+            )
+            preview = source.get("preview") or {}
+            rows.append({
+                "id": f"nd-{nb_id}-{order}",
+                "kind": source.get("kind", "text"),
+                "origin": source.get("origin", ""),
+                "state": "ready",
+                "title": preview.get("title") or source.get("title"),
+                "summary": body[:240] + ("\u2026" if len(body) > 240 else ""),
+                # The notebook's TITLE, never its handle. `anonymise_models` two functions down
+                # scrubs model names from this same fixture for exactly this reason, and the handle
+                # was left in - so every row on the public page carried a clickable
+                # `nb-en-security` tag, an internal identifier as reader-facing metadata, on the
+                # first screen a stranger sees.
+                "tags": [response.get("title") or nb_id],
+                "entities": [],
+                "preview": preview,
+                "chars": len(body),
+                # Spread across recent days so the datelines have something to group.
+                "created_at": time.time() - (index * 86400) - (order * 3600),
+                "updated_at": time.time() - (index * 86400) - (order * 3600),
+            })
+    rows.sort(key=lambda r: r["created_at"], reverse=True)
+    return rows
+
+
 def anonymise_models(fixtures: dict) -> None:
     """Replace every model identifier with a neutral label, everywhere in the fixture.
 
@@ -382,14 +424,36 @@ def main() -> int:
 
     for name in VERBATIM:
         shutil.copy2(WEB / name, out / name)
+    # **THE STATIC ASSETS THE COPIED FILES REFERENCE.** `index.html` links `favicon.svg` and
+    # `style.css` has four `@font-face` rules pointing at `/fonts/*.woff2` — and neither was copied,
+    # so the published page 404'd five assets and fell back to system faces, on a page whose entire
+    # premise is that it IS the shipped UI. The served app was always fine; only the static build
+    # was missing them, and `smoke.mjs` made no file-existence assertion, so nothing could see it.
+    #
+    # Copied from `web/` rather than listed by hand: a fifth font would otherwise be the same bug
+    # again.
+    shutil.copy2(WEB / "favicon.svg", out / "favicon.svg")
+    shutil.copytree(WEB / "fonts", out / "fonts")
     for name in ("shim.js", "chrome.css", "tour.js", "chrome.js", "director.js"):
         shutil.copy2(SRC / name, out / name)
     # Vendored, not CDN-loaded: the published page keeps no third-party origin in its critical path.
     for name in ("driver.js.iife.js", "driver.css"):
         shutil.copy2(VENDOR / name, out / name)
+
+    # **ABSOLUTE `url()` IS WRONG TWICE on a sub-path deploy.** `style.css` is copied byte-for-byte
+    # (that is the point), and its `/fonts/…` is right for a server rooted at `/` and wrong for
+    # `www.boik.tw/rlm-notebook/`. `build_index` already rewrites `href=`/`src=` in the HTML for the
+    # same reason and never looked at CSS. One targeted substitution, so the file stays otherwise
+    # identical to what ships.
+    css = (out / "style.css").read_text(encoding="utf-8")
+    absolute = 'url("/fonts/'
+    rooted = css.replace(absolute, 'url("./fonts/')
+    if rooted != css:
+        (out / "style.css").write_text(rooted, encoding="utf-8")
+        print(f"  rewrote {css.count(absolute)} absolute font url() to be relative")
     (out / "index.html").write_text(build_index(), encoding="utf-8")
 
-    fixtures = {"scenarios": [], "notebooks": {}, "sources": {}, "runs": {}}
+    fixtures = {"scenarios": [], "notebooks": {}, "sources": {}, "runs": {}, "inbox": []}
     for scenario in SCENARIOS:
         nb_id = scenario["id"]
         response, texts = load_notebook(nb_id)
@@ -419,6 +483,12 @@ def main() -> int:
             "audio": audio,
             "utterances": len(pod.get("utterances") or []),
         })
+
+    # **The Inbox is the product's FRONT DOOR now, so the demo has to open on it.** Built from the
+    # same real notebooks the rest of this page is built from - one row per source - rather than
+    # invented filler, for the same reason everything else here is real: a demo of a recall surface
+    # made of lorem ipsum demonstrates nothing about recall.
+    fixtures["inbox"] = inbox_rows(fixtures)
 
     anonymise_models(fixtures)
     redact_traces(fixtures)
