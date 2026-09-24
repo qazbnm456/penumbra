@@ -1,14 +1,14 @@
 [package]
-name = "rlm-notebook-desktop"
+name = "penumbra-desktop"
 version = "0.1.0"
-description = "Desktop shell for rlm-notebook"
+description = "Desktop shell for Penumbra"
 authors = ["qazbnm456"]
 license = "MIT"
 edition = "2021"
 rust-version = "1.77"
 
 [lib]
-name = "rlm_notebook_desktop_lib"
+name = "penumbra_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

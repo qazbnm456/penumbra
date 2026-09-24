@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from rlm_notebook.parsers.youtube import (
+from penumbra.parsers.youtube import (
     CaptionError,
     _chunk,
     _dedupe_consecutive,

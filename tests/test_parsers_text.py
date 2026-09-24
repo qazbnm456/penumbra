@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from rlm_notebook.parsers.text import parse_text
+from penumbra.parsers.text import parse_text
 
 
 def test_parse_text_produces_one_whole_block():

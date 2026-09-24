@@ -6,20 +6,20 @@ Chat, the overview, each guide and the podcast all mount the same `runStatus` co
 
 ## Stop reaches the run the reader meant
 
-Stop cancels by run id (`POST /notebooks/{id}/runs/{run_id}/cancel`), because `/overview` starts two runs while `_ACTIVE_RUNS` holds one slot per notebook (invariant 23); the notebook-scoped `/cancel` would reach only the one that registered last. `_RUN_PROCESSES` is keyed by run id and holds the process, so a precise cancel is a lookup. It kills the whole process group (invariant 22).
+Stop cancels by run id (`POST /orbits/{id}/runs/{run_id}/cancel`), because `/overview` starts two runs while `_ACTIVE_RUNS` holds one slot per orbit (invariant 23); the orbit-scoped `/cancel` would reach only the one that registered last. `_RUN_PROCESSES` is keyed by run id and holds the process, so a precise cancel is a lookup. It kills the whole process group (invariant 22).
 
 Stop also reaches a run that has not spawned yet. Every run is announced before its preparatory work (invariant 46), and `_resolve_language` is a real model call. A cancel in that window used to signal nothing, and the main run then spawned with nothing to stop it. `_CANCELLED_BEFORE_SPAWN` records the stop, `_run_isolated` refuses to spawn that id, and the cancel reaches `{base}-lang` too.
 
-A reload is not an exemption. The worker survives the page, so `GET /notebooks/{id}/runs` lists what is in flight and the UI mounts a status with a working Stop for it.
+A reload is not an exemption. The worker survives the page, so `GET /orbits/{id}/runs` lists what is in flight and the UI mounts a status with a working Stop for it.
 
-Tier 0's two long actions are stopped globally, with no run id, because there is nothing to disambiguate: intake is one serial queue (invariant 79) and the summary pass runs one batch at a time. `/inbox/cancel` stops both on purpose, because a reader pressing Stop while both run is not asking for one of them. The automatic summary pass shares the same progress state as the manual one; before it did, the one batch that runs without a press had no progress, no Stop and no failure channel.
+Tier 0's two long actions are stopped globally, with no run id, because there is nothing to disambiguate: intake is one serial queue (invariant 79) and the summary pass runs one batch at a time. `/horizon/cancel` stops both on purpose, because a reader pressing Stop while both run is not asking for one of them. The automatic summary pass shares the same progress state as the manual one; before it did, the one batch that runs without a press had no progress, no Stop and no failure channel.
 
 ## A run's state belongs to that run
 
 A page that repaints, fails or switches context must never lose, duplicate or misplace a run's state. This was the source of most late defects, so the rules are stated together:
 
 - Each run owns its status row and its Stop. A repaint of the thread, the overview (invariant 71) or the Studio re-attaches the row instead of replacing it; the pending question and a recovered run carry theirs through every rebuild.
-- A result or failure lands only in its own notebook and its own tab. Completion handlers check that the notebook has not changed before touching shared state.
+- A result or failure lands only in its own orbit and its own tab. Completion handlers check that the orbit has not changed before touching shared state.
 - Stop cancels the new run and never removes the previous result. A stopped or failed regeneration of an answer, the overview, a guide or the podcast keeps what was there, with any failure shown above it.
 - A lock is released only by the run that holds it. The composer is held while either the overview or a question runs, a recovery flag belongs to the mount that set it, and a start button is re-decided through the run guard instead of being switched back on.
 - Every control becomes usable again once the reason for disabling it has ended.

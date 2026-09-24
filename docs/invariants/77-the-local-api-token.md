@@ -2,7 +2,7 @@
 
 **Every request needs the API token (`auth.py`), the static web assets are the only exception, and a `Host` header that is a DNS name is refused.**
 
-`api._require_api_token` is the single middleware that applies the rules. `rlm-notebook serve` mints a token per launch and prints it; `RN_API_TOKEN` supplies one instead, which is how the desktop shell will pass it.
+`api._require_api_token` is the single middleware that applies the rules. `penumbra serve` mints a token per launch and prints it; `PN_API_TOKEN` supplies one instead, which is how the desktop shell will pass it.
 
 ## Why loopback alone stopped being enough
 
@@ -16,7 +16,7 @@ Binding `127.0.0.1` was adequate while the only client was a page the same serve
 
 The token is the main defence. A cross-origin page cannot read the URL the token arrived in, so it cannot present it; this is what makes "local" mean "this app".
 
-The `Host` check answers DNS rebinding specifically: the header must be a literal IP address or `localhost`. Rebinding needs a name, because what it rebinds is a DNS answer; `evil.example` can resolve to `127.0.0.1`, but the browser still sends `Host: evil.example`, and that is rejected. A trusted-network deployment reached at `192.168.1.5:8000` is unaffected. `RN_ALLOWED_HOSTS` lets the operator allow a name that is genuinely theirs (mDNS or internal DNS), for the same reason as invariant 76's carve-out: the guard cannot see the operator's network, so the operator says so explicitly.
+The `Host` check answers DNS rebinding specifically: the header must be a literal IP address or `localhost`. Rebinding needs a name, because what it rebinds is a DNS answer; `evil.example` can resolve to `127.0.0.1`, but the browser still sends `Host: evil.example`, and that is rejected. A trusted-network deployment reached at `192.168.1.5:8000` is unaffected. `PN_ALLOWED_HOSTS` lets the operator allow a name that is genuinely theirs (mDNS or internal DNS), for the same reason as invariant 76's carve-out: the guard cannot see the operator's network, so the operator says so explicitly.
 
 ## Deny by default
 
@@ -30,14 +30,14 @@ The allowlist is computed at import, which is exact for a packaged wheel; in dev
 
 ## What this is not
 
-- It is not authorization. The token authenticates the application, not a person, and every holder is fully privileged over every notebook and over global settings. Invariant 25 is unchanged.
+- It is not authorization. The token authenticates the application, not a person, and every holder is fully privileged over every orbit and over global settings. Invariant 25 is unchanged.
 - It is not multi-user: no accounts and no sessions.
-- It cannot be turned off. A `--no-token` flag would recreate the hole and be reached for the first time anything felt inconvenient. An operator behind their own auth proxy sets `RN_API_TOKEN` to a value the proxy injects.
+- It cannot be turned off. A `--no-token` flag would recreate the hole and be reached for the first time anything felt inconvenient. An operator behind their own auth proxy sets `PN_API_TOKEN` to a value the proxy injects.
 - It does not replace the loopback default, which stays in code for invariant 25's reasons.
 
 ## Two traps
 
-`RN_API_TOKEN="   "` must not mean "authentication off". Whitespace falls back to the minted token, so the server stays protected and the operator notices that their value does not work. A test pins it.
+`PN_API_TOKEN="   "` must not mean "authentication off". Whitespace falls back to the minted token, so the server stays protected and the operator notices that their value does not work. A test pins it.
 
 `TestClient`'s default `base_url` is `http://testserver`, a DNS name the `Host` check refuses. The fix is to point tests at a literal address (`test_api.py::_authed_client`), never to allow `testserver` in the guard; a test hostname inside a security control is how the control stops being one.
 

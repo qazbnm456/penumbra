@@ -10,29 +10,29 @@ import json
 
 import pytest
 
-from rlm_notebook import worker
+from penumbra import worker
 
 
 def test_resolve_task_class_finds_a_real_class():
-    cls = worker._resolve_task_class("rlm_notebook.schema:Answer")
-    from rlm_notebook.schema import Answer
+    cls = worker._resolve_task_class("penumbra.schema:Answer")
+    from penumbra.schema import Answer
 
     assert cls is Answer
 
 
 def test_resolve_task_class_raises_on_missing_colon():
     with pytest.raises(ValueError, match="module:ClassName"):
-        worker._resolve_task_class("rlm_notebook.schema.Answer")
+        worker._resolve_task_class("penumbra.schema.Answer")
 
 
 def test_resolve_task_class_raises_on_unknown_module():
     with pytest.raises(ImportError):
-        worker._resolve_task_class("rlm_notebook.not_a_real_module:Thing")
+        worker._resolve_task_class("penumbra.not_a_real_module:Thing")
 
 
 def test_resolve_task_class_raises_on_unknown_class():
     with pytest.raises(AttributeError):
-        worker._resolve_task_class("rlm_notebook.schema:NotARealClass")
+        worker._resolve_task_class("penumbra.schema:NotARealClass")
 
 
 def test_emit_prints_exactly_one_json_line(capsys):
@@ -44,7 +44,7 @@ def test_emit_prints_exactly_one_json_line(capsys):
 
 
 def test_emit_serializes_pydantic_models_via_model_dump(capsys):
-    from rlm_notebook.schema import Answer
+    from penumbra.schema import Answer
 
     worker._emit({"ok": True, "result": Answer(text="hi", citations=[])})
     payload = json.loads(capsys.readouterr().out)
@@ -53,7 +53,7 @@ def test_emit_serializes_pydantic_models_via_model_dump(capsys):
 
 def test_main_reports_a_clean_error_on_malformed_stdin(monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
-    code = worker.main(["run1", "/tmp/trace.jsonl", "rlm_notebook.schema:Answer"])
+    code = worker.main(["run1", "/tmp/trace.jsonl", "penumbra.schema:Answer"])
     assert code == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False

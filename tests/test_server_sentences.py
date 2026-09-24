@@ -2,7 +2,7 @@
 
 `injection_scan.py` flags and `citations.verify_citations` reasons are English sentences built on the
 server. The web UI maps each known one to an i18n key (`FLAG_KEYS`, `readableReason` in
-`rlm_notebook/web/app.js`). Two ways that breaks silently, and one test for each:
+`penumbra/web/app.js`). Two ways that breaks silently, and one test for each:
 
 - a new scan pattern ships with no entry in `FLAG_KEYS`, so a zh-Hant reader sees English again;
 - `citations.py` rewords a reason, the regex stops matching, and the raw sentence comes back.
@@ -20,12 +20,12 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from rlm_notebook import injection_scan
-from rlm_notebook.citations import verify_citations
-from rlm_notebook.corpus import Corpus
-from rlm_notebook.schema import Citation, Source, SourceBlock
+from penumbra import injection_scan
+from penumbra.citations import verify_citations
+from penumbra.corpus import Corpus
+from penumbra.schema import Citation, Source, SourceBlock
 
-WEB = Path(__file__).resolve().parents[1] / "rlm_notebook" / "web"
+WEB = Path(__file__).resolve().parents[1] / "penumbra" / "web"
 
 
 def test_every_injection_flag_has_a_translation_key():
@@ -85,7 +85,7 @@ def test_readable_reason_turns_both_verifier_sentences_into_plain_ones():
     assert done.returncode == 0, done.stderr
     no_source, no_block, named = json.loads(done.stdout)
 
-    assert no_source == "There is no source s9 in this notebook. It may have been removed.", raw[0]
+    assert no_source == "There is no source s9 in this orbit. It may have been removed.", raw[0]
     assert no_block.startswith("Source s2 has no page:12. It has: page:1, page:2"), raw[1]
     assert no_block.endswith(", ….") and "page:7" not in no_block, "only the first six are named"
     # The card names the source by its title, so the reason does too when the caller knows it.

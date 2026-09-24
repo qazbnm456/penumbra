@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from rlm_notebook.parsers import _ocr
+from penumbra.parsers import _ocr
 
 
 class _Out:

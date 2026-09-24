@@ -19,14 +19,14 @@ def _shipped_tasks():
     Class-level rather than constructed, because constructing one requires a configured
     `rlm_harness` runtime and this file is about the prompt text alone.
     """
-    from rlm_notebook.audio import GeneratePodcastScript
-    from rlm_notebook.guide import (
+    from penumbra.audio import GeneratePodcastScript
+    from penumbra.guide import (
         GenerateFAQ,
         GenerateKeyInsight,
         GenerateSummary,
         GenerateTimeline,
     )
-    from rlm_notebook.task import AnswerQuestion
+    from penumbra.task import AnswerQuestion
 
     return {
         cls.__name__: cls.instructions
@@ -50,7 +50,7 @@ def test_every_shipped_task_pins_the_script_a_language_name_leaves_open():
     This is the tripwire the first version of the feature lacked: it asserts the rule reaches the
     six prompts that ship, which is exactly what name-matching failed to do.
     """
-    from rlm_notebook.instructions import SCRIPT_PINNED
+    from penumbra.instructions import SCRIPT_PINNED
 
     for name, instructions in _shipped_tasks().items():
         assert SCRIPT_PINNED in instructions, f"{name} does not carry the script rule"
@@ -69,13 +69,13 @@ def test_the_script_rule_is_worded_conditionally_rather_than_matched_on_a_langua
     see it. Pinned because "compose the rule for the language that was asked for" reads as the
     obvious improvement and is the exact defect this replaced.
     """
-    from rlm_notebook.instructions import SCRIPT_PINNED
+    from penumbra.instructions import SCRIPT_PINNED
 
     assert SCRIPT_PINNED.startswith("If that language has more than one script")
     # No call site may reintroduce a language-name branch.
     import inspect
 
-    from rlm_notebook import audio, guide, instructions, task
+    from penumbra import audio, guide, instructions, task
 
     for module in (instructions, task, guide, audio):
         source = inspect.getsource(module)
@@ -86,7 +86,7 @@ def test_every_shipped_task_asks_for_native_wording_not_a_calque():
     """The observed failure was LEXICAL, not script: a Traditional Chinese answer wrote `源文` for
     "the source text" where a reader expects `原文`. 源 and 原 are both ordinary Traditional
     characters, so no script rule can reach it — only a rule about wording."""
-    from rlm_notebook.instructions import NATURAL_REGISTER
+    from penumbra.instructions import NATURAL_REGISTER
 
     for name, instructions in _shipped_tasks().items():
         assert NATURAL_REGISTER in instructions, f"{name} does not carry the register rule"
@@ -105,7 +105,7 @@ def test_a_proper_noun_outranks_the_script_rule_in_every_shipped_task():
     first version carved it out of the Traditional rule only and left the Simplified rule with the
     mirror-image exposure.
     """
-    from rlm_notebook.instructions import NATURAL_REGISTER, SCRIPT_PINNED
+    from penumbra.instructions import NATURAL_REGISTER, SCRIPT_PINNED
 
     assert "PROPER NOUN is the exception" in SCRIPT_PINNED
     assert SCRIPT_PINNED.index("PROPER NOUN is the exception") > SCRIPT_PINNED.index("繁體字")
@@ -135,7 +135,7 @@ def test_the_chat_answer_shape_rules_reach_the_prompt(phrase):
     runtime enforcement anywhere, so a deletion is invisible to every other test in the suite —
     mutations removing each of these survived the full 621-test run before this existed.
     """
-    from rlm_notebook.task import AnswerQuestion
+    from penumbra.task import AnswerQuestion
 
     assert phrase in AnswerQuestion.instructions
 
@@ -143,9 +143,9 @@ def test_the_chat_answer_shape_rules_reach_the_prompt(phrase):
 # --- the pre-SUBMIT script check ------------------------------------------------------------
 
 #: Correct Traditional characters a `zhconv` diff flags but this check must never touch. All nine
-#: were measured in real prose in this project's own notebooks (`干預`, `一台`, `一群`, `里程碑`).
+#: were measured in real prose in this project's own orbits (`干預`, `一台`, `一群`, `里程碑`).
 CORRECT_TRADITIONAL = "干台群里面系松板折繁體字概覽模組臺灣麼對點問題爾茲峽個們這"
-#: Measured Simplified drift in two real notebooks' podcast fields.
+#: Measured Simplified drift in two real orbits' podcast fields.
 MEASURED_DRIFT = {"尔": "爾", "兹": "茲", "峡": "峽", "对": "對", "点": "點", "问": "問", "题": "題"}
 
 
@@ -173,9 +173,9 @@ def test_the_wrong_script_table_never_flags_a_correct_traditional_character():
     A false positive is a rejection the model cannot satisfy, which spends the step budget looping
     and loses a paid-for episode over one glyph. So the table is built from BIG5-ENCODABILITY, not
     from `zhconv`'s own `SIMPONLY` set — that set contains `干`, `台`, `群` and `里`, all of which
-    appear in correct prose in this project's real notebooks.
+    appear in correct prose in this project's real orbits.
     """
-    from rlm_notebook.instructions import _wrong_script_chars
+    from penumbra.instructions import _wrong_script_chars
 
     wrong = _wrong_script_chars("hant")
     assert not [c for c in CORRECT_TRADITIONAL if c in wrong]
@@ -200,7 +200,7 @@ def test_the_two_directions_gate_themselves_differently_and_both_gates_run():
     retained Simplified form with it. A run in Simplified over this project's own Japanese-bearing
     corpus would have spent its single once-per-run report on quoted Japanese.
     """
-    from rlm_notebook.instructions import _BIG5_SHARED, _wrong_script_chars
+    from penumbra.instructions import _BIG5_SHARED, _wrong_script_chars
 
     assert _BIG5_SHARED["hans"] == frozenset(), (
         "the Simplified direction has no enumeration; if one is added, the branch above changes"
@@ -223,7 +223,7 @@ def test_the_suggestion_is_phrase_aware_not_a_character_lookup():
     The regional preference must survive it AND must not override it — `因为` still gets `為` over
     `zh-hant`'s `爲`, while `日历` keeps the phrase-aware `曆` instead of losing it to `歷`.
     """
-    from rlm_notebook.instructions import _script_offenders, _wrong_script_chars
+    from penumbra.instructions import _script_offenders, _wrong_script_chars
 
     wrong = _wrong_script_chars("hant")
 
@@ -245,7 +245,7 @@ def test_the_wrong_script_table_names_the_fix_for_every_measured_drift_character
     reason (a valid Big5 character) until it was measured drifting three times, at which point
     `_MEASURED_OTHER_SCRIPT` bought it back; the test below is the one that pins it now.
     """
-    from rlm_notebook.instructions import _wrong_script_chars
+    from penumbra.instructions import _wrong_script_chars
 
     wrong = _wrong_script_chars("hant")
     for bad, good in MEASURED_DRIFT.items():
@@ -264,7 +264,7 @@ def test_the_big5_letthrough_is_fully_classified():
     """
     import zhconv.zhconv as zh
 
-    from rlm_notebook.instructions import _BIG5_SHARED
+    from penumbra.instructions import _BIG5_SHARED
 
     table = {
         src: dst
@@ -300,7 +300,7 @@ def test_the_big5_letthrough_is_fully_classified():
 
 
 def _wrong_script_chars_keys():
-    from rlm_notebook.instructions import _wrong_script_chars
+    from penumbra.instructions import _wrong_script_chars
 
     return _wrong_script_chars("hant").keys()
 
@@ -313,7 +313,7 @@ def test_no_shared_character_is_ever_flagged_in_its_own_word():
     `凶宅` would have been corrupted by this one, while `昵稱`, `腌菜`, `昆虫`, `蚝油` and `蝎子`
     were missed by it.
     """
-    from rlm_notebook.instructions import _actionable, _script_offenders, _wrong_script_chars
+    from penumbra.instructions import _actionable, _script_offenders, _wrong_script_chars
 
     wrong = _wrong_script_chars("hant")
     words = [
@@ -336,7 +336,7 @@ def test_a_proper_noun_keeps_its_character_unflagged():
     and a reader who wants to look the name up needs the string the sources used. `吁` and `咨` are
     the same call on an idiom rather than a name, and are the weaker half of it.
     """
-    from rlm_notebook.instructions import _BIG5_SHARED
+    from penumbra.instructions import _BIG5_SHARED
 
     for char in "范余涌涂朴杰岳郁":
         assert char in _BIG5_SHARED["hant"], f"{char} names a person or a place"
@@ -352,7 +352,7 @@ def test_the_suggestion_is_the_regional_standard_not_just_a_traditional_form():
     `zh-hant` and `zh-tw` leaves that alone, while `账` maps straight to `帳`. The two agree on 29
     of the 33 characters where anything differs and `via src` is right on all four of the rest.
     """
-    from rlm_notebook.instructions import _wrong_script_chars
+    from penumbra.instructions import _wrong_script_chars
 
     wrong = _wrong_script_chars("hant")
     for bad, good in {"为": "為", "众": "眾", "启": "啟", "账": "帳",
@@ -372,8 +372,8 @@ def test_the_script_check_is_bounded_and_never_holds_a_run_hostage():
     COMPLIANT model that fixes and re-validates was told `success` on its second call whether or
     not it had fixed anything — the bound was lying to the model that deserved the answer.
     """
-    from rlm_notebook.instructions import _SCRIPT_REPORT_LIMIT, make_grounded_validator
-    from rlm_notebook.schema import PodcastScript
+    from penumbra.instructions import _SCRIPT_REPORT_LIMIT, make_grounded_validator
+    from penumbra.schema import PodcastScript
 
     assert _SCRIPT_REPORT_LIMIT == 3, "fix, verify, and one more fix"
     validate = make_grounded_validator(PodcastScript, lambda: set(), lambda: "hant")
@@ -403,8 +403,8 @@ def test_a_quoted_character_is_exempt_from_the_script_check():
     shinjitai collide with Chinese simplified forms — `学`, `会`, `国` and `峡` are all flagged by
     the character test and are correct inside a Japanese quotation. Same exemption, and the same
     reason, as `_marker_offenders`."""
-    from rlm_notebook.instructions import make_grounded_validator
-    from rlm_notebook.schema import PodcastScript
+    from penumbra.instructions import make_grounded_validator
+    from penumbra.schema import PodcastScript
 
     validate = make_grounded_validator(PodcastScript, lambda: set(), lambda: "hant")
     clean_prose_japanese_quote = _drifted("這一段完全是正體字。", quote="ホルムズ海峡の学会")
@@ -415,8 +415,8 @@ def test_the_script_check_is_inert_when_the_language_pins_no_script():
     """`script_family` matches on the language NAME, which is correct HERE and was wrong in the
     prompt: `arun` receives the RESOLVED value, while a class-level `instructions` string is
     composed at import time and only ever sees the placeholder. Do not unify the two."""
-    from rlm_notebook.instructions import make_grounded_validator, script_family
-    from rlm_notebook.schema import PodcastScript
+    from penumbra.instructions import make_grounded_validator, script_family
+    from penumbra.schema import PodcastScript
 
     assert script_family("Traditional Chinese") == "hant"
     assert script_family("zh-Hant") == "hant"
@@ -446,14 +446,14 @@ def test_every_shipped_task_wires_the_script_check_to_its_own_run():
         sub_lm=dummy,
     )
 
-    from rlm_notebook.audio import GeneratePodcastScript
-    from rlm_notebook.guide import (
+    from penumbra.audio import GeneratePodcastScript
+    from penumbra.guide import (
         GenerateFAQ,
         GenerateKeyInsight,
         GenerateSummary,
         GenerateTimeline,
     )
-    from rlm_notebook.task import AnswerQuestion
+    from penumbra.task import AnswerQuestion
 
     for cls in (
         AnswerQuestion,
@@ -491,7 +491,7 @@ def test_arun_captures_the_resolved_output_language():
 
     from rlm_harness import RLMTask
 
-    from rlm_notebook.task import AnswerQuestion
+    from penumbra.task import AnswerQuestion
 
     task = AnswerQuestion(skills_dir=None)
     seen = {}
@@ -540,7 +540,7 @@ def test_the_script_check_never_asks_for_a_character_it_already_has():
     once-per-run bound capped the cost and did not make the message coherent. Sixteen gate
     characters have such a context, so the documented `拮据` was not the only one.
     """
-    from rlm_notebook.instructions import _actionable, _script_offenders, _wrong_script_chars
+    from penumbra.instructions import _actionable, _script_offenders, _wrong_script_chars
 
     wrong = _wrong_script_chars("hant")
     for text in ("公司財務拮据", "恒生指數", "溫度計與温泉", "推薦與草荐"):
@@ -557,8 +557,8 @@ def test_the_rejection_counts_characters_not_fields():
     characters reported "4 field(s) carry a character" — a sentence that is wrong twice."""
     import json
 
-    from rlm_notebook.instructions import make_grounded_validator
-    from rlm_notebook.schema import PodcastScript
+    from penumbra.instructions import make_grounded_validator
+    from penumbra.schema import PodcastScript
 
     validate = make_grounded_validator(PodcastScript, lambda: set(), lambda: "hant")
     verdict = validate(
@@ -570,11 +570,11 @@ def test_the_rejection_counts_characters_not_fields():
 
 def test_script_family_matches_both_orderings_of_the_language_name():
     """`Chinese (Traditional)` is as ordinary a spelling as `Traditional Chinese` and matched
-    NOTHING, which turns the whole check off silently — and `RN_OUTPUT_LANGUAGE` and the settings
+    NOTHING, which turns the whole check off silently — and `PN_OUTPUT_LANGUAGE` and the settings
     file accept any string, since `clean_language` bounds length rather than the character set. A
     needle list is inherently incomplete; these are the spellings a person actually writes.
     """
-    from rlm_notebook.instructions import script_family
+    from penumbra.instructions import script_family
 
     for name in ("Traditional Chinese", "Chinese (Traditional)", "zh-Hant", "繁體中文", "正體中文"):
         assert script_family(name) == "hant", name
@@ -606,8 +606,8 @@ def test_the_validator_records_a_tool_call():
 
     from rlm_harness.trace import TraceRecorder
 
-    from rlm_notebook.instructions import make_grounded_validator
-    from rlm_notebook.schema import PodcastScript
+    from penumbra.instructions import make_grounded_validator
+    from penumbra.schema import PodcastScript
 
     out = _Path(tempfile.mkdtemp()) / "t.jsonl"
     validate = make_grounded_validator(PodcastScript, lambda: set(), lambda: None)
@@ -651,8 +651,8 @@ def test_a_rejection_verdict_can_carry_the_models_own_coordinate():
 
     from rlm_harness.trace import TraceRecorder
 
-    from rlm_notebook.instructions import _VERDICT_CHARS, make_grounded_validator
-    from rlm_notebook.schema import Summary
+    from penumbra.instructions import _VERDICT_CHARS, make_grounded_validator
+    from penumbra.schema import Summary
 
     out = _Path(tempfile.mkdtemp()) / "t.jsonl"
     validate = make_grounded_validator(Summary, lambda: {"s1|whole"}, lambda: None)
@@ -684,7 +684,7 @@ def test_every_task_is_told_to_submit_on_a_LATER_turn_than_it_validates():
 
     Shared by all six tasks (invariant 13), so the rule lands everywhere at once.
     """
-    from rlm_notebook.instructions import validate_before_submit_rule
+    from penumbra.instructions import validate_before_submit_rule
 
     rule = validate_before_submit_rule("validate_x")
     assert "LATER REPL turn" in rule, rule

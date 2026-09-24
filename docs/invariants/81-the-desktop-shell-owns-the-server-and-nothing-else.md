@@ -1,6 +1,6 @@
 # Invariant 81: The desktop shell owns the server and nothing else
 
-**The desktop shell (`desktop/src-tauri/src/lib.rs`) gives the web UI no IPC at all, and the server it starts can never outlive it: the shell holds the server's stdin as a pipe and `serve` shuts down when that pipe closes (`RN_EXIT_WITH_PARENT`).**
+**The desktop shell (`desktop/src-tauri/src/lib.rs`) gives the web UI no IPC at all, and the server it starts can never outlive it: the shell holds the server's stdin as a pipe and `serve` shuts down when that pipe closes (`PN_EXIT_WITH_PARENT`).**
 
 The web UI in the desktop app is the same page a browser loads, talking to the same server over HTTP with the same token. That is what keeps every rule written for the browser true in the app: the token on every request (77), no local paths through the API (26 and 30), keys only in the environment (41), links shown but inert in answers (55). Tauri makes it easy to hand a page a command bridge, and a bridge would be the first way for anything the page renders, including the full text of an attacker's captured page, to reach the file system or a process. The page does not need one. What a browser tab provided and a bare webview does not (saving downloads, printing, opening other sites in a real browser) the shell does itself, from its own menu and its own download and navigation handlers, without the page asking.
 
@@ -12,6 +12,6 @@ Three smaller decisions follow the same line:
 - **The port is remembered.** The web UI keeps its per-reader choices in `localStorage`, which is scoped to the origin, and the origin includes the port. A fresh port each launch would forget the interface language and theme every time.
 - **Keys live in a configuration file the File menu opens**, never on the settings page, for invariant 41's reason: that page is writable by every token holder.
 
-The web UI learns it is in the desktop app from a `shell=desktop` fragment parameter, remembered for the session and stripped from the address bar with the token. It uses that for one thing only: an error that names an `RN_*` setting also says where that setting lives in the desktop app.
+The web UI learns it is in the desktop app from a `shell=desktop` fragment parameter, remembered for the session and stripped from the address bar with the token. It uses that for one thing only: an error that names an `PN_*` setting also says where that setting lives in the desktop app.
 
 Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

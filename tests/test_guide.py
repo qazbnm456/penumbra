@@ -1,4 +1,4 @@
-"""Notebook Guide tasks (`guide.py`), driven through REAL offline forward passes — same pattern as
+"""Orbit Guide tasks (`guide.py`), driven through REAL offline forward passes — same pattern as
 `test_task.py`: `rlm_harness.testing.ScriptedInterpreter` + `scripted_lm` drive `dspy.RLM.aforward` for
 real, no live model, no Deno, no network.
 """
@@ -16,8 +16,8 @@ import rlm_harness.runtime as rt
 from rlm_harness import RLMConfig
 from rlm_harness.testing import ScriptedInterpreter, assert_repl_safe, call, scripted_lm, submit
 
-from rlm_notebook.guide import GenerateFAQ, GenerateKeyInsight, GenerateSummary, GenerateTimeline
-from rlm_notebook.schema import FAQ, KeyInsight, Summary, Timeline
+from penumbra.guide import GenerateFAQ, GenerateKeyInsight, GenerateSummary, GenerateTimeline
+from penumbra.schema import FAQ, KeyInsight, Summary, Timeline
 
 _SOURCES = "[[SRC:s1|page:1]]\nApples are red or green. Oranges are orange."
 
@@ -151,7 +151,7 @@ def test_a_locator_the_model_composed_from_the_passage_is_rejected_before_submit
 
     `citations.verify_citations` is still the guarantee (invariant 5); this is the early warning.
     """
-    from rlm_notebook.guide import GenerateSummary
+    from penumbra.guide import GenerateSummary
 
     _configure([])
     task = GenerateSummary(skills_dir=None)
@@ -159,7 +159,7 @@ def test_a_locator_the_model_composed_from_the_passage_is_rejected_before_submit
 
     blob = '[[SRC:s1|whole]]\nMoving from a localized security "skill" to a pipeline is hard.\n'
     task._coordinates = __import__(
-        "rlm_notebook.instructions", fromlist=["coordinates_in"]
+        "penumbra.instructions", fromlist=["coordinates_in"]
     ).coordinates_in(blob)
     assert task._coordinates == {"s1|whole"}
 
@@ -192,8 +192,8 @@ def test_the_coordinate_check_reaches_citations_NESTED_under_a_list_of_models():
     An independent review disabled descent into nested models and the whole suite stayed green,
     which would have left `GenerateFAQ`, `GenerateTimeline` and `GeneratePodcastScript` unguarded.
     The podcast is the very task the MARKER check already spent a slice living only on."""
-    from rlm_notebook.instructions import _cited_coordinates
-    from rlm_notebook.schema import FAQ, Citation, PodcastScript, Timeline, TimelineEvent, Utterance
+    from penumbra.instructions import _cited_coordinates
+    from penumbra.schema import FAQ, Citation, PodcastScript, Timeline, TimelineEvent, Utterance
 
     bad = Citation(source_id="s9", locator="A SECTION HEADING", quote="q", answer_span="a")
     faq = FAQ.model_validate({"items": [{"question": "q?", "answer": "a", "citations": [bad.model_dump()]}]})
@@ -210,7 +210,7 @@ def test_the_coordinate_check_fails_open_when_the_blob_has_no_markers():
     """An empty coordinate set means "we do not know what is valid here", and rejecting every
     citation of a legitimate run is far worse than letting server-side verification catch an
     invented one. Deliberate and documented — not the silent fail-open invariant 66 warns about."""
-    from rlm_notebook.guide import GenerateSummary
+    from penumbra.guide import GenerateSummary
 
     _configure([])
     task = GenerateSummary(skills_dir=None)
@@ -231,7 +231,7 @@ def test_arun_captures_this_runs_coordinates_from_the_blob_it_was_handed():
     how a guard that "exists" protects nothing."""
     import asyncio
 
-    from rlm_notebook.guide import GenerateSummary
+    from penumbra.guide import GenerateSummary
 
     payload = {
         "text": "Fruit colors.",

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>rlm-notebook</title>
+<title>Penumbra</title>
 <style>
   :root {
     --bg: oklch(97.5% 0.008 75);
@@ -47,7 +47,7 @@
 <body>
 <main id="main">
   <div class="mark" aria-hidden="true"></div>
-  <h1 id="status" role="status">Starting rlm-notebook…</h1>
+  <h1 id="status" role="status">Starting Penumbra…</h1>
   <p id="sub">The first start can take a few seconds.</p>
   <pre id="detail"></pre>
   <p class="hint" id="hint" hidden>File &gt; Show Server Log has the whole log. File &gt; Restart Server tries again.</p>
@@ -56,10 +56,10 @@
   // The OS language, Traditional Chinese or English, matching the shell's own menu.
   const zh = /^zh-(hant|tw|hk|mo)/i.test(navigator.language || "");
   const WORDS = zh
-    ? { starting: "正在啟動 rlm-notebook…", failed: "rlm-notebook 無法啟動",
+    ? { starting: "正在啟動 Penumbra…", failed: "Penumbra 無法啟動",
         sub: "第一次啟動可能要幾秒鐘。",
         hint: "「檔案 > 顯示伺服器紀錄」可以看完整紀錄，「檔案 > 重新啟動伺服器」可以再試一次。" }
-    : { starting: "Starting rlm-notebook…", failed: "rlm-notebook could not start",
+    : { starting: "Starting Penumbra…", failed: "Penumbra could not start",
         sub: "The first start can take a few seconds.",
         hint: "File > Show Server Log has the whole log. File > Restart Server tries again." };
   if (zh) document.documentElement.lang = "zh-Hant";

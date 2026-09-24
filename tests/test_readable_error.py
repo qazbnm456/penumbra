@@ -48,7 +48,7 @@ def _clean(*messages: str) -> list[str]:
 
 #: What must NEVER reach a reader, per the rule this function exists to keep: a status code, an
 #: exception class, an OpenSSL source line, a run UUID, a signal number, a shell incantation, a
-#: Python repr. `RN_MAIN_MODEL` and `RN_MAX_TOKENS` are exempt — naming the variable IS the action.
+#: Python repr. `PN_MAIN_MODEL` and `PN_MAX_TOKENS` are exempt — naming the variable IS the action.
 FORBIDDEN = (
     "litellm", "Exception", "Error code", "OpenAIException", "PdfiumError", "Traceback",
     "{'", '{"', "_ssl.c", "exit -9", "set -a",
@@ -77,13 +77,13 @@ def test_a_provider_failure_says_what_to_do_and_keeps_the_model_name():
     # The model string is the one actionable thing in a provider error: it says which credential
     # and which line of the environment to go and look at.
     assert "openai/gpt-4o-mini" in wrong_key
-    assert "RN_API_KEY" in wrong_key, (
+    assert "PN_API_KEY" in wrong_key, (
         "the sentence never names the variable the product actually reads, while the sibling "
-        "branches name RN_MAIN_MODEL"
+        "branches name PN_MAIN_MODEL"
     )
 
     # **`Missing credentials` is the FIRST-RUN failure** — no key configured at all, the commonest
-    # thing a new BYOK install can do — and it reached the reader raw on the Inbox front page. Two
+    # thing a new BYOK install can do — and it reached the reader raw on the Horizon front page. Two
     # independent causes: the shape was unrecognised, and `LEADING_NOISE` being `^`-anchored let a
     # class-name prefix shield the `[vendor/model]` tag from the only rule that strips it. The chat
     # path could not match `FROM_PROVIDER` either: `\bLM[A-Za-z]*Error\b` has no word boundary
@@ -99,13 +99,13 @@ def test_a_provider_failure_says_what_to_do_and_keeps_the_model_name():
     # class — no `litellm`, no `[vendor/model]` tag — failed the provenance gate and fell through to
     # the tail, printing the provider's own wording instead of the actionable sentence.
     (bare_task,) = _clean("RLMTaskError: Missing credentials for the configured provider.")
-    assert "RN_API_KEY" in bare_task, (
+    assert "PN_API_KEY" in bare_task, (
         f"a provider failure was not recognised as one: {bare_task!r}"
     )
 
     for cleaned in (first_run, chat_path):
         _assert_readable("missing-credentials", cleaned)
-        assert "RN_API_KEY" in cleaned, f"the actionable variable is missing: {cleaned!r}"
+        assert "PN_API_KEY" in cleaned, f"the actionable variable is missing: {cleaned!r}"
         assert "[openai/" not in cleaned, f"the vendor/model tag survived: {cleaned!r}"
         for noise in ("workload_identity", "admin_api_key", "OPENAI_ADMIN_KEY"):
             assert noise not in cleaned, (
@@ -114,13 +114,13 @@ def test_a_provider_failure_says_what_to_do_and_keeps_the_model_name():
     assert "openai/no-such-model" in no_model
     # The two SIZE refusals are different problems with different actions, and naming the lever is
     # the point of each.
-    assert "RN_MAX_TOKENS" in too_long
-    assert "RN_MAX_TOKENS" not in context and "RN_MAIN_MODEL" not in context
+    assert "PN_MAX_TOKENS" in too_long
+    assert "PN_MAX_TOKENS" not in context and "PN_MAIN_MODEL" not in context
 
     # **`Received Model Group=` is litellm ROUTER BOILERPLATE, not evidence of a missing model.**
     # It appears in every router error, so with it in the pattern a `max_tokens` refusal rendered
     # as "your provider has no model called gpt-4o-mini" - sending the reader to pick another
-    # OpenAI model, which fails identically, while the Inbox strip on the same page correctly
+    # OpenAI model, which fails identically, while the Horizon strip on the same page correctly
     # blamed something else. This is the exact string the running server produced.
     (routed,) = _clean(
         "LMInvalidRequestError: [openai/gpt-4o-mini] litellm.BadRequestError: OpenAIException - "
@@ -129,8 +129,8 @@ def test_a_provider_failure_says_what_to_do_and_keeps_the_model_name():
         "Available Model Group Fallbacks=None"
     )
     _assert_readable("router", routed)
-    assert "RN_MAX_TOKENS" in routed, f"the actual cause was lost: {routed!r}"
-    assert "RN_MAIN_MODEL" not in routed, (
+    assert "PN_MAX_TOKENS" in routed, f"the actual cause was lost: {routed!r}"
+    assert "PN_MAIN_MODEL" not in routed, (
         f"a router error was read as a missing model: {routed!r}"
     )
 
@@ -148,7 +148,7 @@ def test_a_website_status_is_never_reported_as_a_credential_problem():
     )
     for status, cleaned in (("403", forbidden), ("404", gone), ("429", busy), ("503", broken)):
         _assert_readable("fetch", cleaned)
-        for word in ("API key", "RN_MAIN_MODEL", "quota", "provider"):
+        for word in ("API key", "PN_MAIN_MODEL", "quota", "provider"):
             assert word not in cleaned, f"a website's status was blamed on the model: {cleaned!r}"
         # TRANSLATED, not merely un-blamed. A status code is the thing this function exists to
         # replace, and passing the sentence through with the number still in it is not doing that.
@@ -175,7 +175,7 @@ def test_a_website_status_is_never_reported_as_a_credential_problem():
         assert cleaned == forbidden, (
             f"a provider's name inside a URL changed the diagnosis: {url} -> {cleaned!r}"
         )
-        for word in ("API key", "RN_API_KEY", "credential", "quota"):
+        for word in ("API key", "PN_API_KEY", "credential", "quota"):
             assert word not in cleaned, f"a blocked page was blamed on the model: {cleaned!r}"
 
     # ...while a real provider failure that merely MENTIONS a URL is still a provider failure.
@@ -217,7 +217,7 @@ def test_a_website_status_is_never_reported_as_a_credential_problem():
         "FetchError: fetch error for 'https://example.com/e': 403 Client Error: Forbidden for url"
     )
     _assert_readable("fetch-403-no-wording", odd)
-    for word in ("API key", "RN_MAIN_MODEL", "quota"):
+    for word in ("API key", "PN_MAIN_MODEL", "quota"):
         assert word not in odd, f"a website's 403 was blamed on the model provider: {odd!r}"
 
 
@@ -271,13 +271,13 @@ def test_an_unrecognised_message_keeps_its_sentence_and_loses_only_the_noise():
 
     # **Router boilerplate with no recognised cause behind it.** `Received Model Group=` is in
     # every litellm router error; reading it as "no such model" sends the reader to change
-    # `RN_MAIN_MODEL` over a failure that has nothing to do with the model's name. With nothing
+    # `PN_MAIN_MODEL` over a failure that has nothing to do with the model's name. With nothing
     # else to go on, the honest answer is the sentence the server actually sent.
     (routed,) = _clean(
         "LMError: Failed to produce a valid 'answer' after 1 attempts - caused by Error code: 400. "
         "Received Model Group=gpt-4o-mini\nAvailable Model Group Fallbacks=None"
     )
-    assert "RN_MAIN_MODEL" not in routed, (
+    assert "PN_MAIN_MODEL" not in routed, (
         f"router boilerplate was read as a missing model: {routed!r}"
     )
     assert "Failed to produce a valid 'answer'" in routed, (
@@ -289,12 +289,12 @@ def test_a_stopped_run_is_not_an_error_and_a_missing_model_names_its_variable():
     stopped, killed, no_lm = _clean(
         "499: run 'reading-4d2662ef-79ea-4598-83a0-00a573fc9dff' was stopped before it started",
         "502: worker for run 'reading-faac4924' produced no output (exit -9); stderr:",
-        "RN_MAIN_MODEL is not set. Set it and restart, e.g. `set -a; . ./.env; set +a`",
+        "PN_MAIN_MODEL is not set. Set it and restart, e.g. `set -a; . ./.env; set +a`",
     )
     assert stopped == killed, "both halves of a cancellation read the same to the person who asked"
     for cleaned in (stopped, killed):
         assert "499" not in cleaned and "exit -9" not in cleaned and "4d2662ef" not in cleaned
-    assert "RN_MAIN_MODEL" in no_lm, "the variable name is the actionable half"
+    assert "PN_MAIN_MODEL" in no_lm, "the variable name is the actionable half"
     assert "set -a" not in no_lm, "a shell command in a chat bubble is the terminal's voice"
 
 
@@ -324,7 +324,7 @@ def test_losing_the_server_says_so_instead_of_quoting_the_browser():
     raw message went straight to the surface: a capture said "Could not capture that: Failed to
     fetch", a question failed with "Failed to fetch", and in a zh-Hant interface both stayed in
     English. It never said the one thing that is true and actionable — this all runs on loopback, so
-    the overwhelmingly likely cause is that `rlm-notebook serve` is no longer running.
+    the overwhelmingly likely cause is that `penumbra serve` is no longer running.
 
     Distinct from `UNREACHABLE`, which is the SERVER failing to fetch a source the reader asked for.
     """
@@ -354,7 +354,7 @@ def test_a_run_that_hit_the_time_limit_is_not_reported_as_a_network_fault():
     """**The wall-clock backstop firing is a DESIGNED outcome**, and `UNREACHABLE` matched the bare
     words "timed out" anywhere, above every provider branch.
 
-    So a `long` Audio Overview that hit `RN_RUN_TIMEOUT_SECONDS` — the thing invariant 68 exists
+    So a `long` Audio Overview that hit `PN_RUN_TIMEOUT_SECONDS` — the thing invariant 68 exists
     for, since 60-90 accumulated utterances (invariant 64) could not fit under the 300s default —
     told the reader "Could not reach that address." for a run in which no address was involved,
     right after they had paid for a 5x-budget episode. `runner.py` names the knob in the message
@@ -362,7 +362,7 @@ def test_a_run_that_hit_the_time_limit_is_not_reported_as_a_network_fault():
     """
     timed_out, refused_provider, page, source_url = _clean(
         "502: run 'nb-x-abc' timed out after 300.0s and was cancelled (the wall-clock backstop; "
-        "raise RN_RUN_TIMEOUT_SECONDS if the model is simply slow)",
+        "raise PN_RUN_TIMEOUT_SECONDS if the model is simply slow)",
         "502: RLMTaskError: ... caused by APIConnectionError: [Errno 61] Connection refused",
         "Failed to produce a valid 'answer' after 1 attempts — caused by <!doctype html> <html> "
         "<head> <meta charset=\"utf-8\"> <title>Unable to connect</title> <style> * { margin: 0; }",
@@ -378,11 +378,11 @@ def test_a_run_that_hit_the_time_limit_is_not_reported_as_a_network_fault():
         _assert_readable("err", cleaned)
 
     # The timeout names the knob, because that is the only thing the reader can do about it.
-    assert "RN_RUN_TIMEOUT_SECONDS" in timed_out, timed_out
+    assert "PN_RUN_TIMEOUT_SECONDS" in timed_out, timed_out
     assert "address" not in timed_out.lower(), "a run has no address to be unreachable at"
 
     # A dead local model server is the commonest first-run failure for a BYOK product.
-    assert "RN_BASE_URL" in refused_provider, refused_provider
+    assert "PN_BASE_URL" in refused_provider, refused_provider
 
     # A proxy answering a model request with a web page: none of the markup reaches the reader.
     assert "<" not in page and "doctype" not in page.lower(), page
@@ -396,9 +396,9 @@ def test_a_fake_ip_refusal_keeps_the_setting_that_fixes_it():
     generic "not one this can fetch" dropped it, and a user could not add a single URL."""
     raw = (
         "refused: 'https://example.com/' resolves to a disallowed address "
-        "(if you are behind a fake-IP proxy or split-DNS VPN, set RN_FETCH_ALLOW_CIDRS)"
+        "(if you are behind a fake-IP proxy or split-DNS VPN, set PN_FETCH_ALLOW_CIDRS)"
     )
     (cleaned,) = _clean(raw)
-    assert "RN_FETCH_ALLOW_CIDRS" in cleaned and "198.18.0.0/15" in cleaned, cleaned
+    assert "PN_FETCH_ALLOW_CIDRS" in cleaned and "198.18.0.0/15" in cleaned, cleaned
     (plain,) = _clean("refused: 'file:///etc' is not a permitted external http(s) URL")
     assert plain == "That address is not one this can fetch."

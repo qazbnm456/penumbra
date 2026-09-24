@@ -4,8 +4,8 @@ from typing import ClassVar
 
 import pytest
 
-from rlm_notebook.parsers import web
-from rlm_notebook.parsers.web import FetchError, _SafeRedirectHandler, parse_web
+from penumbra.parsers import web
+from penumbra.parsers.web import FetchError, _SafeRedirectHandler, parse_web
 
 _HTML = """\
 <html><body>
@@ -97,7 +97,7 @@ def test_default_fetcher_uses_the_guarded_opener_never_plain_urlopen(monkeypatch
     """
     import urllib.request
 
-    from rlm_notebook.parsers import web
+    from penumbra.parsers import web
 
     monkeypatch.setattr(web, "resolved_host_is_safe", lambda *a, **k: True)
 
@@ -143,7 +143,7 @@ def test_a_fake_ip_resolver_starves_ingestion_until_the_carve_out_is_set(monkeyp
     test asserts the GUARD's behaviour rather than the machine's networking."""
     from rlm_harness.tools import fetch as harness_fetch
 
-    from rlm_notebook.parsers import web
+    from penumbra.parsers import web
 
     # `resolved_host_is_safe` calls `socket.getaddrinfo` in ITS OWN module's namespace, not in
     # `web`'s — patching `web.socket` would silently do nothing and the test would pass on the
@@ -155,11 +155,11 @@ def test_a_fake_ip_resolver_starves_ingestion_until_the_carve_out_is_set(monkeyp
     )
     assert harness_fetch.resolved_host_is_safe("example.com", 443) is False
 
-    monkeypatch.delenv("RN_FETCH_ALLOW_CIDRS", raising=False)
-    with pytest.raises(web.FetchError, match="RN_FETCH_ALLOW_CIDRS"):
+    monkeypatch.delenv("PN_FETCH_ALLOW_CIDRS", raising=False)
+    with pytest.raises(web.FetchError, match="PN_FETCH_ALLOW_CIDRS"):
         web._check_safe("https://example.com/a")
 
-    monkeypatch.setenv("RN_FETCH_ALLOW_CIDRS", "198.18.0.0/16")
+    monkeypatch.setenv("PN_FETCH_ALLOW_CIDRS", "198.18.0.0/16")
     web._check_safe("https://example.com/a")  # no raise
 
 
@@ -185,10 +185,10 @@ def test_a_public_hostname_resolving_internally_is_refused_under_the_carve_out(m
     DELETED from `_check_safe`. It asserted nothing about the carve-out. `is_safe_url` returns True
     for `http://evil.example.com/` however that name resolves, so the DNS-rebinding check is the ONLY
     layer that ever sees the resolved address, and `allow_nets` is exactly what can switch it off."""
-    from rlm_notebook.parsers import web
+    from penumbra.parsers import web
 
     _resolve_to(monkeypatch, addr)
-    monkeypatch.setenv("RN_FETCH_ALLOW_CIDRS", "198.18.0.0/16")
+    monkeypatch.setenv("PN_FETCH_ALLOW_CIDRS", "198.18.0.0/16")
     with pytest.raises(web.FetchError, match="disallowed address"):
         web._check_safe("http://evil.example.com/")
 
@@ -196,10 +196,10 @@ def test_a_public_hostname_resolving_internally_is_refused_under_the_carve_out(m
 def test_the_fake_ip_range_still_resolves_under_the_same_setting(monkeypatch):
     """The other half of the test above: the carve-out must still DO its job. Without this, a broken
     `allow_nets` that refused everything would satisfy every assertion here."""
-    from rlm_notebook.parsers import web
+    from penumbra.parsers import web
 
     _resolve_to(monkeypatch, "198.18.1.88")
-    monkeypatch.setenv("RN_FETCH_ALLOW_CIDRS", "198.18.0.0/16")
+    monkeypatch.setenv("PN_FETCH_ALLOW_CIDRS", "198.18.0.0/16")
     web._check_safe("https://example.com/a")  # no raise
 
 
@@ -211,9 +211,9 @@ def test_an_allow_cidr_that_would_disable_the_guard_is_refused(monkeypatch, valu
     not widen the carve-out — it turns the DNS-rebinding defence off. `198.18.0.0/1` is the dropped
     character in the one documented value, and it normalises to `128.0.0.0/1`: half the address
     space, cloud metadata and `192.168/16` included, and it parses cleanly."""
-    from rlm_notebook import config
+    from penumbra import config
 
-    monkeypatch.setenv("RN_FETCH_ALLOW_CIDRS", value)
+    monkeypatch.setenv("PN_FETCH_ALLOW_CIDRS", value)
     with pytest.raises(SystemExit, match="disable the SSRF guard"):
         config.fetch_allow_cidrs()
 
@@ -223,9 +223,9 @@ def test_a_malformed_allow_cidr_is_refused_rather_than_skipped(monkeypatch):
     run" — right for a tool the model calls mid-run, wrong for an operator setting. Dropping the only
     entry restores full strictness, so a typo'd variable reproduces the exact symptom it was set to
     fix with nothing on screen connecting the two. `config.fetch_allow_cidrs` raises first."""
-    from rlm_notebook import config
+    from penumbra import config
 
-    monkeypatch.setenv("RN_FETCH_ALLOW_CIDRS", "198.18.0.0/16,not-a-cidr")
+    monkeypatch.setenv("PN_FETCH_ALLOW_CIDRS", "198.18.0.0/16,not-a-cidr")
     with pytest.raises(SystemExit, match="not-a-cidr"):
         config.fetch_allow_cidrs()
 
@@ -237,7 +237,7 @@ def test_both_fetchers_read_one_carve_out(monkeypatch):
     from pathlib import Path
 
     root = Path(__file__).resolve().parent.parent
-    yt = (root / "rlm_notebook" / "parsers" / "youtube.py").read_text(encoding="utf-8")
+    yt = (root / "penumbra" / "parsers" / "youtube.py").read_text(encoding="utf-8")
     assert "from .web import _opener, allow_nets" in yt
     assert "allow_nets=allow_nets()" in yt
     assert "fetch_allow_cidrs" not in yt, "youtube.py must not read the variable itself"
@@ -292,7 +292,7 @@ def test_a_preview_never_carries_an_image():
 def test_a_preview_is_display_only_and_never_reaches_the_corpus():
     """The blob is built from `blocks` alone, so a page controlling its own `<meta>` tags can
     influence what a Sources row LOOKS like and nothing the model reads."""
-    from rlm_notebook.corpus import Corpus
+    from penumbra.corpus import Corpus
 
     html = '<meta property="og:title" content="INJECTED-INTO-PREVIEW"><p>real body text</p>'
     source = web.parse_web(
@@ -332,7 +332,7 @@ def test_a_hostile_page_cannot_stall_the_preview_scraper():
 
 def _canned(monkeypatch, body: bytes, content_type: str):
     """Stand in for the network at the `_opener` seam, so `_fetch` itself is what runs."""
-    from rlm_notebook.parsers import web
+    from penumbra.parsers import web
 
     monkeypatch.setattr(web, "resolved_host_is_safe", lambda *a, **k: True)
 
@@ -365,7 +365,7 @@ def _canned(monkeypatch, body: bytes, content_type: str):
 
 
 def test_a_pdf_url_is_parsed_as_a_pdf_not_refused_as_an_empty_page(monkeypatch, tmp_path):
-    """**The most obvious act on a research inbox was impossible.**
+    """**The most obvious act on a research horizon was impossible.**
 
     `trafilatura.extract` ran unconditionally on whatever came back, so pasting an arXiv PDF link
     produced `FetchError: no extractable text content` — a message that reads like the fetch failed
@@ -434,9 +434,9 @@ def test_the_fetch_is_bounded(monkeypatch):
     from a file that happens to be exactly that size."""
     import pytest as _pytest
 
-    from rlm_notebook import config
+    from penumbra import config
 
-    monkeypatch.setenv("RN_MAX_UPLOAD_BYTES", "64")
+    monkeypatch.setenv("PN_MAX_UPLOAD_BYTES", "64")
     # Deliberately much larger than the cap: if the read were unbounded this would be the size of
     # the spike, and the assertion below is what tells the two apart.
     web = _canned(monkeypatch, b"x" * 100_000, "text/plain")

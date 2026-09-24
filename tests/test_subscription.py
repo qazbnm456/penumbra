@@ -13,11 +13,11 @@ import sys
 
 import pytest
 
-from rlm_notebook.config import SUBSCRIPTION_PREFIX, NotebookConfig, _maybe_subscription_lm
+from penumbra.config import SUBSCRIPTION_PREFIX, PenumbraConfig, _maybe_subscription_lm
 
 
 def _clear(monkeypatch):
-    for var in ("RN_MAIN_MODEL", "RN_SUB_MODEL", "RN_API_KEY", "RN_BASE_URL", "RN_INTERPRETER"):
+    for var in ("PN_MAIN_MODEL", "PN_SUB_MODEL", "PN_API_KEY", "PN_BASE_URL", "PN_INTERPRETER"):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -33,12 +33,12 @@ def test_non_sentinel_returns_none_without_importing_the_adapter():
 
 
 def test_a_subscription_model_needs_no_api_key(monkeypatch):
-    """`RN_API_KEY` stays optional, which is the whole point: a subscription run authenticates
+    """`PN_API_KEY` stays optional, which is the whole point: a subscription run authenticates
     through the Claude Code CLI's own login, so `from_env` must not start demanding a key."""
     _clear(monkeypatch)
-    monkeypatch.setenv("RN_MAIN_MODEL", f"{SUBSCRIPTION_PREFIX}claude-sonnet-5")
+    monkeypatch.setenv("PN_MAIN_MODEL", f"{SUBSCRIPTION_PREFIX}claude-sonnet-5")
 
-    config = NotebookConfig.from_env()
+    config = PenumbraConfig.from_env()
 
     assert config.main_model == "claude-agent-sdk/claude-sonnet-5"
     assert config.api_key is None
@@ -46,15 +46,15 @@ def test_a_subscription_model_needs_no_api_key(monkeypatch):
 
 
 def test_an_unset_sub_model_inherits_the_sentinel(monkeypatch):
-    """`RN_SUB_MODEL` defaults to the main model, so a subscription planner puts the sub-LM on the
+    """`PN_SUB_MODEL` defaults to the main model, so a subscription planner puts the sub-LM on the
     subscription too. Unlike `cve-reverser` — where the same inheritance was a HAZARD it had to
     reject, because its generator role is a separate tool that must stay on its own endpoint —
     this project has no such role, so inheriting is simply correct here. Pinned so the difference
     between the two projects is deliberate rather than accidental."""
     _clear(monkeypatch)
-    monkeypatch.setenv("RN_MAIN_MODEL", f"{SUBSCRIPTION_PREFIX}claude-sonnet-5")
+    monkeypatch.setenv("PN_MAIN_MODEL", f"{SUBSCRIPTION_PREFIX}claude-sonnet-5")
 
-    config = NotebookConfig.from_env()
+    config = PenumbraConfig.from_env()
 
     assert config.sub_model == config.main_model
 
@@ -63,11 +63,11 @@ def test_mixed_auth_is_allowed(monkeypatch):
     """A subscription planner with a proxy sub-LM (or the reverse) — each role is resolved
     independently, so nothing forces both onto the same backend."""
     _clear(monkeypatch)
-    monkeypatch.setenv("RN_MAIN_MODEL", f"{SUBSCRIPTION_PREFIX}claude-sonnet-5")
-    monkeypatch.setenv("RN_SUB_MODEL", "openai/gpt-4o")
-    monkeypatch.setenv("RN_API_KEY", "sk-proxy")
+    monkeypatch.setenv("PN_MAIN_MODEL", f"{SUBSCRIPTION_PREFIX}claude-sonnet-5")
+    monkeypatch.setenv("PN_SUB_MODEL", "openai/gpt-4o")
+    monkeypatch.setenv("PN_API_KEY", "sk-proxy")
 
-    config = NotebookConfig.from_env()
+    config = PenumbraConfig.from_env()
 
     assert config.main_model.startswith(SUBSCRIPTION_PREFIX)
     assert config.sub_model == "openai/gpt-4o"
@@ -75,7 +75,7 @@ def test_mixed_auth_is_allowed(monkeypatch):
 
 def test_setup_injects_the_subscription_lm_for_a_sentinel_role(monkeypatch):
     """`setup` supplies the sentinel role through `configure`'s `main_lm=`/`sub_lm=` seam, and
-    leaves every other role for `configure` to build from the `RN_*` config.
+    leaves every other role for `configure` to build from the `PN_*` config.
 
     The ASSERTIONS are unchanged and still the right ones; this docstring used to justify them with
     a premise that has since expired. It said `rlm_harness.configure` does not route on the prefix,
@@ -100,10 +100,10 @@ def test_setup_injects_the_subscription_lm_for_a_sentinel_role(monkeypatch):
 
     monkeypatch.setattr(rlm_harness, "configure", _spy_configure)
 
-    from rlm_notebook.config import setup
+    from penumbra.config import setup
 
     setup(
-        NotebookConfig(
+        PenumbraConfig(
             main_model=f"{SUBSCRIPTION_PREFIX}claude-sonnet-5",
             sub_model="openai/gpt-4o",
             api_key="sk-proxy",
@@ -133,8 +133,8 @@ def test_setup_leaves_both_seats_to_configure_on_the_pure_proxy_path(monkeypatch
         lambda config, *, main_lm=None, sub_lm=None: captured.update(main_lm=main_lm, sub_lm=sub_lm),
     )
 
-    from rlm_notebook.config import setup
+    from penumbra.config import setup
 
-    setup(NotebookConfig(main_model="anthropic/claude-sonnet-5", sub_model="openai/gpt-4o"))
+    setup(PenumbraConfig(main_model="anthropic/claude-sonnet-5", sub_model="openai/gpt-4o"))
 
     assert captured == {"main_lm": None, "sub_lm": None}

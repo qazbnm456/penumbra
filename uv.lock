@@ -2780,6 +2780,84 @@ wheels = [
 ]
 
 [[package]]
+name = "penumbra"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "edge-tts" },
+    { name = "numpy" },
+    { name = "onnxruntime" },
+    { name = "pillow" },
+    { name = "pydantic" },
+    { name = "pypdfium2" },
+    { name = "pytesseract" },
+    { name = "rapidocr" },
+    { name = "rlm-harness" },
+    { name = "trafilatura" },
+    { name = "yt-dlp" },
+    { name = "zhconv" },
+]
+
+[package.optional-dependencies]
+api = [
+    { name = "fastapi" },
+    { name = "python-multipart" },
+    { name = "uvicorn" },
+]
+chatterbox = [
+    { name = "chatterbox-tts", marker = "python_full_version >= '3.13'" },
+    { name = "numba", marker = "python_full_version >= '3.13'" },
+    { name = "numpy", marker = "python_full_version >= '3.13'" },
+    { name = "setuptools", marker = "python_full_version >= '3.13'" },
+    { name = "soundfile", marker = "python_full_version >= '3.13'" },
+]
+subscription = [
+    { name = "claude-agent-sdk" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "reportlab" },
+]
+subscription-sdk = [
+    { name = "claude-agent-sdk" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "chatterbox-tts", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = ">=0.1.7" },
+    { name = "claude-agent-sdk", marker = "extra == 'subscription'", specifier = ">=0.1.60" },
+    { name = "edge-tts", specifier = ">=7.2.8" },
+    { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.115" },
+    { name = "numba", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = ">=0.61" },
+    { name = "numpy", specifier = ">=2" },
+    { name = "numpy", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = ">=2" },
+    { name = "onnxruntime", specifier = ">=1.17" },
+    { name = "pillow", specifier = ">=10" },
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "pypdfium2", specifier = ">=4" },
+    { name = "pytesseract", specifier = ">=0.3.10" },
+    { name = "python-multipart", marker = "extra == 'api'", specifier = ">=0.0.9" },
+    { name = "rapidocr", specifier = ">=3.9" },
+    { name = "rlm-harness", specifier = "==1.10.0" },
+    { name = "setuptools", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = "<82" },
+    { name = "soundfile", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = ">=0.12" },
+    { name = "trafilatura", specifier = ">=1.12" },
+    { name = "uvicorn", marker = "extra == 'api'", specifier = ">=0.30" },
+    { name = "yt-dlp", specifier = ">=2024.1" },
+    { name = "zhconv", specifier = ">=1.4" },
+]
+provides-extras = ["api", "subscription", "chatterbox"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "reportlab", specifier = ">=4" },
+]
+subscription-sdk = [{ name = "claude-agent-sdk", specifier = ">=0.1.60" }]
+
+[[package]]
 name = "pillow"
 version = "12.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3661,84 +3739,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/9b/7c/6b620c7689049c1d0
 wheels = [
     { url = "https://files.pythonhosted.org/packages/14/3b/a84f54b8970cb7e2973b461d090b4adea3836928605683672f75d5087b7e/rlm_harness-1.10.0-py3-none-any.whl", hash = "sha256:ad282246a3ca3a6d82009ebf1ab06dcad34f5a9efad159b0a6a029869b379805", size = 276020, upload-time = "2026-09-04T07:26:50.713Z" },
 ]
-
-[[package]]
-name = "rlm-notebook"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "edge-tts" },
-    { name = "numpy" },
-    { name = "onnxruntime" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "pypdfium2" },
-    { name = "pytesseract" },
-    { name = "rapidocr" },
-    { name = "rlm-harness" },
-    { name = "trafilatura" },
-    { name = "yt-dlp" },
-    { name = "zhconv" },
-]
-
-[package.optional-dependencies]
-api = [
-    { name = "fastapi" },
-    { name = "python-multipart" },
-    { name = "uvicorn" },
-]
-chatterbox = [
-    { name = "chatterbox-tts", marker = "python_full_version >= '3.13'" },
-    { name = "numba", marker = "python_full_version >= '3.13'" },
-    { name = "numpy", marker = "python_full_version >= '3.13'" },
-    { name = "setuptools", marker = "python_full_version >= '3.13'" },
-    { name = "soundfile", marker = "python_full_version >= '3.13'" },
-]
-subscription = [
-    { name = "claude-agent-sdk" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "reportlab" },
-]
-subscription-sdk = [
-    { name = "claude-agent-sdk" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "chatterbox-tts", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = ">=0.1.7" },
-    { name = "claude-agent-sdk", marker = "extra == 'subscription'", specifier = ">=0.1.60" },
-    { name = "edge-tts", specifier = ">=7.2.8" },
-    { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.115" },
-    { name = "numba", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = ">=0.61" },
-    { name = "numpy", specifier = ">=2" },
-    { name = "numpy", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = ">=2" },
-    { name = "onnxruntime", specifier = ">=1.17" },
-    { name = "pillow", specifier = ">=10" },
-    { name = "pydantic", specifier = ">=2.9" },
-    { name = "pypdfium2", specifier = ">=4" },
-    { name = "pytesseract", specifier = ">=0.3.10" },
-    { name = "python-multipart", marker = "extra == 'api'", specifier = ">=0.0.9" },
-    { name = "rapidocr", specifier = ">=3.9" },
-    { name = "rlm-harness", specifier = "==1.10.0" },
-    { name = "setuptools", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = "<82" },
-    { name = "soundfile", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = ">=0.12" },
-    { name = "trafilatura", specifier = ">=1.12" },
-    { name = "uvicorn", marker = "extra == 'api'", specifier = ">=0.30" },
-    { name = "yt-dlp", specifier = ">=2024.1" },
-    { name = "zhconv", specifier = ">=1.4" },
-]
-provides-extras = ["api", "subscription", "chatterbox"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "reportlab", specifier = ">=4" },
-]
-subscription-sdk = [{ name = "claude-agent-sdk", specifier = ">=0.1.60" }]
 
 [[package]]
 name = "rpds-py"

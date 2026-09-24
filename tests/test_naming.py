@@ -1,4 +1,4 @@
-"""`naming.py` — the notebook title suggested from its sources.
+"""`naming.py` — the orbit title suggested from its sources.
 
 No model is called here. `SuggestTitle.arun`'s model branch needs a live LM (and runs inside the
 API's isolated subprocess in production); these cover the deterministic halves — the fallback, the
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 
-from rlm_notebook.naming import SuggestTitle, clean_title, fallback_title
+from penumbra.naming import SuggestTitle, clean_title, fallback_title
 
 
 def test_fallback_reads_a_pasted_origins_snippet_not_its_hash():
@@ -25,7 +25,7 @@ def test_fallback_shortens_a_url_and_counts_the_rest():
 
 
 def test_fallback_is_deterministic_and_never_empty():
-    assert fallback_title([]) == "Untitled notebook"
+    assert fallback_title([]) == "Untitled orbit"
     assert fallback_title(["pasted:hi #1"]) == fallback_title(["pasted:hi #1"])
 
 
@@ -43,7 +43,7 @@ def test_arun_short_circuits_without_sources_and_never_raises():
     """A title is a convenience; losing one must never cost the user the source they just added, so
     the model branch is wrapped and every path returns a string."""
     assert asyncio.run(SuggestTitle().arun(sources="", origins=["pasted:hi #1"])) == "hi"
-    assert asyncio.run(SuggestTitle().arun()) == "Untitled notebook"
+    assert asyncio.run(SuggestTitle().arun()) == "Untitled orbit"
 
 
 def test_arun_falls_back_when_the_model_call_explodes(monkeypatch):

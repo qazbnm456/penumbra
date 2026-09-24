@@ -8,13 +8,16 @@ __pycache__/
 # uv / virtualenv
 .venv/
 
-# Run artifacts (traces, persisted notebooks, and the Tier 0 Inbox a live run writes; not source).
-# /inbox/ holds index.db and one JSON file per captured node — a user's whole capture history, so
+# Run artifacts (traces, persisted orbits, and the Tier 0 Horizon a live run writes; not source).
+# /horizon/ holds index.db and one JSON file per captured node — a user's whole capture history, so
 # committing it would publish everything they ever threw in. The settings
-# page writes notebooks/.settings — inside an already-ignored directory, and deliberately NOT a
-# .json file, since list_notebook_summaries globs notebooks/*.json (which pathlib matches against
-# dotfiles too) and would report it as a corrupt notebook.
+# page writes orbits/.settings — inside an already-ignored directory, and deliberately NOT a
+# .json file, since list_orbit_summaries globs orbits/*.json (which pathlib matches against
+# dotfiles too) and would report it as a corrupt orbit.
 /traces/
+/orbits/
+/horizon/
+# The same data under its pre-rename names, until `penumbra.legacy` moves it on the next start.
 /notebooks/
 /inbox/
 *.jsonl

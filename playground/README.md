@@ -1,6 +1,6 @@
 # The playground: the web UI as a static product page
 
-`playground/` builds a **server-free, single-page, fully interactive demo** of `rlm-notebook` from the web UI this repo already ships and the notebooks on the author's machine. The output is a directory of static files, deployed under a personal domain ([`www.boik.tw/rlm-notebook/`](https://www.boik.tw/rlm-notebook/)) so the product page and its author share an origin.
+`playground/` builds a **server-free, single-page, fully interactive demo** of Penumbra from the web UI this repo already ships and the orbits on the author's machine. The output is a directory of static files, deployed under a personal domain ([`www.boik.tw/rlm-notebook/`](https://www.boik.tw/rlm-notebook/)) so the product page and its author share an origin.
 
 ```
 uv run --extra api python playground/build.py     # -> playground/dist/
@@ -12,13 +12,13 @@ CI runs neither `build.py` nor `smoke.mjs`, so run both yourself whenever the ap
 
 ## Why this shape
 
-`rlm-notebook` is hard to install for a curious stranger: Python, a model key, a Deno sandbox and an optional OCR stack. Most people who would like it never get far enough to see it. A page that only describes the product persuades almost nobody; a page they can use lets them do the thing.
+Penumbra is hard to install for a curious stranger: Python, a model key, a Deno sandbox and an optional OCR stack. Most people who would like it never get far enough to see it. A page that only describes the product persuades almost nobody; a page they can use lets them do the thing.
 
 The interaction model follows [witr's playground](https://pranshuparmar.github.io/witr/): a simulated product with a guided tour, a scenario switcher and an install modal, all honestly labelled as simulated. That page is a separate, hand-written implementation of the real tool.
 
-**This one is not, and that is the whole design.** `app.js`, `style.css` and `i18n.js` are copied byte for byte out of `rlm_notebook/web/`, and the demo runs them. A screenshot of the playground is a screenshot of the product and cannot flatter it. New features appear in the demo on the next build, as long as they need no route the shim lacks.
+**This one is not, and that is the whole design.** `app.js`, `style.css` and `i18n.js` are copied byte for byte out of `penumbra/web/`, and the demo runs them. A screenshot of the playground is a screenshot of the product and cannot flatter it. New features appear in the demo on the next build, as long as they need no route the shim lacks.
 
-**The shim is the one part not copied from the product, and it is where the demo can rot.** It did once: when the Inbox became the front door, `shim.js` still answered only `/notebooks*` and `/settings*`, and the demo's first screen became a 404 under a guided tour pointing at a button that was not there. Check the shim's route list whenever the app learns an endpoint.
+**The shim is the one part not copied from the product, and it is where the demo can rot.** It did once: when the Horizon became the front door, `shim.js` still answered only `/orbits*` and `/settings*`, and the demo's first screen became a 404 under a guided tour pointing at a button that was not there. Check the shim's route list whenever the app learns an endpoint.
 
 ## How it works: three interception points
 
@@ -36,27 +36,27 @@ The interaction model follows [witr's playground](https://pranshuparmar.github.i
 
 Every pixel is either the shipped UI or output a model really produced.
 
-- **Notebooks are real**, and their API responses are computed at build time by the real Python, `api._notebook_response`. Every citation is verified by `citations.py` itself and every `answer_span` located by `locate_answer_spans`. The fixture is the response, and there is no JavaScript re-implementation to drift from it.
+- **Orbits are real**, and their API responses are computed at build time by the real Python, `api._orbit_response`. Every citation is verified by `citations.py` itself and every `answer_span` located by `locate_answer_spans`. The fixture is the response, and there is no JavaScript re-implementation to drift from it.
 - **Reasoning traces are real** `traces/*.jsonl` files from runs that happened, decomposed by the real `trajectory.build_trajectory` and translated by the real `api._translate_trace_event`. The ticker shows the model's own words.
-- **Where there is no artifact, the demo says so.** Only the overview is persisted on a notebook (invariant 38), so Studio's Timeline and Insight tabs have no recorded output and show an honest note instead. A reader cannot tell a made-up artifact from a real one, which is exactly why there are none.
+- **Where there is no artifact, the demo says so.** Only the overview is persisted on an orbit (invariant 38), so Studio's Timeline and Insight tabs have no recorded output and show an honest note instead. A reader cannot tell a made-up artifact from a real one, which is exactly why there are none.
 - **A source added in the playground is labelled simulated**, because nothing was fetched or parsed.
 
 Two things are deliberately reduced: ingested source text is capped (`MAX_SOURCE_CHARS`) so a public page does not rehost whole third-party articles, and audio is trimmed (`--audio-seconds`) so the page is not 14MB.
 
-**Choose the default scenario deliberately.** `SCENARIOS[0]` is what a first-time visitor lands on. One notebook predates `instructions.NATURAL_REGISTER` and carries thirteen instances of the calque that rule prevents; it still ships, but it greets nobody.
+**Choose the default scenario deliberately.** `SCENARIOS[0]` is what a first-time visitor lands on. One orbit predates `instructions.NATURAL_REGISTER` and carries thirteen instances of the calque that rule prevents; it still ships, but it greets nobody.
 
 **Use `serve.py`, not `python -m http.server`.** The latter sends no `Cache-Control`, so the browser may reuse a stale copy without revalidating, and with no content hash in the filenames there is nothing to bust. Half an hour once went into a tour step that had already been fixed on disk. This is invariant 72's reasoning applied to the playground's own dev server.
 
 ## What the build needs, and what it cannot reproduce
 
-**`notebooks/` and `traces/` are gitignored** because they are run artifacts, so `build.py` reads data that exists only on the machine that generated it. A fresh clone can run `smoke.mjs` against an existing `dist/`, but cannot rebuild one without generating notebooks of its own. Committing them would put several megabytes of third-party article text into the repo, so **the published `dist/` in the Pages repo is the artifact of record**. Regenerating the data from scratch produces a different, equally real playground, not an identical one.
+**`orbits/` and `traces/` are gitignored** because they are run artifacts, so `build.py` reads data that exists only on the machine that generated it. A fresh clone can run `smoke.mjs` against an existing `dist/`, but cannot rebuild one without generating orbits of its own. Committing them would put several megabytes of third-party article text into the repo, so **the published `dist/` in the Pages repo is the artifact of record**. Regenerating the data from scratch produces a different, equally real playground, not an identical one.
 
 - **Generate demo data through the API, not the CLI.** The CLI writes a trace only when asked (`--trace PATH`); the API always does. No trace means an empty Trajectory drawer, one of the three things the page leads with.
-- **Cover the podcast tiers on purpose.** A notebook holds one episode (invariant 42), so showing short, default and long takes three notebooks per language. `smoke.mjs` asserts the matrix.
+- **Cover the podcast tiers on purpose.** An orbit holds one episode (invariant 42), so showing short, default and long takes three orbits per language. `smoke.mjs` asserts the matrix.
 
 ## Verifying without a browser
 
-The playground has no server, so `smoke.mjs` stubs the handful of web globals, loads `tour.js` and `shim.js` exactly as the page does, and drives every endpoint. **It extracts the endpoint list from `app.js` rather than hardcoding one**, so a new `api()` call in the product fails the smoke test instead of 404ing in front of a reader. It has caught real mismatches that no status-code check would: note ids that are strings (`n1`) where the shim assumed integers, and `GET /notebooks` returning `sources` and `turns` where the picker reads `source_count` and `turn_count`, which rendered "undefined sources" instead of failing.
+The playground has no server, so `smoke.mjs` stubs the handful of web globals, loads `tour.js` and `shim.js` exactly as the page does, and drives every endpoint. **It extracts the endpoint list from `app.js` rather than hardcoding one**, so a new `api()` call in the product fails the smoke test instead of 404ing in front of a reader. It has caught real mismatches that no status-code check would: note ids that are strings (`n1`) where the shim assumed integers, and `GET /orbits` returning `sources` and `turns` where the picker reads `source_count` and `turn_count`, which rendered "undefined sources" instead of failing.
 
 ## Deploying
 

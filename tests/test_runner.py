@@ -1,6 +1,6 @@
 """`runner.py`'s subprocess-per-run mechanics, tested against small throwaway `-c` scripts that
 speak the same one-JSON-line-to-stdout contract `worker.py` does — not the real
-`rlm_notebook.worker` module, which needs model credentials and a sandbox this offline suite
+`penumbra.worker` module, which needs model credentials and a sandbox this offline suite
 deliberately never has (see AGENTS.md's Verify section). `test_api.py` covers the higher-level
 behavior with a fully-mocked `runner` instead.
 """
@@ -13,7 +13,7 @@ import sys
 
 import pytest
 
-from rlm_notebook import runner
+from penumbra import runner
 
 _ECHO_OK = """
 import sys, json
@@ -138,7 +138,7 @@ time.sleep(9999)
 def test_start_run_creates_the_trace_directory(tmp_path):
     async def _go():
         trace_dir = tmp_path / "does" / "not" / "exist"
-        run = await runner.start_run("run1", trace_dir, "rlm_notebook.schema:Answer", {})
+        run = await runner.start_run("run1", trace_dir, "penumbra.schema:Answer", {})
         run.cancel()
         assert trace_dir.exists()
 
@@ -152,13 +152,13 @@ def test_start_run_puts_the_worker_in_its_own_session_not_the_servers(tmp_path):
     worker shares the SERVER's process group, so `Run.cancel()`'s `killpg` would signal the whole
     server — the opposite of the containment invariant 22 describes.
 
-    Spawns the real `rlm_notebook.worker` with a nonexistent dotted task, so it exits promptly on
+    Spawns the real `penumbra.worker` with a nonexistent dotted task, so it exits promptly on
     its own; the session check happens the moment the process exists, before it does anything.
     """
 
     async def _go():
         run = await runner.start_run(
-            "session-check", tmp_path, "rlm_notebook.does_not_exist:Nope", {}
+            "session-check", tmp_path, "penumbra.does_not_exist:Nope", {}
         )
         try:
             assert os.getsid(run.process.pid) != os.getsid(0)

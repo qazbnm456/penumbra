@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from rlm_notebook.schema import (
+from penumbra.schema import (
     FAQ,
     Answer,
     Citation,

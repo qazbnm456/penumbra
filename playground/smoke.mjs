@@ -115,24 +115,24 @@ function endpointsFromApp() {
 
 const nb = fixtures.scenarios[0].id;
 const REQUESTS = [
-  ["GET", "/notebooks"],
-  ["GET", `/notebooks/${nb}`],
+  ["GET", "/orbits"],
+  ["GET", `/orbits/${nb}`],
   ["GET", "/settings"],
   ["GET", "/settings/choices"],
-  ["GET", `/notebooks/${nb}/sources/s1`],
-  ["POST", `/notebooks/${nb}/sources`, { sources: ["https://example.com/x"] }],
-  ["PUT", `/notebooks/${nb}/title`, { title: "renamed" }],
-  ["POST", `/notebooks/${nb}/ask`, { question: "test?", run_id: `${nb}-smoke` }],
-  ["POST", `/notebooks/${nb}/overview`, { run_id: `${nb}-smoke2` }],
-  ["POST", `/notebooks/${nb}/guide/summary`, { run_id: `${nb}-smoke3` }],
-  ["POST", `/notebooks/${nb}/audio`, { run_id: `${nb}-smoke4`, length: "long" }],
-  ["POST", `/notebooks/${nb}/runs/${nb}-smoke/cancel`, {}],
-  // DESTRUCTIVE, so it runs against a DIFFERENT notebook. This list shares one shim context with
+  ["GET", `/orbits/${nb}/sources/s1`],
+  ["POST", `/orbits/${nb}/sources`, { sources: ["https://example.com/x"] }],
+  ["PUT", `/orbits/${nb}/title`, { title: "renamed" }],
+  ["POST", `/orbits/${nb}/ask`, { question: "test?", run_id: `${nb}-smoke` }],
+  ["POST", `/orbits/${nb}/overview`, { run_id: `${nb}-smoke2` }],
+  ["POST", `/orbits/${nb}/guide/summary`, { run_id: `${nb}-smoke3` }],
+  ["POST", `/orbits/${nb}/audio`, { run_id: `${nb}-smoke4`, length: "long" }],
+  ["POST", `/orbits/${nb}/runs/${nb}-smoke/cancel`, {}],
+  // DESTRUCTIVE, so it runs against a DIFFERENT orbit. This list shares one shim context with
   // every block after it, and clearing a conversation used to be a no-op whose result was thrown
-  // away — so it sat above `ask` and above six later assertions that all read the same notebook.
+  // away — so it sat above `ask` and above six later assertions that all read the same orbit.
   // Making the shim persist its mutations broke all of them at once, which is the suite finding an
   // order dependency in itself that was invisible while the operation did nothing.
-  ["DELETE", `/notebooks/${fixtures.scenarios[fixtures.scenarios.length - 1].id}/turns`],
+  ["DELETE", `/orbits/${fixtures.scenarios[fixtures.scenarios.length - 1].id}/turns`],
 ];
 
 console.log("routes:");
@@ -148,7 +148,7 @@ for (const [method, path, body] of REQUESTS) {
 
 console.log("\ncoverage of app.js's own call sites:");
 const unrouted = [];
-// One placeholder cannot stand in for a notebook id, a note id and a guide kind at once, so each
+// One placeholder cannot stand in for an orbit id, a note id and a guide kind at once, so each
 // signature is probed with several plausible fillings and passes if ANY is routed. The check is
 // "does a route of this SHAPE exist", not "does this exact string resolve".
 const FILLERS = ["s1", "n1", "summary", "1", nb];
@@ -174,31 +174,31 @@ console.log("\nnotes lifecycle:");
     (await ctx.fetch(new Q(`http://x${path}`, {
       method: "POST", body: JSON.stringify(body || {}),
     }))).json();
-  let state = await post(`/notebooks/${nb}/notes`, { text: "a playground note" });
+  let state = await post(`/orbits/${nb}/notes`, { text: "a playground note" });
   const added = state.notes[state.notes.length - 1];
   ok(/^n\d+$/.test(String(added.id)), `added note has an n-prefixed id (${added.id})`);
   const before = state.notes.length;
-  const del = await ctx.fetch(new Q(`http://x/notebooks/${nb}/notes/${added.id}`, { method: "DELETE" }));
+  const del = await ctx.fetch(new Q(`http://x/orbits/${nb}/notes/${added.id}`, { method: "DELETE" }));
   ok(del.status === 200, `DELETE the note it just created -> ${del.status}`);
   state = await del.json();
   ok(state.notes.length === before - 1, `note removed (${before} -> ${state.notes.length})`);
-  state = await post(`/notebooks/${nb}/notes`, { text: "promote me" });
+  state = await post(`/orbits/${nb}/notes`, { text: "promote me" });
   const target = state.notes[state.notes.length - 1];
   const srcBefore = state.sources.length;
-  state = await post(`/notebooks/${nb}/notes/${target.id}/promote`, {});
+  state = await post(`/orbits/${nb}/notes/${target.id}/promote`, {});
   ok(state.sources.length === srcBefore + 1, "promote turns the note into a source (invariant 32)");
   ok(!state.notes.some((n) => n.id === target.id), "promote removes the note");
 }
 
 console.log("\nresponse shapes (a near-miss renders undefined, it does not 404):");
-const listed = await (await ctx.fetch(new Q("http://x/notebooks"))).json();
+const listed = await (await ctx.fetch(new Q("http://x/orbits"))).json();
 const SUMMARY = ["id", "title", "derived_title", "source_count", "turn_count", "updated_at"];
-ok(Array.isArray(listed.notebooks) && listed.notebooks.length > 0, `${listed.notebooks?.length} notebooks listed`);
-ok(SUMMARY.every((k) => k in listed.notebooks[0]), `summary carries ${SUMMARY.join(", ")}`);
+ok(Array.isArray(listed.orbits) && listed.orbits.length > 0, `${listed.orbits?.length} orbits listed`);
+ok(SUMMARY.every((k) => k in listed.orbits[0]), `summary carries ${SUMMARY.join(", ")}`);
 
 console.log("\ndata fidelity:");
-const one = await (await ctx.fetch(new Q(`http://x/notebooks/${nb}`))).json();
-ok(one.turns.length > 0, `notebook has ${one.turns.length} real turns`);
+const one = await (await ctx.fetch(new Q(`http://x/orbits/${nb}`))).json();
+ok(one.turns.length > 0, `orbit has ${one.turns.length} real turns`);
 ok(one.overview && one.overview.text.length > 200, "overview carries real prose");
 ok(one.podcast && one.podcast.utterances.length > 10, `podcast has ${one.podcast?.utterances.length} utterances`);
 const cited = one.turns.flatMap((t) => t.citations);
@@ -216,7 +216,7 @@ console.log("\nheadline demos are present in every scenario:");
   const tier = (n) => (n <= 20 ? "short" : n <= 50 ? "default" : "long");
   const seen = new Map();
   for (const s of fixtures.scenarios) {
-    const nbf = fixtures.notebooks[s.id];
+    const nbf = fixtures.orbits[s.id];
     const turns = nbf.turns.length;
     const pod = nbf.podcast;
     const runs = Object.keys(fixtures.runs).filter((r) => r.startsWith(`${s.id}-`)).length;
@@ -256,7 +256,7 @@ console.log("\nheadline demos are present in every scenario:");
 // would accept a rule that loses the cascade, so this computes it, the way the product's own
 // stylesheet tripwires do.
 // "Do it for me" has to leave the workspace in the state pressing the button would have produced.
-// When it only advanced the script, skipping step 1 left the notebook with no sources, so
+// When it only advanced the script, skipping step 1 left the orbit with no sources, so
 // `renderChatOverview` returned early, `#chat-overview` stayed hidden, and step 2 hunted for a
 // button that had never been built. Every later step inherited that.
 console.log("\nskipping a step fulfils it, and never strands a later one:");
@@ -288,18 +288,18 @@ console.log("\nskipping a step fulfils it, and never strands a later one:");
   vm.runInContext(readFileSync(join(DIST, "shim.js"), "utf8"), shc, { filename: "shim.js" });
   const SPG = sh.rlmPlayground;
 
-  // The tour builds ONE notebook up from nothing, and only that one starts empty. Every other
-  // notebook opens complete, because the product's own picker switches in place with no reload to
+  // The tour builds ONE orbit up from nothing, and only that one starts empty. Every other
+  // orbit opens complete, because the product's own picker switches in place with no reload to
   // re-stage anything, so a reader who finished the tour and went browsing must not be handed a
   // blank workspace.
   const nbId = fixtures.scenarios[0].id;
   SPG.beginTour(nbId);
   let p0 = await SPG.progress(nbId);
   ok(p0.sources === 0 && !p0.overview && p0.turns === 0,
-     "the tour's own notebook starts empty (nothing pre-loaded)");
+     "the tour's own orbit starts empty (nothing pre-loaded)");
   const other = await SPG.progress(fixtures.scenarios[1].id);
   ok(other.sources > 0 && other.overview && other.turns > 0,
-     `another notebook opens complete (${other.sources} sources, ${other.turns} turns)`);
+     `another orbit opens complete (${other.sources} sources, ${other.turns} turns)`);
 
   const fulfilling = SCRIPT.filter((st) => st.fulfil);
   ok(fulfilling.length >= 4, `${fulfilling.length} steps declare what they fulfil`);
@@ -326,13 +326,13 @@ console.log("\nskipping a step fulfils it, and never strands a later one:");
 // holding unconditionally (no run is coming, so it never releases).
 // The interface language is detected from the browser; the DEMO has to follow it, or a Chinese
 // reader gets Chinese buttons around English answers. And the rule has one exception that must not
-// be lost: a hash the reader ARRIVED with is a shared link naming a specific notebook.
+// be lost: a hash the reader ARRIVED with is a shared link naming a specific orbit.
 // A step that is already `done` when the reader arrives is a frame nobody sees, and it cascades:
 // step 7 reported done because `#podcast-generate:not([hidden])` matched a button whose STUDIO VIEW
 // was hidden rather than the button itself, so step 8 (`done: () => true`) fell through as well and
 // step 9 spotlit a control inside a closed panel.
 // The product records this twice — invariant 60 ("a repaint may not delete a RUN") and invariant 71
-// — and the playground reintroduced it: "Do it for me" called `openNotebook`, a full repaint, while
+// — and the playground reintroduced it: "Do it for me" called `openOrbit`, a full repaint, while
 // a run was still in flight, and the answer and the overview vanished off the screen.
 // One global "is a run going" flag made every step's own check true at once: while the overview was
 // generating, the ask step reported itself done and the script fell through it, so one press of
@@ -352,7 +352,7 @@ console.log("\nnothing local or private reaches the published fixture:");
   const blob = readFileSync(join(DIST, "fixtures.json"), "utf8");
   const FORBIDDEN = {
     "absolute home paths": /\/Users\/[\w.-]+|\/home\/[\w.-]+|C:\\\\Users/,
-    "credentials": /sk-[A-Za-z0-9]{8,}|Bearer\s+\S{12,}|RN_API_KEY|RN_BASE_URL/,
+    "credentials": /sk-[A-Za-z0-9]{8,}|Bearer\s+\S{12,}|PN_API_KEY|PN_BASE_URL/,
     "email addresses": /[\w.+-]+@[\w-]+\.[\w.]{2,}/,
     "loopback or hostnames": /127\.0\.0\.1|localhost:\d+|\.local\b/,
     "python tracebacks": /File "[^"]+", line \d+/,
@@ -392,7 +392,7 @@ console.log("\nnothing local or private reaches the published fixture:");
 // pins had the two the wrong way round AND gated the scroll on `target === this.lastTarget`, which
 // is the one case `highlight` refuses to act on: a new step was placed against the unscrolled rect,
 // then scrolled out from under its own popover, which stayed behind pointing at nothing.
-// `POST /audio` is the ONE endpoint whose reply is not a `NotebookResponse`: the real API answers
+// `POST /audio` is the ONE endpoint whose reply is not an `OrbitResponse`: the real API answers
 // with a flat `AudioResponse`, and the shim was nesting the episode under `{podcast}`. `app.js`
 // reads `data.utterances.length` straight off it, so Generate died with "Cannot read properties of
 // undefined" and the demo's headline artifact never rendered. Read what app.js expects, then check
@@ -401,13 +401,13 @@ console.log("\nnothing local or private reaches the published fixture:");
 // NAMES a control from the other has to reach for that control's current label, or a translated
 // interface ends up pointing at a button by its English name.
 // This is a teaching page: nothing a reader changed last visit may decide what they see this
-// visit. `rlmnb-studio-view` surviving a reload is what made the "open the Podcast tab" step
+// visit. `penumbra-studio-view` surviving a reload is what made the "open the Podcast tab" step
 // vanish, and the podcast length is the same shape one step later.
 // A `pg-` class exists to be styled: the playground's chrome adds nodes the product's own
 // stylesheet knows nothing about. So one created in JS with no rule in chrome.css is either a typo
 // or a rule that has been deleted, and deletion is how it happened: replacing the picker's card
 // grid took the two heading rules sitting inside the replaced range with it, and a bare <h3> then
-// rendered the language name larger than the notebook titles under it. Nothing else here can see
+// rendered the language name larger than the orbit titles under it. Nothing else here can see
 // that, since the Python suite never renders and there is no JS test runner (invariant 36's
 // reasoning, applied to the playground's own chrome).
 // A stylesheet edit that leaves a selector list ending in a comma silently swallows the rule that
@@ -421,12 +421,12 @@ console.log("\nnothing local or private reaches the published fixture:");
 // asked `app.js + i18n.js` whether it contained the words anywhere, and a mutation walked straight
 // past it: the stale "產生概覽" is still a substring of "↻ 重新產生概覽", which is a different
 // button. A vacuous check is worse than none, because the name promises otherwise.
-// Four findings from an independent review, each of them live on every notebook, each invisible to
+// Four findings from an independent review, each of them live on every orbit, each invisible to
 // the ~190 assertions that were already here.
-// Every mutating route was writing to a COPY. `notebook()` returns what `view` built — a new
+// Every mutating route was writing to a COPY. `orbit()` returns what `view` built — a new
 // object with sliced arrays — so a handler that spliced one changed something thrown away with the
 // response: a deleted source came back on the next read, a rename reverted the moment
-// `refreshNotebookList` re-fetched, a cleared conversation reappeared. Notes were the exception,
+// `refreshOrbitList` re-fetched, a cleared conversation reappeared. Notes were the exception,
 // because `view` spreads them by reference, and that one exception is what hid the whole class from
 // the notes-lifecycle assertions that already existed.
 console.log("\nwhat the shim changes, it keeps:");
@@ -458,24 +458,24 @@ console.log("\nwhat the shim changes, it keeps:");
     return { status: res.status, body: await res.json() };
   };
   const id = fixtures.scenarios[0].id;
-  for (let i = 0; i < 3; i += 1) await call("POST", `/notebooks/${id}/sources`);
+  for (let i = 0; i < 3; i += 1) await call("POST", `/orbits/${id}/sources`);
 
-  const before = (await call("GET", `/notebooks/${id}`)).body;
+  const before = (await call("GET", `/orbits/${id}`)).body;
   const removed = before.sources[0].id;
-  const afterDelete = (await call("DELETE", `/notebooks/${id}/sources/${removed}`)).body;
-  const reread = (await call("GET", `/notebooks/${id}`)).body;
+  const afterDelete = (await call("DELETE", `/orbits/${id}/sources/${removed}`)).body;
+  const reread = (await call("GET", `/orbits/${id}`)).body;
   ok(afterDelete.sources.length === reread.sources.length,
      `a deleted source stays deleted (${afterDelete.sources.length} in the reply, ${reread.sources.length} on re-read)`);
   ok(!reread.sources.some((s) => s.id === removed), "and it is the one that was asked for");
 
-  await call("PUT", `/notebooks/${id}/title`, { title: "RENAMED-BY-SMOKE" });
-  ok((await call("GET", `/notebooks/${id}`)).body.title === "RENAMED-BY-SMOKE",
+  await call("PUT", `/orbits/${id}/title`, { title: "RENAMED-BY-SMOKE" });
+  ok((await call("GET", `/orbits/${id}`)).body.title === "RENAMED-BY-SMOKE",
      "a rename survives the re-fetch app.js does immediately after it");
 
-  const noted = (await call("POST", `/notebooks/${id}/notes`, { text: "smoke" })).body;
+  const noted = (await call("POST", `/orbits/${id}/notes`, { text: "smoke" })).body;
   const noteId = noted.notes[noted.notes.length - 1].id;
-  const promoted = (await call("POST", `/notebooks/${id}/notes/${noteId}/promote`)).body;
-  const afterPromote = (await call("GET", `/notebooks/${id}`)).body;
+  const promoted = (await call("POST", `/orbits/${id}/notes/${noteId}/promote`)).body;
+  const afterPromote = (await call("GET", `/orbits/${id}`)).body;
   ok(promoted.sources.length === afterPromote.sources.length,
      `a promoted note stays a source (${promoted.sources.length} vs ${afterPromote.sources.length} on re-read)`);
 
@@ -488,20 +488,20 @@ console.log("\nwhat the shim changes, it keeps:");
   ok(key && key in choices, `/settings/choices carries ${key}, the key app.js declares`);
   ok("provider" in choices, "and the provider field SettingsChoices requires");
 
-  const cancelled = (await call("POST", `/notebooks/${id}/runs/some-run/cancel`)).body;
+  const cancelled = (await call("POST", `/orbits/${id}/runs/some-run/cancel`)).body;
   ok(cancelled.cancelled === "some-run",
      `cancel answers with the run id like the real endpoint, not ${JSON.stringify(cancelled.cancelled)}`);
 
-  const asked = (await call("POST", `/notebooks/${id}/ask`, { question: "?" })).body;
+  const asked = (await call("POST", `/orbits/${id}/ask`, { question: "?" })).body;
   ok(typeof asked.text === "string", "ask answers with `text`, the field AskResponse declares");
 
   // LAST, because it empties the conversation everything above reads.
-  await call("DELETE", `/notebooks/${id}/turns`);
-  ok((await call("GET", `/notebooks/${id}`)).body.turns.length === 0, "a cleared conversation stays cleared");
+  await call("DELETE", `/orbits/${id}/turns`);
+  ok((await call("GET", `/orbits/${id}`)).body.turns.length === 0, "a cleared conversation stays cleared");
 
-  // The product's own "＋ New notebook" mints an id this page has never heard of, in two clicks.
-  const unknown = await call("POST", "/notebooks/nb-deadbeef/sources");
-  ok(unknown.status === 422, `an unknown notebook is refused (${unknown.status}), not a 500`);
+  // The product's own "＋ New orbit" mints an id this page has never heard of, in two clicks.
+  const unknown = await call("POST", "/orbits/nb-deadbeef/sources");
+  ok(unknown.status === 422, `an unknown orbit is refused (${unknown.status}), not a 500`);
   ok(/playground|展示頁/.test(String(unknown.body.detail)), "and the refusal says why");
 }
 
@@ -523,8 +523,8 @@ console.log("\nthe shim speaks the renderer's language, per tab:");
   for (const [kind, field] of Object.entries(NEEDS)) {
     ok(new RegExp(`data\\.${field}\\b`).test(APP), `app.js really reads data.${field} for ${kind}`);
   }
-  for (const id of Object.keys(fx.notebooks)) {
-    const bare = { ...fx.notebooks[id], overview: null };   // the unavailable branch
+  for (const id of Object.keys(fx.orbits)) {
+    const bare = { ...fx.orbits[id], overview: null };   // the unavailable branch
     for (const [kind, field] of Object.entries(NEEDS)) {
       const value = PG.guide(bare, kind)[field];
       const usable = field === "text"
@@ -560,18 +560,18 @@ console.log("\nthe tour's script is well formed and lands on real controls:");
      "and has no bare .ticker-toggle fallback that would match Regenerate");
 
   // The pill exists only `if (turn.run_id)`, so the trace step has to run when a TRACED turn is on
-  // screen. Three notebooks have no run id on turn 0, including the default English one.
+  // screen. Three orbits have no run id on turn 0, including the default English one.
   const fx = JSON.parse(readFileSync(join(DIST, "fixtures.json"), "utf8"));
   const ids = SCRIPT.map((s) => s.id);
   const revealed = ids.indexOf("trace") > ids.indexOf("watch-ask2") ? 2 : 1;
-  const withPill = Object.entries(fx.notebooks)
+  const withPill = Object.entries(fx.orbits)
     .filter(([, nb]) => nb.turns.slice(0, revealed).some((turn) => turn.run_id));
   ok(withPill.length >= 1,
-     `${withPill.length}/${Object.keys(fx.notebooks).length} notebooks can show the drawer by then`);
+     `${withPill.length}/${Object.keys(fx.orbits).length} orbits can show the drawer by then`);
   ok(withPill.some(([id]) => id.startsWith("nb-en-")) &&
      withPill.some(([id]) => !id.startsWith("nb-en-")),
-     "at least one notebook per language reaches it, so neither tour ends without the drawer");
-  // The others must SKIP, not wait: two notebooks' traces aged out under retention, and one of them
+     "at least one orbit per language reaches it, so neither tour ends without the drawer");
+  // The others must SKIP, not wait: two orbits' traces aged out under retention, and one of them
   // has no ⌁ anywhere on its page.
   for (const step of ["trace", "trace-close"]) {
     const s = SCRIPT.find((x) => x.id === step);
@@ -661,12 +661,12 @@ console.log("\nthe demo starts from scratch on every load:");
   const APP = readFileSync(join(DIST, "app.js"), "utf8");
   const listed = [...SHIM.slice(SHIM.indexOf("const WORKSPACE_KEYS"),
                                 SHIM.indexOf("];", SHIM.indexOf("const WORKSPACE_KEYS")))
-                    .matchAll(/"(rlmnb-[a-z-]+)"/g)].map((m) => m[1]);
+                    .matchAll(/"(penumbra-[a-z-]+)"/g)].map((m) => m[1]);
   ok(listed.length >= 4, `${listed.length} workspace keys cleared on load`);
   // Every key the workspace persists is either cleared or deliberately exempt. A key added later
   // and forgotten is exactly how this bug arrives again.
-  const owned = [...new Set([...APP.matchAll(/"(rlmnb-[a-z-]+)"/g)].map((m) => m[1]))];
-  const EXEMPT = ["rlmnb-ui-lang", "rlmnb-theme"];  // how the reader LOOKS at it, not what is taught
+  const owned = [...new Set([...APP.matchAll(/"(penumbra-[a-z-]+)"/g)].map((m) => m[1]))];
+  const EXEMPT = ["penumbra-ui-lang", "penumbra-theme"];  // how the reader LOOKS at it, not what is taught
   for (const key of owned) {
     ok(listed.includes(key) || EXEMPT.includes(key),
        `${key} is ${EXEMPT.includes(key) ? "deliberately kept" : "cleared"}`);
@@ -771,7 +771,7 @@ console.log("\nskipping a wait ends the run and still lands its result:");
   const nb = fixtures.scenarios[0].id;
   await SPG.progress(nb);
   const started = Date.now();
-  const inflight = sh.fetch(new Q(`http://x/notebooks/${nb}/overview`, { method: "POST", body: "{}" }));
+  const inflight = sh.fetch(new Q(`http://x/orbits/${nb}/overview`, { method: "POST", body: "{}" }));
   await new Promise((r) => setTimeout(r, 120));
   ok(SPG.isRunning("overview"), "the overview run is in flight");
   SPG.finishRun("overview");
@@ -825,7 +825,7 @@ console.log("\nrun checks are per kind, so a step cannot fall through another's 
 console.log("\nnothing repaints while a run is in flight:");
 {
   const DIR = readFileSync(join(DIST, "director.js"), "utf8");
-  // Comments stripped: the one explaining this bug names `openNotebook` above the guard, and an
+  // Comments stripped: the one explaining this bug names `openOrbit` above the guard, and an
   // ordering check on raw text reads that as the guard coming second.
   const fn = DIR.slice(DIR.indexOf("async fulfilAndAdvance"), DIR.indexOf("\n    advance("))
     .split("\n")
@@ -834,11 +834,11 @@ console.log("\nnothing repaints while a run is in flight:");
   ok(fn.length > 0, "fulfilAndAdvance is present");
   ok(/isRunning\(\)/.test(fn), "it checks whether a run is in flight");
   // The guard has to sit BEFORE the repaint, not after it.
-  ok(fn.indexOf("isRunning()") < fn.indexOf("openNotebook"),
-     "the in-flight check comes before openNotebook");
+  ok(fn.indexOf("isRunning()") < fn.indexOf("openOrbit"),
+     "the in-flight check comes before openOrbit");
   // And nothing else may repaint unconditionally.
-  const repaints = [...DIR.matchAll(/openNotebook\(/g)].length;
-  ok(repaints <= 1, `openNotebook is called from one place only (${repaints})`);
+  const repaints = [...DIR.matchAll(/openOrbit\(/g)].length;
+  ok(repaints <= 1, `openOrbit is called from one place only (${repaints})`);
 }
 
 console.log("\nno step completes before the reader acts:");
@@ -873,18 +873,18 @@ console.log("\nno step completes before the reader acts:");
   ok(!/done:\s*\(\)\s*=>\s*true/.test(CODE), "no step declares `done: () => true`");
 }
 
-console.log("\nthe demo notebook follows the interface language:");
+console.log("\nthe demo orbit follows the interface language:");
 {
   const CHROME = readFileSync(join(DIST, "chrome.js"), "utf8");
   const LANG = { "zh-Hant": "Traditional Chinese", en: "English" };
   for (const [ui, want] of Object.entries(LANG)) {
     const match = fixtures.scenarios.find((s) => s.lang === want);
-    ok(!!match, `${ui} has a notebook to open (${match ? match.id : "none"})`);
+    ok(!!match, `${ui} has an orbit to open (${match ? match.id : "none"})`);
   }
   // Both directions have to exist or the preference silently falls through to scenarios[0].
   const langs = new Set(fixtures.scenarios.map((s) => s.lang));
   ok(Object.values(LANG).every((l) => langs.has(l)),
-     `every interface language maps to a real notebook language (${[...langs].join(", ")})`);
+     `every interface language maps to a real orbit language (${[...langs].join(", ")})`);
 
   // The arriving hash is captured ONCE, before anything writes it. Reading `location.hash` at call
   // time meant the hash we had just written won on every reload after the first, so the language
@@ -894,7 +894,7 @@ console.log("\nthe demo notebook follows the interface language:");
                                    CHROME.indexOf("async function noteTrimmedAudio"));
   ok(!/location\.hash\.replace/.test(openInitial),
      "openInitial does not re-read location.hash (it writes it)");
-  ok(/ui-lang-changed/.test(CHROME), "changing the interface language re-picks the notebook");
+  ok(/ui-lang-changed/.test(CHROME), "changing the interface language re-picks the orbit");
 }
 
 console.log("\nthe dwell step cannot strand the reader:");
@@ -1006,7 +1006,7 @@ console.log("\nheader chrome actually mounts:");
   header.appendChild(actions);
   actions.appendChild(settingsBtn);
 
-  const byId = { "settings-open": settingsBtn, "new-notebook": wordmark };
+  const byId = { "settings-open": settingsBtn, "new-orbit": wordmark };
   const sandbox = {
     console: { warn() {}, log() {} }, setTimeout, clearTimeout, setInterval: () => 0,
     JSON, Math, Object, Number, Map, Set, Promise, String, Array, Error, Boolean,
@@ -1037,11 +1037,11 @@ console.log("\nheader chrome actually mounts:");
   ok(!threw, threw || "tour.js + chrome.js evaluate cleanly");
   await new Promise((r) => setTimeout(r, 40));
   const added = actions.children.filter((n) => (n.className || "").includes("pg-"));
-  // Every needle below must be a real label. When the Notebooks button was deleted its copy key
-  // went with it, `PG.ui("notebooks")` became "", and `labels.includes("")` passed for a control
+  // Every needle below must be a real label. When the Orbits button was deleted its copy key
+  // went with it, `PG.ui("orbits")` became "", and `labels.includes("")` passed for a control
   // that no longer existed — and would pass for one whose label had been emptied by a typo.
-  // Four, not five: the Notebooks button was deleted. The product's own title dropdown is the
-  // notebook picker, and a second one in the header was a second modal to keep working.
+  // Four, not five: the Orbits button was deleted. The product's own title dropdown is the
+  // orbit picker, and a second one in the header was a second modal to keep working.
   ok(added.length >= 4, `${added.length} chrome controls inserted into .header-actions`);
   // Expected labels come from the copy table, not from strings pinned here: this asserts that the
   // chrome MOUNTED, and rewording a button should not fail a DOM test.
@@ -1054,7 +1054,7 @@ console.log("\nheader chrome actually mounts:");
   const deep = (n) => (n.textContent || "") + (n.children || []).map(deep).join("");
   const flat = (x) => String(x).replace(/\s+/g, "");
   const labels = flat(added.map((n) => deep(n) || n.className).join(" "));
-  const wanted = ["notebooks", "restart", "install", "github"].map((k) => flat(c.rlmPlayground.ui(k)));
+  const wanted = ["orbits", "restart", "install", "github"].map((k) => flat(c.rlmPlayground.ui(k)));
   // By CLASS. `labels` reads the deep text now, and the badge's text is its copy, not its class.
   ok(added.some((n) => (n.className || "") === "pg-sim"), "header has the SIMULATED badge");
   // The demo marker has to survive a phone, where BOTH in-header markers are gone: `.pg-sim` below
@@ -1142,14 +1142,14 @@ console.log("\ndirector selectors still match the shipped UI:");
     "#podcast-generate": 'id="podcast-generate"',
     "#podcast-body": 'id="podcast-body"',
     "traj-drawer": 'id="traj-drawer"',
-    "notebook-current": 'id="notebook-current"',
+    "orbit-current": 'id="orbit-current"',
     "traj-close": 'id="traj-close"',
     "traj-head": '"traj-head',
     "run-status": '"run-status"',
     "run-log": '"run-log"',
     "chat-history": 'id="chat-history"',
     "data-view-body": "data-view-body",
-    // Tier 0. The script opens on the Inbox now, and these are the controls its first four steps
+    // Tier 0. The script opens on the Horizon now, and these are the controls its first four steps
     // point at - the same rename hazard as every product token above.
     "#capture-form": 'id="capture-form"',
     ".find": 'class="find"',
@@ -1217,7 +1217,7 @@ console.log("\nevery asset the page references is actually in dist:");
 
 console.log("\naudio rewrite:");
 const media = new sandbox.HTMLMediaElement();
-media.src = `/notebooks/${nb}/audio/file?v=1`;
+media.src = `/orbits/${nb}/audio/file?v=1`;
 ok(media.src.endsWith(`audio/${nb}.mp3`), `player.src -> ${media.src.split("/").slice(-2).join("/")}`);
 
 console.log(failures ? `\n${failures} FAILED` : "\nall checks passed");

@@ -2,35 +2,35 @@ from __future__ import annotations
 
 import pytest
 
-from rlm_notebook.config import NotebookConfig, max_trace_files, trace_retention_seconds
+from penumbra.config import PenumbraConfig, max_trace_files, trace_retention_seconds
 
 
 def test_from_env_requires_main_model(monkeypatch):
-    monkeypatch.delenv("RN_MAIN_MODEL", raising=False)
-    with pytest.raises(SystemExit, match="RN_MAIN_MODEL"):
-        NotebookConfig.from_env()
+    monkeypatch.delenv("PN_MAIN_MODEL", raising=False)
+    with pytest.raises(SystemExit, match="PN_MAIN_MODEL"):
+        PenumbraConfig.from_env()
 
 
 def test_from_env_refuses_non_pinned_interpreter(monkeypatch):
-    monkeypatch.setenv("RN_MAIN_MODEL", "openai/gpt-4o")
-    monkeypatch.setenv("RN_INTERPRETER", "local")
+    monkeypatch.setenv("PN_MAIN_MODEL", "openai/gpt-4o")
+    monkeypatch.setenv("PN_INTERPRETER", "local")
     with pytest.raises(SystemExit, match="refused"):
-        NotebookConfig.from_env()
+        PenumbraConfig.from_env()
 
 
 def test_from_env_refuses_unknown_ocr_provider(monkeypatch):
-    monkeypatch.setenv("RN_MAIN_MODEL", "openai/gpt-4o")
-    monkeypatch.delenv("RN_INTERPRETER", raising=False)
-    monkeypatch.setenv("RN_OCR_PROVIDER", "made-up")
-    with pytest.raises(SystemExit, match="RN_OCR_PROVIDER"):
-        NotebookConfig.from_env()
+    monkeypatch.setenv("PN_MAIN_MODEL", "openai/gpt-4o")
+    monkeypatch.delenv("PN_INTERPRETER", raising=False)
+    monkeypatch.setenv("PN_OCR_PROVIDER", "made-up")
+    with pytest.raises(SystemExit, match="PN_OCR_PROVIDER"):
+        PenumbraConfig.from_env()
 
 
 def test_from_env_defaults(monkeypatch):
-    monkeypatch.setenv("RN_MAIN_MODEL", "openai/gpt-4o")
-    for var in ("RN_INTERPRETER", "RN_SUB_MODEL", "RN_OCR_PROVIDER", "RN_MAX_CORPUS_CHARS"):
+    monkeypatch.setenv("PN_MAIN_MODEL", "openai/gpt-4o")
+    for var in ("PN_INTERPRETER", "PN_SUB_MODEL", "PN_OCR_PROVIDER", "PN_MAX_CORPUS_CHARS"):
         monkeypatch.delenv(var, raising=False)
-    config = NotebookConfig.from_env()
+    config = PenumbraConfig.from_env()
     assert config.main_model == "openai/gpt-4o"
     assert config.sub_model == "openai/gpt-4o"
     assert config.interpreter == "pyodide"
@@ -39,16 +39,16 @@ def test_from_env_defaults(monkeypatch):
 
 
 def test_trace_retention_defaults(monkeypatch):
-    for var in ("RN_TRACE_RETENTION_DAYS", "RN_MAX_TRACE_FILES"):
+    for var in ("PN_TRACE_RETENTION_DAYS", "PN_MAX_TRACE_FILES"):
         monkeypatch.delenv(var, raising=False)
     assert trace_retention_seconds() == 7 * 86_400
     assert max_trace_files() == 500
 
 
 def test_trace_retention_does_not_need_a_model_configured(monkeypatch):
-    """Standalone, not a `NotebookConfig` field, for the same reason `max_upload_bytes` is
-    (invariant 30): housekeeping runs at server startup and must not depend on `RN_MAIN_MODEL`."""
-    monkeypatch.delenv("RN_MAIN_MODEL", raising=False)
+    """Standalone, not a `PenumbraConfig` field, for the same reason `max_upload_bytes` is
+    (invariant 30): housekeeping runs at server startup and must not depend on `PN_MAIN_MODEL`."""
+    monkeypatch.delenv("PN_MAIN_MODEL", raising=False)
     assert trace_retention_seconds() > 0
     assert max_trace_files() > 0
 
@@ -57,16 +57,16 @@ def test_zero_means_no_limit_for_the_retention_knobs(monkeypatch):
     """`_env_int` refuses 0 on purpose — every value it reads is a budget, where zero is almost
     certainly a mistake. Here it has a real meaning ("keep everything"), which is why these two use
     their own reader rather than loosening `_env_int` for everyone."""
-    monkeypatch.setenv("RN_TRACE_RETENTION_DAYS", "0")
-    monkeypatch.setenv("RN_MAX_TRACE_FILES", "0")
+    monkeypatch.setenv("PN_TRACE_RETENTION_DAYS", "0")
+    monkeypatch.setenv("PN_MAX_TRACE_FILES", "0")
     assert trace_retention_seconds() == 0
     assert max_trace_files() == 0
 
 
 @pytest.mark.parametrize("value", ["not-a-number", "-1"])
 def test_a_malformed_retention_value_is_refused(monkeypatch, value):
-    monkeypatch.setenv("RN_MAX_TRACE_FILES", value)
-    with pytest.raises(SystemExit, match="RN_MAX_TRACE_FILES"):
+    monkeypatch.setenv("PN_MAX_TRACE_FILES", value)
+    with pytest.raises(SystemExit, match="PN_MAX_TRACE_FILES"):
         max_trace_files()
 
 
@@ -82,7 +82,7 @@ def test_settings_reader_never_raises(tmp_path, monkeypatch):
     invocation, and is deliberately NOT reached through `api._config()` — so a reader that raised
     would escape a request handler exactly the way invariant 24 forbids, and would break
     `_resolve_language`'s documented "never raises" contract."""
-    from rlm_notebook.config import read_settings, settings_path
+    from penumbra.config import read_settings, settings_path
 
     assert read_settings(tmp_path) == ({}, None)  # missing file
 
@@ -99,7 +99,7 @@ def test_a_hand_edited_bad_value_is_refused_on_read_too(tmp_path):
     because it arrived another way."""
     import json
 
-    from rlm_notebook.config import read_settings, settings_path
+    from penumbra.config import read_settings, settings_path
 
     settings_path(tmp_path).write_text(
         json.dumps(
@@ -116,10 +116,10 @@ def test_a_hand_edited_bad_value_is_refused_on_read_too(tmp_path):
 
 
 def test_write_settings_refuses_rather_than_coerces(tmp_path):
-    from rlm_notebook.config import read_settings, write_settings
+    from penumbra.config import read_settings, write_settings
 
     with pytest.raises(ValueError, match="unknown setting"):
-        write_settings({"RN_API_KEY": "sk-x"}, tmp_path)
+        write_settings({"PN_API_KEY": "sk-x"}, tmp_path)
     # A voice string reaches an OUTBOUND request unescaped (edge-tts interpolates it into
     # `<voice name='...'>` SSML), demonstrated by an audit and reported upstream.
     with pytest.raises(ValueError, match="invalid value"):
@@ -135,7 +135,7 @@ def test_write_settings_refuses_rather_than_coerces(tmp_path):
 def test_a_full_replacement_clears_omitted_keys(tmp_path):
     """There is no partial update: omitting a voice is how a user goes back to "follow the
     language"."""
-    from rlm_notebook.config import read_settings, write_settings
+    from penumbra.config import read_settings, write_settings
 
     write_settings({"tts_voice_host_a": "zh-TW-YunJheNeural"}, tmp_path)
     write_settings({"output_language": "Japanese"}, tmp_path)
@@ -145,46 +145,46 @@ def test_a_full_replacement_clears_omitted_keys(tmp_path):
 def test_pinned_means_the_env_actually_wins_not_that_it_is_present(monkeypatch, tmp_path):
     """An empty or whitespace variable loses to the file, so reporting it as pinned would disable
     an input that still works."""
-    from rlm_notebook.config import settings_state, write_settings
+    from penumbra.config import settings_state, write_settings
 
     write_settings({"output_language": "Japanese"}, tmp_path)
 
-    monkeypatch.setenv("RN_OUTPUT_LANGUAGE", "   ")
+    monkeypatch.setenv("PN_OUTPUT_LANGUAGE", "   ")
     state = settings_state(tmp_path)
     assert state["output_language"] == {
-        "value": "Japanese", "source": "file", "env_var": "RN_OUTPUT_LANGUAGE",
+        "value": "Japanese", "source": "file", "env_var": "PN_OUTPUT_LANGUAGE",
     }
 
-    monkeypatch.setenv("RN_OUTPUT_LANGUAGE", "Korean")
+    monkeypatch.setenv("PN_OUTPUT_LANGUAGE", "Korean")
     assert settings_state(tmp_path)["output_language"]["source"] == "env"
 
-    monkeypatch.delenv("RN_OUTPUT_LANGUAGE")
-    monkeypatch.setenv("RN_TTS_VOICE_HOST_A", "en-US-GuyNeural")
+    monkeypatch.delenv("PN_OUTPUT_LANGUAGE")
+    monkeypatch.setenv("PN_TTS_VOICE_HOST_A", "en-US-GuyNeural")
     state = settings_state(tmp_path)
     assert state["tts_voice_host_a"]["source"] == "env"
     # the two voices resolve independently (invariant 40)
     assert state["tts_voice_host_b"]["source"] == "default"
 
 
-def test_the_notebooks_dir_constant_matches_notebook_pys(tmp_path):
-    """`config.py` keeps its own copy so importing it stays plain stdlib — `notebook.py` drags in
+def test_the_orbits_dir_constant_matches_orbit_pys(tmp_path):
+    """`config.py` keeps its own copy so importing it stays plain stdlib — `orbit.py` drags in
     the whole ingestion/parser chain. Pinned so the two cannot drift."""
-    from rlm_notebook.config import _DEFAULT_NOTEBOOKS_DIR
-    from rlm_notebook.notebook import DEFAULT_NOTEBOOKS_DIR
+    from penumbra.config import _DEFAULT_ORBITS_DIR
+    from penumbra.orbit import DEFAULT_ORBITS_DIR
 
-    assert _DEFAULT_NOTEBOOKS_DIR == DEFAULT_NOTEBOOKS_DIR
+    assert _DEFAULT_ORBITS_DIR == DEFAULT_ORBITS_DIR
 
 
-def test_the_settings_filename_is_not_globbed_by_the_notebook_listing(tmp_path):
-    """`pathlib.Path.glob("*.json")` DOES match dotfiles, so a `.settings.json` inside the notebooks
-    directory would be parsed as a corrupt notebook and reported in `GET /notebooks`'s `unreadable`
+def test_the_settings_filename_is_not_globbed_by_the_orbit_listing(tmp_path):
+    """`pathlib.Path.glob("*.json")` DOES match dotfiles, so a `.settings.json` inside the orbits
+    directory would be parsed as a corrupt orbit and reported in `GET /orbits`'s `unreadable`
     list. Verified, not assumed."""
-    from rlm_notebook.config import settings_path, write_settings
-    from rlm_notebook.notebook import list_notebook_summaries
+    from penumbra.config import settings_path, write_settings
+    from penumbra.orbit import list_orbit_summaries
 
     write_settings({"output_language": "Japanese"}, tmp_path)
     assert settings_path(tmp_path).exists()
-    assert list_notebook_summaries(base_dir=tmp_path) == ([], [])
+    assert list_orbit_summaries(base_dir=tmp_path) == ([], [])
 
 
 def test_the_run_timeout_default_follows_how_the_model_is_served(monkeypatch):
@@ -197,20 +197,20 @@ def test_the_run_timeout_default_follows_how_the_model_is_served(monkeypatch):
     A backstop's only real question is whether it sits far enough past a legitimate run; 300s
     demonstrably did not on this path, and does on the other.
     """
-    monkeypatch.delenv("RN_RUN_TIMEOUT_SECONDS", raising=False)
-    monkeypatch.delenv("RN_INTERPRETER", raising=False)
+    monkeypatch.delenv("PN_RUN_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("PN_INTERPRETER", raising=False)
 
-    monkeypatch.setenv("RN_MAIN_MODEL", "openai/gpt-5")
-    assert NotebookConfig.from_env().run_timeout_seconds == 300.0
+    monkeypatch.setenv("PN_MAIN_MODEL", "openai/gpt-5")
+    assert PenumbraConfig.from_env().run_timeout_seconds == 300.0
 
-    monkeypatch.setenv("RN_MAIN_MODEL", "claude-agent-sdk/claude-sonnet-5")
-    assert NotebookConfig.from_env().run_timeout_seconds == 1800.0
+    monkeypatch.setenv("PN_MAIN_MODEL", "claude-agent-sdk/claude-sonnet-5")
+    assert PenumbraConfig.from_env().run_timeout_seconds == 1800.0
 
     # An explicit value still wins on BOTH paths — the point is the default, not a floor.
-    monkeypatch.setenv("RN_RUN_TIMEOUT_SECONDS", "45")
-    assert NotebookConfig.from_env().run_timeout_seconds == 45.0
-    monkeypatch.setenv("RN_MAIN_MODEL", "openai/gpt-5")
-    assert NotebookConfig.from_env().run_timeout_seconds == 45.0
+    monkeypatch.setenv("PN_RUN_TIMEOUT_SECONDS", "45")
+    assert PenumbraConfig.from_env().run_timeout_seconds == 45.0
+    monkeypatch.setenv("PN_MAIN_MODEL", "openai/gpt-5")
+    assert PenumbraConfig.from_env().run_timeout_seconds == 45.0
 
 
 def test_the_step_budget_is_this_projects_own_choice_not_the_harness_default(monkeypatch):
@@ -218,10 +218,10 @@ def test_the_step_budget_is_this_projects_own_choice_not_the_harness_default(mon
     actually a decision: exhausting the budget loses a run already paid for, unused headroom costs
     nothing (the loop ends when the model submits), and a runaway is bounded by the wall-clock
     timeout instead — which is a bound the step budget cannot be."""
-    monkeypatch.setenv("RN_MAIN_MODEL", "openai/gpt-5")
-    monkeypatch.delenv("RN_MAX_ITERATIONS", raising=False)
-    monkeypatch.delenv("RN_INTERPRETER", raising=False)
-    assert NotebookConfig.from_env().max_iterations == 25
+    monkeypatch.setenv("PN_MAIN_MODEL", "openai/gpt-5")
+    monkeypatch.delenv("PN_MAX_ITERATIONS", raising=False)
+    monkeypatch.delenv("PN_INTERPRETER", raising=False)
+    assert PenumbraConfig.from_env().max_iterations == 25
 
 
 def test_the_retry_budget_stays_at_one_but_is_readable(monkeypatch):
@@ -230,45 +230,45 @@ def test_the_retry_budget_stays_at_one_but_is_readable(monkeypatch):
     into the trace. It moved to a field only so an operator can raise it deliberately — the default
     does not move, and the first-turn parse failure that prompted the question is a `max_tokens`
     problem, not a retry one."""
-    monkeypatch.setenv("RN_MAIN_MODEL", "openai/gpt-5")
-    monkeypatch.delenv("RN_INTERPRETER", raising=False)
-    monkeypatch.delenv("RN_MAX_RETRIES", raising=False)
-    assert NotebookConfig.from_env().max_retries == 1
+    monkeypatch.setenv("PN_MAIN_MODEL", "openai/gpt-5")
+    monkeypatch.delenv("PN_INTERPRETER", raising=False)
+    monkeypatch.delenv("PN_MAX_RETRIES", raising=False)
+    assert PenumbraConfig.from_env().max_retries == 1
 
-    monkeypatch.setenv("RN_MAX_RETRIES", "5")
-    assert NotebookConfig.from_env().max_retries == 5
+    monkeypatch.setenv("PN_MAX_RETRIES", "5")
+    assert PenumbraConfig.from_env().max_retries == 5
 
 
 def test_setup_forwards_every_budget_to_the_harness(monkeypatch):
     """BEHAVIOURAL, not a source-string search. A value has to REACH rlm-harness: an env var read
-    into a field nothing forwards is the shape `RN_OCR_PROVIDER` already has (invariant 7) and looks
+    into a field nothing forwards is the shape `PN_OCR_PROVIDER` already has (invariant 7) and looks
     identical from outside.
 
     The first version of this test grepped `config.setup`'s source for `max_retries=config.…`, which
     an independent review found wrong twice over — it covered only the PINNED knob while both
-    `RN_MAX_TOKENS` mutations (hardcoding the default, and deleting the forwarding line entirely)
+    `PN_MAX_TOKENS` mutations (hardcoding the default, and deleting the forwarding line entirely)
     survived the whole suite, and its negative assertion would have fired on a docstring sentence
     containing the literal, which is exactly the phrasing a sibling's config already uses.
     """
     import rlm_harness
 
-    from rlm_notebook import config as config_module
+    from penumbra import config as config_module
 
-    monkeypatch.setenv("RN_MAIN_MODEL", "openai/gpt-5")
-    monkeypatch.delenv("RN_INTERPRETER", raising=False)
-    monkeypatch.setenv("RN_MAX_TOKENS", "31337")
-    monkeypatch.setenv("RN_MAX_RETRIES", "7")
-    monkeypatch.setenv("RN_MAX_ITERATIONS", "13")
-    monkeypatch.setenv("RN_MAX_LLM_CALLS", "17")
-    monkeypatch.setenv("RN_MAX_OUTPUT_CHARS", "12345")
+    monkeypatch.setenv("PN_MAIN_MODEL", "openai/gpt-5")
+    monkeypatch.delenv("PN_INTERPRETER", raising=False)
+    monkeypatch.setenv("PN_MAX_TOKENS", "31337")
+    monkeypatch.setenv("PN_MAX_RETRIES", "7")
+    monkeypatch.setenv("PN_MAX_ITERATIONS", "13")
+    monkeypatch.setenv("PN_MAX_LLM_CALLS", "17")
+    monkeypatch.setenv("PN_MAX_OUTPUT_CHARS", "12345")
 
     seen = {}
     monkeypatch.setattr(rlm_harness, "configure", lambda cfg, **kw: seen.setdefault("cfg", cfg))
-    config_module.setup(NotebookConfig.from_env())
+    config_module.setup(PenumbraConfig.from_env())
 
     forwarded = seen["cfg"]
-    assert forwarded.max_tokens == 31337, "RN_MAX_TOKENS never reaches the run"
-    assert forwarded.max_retries == 7, "RN_MAX_RETRIES never reaches the run"
+    assert forwarded.max_tokens == 31337, "PN_MAX_TOKENS never reaches the run"
+    assert forwarded.max_retries == 7, "PN_MAX_RETRIES never reaches the run"
     assert forwarded.max_iterations == 13
     assert forwarded.max_llm_calls == 17
     assert forwarded.max_output_chars == 12345
@@ -291,14 +291,14 @@ def test_the_planner_token_cap_is_this_projects_own_choice(monkeypatch):
     cap would save. So this buys the tail the old value was cutting, and a further doubling buys
     nothing by that data. Raise it again only against a distribution, never against one truncation.
     """
-    monkeypatch.setenv("RN_MAIN_MODEL", "openai/gpt-5")
-    monkeypatch.delenv("RN_INTERPRETER", raising=False)
-    monkeypatch.delenv("RN_MAX_TOKENS", raising=False)
-    assert NotebookConfig.from_env().max_tokens == 32768
-    assert NotebookConfig().max_tokens == 32768
+    monkeypatch.setenv("PN_MAIN_MODEL", "openai/gpt-5")
+    monkeypatch.delenv("PN_INTERPRETER", raising=False)
+    monkeypatch.delenv("PN_MAX_TOKENS", raising=False)
+    assert PenumbraConfig.from_env().max_tokens == 32768
+    assert PenumbraConfig().max_tokens == 32768
     # It reaches BOTH seats: runtime.configure builds one lm_kwargs for main and sub alike.
-    monkeypatch.setenv("RN_MAX_TOKENS", "1234")
-    assert NotebookConfig.from_env().max_tokens == 1234
+    monkeypatch.setenv("PN_MAX_TOKENS", "1234")
+    assert PenumbraConfig.from_env().max_tokens == 1234
 
 
 def test_the_repl_output_cap_is_this_projects_own_choice(monkeypatch):
@@ -307,11 +307,11 @@ def test_the_repl_output_cap_is_this_projects_own_choice(monkeypatch):
     here for invariant 8's reason: every task explores the corpus by `.find()`/slicing and PRINTS
     the spans, so a truncated output is a span that has to be fetched again, costing an iteration
     against a budget this project has already had to raise once."""
-    monkeypatch.setenv("RN_MAIN_MODEL", "openai/gpt-5")
-    monkeypatch.delenv("RN_INTERPRETER", raising=False)
-    monkeypatch.delenv("RN_MAX_OUTPUT_CHARS", raising=False)
-    assert NotebookConfig.from_env().max_output_chars == 40_000
-    assert NotebookConfig().max_output_chars == 40_000
+    monkeypatch.setenv("PN_MAIN_MODEL", "openai/gpt-5")
+    monkeypatch.delenv("PN_INTERPRETER", raising=False)
+    monkeypatch.delenv("PN_MAX_OUTPUT_CHARS", raising=False)
+    assert PenumbraConfig.from_env().max_output_chars == 40_000
+    assert PenumbraConfig().max_output_chars == 40_000
 
 
 # --- invariant 59: a budget the provider will actually accept -------------------------------------
@@ -320,7 +320,7 @@ def test_the_repl_output_cap_is_this_projects_own_choice(monkeypatch):
 def test_max_tokens_is_clamped_to_what_the_model_will_accept(caplog):
     """**The shipped default refused every call for the model `.env.example` itself names.**
 
-    `RN_MAX_TOKENS` defaults to 32768 for invariant 59's reason: dspy reads `content` and discards
+    `PN_MAX_TOKENS` defaults to 32768 for invariant 59's reason: dspy reads `content` and discards
     `reasoning_content`, so a reasoning model's chain of thought is billed against a cap it never
     appears in and a smaller number returns a reply cut mid-JSON. That argument is about the
     DISTRIBUTION of replies and says nothing about the provider's own ceiling, which is lower for
@@ -330,15 +330,15 @@ def test_max_tokens_is_clamped_to_what_the_model_will_accept(caplog):
     OpenAI refuses an oversized `max_tokens` BEFORE it checks the key, so the request never left the
     machine: ask, guide, overview, title and podcast all answered 502 with `max_tokens is too
     large: 32768`, and a valid key changed nothing. Proven by an A/B on a live server where
-    `RN_MAX_TOKENS=8000` reached the provider and the default did not. It is invisible to anyone
+    `PN_MAX_TOKENS=8000` reached the provider and the default did not. It is invisible to anyone
     whose own model has a ≥32k output cap, which is why it survived to a seventh review round.
     """
     import logging
 
-    from rlm_notebook.config import _CLAMPED, _max_tokens_for
+    from penumbra.config import _CLAMPED, _max_tokens_for
 
     _CLAMPED.clear()
-    with caplog.at_level(logging.WARNING, logger="rlm_notebook.config"):
+    with caplog.at_level(logging.WARNING, logger="penumbra.config"):
         assert _max_tokens_for("openai/gpt-4o", 32768) == 16384
     # SAID, not silently corrected: invariant 9's rule is that a silent override makes an
     # operator's belief about their own run false. Both numbers, so they can choose differently.
@@ -347,7 +347,7 @@ def test_max_tokens_is_clamped_to_what_the_model_will_accept(caplog):
     # Once per model per process. `setup()` runs in every worker subprocess (invariant 21), so an
     # un-deduplicated warning would print on every single run.
     caplog.clear()
-    with caplog.at_level(logging.WARNING, logger="rlm_notebook.config"):
+    with caplog.at_level(logging.WARNING, logger="penumbra.config"):
         assert _max_tokens_for("openai/gpt-4o", 32768) == 16384
     assert not caplog.text.strip()
 
@@ -362,7 +362,7 @@ def test_a_budget_already_under_the_ceiling_and_an_unknown_model_are_left_alone(
     import contextlib
     import io
 
-    from rlm_notebook.config import _max_tokens_for
+    from penumbra.config import _max_tokens_for
 
     assert _max_tokens_for("openai/gpt-4o", 8000) == 8000
 
@@ -388,14 +388,14 @@ def test_setup_hands_the_clamped_budget_to_the_harness(monkeypatch):
     import sys
     import types
 
-    from rlm_notebook import config as config_module
+    from penumbra import config as config_module
 
     seen: dict = {}
     fake = types.ModuleType("rlm_harness")
     fake.configure = lambda cfg, **kw: seen.update(max_tokens=cfg.max_tokens)
     monkeypatch.setitem(sys.modules, "rlm_harness", fake)
 
-    cfg = config_module.NotebookConfig(main_model="openai/gpt-4o", max_tokens=32768)
+    cfg = config_module.PenumbraConfig(main_model="openai/gpt-4o", max_tokens=32768)
     config_module.setup(cfg)
     assert seen["max_tokens"] == 16384, (
         f"the harness was handed {seen.get('max_tokens')}, which the provider refuses outright"
@@ -404,11 +404,11 @@ def test_setup_hands_the_clamped_budget_to_the_harness(monkeypatch):
     # **AND THE SUB SEAT.** `RLMConfig` carries one `max_tokens` and `rlm_harness.configure` builds
     # both LMs from the same kwargs, so a split-role install (which `README.md` advertises and
     # invariant 35 supports) handed the sub LM a value ITS provider refuses. The lower of the two
-    # ceilings is the only number both seats accept. Invisible by default, because `RN_SUB_MODEL`
-    # inherits `RN_MAIN_MODEL`.
+    # ceilings is the only number both seats accept. Invisible by default, because `PN_SUB_MODEL`
+    # inherits `PN_MAIN_MODEL`.
     seen.clear()
     config_module.setup(
-        config_module.NotebookConfig(
+        config_module.PenumbraConfig(
             main_model="openai/gpt-5", sub_model="openai/gpt-4o-mini", max_tokens=32768
         )
     )
@@ -425,12 +425,12 @@ def test_the_trace_reports_the_budget_the_run_actually_had():
     `trajectory.budget_summary` reads the cap off the LM the run used. Once `setup()` began clamping,
     the drawer printed two different generation caps in one viewport: the BUDGET note said 16384 and
     the chip four rows below said `max tokens 32768`. `budget_summary`'s own docstring states the
-    rule the chip was breaking ("never off `NotebookConfig`, because the configured cap can be one
+    rule the chip was breaking ("never off `PenumbraConfig`, because the configured cap can be one
     no call ever saw"), and invariant 75 exists to say this number is the one that matters.
 
     Both SEATS, for the same reason `setup` clamps both: one `max_tokens` reaches both LMs.
     """
-    from rlm_notebook.traces import _effective_max_tokens
+    from penumbra.traces import _effective_max_tokens
 
     class Cfg:
         def __init__(self, main, sub="", wanted=32768):

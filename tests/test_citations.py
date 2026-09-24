@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from rlm_notebook.citations import verify_citations
-from rlm_notebook.corpus import Corpus
-from rlm_notebook.schema import Citation, Source, SourceBlock
+from penumbra.citations import verify_citations
+from penumbra.corpus import Corpus
+from penumbra.schema import Citation, Source, SourceBlock
 
 
 def _corpus() -> Corpus:
@@ -74,8 +74,8 @@ def test_an_answer_span_is_kept_only_when_it_occurs_verbatim_in_the_prose():
     the model's own text: a span that cannot be found is DROPPED, and the citation survives without
     it. Losing a highlight costs a reader little; highlighting the wrong sentence costs them trust.
     """
-    from rlm_notebook.citations import locate_answer_spans
-    from rlm_notebook.schema import Citation
+    from penumbra.citations import locate_answer_spans
+    from penumbra.schema import Citation
 
     prose = "根據資料：先發射的是航海家2號。它比航海家1號早了十六天。"
 
@@ -107,8 +107,8 @@ def test_the_span_and_the_quote_are_in_different_languages_on_purpose():
     """`quote` stays in the SOURCE's words (it is evidence a reader checks) and `answer_span` stays
     in the model's (it is where the highlight goes). Having both is what lets someone reading in one
     language cite a source written in another — the case that broke the old single-field design."""
-    from rlm_notebook.citations import locate_answer_spans
-    from rlm_notebook.schema import Citation
+    from penumbra.citations import locate_answer_spans
+    from penumbra.schema import Citation
 
     prose = "航海家2號比較早發射。"
     citation = Citation(
@@ -129,7 +129,7 @@ def test_a_corpus_marker_never_reaches_the_reader():
     into the sentence it is writing — but it reads a corpus full of them, and a real run ended four
     of five paragraphs with a literal `[[SRC:s1|whole]]` on screen. A user reported it as a failed
     render, which is a fair reading: it looks exactly like a template that did not resolve."""
-    from rlm_notebook.citations import strip_markers
+    from penumbra.citations import strip_markers
 
     assert strip_markers("A claim.[[SRC:s1|whole]]") == "A claim."
     assert strip_markers("Mid [[SRC:s2|page:3]] sentence.") == "Mid sentence."
@@ -146,8 +146,8 @@ def test_a_span_carrying_a_marker_still_matches_the_stripped_prose():
     """The model copies `answer_span` out of its own text, so if the text had a marker the span can
     have one too. Both get the SAME strip, or the span silently stops being locatable and the
     highlighter stroke disappears — which is invariant 49's whole failure mode, one layer down."""
-    from rlm_notebook.citations import locate_answer_spans, strip_markers
-    from rlm_notebook.schema import Citation
+    from penumbra.citations import locate_answer_spans, strip_markers
+    from penumbra.schema import Citation
 
     raw = "Voyager left in 2012.[[SRC:s1|whole]] It still transmits."
     prose = strip_markers(raw)
@@ -165,8 +165,8 @@ def test_the_punctuation_tidy_only_touches_where_a_marker_was():
     early-returns on a marker-free string, the prose and the `answer_span` would then get DIFFERENT
     normalisation and the span would stop matching. That is invariant 49's failure mode one layer
     down: the highlighter stroke silently disappears."""
-    from rlm_notebook.citations import locate_answer_spans, strip_markers
-    from rlm_notebook.schema import Citation
+    from penumbra.citations import locate_answer_spans, strip_markers
+    from penumbra.schema import Citation
 
     prose = strip_markers("C'est vrai ! Voir [[SRC:s1|whole]].")
     assert prose == "C'est vrai ! Voir.", f"spacing outside the marker's hole was altered: {prose!r}"

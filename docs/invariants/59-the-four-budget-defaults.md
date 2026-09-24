@@ -18,9 +18,9 @@ The number is a request, and the provider has the last word. Many models have a 
 
 `max_output_chars: 40000` bounds how much of a REPL output reaches the planner's prompt. Every task explores the corpus by searching and slicing and prints the spans, so a truncated output means fetching the span again and wasting an iteration.
 
-`max_iterations: 25`, because 10 was about to be reached: an 8-source notebook's summary took nine main steps. Running out loses a run already paid for, while unused headroom costs nothing because the loop ends when the model submits, and `run_timeout_seconds` bounds a runaway in wall-clock time.
+`max_iterations: 25`, because 10 was about to be reached: an 8-source orbit's summary took nine main steps. Running out loses a run already paid for, while unused headroom costs nothing because the loop ends when the model submits, and `run_timeout_seconds` bounds a runaway in wall-clock time.
 
-`max_retries: 1` stays. A whole-run retry rarely fixes a persistent failure, burns the budget again and writes a second copy of the same failure into the trace, and a turn-zero parse failure is not transient, because the retry hits the same token ceiling. Unlike its siblings, this project reads `RN_MAX_RETRIES`, but the default does not move, and raising it multiplies the budget: `RN_MAX_RETRIES=5` with 25 iterations is up to 125 iterations. The API has `run_timeout_seconds` as a backstop; the CLI has none.
+`max_retries: 1` stays. A whole-run retry rarely fixes a persistent failure, burns the budget again and writes a second copy of the same failure into the trace, and a turn-zero parse failure is not transient, because the retry hits the same token ceiling. Unlike its siblings, this project reads `PN_MAX_RETRIES`, but the default does not move, and raising it multiplies the budget: `PN_MAX_RETRIES=5` with 25 iterations is up to 125 iterations. The API has `run_timeout_seconds` as a backstop; the CLI has none.
 
 `worker._describe` carries the root cause across the process boundary. "Failed to produce a valid 'script' after 1 attempts" names the symptom; the exception chain names the cause, which used to be discarded exactly where a person starts reading.
 

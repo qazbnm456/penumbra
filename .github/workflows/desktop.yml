@@ -4,7 +4,7 @@ name: Desktop
 #
 # - `check` compiles and unit-tests the Rust shell on each OS. It is the only thing that would
 #   notice a Windows- or Linux-only compile error in a shell developed on a Mac.
-# - `bundle` builds the full installers (a bundled Python with rlm-notebook installed, plus deno)
+# - `bundle` builds the full installers (a bundled Python with penumbra installed, plus deno)
 #   and uploads them as workflow artifacts. It publishes nothing by itself.
 #
 # Each target builds on its own runner, because the wheels inside the bundled Python (numpy,
@@ -85,7 +85,7 @@ jobs:
         run: cargo tauri build
       - uses: actions/upload-artifact@v4
         with:
-          name: rlm-notebook-${{ matrix.target }}
+          name: penumbra-${{ matrix.target }}
           path: |
             desktop/src-tauri/target/release/bundle/dmg/*.dmg
             desktop/src-tauri/target/release/bundle/msi/*.msi

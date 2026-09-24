@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the static, no-server PLAYGROUND from this repo's real web UI and real notebooks.
+"""Build the static, no-server PLAYGROUND from this repo's real web UI and real orbits.
 
 The whole point: `app.js`, `style.css` and `i18n.js` are COPIED VERBATIM and never edited. The
 playground is the product, running against a network shim instead of a server — so a screenshot of
@@ -23,10 +23,10 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-WEB = ROOT / "rlm_notebook" / "web"
+WEB = ROOT / "penumbra" / "web"
 SRC = Path(__file__).resolve().parent / "src"
 VENDOR = Path(__file__).resolve().parent / "vendor"
-NOTEBOOKS = ROOT / "notebooks"
+ORBITS = ROOT / "orbits"
 TRACES = ROOT / "traces"
 
 #: Verbatim copies. Editing any of these in `dist/` is the one thing that breaks the guarantee
@@ -39,23 +39,23 @@ VERBATIM = ("app.js", "style.css", "i18n.js")
 #: when it is not.
 MAX_SOURCE_CHARS = 6000
 
-#: Which notebooks ship, in picker order, with the one-line pitch the scenario modal shows. Keep
-#: this list explicit rather than globbing `notebooks/`: a local notebook is the author's own
+#: Which orbits ship, in picker order, with the one-line pitch the scenario modal shows. Keep
+#: this list explicit rather than globbing `orbits/`: a local orbit is the author's own
 #: working data and must never be published by accident.
 SCENARIOS = [
     # ORDER IS THE DEFAULT: the first entry is what a first-time visitor lands on.
     #
-    # The three English notebooks and the three Traditional Chinese ones are built from the SAME
-    # source sets. That pairing is the point: `RN_OUTPUT_LANGUAGE` is the only difference between
+    # The three English orbits and the three Traditional Chinese ones are built from the SAME
+    # source sets. That pairing is the point: `PN_OUTPUT_LANGUAGE` is the only difference between
     # each pair, so a reader can switch between them and see invariant 39 directly — model-authored
     # prose follows the READER while `source_id`, `locator` and every `quote` stay in the source's
     # own words and language.
     #
     # English leads because this is a public product page whose README, repo and install commands
     # are English; the Chinese set is one click away in the scenario picker.
-    # `lang` is the only field here the page still reads: `openInitial` picks the notebook whose
+    # `lang` is the only field here the page still reads: `openInitial` picks the orbit whose
     # output language matches the reader's interface. The per-scenario blurb and badge went with the
-    # scenario modal that displayed them, and the product's own picker names each notebook by its
+    # scenario modal that displayed them, and the product's own picker names each orbit by its
     # real title with its source and turn counts beside it.
     {
         "id": "nb-en-security",
@@ -96,28 +96,28 @@ def _truncate(text: str) -> str:
         return text
     return text[:MAX_SOURCE_CHARS].rstrip() + (
         "\n\n[… truncated for the public playground. The full text is only ever in your own local "
-        "notebook — install rlm-notebook and ingest the source yourself to read all of it.]"
+        "orbit — install penumbra and ingest the source yourself to read all of it.]"
     )
 
 
-def load_notebook(nb_id: str) -> tuple[dict, dict]:
+def load_orbit(nb_id: str) -> tuple[dict, dict]:
     """Return `(api_response, source_texts)` computed by the REAL response models.
 
-    This is the load-bearing choice in the whole build. Rendering a notebook the way the server
+    This is the load-bearing choice in the whole build. Rendering an orbit the way the server
     does means verifying every citation's coordinate, locating every `answer_span`, and computing
     two staleness verdicts — `citations.py` and `api.py` already do all of it, correctly, and a
     JavaScript re-implementation in the shim would be a second answer that drifts from the first.
-    So the build imports `api._notebook_response` and ships what it produced: the fixture IS the
+    So the build imports `api._orbit_response` and ships what it produced: the fixture IS the
     response, checkmarks and all, and a playground citation is verified by the same code that
     verifies a real one.
 
     Needs the `api` extra (`uv run --extra api python playground/build.py`)."""
-    from rlm_notebook.api import _notebook_response
-    from rlm_notebook.schema import Notebook
+    from penumbra.api import _orbit_response
+    from penumbra.schema import Orbit
 
-    raw = json.loads((NOTEBOOKS / f"{nb_id}.json").read_text(encoding="utf-8"))
-    notebook = Notebook.model_validate(raw)
-    response = _notebook_response(notebook).model_dump(mode="json")
+    raw = json.loads((ORBITS / f"{nb_id}.json").read_text(encoding="utf-8"))
+    orbit = Orbit.model_validate(raw)
+    response = _orbit_response(orbit).model_dump(mode="json")
     # `GET /sources/{id}` is the one response that carries a source's FULL text (invariant 31), so
     # it is the one the cap applies to.
     texts = {
@@ -131,7 +131,7 @@ def load_notebook(nb_id: str) -> tuple[dict, dict]:
                 {"locator": b.locator, "text": _truncate(b.text)} for b in s.blocks
             ],
         }
-        for s in notebook.sources
+        for s in orbit.sources
     }
     return response, texts
 
@@ -140,12 +140,12 @@ def precompute_runs(nb_id: str) -> dict[str, dict]:
     """Per run id: the ticker events and the Trajectory decomposition, both computed by the REAL
     code (`api._translate_trace_event`, `trajectory.build_trajectory`).
 
-    Same reasoning as `load_notebook`: the shim replays what those functions produced rather than
+    Same reasoning as `load_orbit`: the shim replays what those functions produced rather than
     re-deriving it in JavaScript. It also means the playground's reasoning ticker shows the model's
     ACTUAL words from a run that really happened, which is the one thing a hand-written mock could
     never be."""
-    from rlm_notebook.api import _translate_trace_event
-    from rlm_notebook.trajectory import build_trajectory
+    from penumbra.api import _translate_trace_event
+    from penumbra.trajectory import build_trajectory
 
     runs: dict[str, dict] = {}
     for run_id, events in _read_traces(nb_id).items():
@@ -164,8 +164,8 @@ def _read_traces(nb_id: str) -> dict[str, list]:
     """Real trace events, keyed by run id, for the SSE shim to replay.
 
     Replaying a REAL trace is why the ticker in the playground shows the model's own reasoning
-    rather than invented filler — the same reason the fixtures are real notebooks. A run whose trace
-    was pruned (`RN_TRACE_RETENTION_DAYS`) simply has no entry, and the shim synthesises a short
+    rather than invented filler — the same reason the fixtures are real orbits. A run whose trace
+    was pruned (`PN_TRACE_RETENTION_DAYS`) simply has no entry, and the shim synthesises a short
     generic one instead of failing.
     """
     out: dict[str, list] = {}
@@ -192,7 +192,7 @@ def build_index() -> str:
     on the next build instead of silently missing."""
     html = (WEB / "index.html").read_text(encoding="utf-8")
     # `/style.css` etc. are absolute because the server mounts assets at the root; a GitHub Pages
-    # subdirectory (`/rlm-notebook/`) is not the root, so every one of them would 404.
+    # subdirectory (`/penumbra/`) is not the root, so every one of them would 404.
     html = re.sub(r'(href|src)="/([^"]+)"', r'\1="./\2"', html)
     assert '="/' not in html, "an absolute asset path survived the rewrite"
     html = html.replace(
@@ -217,7 +217,7 @@ def build_index() -> str:
         '<script src="./director.js"></script>',
     )
     html = html.replace(
-        "<title>rlm-notebook</title>", "<title>rlm-notebook — interactive playground</title>"
+        "<title>penumbra</title>", "<title>penumbra — interactive playground</title>"
     )
     return html
 
@@ -245,7 +245,7 @@ def trim_audio(nb_id: str, dest: Path, seconds: int) -> dict | None:
     episode's later lines would seek past the end and silently do nothing. The transcript is NOT
     truncated to match (that would understate the tier the episode is demonstrating), so the flag
     returned here is what lets the page say the audio stops early instead of looking broken."""
-    src = NOTEBOOKS / "audio" / f"{nb_id}.mp3"
+    src = ORBITS / "audio" / f"{nb_id}.mp3"
     if not src.exists():
         return None
     full = _duration_s(src)
@@ -322,23 +322,23 @@ def redact_traces(fixtures: dict) -> int:
             return [clean(v) for v in value]
         return value
 
-    for key in ("runs", "notebooks", "sources", "scenarios"):
+    for key in ("runs", "orbits", "sources", "scenarios"):
         fixtures[key] = clean(fixtures[key])
 
     print(f"  rewrote {redacted} string(s) carrying machine-local or contact detail")
     return redacted
 
 
-def inbox_rows(fixtures: dict) -> list[dict]:
-    """One Inbox node per real source, newest first.
+def horizon_rows(fixtures: dict) -> list[dict]:
+    """One Horizon node per real source, newest first.
 
     A source already carries everything a distilled node shows: an origin, a kind, a title through
-    its preview, and text to cut a summary from. So the river is the same material the notebooks are
+    its preview, and text to cut a summary from. So the river is the same material the orbits are
     made of, seen one tier down - which is exactly what the two-tier model claims, and what a page
     demonstrating it should show.
     """
     rows: list[dict] = []
-    for index, (nb_id, response) in enumerate(fixtures["notebooks"].items()):
+    for index, (nb_id, response) in enumerate(fixtures["orbits"].items()):
         texts = fixtures["sources"].get(nb_id, {})
         for order, source in enumerate(response.get("sources") or []):
             stored = texts.get(source["id"]) or {}
@@ -353,7 +353,7 @@ def inbox_rows(fixtures: dict) -> list[dict]:
                 "state": "ready",
                 "title": preview.get("title") or source.get("title"),
                 "summary": body[:240] + ("\u2026" if len(body) > 240 else ""),
-                # The notebook's TITLE, never its handle. `anonymise_models` two functions down
+                # The orbit's TITLE, never its handle. `anonymise_models` two functions down
                 # scrubs model names from this same fixture for exactly this reason, and the handle
                 # was left in - so every row on the public page carried a clickable
                 # `nb-en-security` tag, an internal identifier as reader-facing metadata, on the
@@ -404,6 +404,11 @@ def anonymise_models(fixtures: dict) -> None:
 
 
 def main() -> int:
+    # The data may still sit under its pre-rename names (`notebooks/`, `inbox/`) if no `penumbra`
+    # command has run in this checkout since the rename; move it the way the server would.
+    from penumbra import legacy
+
+    legacy.migrate_data_dirs(ROOT)
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default=str(Path(__file__).resolve().parent / "dist"))
     ap.add_argument("--deploy", metavar="DIR",
@@ -453,17 +458,17 @@ def main() -> int:
         print(f"  rewrote {css.count(absolute)} absolute font url() to be relative")
     (out / "index.html").write_text(build_index(), encoding="utf-8")
 
-    fixtures = {"scenarios": [], "notebooks": {}, "sources": {}, "runs": {}, "inbox": []}
+    fixtures = {"scenarios": [], "orbits": {}, "sources": {}, "runs": {}, "horizon": []}
     for scenario in SCENARIOS:
         nb_id = scenario["id"]
-        response, texts = load_notebook(nb_id)
-        fixtures["notebooks"][nb_id] = response
+        response, texts = load_orbit(nb_id)
+        fixtures["orbits"][nb_id] = response
         fixtures["sources"][nb_id] = texts
         fixtures["runs"].update(precompute_runs(nb_id))
         audio = trim_audio(nb_id, out / "audio" / f"{nb_id}.mp3", args.audio_seconds)
         pod = response.get("podcast") or {}
         # A ⌁ pill is rendered from a persisted `run_id`, and the drawer 404s if the trace behind it
-        # was pruned (`RN_TRACE_RETENTION_DAYS`) or the run predates the API path. In the product
+        # was pruned (`PN_TRACE_RETENTION_DAYS`) or the run predates the API path. In the product
         # that degrades one affordance and nothing else (invariant 29); on a product PAGE it is a
         # reader pressing the headline feature and getting an error. So an artifact whose trace is
         # gone simply does not advertise one here. Honest by subtraction: the demo never offers an
@@ -484,11 +489,11 @@ def main() -> int:
             "utterances": len(pod.get("utterances") or []),
         })
 
-    # **The Inbox is the product's FRONT DOOR now, so the demo has to open on it.** Built from the
-    # same real notebooks the rest of this page is built from - one row per source - rather than
+    # **The Horizon is the product's FRONT DOOR now, so the demo has to open on it.** Built from the
+    # same real orbits the rest of this page is built from - one row per source - rather than
     # invented filler, for the same reason everything else here is real: a demo of a recall surface
     # made of lorem ipsum demonstrates nothing about recall.
-    fixtures["inbox"] = inbox_rows(fixtures)
+    fixtures["horizon"] = horizon_rows(fixtures)
 
     anonymise_models(fixtures)
     redact_traces(fixtures)

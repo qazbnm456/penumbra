@@ -1,4 +1,4 @@
-/* Runs SHIPPED functions out of `rlm_notebook/web/app.js` against a small fake DOM.
+/* Runs SHIPPED functions out of `penumbra/web/app.js` against a small fake DOM.
  *
  * **Why this exists, twice over.** Round seven's `readableError` test re-compiled that function's
  * regex literals and never called it, so replacing the body with `return text` left the suite
@@ -52,7 +52,7 @@
 import { readFileSync } from "node:fs";
 import { buildReadableError } from "./readable_error_parts.mjs";
 
-const APP = new URL("../rlm_notebook/web/app.js", import.meta.url);
+const APP = new URL("../penumbra/web/app.js", import.meta.url);
 const src = readFileSync(APP, "utf8");
 
 function extract(name) {
@@ -73,7 +73,7 @@ function constant(name) {
 
 //: The REAL `readableError`, assembled the way `readable_error_harness.mjs` assembles it — same
 //: constants, same extraction by name. A scenario that shows the reader a message must show the
-//: message the reader actually gets: with an identity stub, `openNotebookFailure("offline")`
+//: message the reader actually gets: with an identity stub, `openOrbitFailure("offline")`
 //: reported Chrome's "Failed to fetch", which is the very string that branch exists to replace.
 function realReadableError() {
   //: The SHARED builder — see `readable_error_parts.mjs`. This used to hold its own copy of the
@@ -318,7 +318,7 @@ const doc = {
 let notices = null;
 
 // --- the tree every scenario uses -------------------------------------------------------------
-//     body > .layout > [header, view-inbox, view-notebook]
+//     body > .layout > [header, view-horizon, view-orbit]
 //     body > notices, traj-backdrop, traj-drawer
 //
 // **This nesting IS the test's premise, so it is pinned against `index.html`** by
@@ -331,9 +331,9 @@ function build() {
   doc.body.children = [];
   const layout = new El("layout");
   const header = new El("header", "header");
-  const inbox = new El("view-inbox", "section");
-  const notebook = new El("view-notebook", "main");
-  layout.append(header, inbox, notebook);
+  const horizon = new El("view-horizon", "section");
+  const orbit = new El("view-orbit", "main");
+  layout.append(header, horizon, orbit);
   notices = new El("notices");
   const backdrop = new El("traj-backdrop");
   const drawer = new El("traj-drawer");
@@ -341,7 +341,7 @@ function build() {
   const picker = new El("traj-run", "select");
   drawer.append(picker, closeBtn);
   doc.body.append(layout, notices, backdrop, drawer);
-  return { layout, header, inbox, notebook, notices, backdrop, drawer, closeBtn, picker };
+  return { layout, header, horizon, orbit, notices, backdrop, drawer, closeBtn, picker };
 }
 
 const SCENARIOS = {
@@ -520,20 +520,20 @@ const SCENARIOS = {
     };
   },
 
-  //: **One dropped request used to fabricate the reader's notebook.** `openNotebook`'s `catch` was
-  //: bare, so every failure meant "does not exist yet": a notebook with real sources and turns
+  //: **One dropped request used to fabricate the reader's orbit.** `openOrbit`'s `catch` was
+  //: bare, so every failure meant "does not exist yet": an orbit with real sources and turns
   //: rendered empty, silently, and did not heal. `mode` is the failure to serve.
-  openNotebookFailure(mode) {
+  openOrbitFailure(mode) {
     build();
     const notices = [];
     const switched = [];
     const state = {};
     const errors = {
-      "404-fresh": { status: 404, message: "404: no such notebook" },
-      "404-known": { status: 404, message: "404: no such notebook" },
+      "404-fresh": { status: 404, message: "404: no such orbit" },
+      "404-known": { status: 404, message: "404: no such orbit" },
       corrupt: {
         status: 409,
-        message: "409: notebooks/x.json exists but is not a valid notebook file (ValidationError)",
+        message: "409: orbits/x.json exists but is not a valid orbit file (ValidationError)",
       },
       offline: { message: "Failed to fetch" }, // `fetch` rejecting: no status at all
       server: { status: 500, message: "500: Internal Server Error" },
@@ -546,9 +546,9 @@ const SCENARIOS = {
     };
 
     const run = new Function(
-      "api", "notify", "t", "readableError", "state", "store", "refreshNotebookList",
-      "showNotebookView", "reattachInFlightRuns",
-      `let notebookGeneration = 0;\n${extract("openNotebook")}\nreturn openNotebook;`
+      "api", "notify", "t", "readableError", "state", "store", "refreshOrbitList",
+      "showOrbitView", "reattachInFlightRuns",
+      `let orbitGeneration = 0;\n${extract("openOrbit")}\nreturn openOrbit;`
     )(
       api,
       (message) => notices.push(message),
@@ -563,7 +563,7 @@ const SCENARIOS = {
 
     return run("nb-real", { push: false, fresh: mode === "404-fresh" }).then((opened) => ({
       opened: opened === true,
-      // The fabrication: did it install a notebook into `state` at all?
+      // The fabrication: did it install an orbit into `state` at all?
       invented: Object.prototype.hasOwnProperty.call(state, "sources"),
       switchedView: switched.some(([name]) => name === "view"),
       notices,
@@ -601,7 +601,7 @@ const SCENARIOS = {
   //: **The product's signature interaction, executed.** `DESIGN.md` §2 calls the stroke "the
   //: literal visual expression of the product's core value", and it was bound to `click` and
   //: `mouseenter` alone: no `tabindex`, no `role`, no key handler. A recorded Tab walk of a whole
-  //: notebook — 37 stops — reached not one citation. SC 2.1.1 and SC 4.1.2, both Level A.
+  //: orbit — 37 stops — reached not one citation. SC 2.1.1 and SC 4.1.2, both Level A.
   //:
   //: Runs the REAL `renderAnswerWithCitations` and the REAL markdown renderer beneath it, which is
   //: what `document.createElement`/`createTextNode` bought: the stroke under test is the one the
@@ -687,7 +687,7 @@ const SCENARIOS = {
   //: **Keyboard shortcuts, which the product had none of.** Every global `keydown` in `app.js`
   //: handled exactly one key (`Escape`), and on the screen built for capture the field was the
   //: sixteenth tab stop. `mode` picks the situation: which view, and whether the find field is
-  //: rendered at all — an empty Inbox hides it, which is what makes "decline and let the browser
+  //: rendered at all — an empty Horizon hides it, which is what makes "decline and let the browser
   //: keep its own ⌘F" the interesting case rather than a detail.
   shortcuts(mode) {
     const tree = build();
@@ -696,8 +696,8 @@ const SCENARIOS = {
     const ask = new El("ask-input", "textarea");
     const find = new El("stream-search", "input");
     const settings = new El("settings-open", "button");
-    tree.inbox.append(capture, find);
-    tree.notebook.append(ask);
+    tree.horizon.append(capture, find);
+    tree.orbit.append(ask);
     tree.header.append(settings);
     doc._byId = {
       "capture-input": capture,
@@ -705,21 +705,21 @@ const SCENARIOS = {
       "stream-search": find,
       "settings-open": settings,
     };
-    // An empty Inbox hides the find field, and `.focus()` on something not rendered is a no-op.
+    // An empty Horizon hides the find field, and `.focus()` on something not rendered is a no-op.
     if (mode === "no-find") find.hidden = true;
     doc.body.dataset = doc.body.dataset || {};
-    doc.body.dataset.view = mode === "notebook" ? "notebook" : "inbox";
+    doc.body.dataset.view = mode === "orbit" ? "orbit" : "horizon";
     let opened = 0;
     settings.click = () => (opened += 1);
 
     const run = new Function(
-      "document", "showInbox",
+      "document", "showHorizon",
       `${constant("SHORTCUTS")}\n` +
-        ["viewIsInbox", "syncSkipLink", "focusIfUsable", "clickIfPresent", "focusFind",
+        ["viewIsHorizon", "syncSkipLink", "focusIfUsable", "clickIfPresent", "focusFind",
          "installShortcuts"].map(extract).join("\n") +
         "\nreturn installShortcuts;"
     )(doc, () => {
-      doc.body.dataset.view = "inbox";
+      doc.body.dataset.view = "horizon";
     });
     run();
 
@@ -840,7 +840,7 @@ const SCENARIOS = {
   },
 
   //: **The locked-out state rendered the whole application as live.** No `?token=` — an ordinary
-  //: bookmark loses the query string — gave a facet rail, "+ New notebook", Settings and a FOCUSED
+  //: bookmark loses the query string — gave a facet rail, "+ New orbit", Settings and a FOCUSED
   //: capture field, all of them dead, with the only remedy being a sentence telling the reader to
   //: hand-edit a URL. There was no field anywhere in the product to paste a token into.
   tokenGate() {
@@ -872,7 +872,7 @@ const SCENARIOS = {
       // Everything behind it is UNREACHABLE, not merely unhelpful — the drawer's own treatment.
       layoutInert: tree.layout.inertly,
       headerInert: tree.header.inertly,
-      captureInert: tree.inbox.inertly,
+      captureInert: tree.horizon.inertly,
       gateInert: gate.inertly,
       // ...and the toast rail stays live, because a notice about the failure has to land somewhere.
       noticesInert: tree.notices.inertly,
@@ -929,7 +929,7 @@ const SCENARIOS = {
     const cite = (id, span) => ({ source_id: id, locator: "whole", quote: id, answer_span: span });
     const state = {
       //: Deliberately OUT of order, which is what a model citing a source it wrote about earlier
-      //: produces — measured on a real notebook as marks running 1, 3, 4, 6, 5.
+      //: produces — measured on a real orbit as marks running 1, 3, 4, 6, 5.
       overview: { text: prose, citations: [cite("s3", "Gamma"), cite("s1", "Alpha"), cite("s2", "Beta")] },
       turns: [{ answer: prose, citations: [cite("s9", "Beta"), cite("s8", "Alpha")] }],
     };
@@ -998,8 +998,8 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
   },
 
   //: **The artifact leaving the product**, which until now it could not do in any form: no copy on
-  //: an answer, the overview or a Guide kind, no notebook export, and `@media print` matched zero
-  //: rules. Runs the real `notebookMarkdown` / `artifactMarkdown` / `guideMarkdown`.
+  //: an answer, the overview or a Guide kind, no orbit export, and `@media print` matched zero
+  //: rules. Runs the real `orbitMarkdown` / `artifactMarkdown` / `guideMarkdown`.
   //: **Printing hid the reference list and kept the numbers.** Runs the real
   //: `installPrintReferences` against a window that records listeners, then fires them.
   printReferences() {
@@ -1026,12 +1026,12 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     )(state, (key, fallback) => fallback, doc, win);
 
     const text = (node) => node.textContent + node.children.map(text).join("");
-    doc.body.dataset.view = "inbox";
+    doc.body.dataset.view = "horizon";
     fire("beforeprint");
-    const onTheInbox = history.children.length;
+    const onTheHorizon = history.children.length;
     fire("afterprint");
 
-    doc.body.dataset.view = "notebook";
+    doc.body.dataset.view = "orbit";
     fire("beforeprint");
     const title = history.children.find((c) => c.className === "print-title");
     const titleFirst = history.children[0] === title;
@@ -1042,7 +1042,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     const afterTwoPrints = history.children.length;
     fire("afterprint");
     return {
-      onTheInbox, printed, afterTwoPrints, afterPrint: history.children.length,
+      onTheHorizon, printed, afterTwoPrints, afterPrint: history.children.length,
       title: title ? title.textContent : null, titleFirst,
     };
   },
@@ -1055,7 +1055,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     const before = { source_id: "s1", locator: "page:1", quote: "alpha", verified: true };
     const after = { ...before, verified: false };
     const state = {
-      notebookId: "nb",
+      orbitId: "nb",
       sources: [{ id: "s1", origin: "a.txt" }, { id: "s2", origin: "b.txt" }],
       overview: null,
       turns: [{ question: "q", answer: "alpha", citations: [before] }],
@@ -1151,15 +1151,15 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       "state", "t",
       constant("REFERENCE_KEY_SEP") + "\n" +
         ["referenceKey", "collectReferences", "pastedExcerpt", "sourceDisplayName", "sourceLabel",
-         "markdownInline", "referenceListMarkdown", "artifactMarkdown", "guideMarkdown", "notebookMarkdown"]
+         "markdownInline", "referenceListMarkdown", "artifactMarkdown", "guideMarkdown", "orbitMarkdown"]
           .map(extract).join("\n") +
         constant("PASTED_SNIPPET_CAP") + "\n" + constant("GUIDE_KIND_LABELS") + "\n" +
-        "return { notebook: notebookMarkdown, guide: guideMarkdown, artifact: artifactMarkdown };"
+        "return { orbit: orbitMarkdown, guide: guideMarkdown, artifact: artifactMarkdown };"
     )(state, (key, fallback) => fallback);
 
-    const notebook = run.notebook();
+    const orbit = run.orbit();
     return {
-      notebook,
+      orbit,
       // An FAQ flattens its question/answer pairs; a timeline flattens its events. All three shapes
       // end in `artifactMarkdown`, so all three carry their references out.
       faq: run.guide("faq", {
@@ -1189,7 +1189,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     return {
       touched: touched.map((e) => e.id),
       headerInert: tree.header.inertly,
-      inboxInert: tree.inbox.inertly,
+      horizonInert: tree.horizon.inertly,
       noticesInert: tree.notices.inertly,
       backdropInert: tree.backdrop.inertly,
     };
@@ -1224,7 +1224,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     // flight). The guard must leave it exactly as it found it.
     const foreign = new El("add-note", "button");
     foreign.disabled = true;
-    tree.notebook.append(podcast, regen, starter, ask, turnRegen, foreign);
+    tree.orbit.append(podcast, regen, starter, ask, turnRegen, foreign);
 
     const narrow = [podcast, regen, starter, foreign];
     const wide = [...narrow, ask, turnRegen];
@@ -1234,7 +1234,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     ] = wide;
     const activeRuns = new Map();
     const recovered = new Set();
-    const state = { notebookId: "nb-1" };
+    const state = { orbitId: "nb-1" };
     const run = new Function(
       "document", "activeRuns", "state", "t", "recoveredRuns",
       `${constant("RUN_GUARDED")}\n${constant("RUN_GUARDED_ON_RECOVERY")}\n` +
@@ -1258,7 +1258,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     const released = snap();
     activeRuns.set("nb-2", 1);
     run();
-    return { idle, busy, afterReload, released, otherNotebook: snap() };
+    return { idle, busy, afterReload, released, otherOrbit: snap() };
   },
 
   //: **`reattachInFlightRuns` ITSELF**, because the guard scenario above injects the recovery flag
@@ -1297,8 +1297,8 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       `${constant("tickerSources")}\n${extract("closeTicker")}\n${extract("openTicker")}\n`;
     const make = new Function(
       "document", "recoveredRuns", "activeRuns", "EventSource", "withToken", "TERMINAL_KINDS",
-      "api", "runStatus", "elt", "t", "syncRunGuards", "failureBlock", "openNotebook",
-      "setInterval", "clearInterval", "notebookGeneration", "store",
+      "api", "runStatus", "elt", "t", "syncRunGuards", "failureBlock", "openOrbit",
+      "setInterval", "clearInterval", "orbitGeneration", "store",
       `${prelude}${extract("reattachInFlightRuns")}\n` +
         "return { reattachInFlightRuns, openTicker, closeTicker };"
     );
@@ -1355,7 +1355,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
 
     //: **PRESSING STOP on the recovered row.** It used to tear the row down by hand, which made the
     //: shared teardown's `if (!watching) return;` swallow the only `recoveredRuns.delete` there is
-    //: — so the notebook stayed marked as recovering for the life of the tab and every later in-tab
+    //: — so the orbit stayed marked as recovering for the life of the tab and every later in-tab
     //: run took the composer away.
     if (mode === "stop") {
       if (!onCancel) return { afterMount, error: "runStatus was mounted without an onCancel" };
@@ -1371,7 +1371,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     }
 
     if (mode === "stale") {
-      // A SECOND mount for the same run, exactly what a notebook switch produces...
+      // A SECOND mount for the same run, exactly what an orbit switch produces...
       await run.reattachInFlightRuns("nb-1", 0);
       const live = opened[opened.length - 1];
       // ...and now the FIRST mount's poll fires with the run gone.
@@ -1428,14 +1428,14 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
   runBookkeeping() {
     const tree = build();
     const podcast = new El("podcast-generate", "button");
-    tree.notebook.append(podcast);
+    tree.orbit.append(podcast);
     const guarded = [podcast];
     doc._all["#podcast-generate, #guide-regenerate, .chat-starter button"] = guarded;
     doc._all[
       "#podcast-generate, #guide-regenerate, .chat-starter button, #ask-submit, .turn-regenerate button"
     ] = guarded;
 
-    const state = { notebookId: "nb-1" };
+    const state = { orbitId: "nb-1" };
     const emitted = [];
     const run = new Function(
       "document", "state", "t", "store", "recoveredRuns",
@@ -1449,7 +1449,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     const idle = snap();
     run.noteRunStarted("nb-1");
     const started = snap();
-    // TWO runs on one notebook: the count, not a boolean — one ending must not release the other.
+    // TWO runs on one orbit: the count, not a boolean — one ending must not release the other.
     run.noteRunStarted("nb-1");
     run.noteRunFinished("nb-1");
     const stillOne = snap();
@@ -1466,14 +1466,14 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
   runStatusTakesTheGuard() {
     const tree = build();
     const podcast = new El("podcast-generate", "button");
-    tree.notebook.append(podcast);
+    tree.orbit.append(podcast);
     // The same registration `runGuards` uses: `syncRunGuards` reaches these through
     // `document.querySelectorAll`, which is still a TABLE here (see the header's limits).
     doc._all["#podcast-generate, #guide-regenerate, .chat-starter button"] = [podcast];
     doc._all[
       "#podcast-generate, #guide-regenerate, .chat-starter button, #ask-submit, .turn-regenerate button"
     ] = [podcast];
-    const state = { notebookId: "nb-1" };
+    const state = { orbitId: "nb-1" };
     const stopped = [];
 
     const run = new Function(
@@ -1498,7 +1498,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
 
     const before = { busy: run.busy(), off: podcast.disabled };
     const status = run.runStatus({
-      notebookId: "nb-1",
+      orbitId: "nb-1",
       runIds: ["nb-1-abc"],
       label: "Reading…",
       onCancel: () => {},

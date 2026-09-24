@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from rlm_notebook import cli
-from rlm_notebook.cli import _cmd_ask, _cmd_guide, _print_citations, build_parser
-from rlm_notebook.corpus import Corpus
-from rlm_notebook.schema import (
+from penumbra import cli
+from penumbra.cli import _cmd_ask, _cmd_guide, _print_citations, build_parser
+from penumbra.corpus import Corpus
+from penumbra.schema import (
     FAQ,
     Answer,
     Citation,
@@ -22,12 +22,12 @@ from rlm_notebook.schema import (
 
 def test_ask_source_is_optional_at_the_argparse_level():
     """`--source` is optional in argparse itself now — required or not depends on whether
-    `--notebook` points at one with existing sources, which `_cmd_ask` checks at runtime, not
-    argparse at parse time (see `test_cmd_ask_refuses_with_no_sources_and_no_notebook`)."""
+    `--orbit` points at one with existing sources, which `_cmd_ask` checks at runtime, not
+    argparse at parse time (see `test_cmd_ask_refuses_with_no_sources_and_no_orbit`)."""
     parser = build_parser()
     args = parser.parse_args(["ask", "a question"])
     assert args.source is None
-    assert args.notebook is None
+    assert args.orbit is None
 
 
 def test_ask_parses_repeated_sources():
@@ -37,13 +37,13 @@ def test_ask_parses_repeated_sources():
     assert args.question == "a question"
 
 
-def test_ask_parses_notebook_flag():
+def test_ask_parses_orbit_flag():
     parser = build_parser()
-    args = parser.parse_args(["ask", "a question", "--notebook", "mynb"])
-    assert args.notebook == "mynb"
+    args = parser.parse_args(["ask", "a question", "--orbit", "mynb"])
+    assert args.orbit == "mynb"
 
 
-def test_cmd_ask_refuses_with_no_sources_and_no_notebook(capsys):
+def test_cmd_ask_refuses_with_no_sources_and_no_orbit(capsys):
     """This early-return path runs before any model config/call, so it's safe to exercise offline
     (see the known gap noted in AGENTS.md/CHANGELOG: `_cmd_ask`'s live-model path is untested)."""
     parser = build_parser()
@@ -52,17 +52,17 @@ def test_cmd_ask_refuses_with_no_sources_and_no_notebook(capsys):
     assert "no sources" in capsys.readouterr().err
 
 
-def test_cmd_ask_reports_a_clear_error_on_a_corrupted_notebook_file(tmp_path, monkeypatch, capsys):
+def test_cmd_ask_reports_a_clear_error_on_a_corrupted_orbit_file(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "notebooks").mkdir()
-    (tmp_path / "notebooks" / "mynb.json").write_text('{"id": "mynb", "sources": [}', encoding="utf-8")
+    (tmp_path / "orbits").mkdir()
+    (tmp_path / "orbits" / "mynb.json").write_text('{"id": "mynb", "sources": [}', encoding="utf-8")
 
     parser = build_parser()
-    args = parser.parse_args(["ask", "a question", "--notebook", "mynb"])
+    args = parser.parse_args(["ask", "a question", "--orbit", "mynb"])
 
     assert _cmd_ask(args) == 1
     err = capsys.readouterr().err
-    assert "mynb" in err and "not a valid notebook file" in err
+    assert "mynb" in err and "not a valid orbit file" in err
 
 
 def test_guide_parses_kind_and_source():
@@ -85,7 +85,7 @@ def test_guide_accepts_every_known_kind(kind):
     assert args.kind == kind
 
 
-def test_cmd_guide_refuses_with_no_sources_and_no_notebook(capsys):
+def test_cmd_guide_refuses_with_no_sources_and_no_orbit(capsys):
     """Shares `_prepare` with `_cmd_ask` — this early-return path runs before any model
     config/call, so it's safe to exercise offline."""
     parser = build_parser()
@@ -94,17 +94,17 @@ def test_cmd_guide_refuses_with_no_sources_and_no_notebook(capsys):
     assert "no sources" in capsys.readouterr().err
 
 
-def test_cmd_guide_reports_a_clear_error_on_a_corrupted_notebook_file(tmp_path, monkeypatch, capsys):
+def test_cmd_guide_reports_a_clear_error_on_a_corrupted_orbit_file(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "notebooks").mkdir()
-    (tmp_path / "notebooks" / "mynb.json").write_text('{"id": "mynb", "sources": [}', encoding="utf-8")
+    (tmp_path / "orbits").mkdir()
+    (tmp_path / "orbits" / "mynb.json").write_text('{"id": "mynb", "sources": [}', encoding="utf-8")
 
     parser = build_parser()
-    args = parser.parse_args(["guide", "summary", "--notebook", "mynb"])
+    args = parser.parse_args(["guide", "summary", "--orbit", "mynb"])
 
     assert _cmd_guide(args) == 1
     err = capsys.readouterr().err
-    assert "mynb" in err and "not a valid notebook file" in err
+    assert "mynb" in err and "not a valid orbit file" in err
 
 
 def _corpus_with_page1(source_id: str = "s1") -> Corpus:
@@ -163,8 +163,8 @@ def _fake_task(result):
 
 
 def _live_env(monkeypatch) -> None:
-    monkeypatch.setenv("RN_MAIN_MODEL", "test/model")
-    monkeypatch.delenv("RN_INTERPRETER", raising=False)
+    monkeypatch.setenv("PN_MAIN_MODEL", "test/model")
+    monkeypatch.delenv("PN_INTERPRETER", raising=False)
 
 
 def test_cmd_ask_prints_no_trailing_blank_line_when_there_are_no_citations(monkeypatch, tmp_path, capsys):
@@ -219,7 +219,7 @@ def test_speaker_labels_cover_every_known_speaker_value():
     fails, `_SPEAKER_LABELS` is missing an entry for a `Speaker` value that now exists."""
     from typing import get_args
 
-    from rlm_notebook.schema import Speaker
+    from penumbra.schema import Speaker
 
     assert set(get_args(Speaker)) <= set(cli._SPEAKER_LABELS)
 
@@ -237,7 +237,7 @@ def test_audio_out_defaults_to_podcast_mp3():
     assert args.out == "podcast.mp3"
 
 
-def test_cmd_audio_refuses_with_no_sources_and_no_notebook(capsys):
+def test_cmd_audio_refuses_with_no_sources_and_no_orbit(capsys):
     parser = build_parser()
     args = parser.parse_args(["audio"])
     assert cli._cmd_audio(args) == 1
@@ -288,7 +288,7 @@ class _FakeTTSProvider:
     def synthesize(self, script, voice_map, out_path, language=None):
         self.calls.append((script, voice_map, out_path, language))
         if self._fail:
-            from rlm_notebook.tts import TTSError
+            from penumbra.tts import TTSError
 
             raise TTSError("simulated synthesis failure")
         out_path.write_bytes(b"fake mp3 bytes")
@@ -340,12 +340,12 @@ def test_cmd_audio_rejects_a_bad_tts_provider_before_running_the_expensive_model
     monkeypatch, tmp_path, capsys
 ):
     """Found by an independent review: `get_tts_provider(config.tts_provider)` used to be called
-    AFTER `GeneratePodcastScript().run(...)` — a mistyped RN_TTS_PROVIDER only surfaced as an
+    AFTER `GeneratePodcastScript().run(...)` — a mistyped PN_TTS_PROVIDER only surfaced as an
     uncaught TTSError once the (potentially expensive) model call had already run and the
     transcript had already printed. Now it's resolved first; this asserts the model task is never
     even constructed when the provider name is bad."""
     _live_env(monkeypatch)
-    monkeypatch.setenv("RN_TTS_PROVIDER", "not-a-real-provider")
+    monkeypatch.setenv("PN_TTS_PROVIDER", "not-a-real-provider")
 
     model_was_called = False
 
@@ -374,7 +374,7 @@ def test_cmd_audio_passes_the_resolved_language_to_synthesize_and_validate(
     `None` from both call sites left the suite green, and a Chinese script synthesized with
     `language_id="en"` is exactly what `_language_id`'s raise exists to prevent."""
     _live_env(monkeypatch)
-    monkeypatch.setenv("RN_OUTPUT_LANGUAGE", "Traditional Chinese")
+    monkeypatch.setenv("PN_OUTPUT_LANGUAGE", "Traditional Chinese")
     script = PodcastScript(utterances=[Utterance(speaker="host_a", text="hello", citations=[])])
     monkeypatch.setattr(cli, "GeneratePodcastScript", _fake_task(script))
     provider = _FakeTTSProvider()
@@ -399,7 +399,7 @@ def test_cmd_audio_passes_the_configured_provider_name_to_get_tts_provider(monke
     config field (e.g. `config.ocr_provider` instead of `config.tts_provider`) — a spy on the
     NAME argument closes that gap."""
     _live_env(monkeypatch)
-    monkeypatch.setenv("RN_TTS_PROVIDER", "edge-tts")
+    monkeypatch.setenv("PN_TTS_PROVIDER", "edge-tts")
     script = PodcastScript(utterances=[Utterance(speaker="host_a", text="hello", citations=[])])
     monkeypatch.setattr(cli, "GeneratePodcastScript", _fake_task(script))
 
@@ -422,8 +422,8 @@ def test_cmd_audio_passes_the_configured_provider_name_to_get_tts_provider(monke
 # --- durable writes (slice 14) -------------------------------------------------------------------
 
 
-def _seed_notebook(monkeypatch, tmp_path, text: str = "the first source"):
-    """A persisted notebook with one source, plus an isolated cwd. Returns the source file path so
+def _seed_orbit(monkeypatch, tmp_path, text: str = "the first source"):
+    """A persisted orbit with one source, plus an isolated cwd. Returns the source file path so
     a caller can pass it as `--source` again (a no-op re-add) or add a different one."""
     monkeypatch.chdir(tmp_path)
     src = tmp_path / "a.txt"
@@ -433,31 +433,31 @@ def _seed_notebook(monkeypatch, tmp_path, text: str = "the first source"):
 
 def test_cmd_ask_appends_its_turn_without_destroying_a_concurrent_write(tmp_path, monkeypatch, capsys):
     """The CLI's half of this slice's defect, which the API's own regression test does not cover:
-    `_cmd_ask` used to append its turn to the notebook `_prepare` returned — read BEFORE the model
-    ran — and `save_notebook` the whole thing back, destroying anything written meanwhile. An
+    `_cmd_ask` used to append its turn to the orbit `_prepare` returned — read BEFORE the model
+    ran — and `save_orbit` the whole thing back, destroying anything written meanwhile. An
     independent test-quality review proved the gap by restoring exactly that code and watching the
     entire suite still pass.
 
     The concurrent write happens INSIDE the stubbed model call, i.e. in the same window a real
-    `rlm-notebook ask` leaves open for minutes."""
-    src = _seed_notebook(monkeypatch, tmp_path)
+    `penumbra ask` leaves open for minutes."""
+    src = _seed_orbit(monkeypatch, tmp_path)
 
-    from rlm_notebook.notebook import add_note, load_notebook, mutate_notebook
+    from penumbra.orbit import add_note, load_orbit, mutate_orbit
 
     class _StubTask:
         def run(self, **kwargs):
-            # Something else writes to the same notebook while the model is "running".
-            mutate_notebook("mynb", lambda nb: add_note(nb, "written during the run"), create=True)
+            # Something else writes to the same orbit while the model is "running".
+            mutate_orbit("mynb", lambda nb: add_note(nb, "written during the run"), create=True)
             return Answer(text="an answer", citations=[])
 
     monkeypatch.setattr(cli, "AnswerQuestion", _StubTask)
     monkeypatch.setattr(cli, "setup", lambda config: config)
-    monkeypatch.setattr(cli.NotebookConfig, "from_env", classmethod(lambda cls: cls()))
+    monkeypatch.setattr(cli.PenumbraConfig, "from_env", classmethod(lambda cls: cls()))
 
-    args = build_parser().parse_args(["ask", "what?", "--source", str(src), "--notebook", "mynb"])
+    args = build_parser().parse_args(["ask", "what?", "--source", str(src), "--orbit", "mynb"])
     assert _cmd_ask(args) == 0
 
-    saved = load_notebook("mynb")
+    saved = load_orbit("mynb")
     assert [n.text for n in saved.notes] == ["written during the run"], "the concurrent note was destroyed"
     assert len(saved.turns) == 1, "the ask's own turn was lost"
     assert len(saved.sources) == 1
@@ -467,9 +467,9 @@ def test_prepare_persists_ingestion_before_the_model_runs(tmp_path, monkeypatch,
     """A run that dies mid-model must not discard ingestion the user already paid for in OCR or
     network time — so `_prepare` persists it in its own critical section, not in a single save at
     the end of the command."""
-    src = _seed_notebook(monkeypatch, tmp_path)
+    src = _seed_orbit(monkeypatch, tmp_path)
 
-    from rlm_notebook.notebook import load_notebook
+    from penumbra.orbit import load_orbit
 
     class _ExplodingTask:
         def run(self, **kwargs):
@@ -477,59 +477,59 @@ def test_prepare_persists_ingestion_before_the_model_runs(tmp_path, monkeypatch,
 
     monkeypatch.setattr(cli, "AnswerQuestion", _ExplodingTask)
     monkeypatch.setattr(cli, "setup", lambda config: config)
-    monkeypatch.setattr(cli.NotebookConfig, "from_env", classmethod(lambda cls: cls()))
+    monkeypatch.setattr(cli.PenumbraConfig, "from_env", classmethod(lambda cls: cls()))
 
-    args = build_parser().parse_args(["ask", "what?", "--source", str(src), "--notebook", "mynb"])
+    args = build_parser().parse_args(["ask", "what?", "--source", str(src), "--orbit", "mynb"])
     with pytest.raises(RuntimeError, match="the model run died"):
         _cmd_ask(args)
 
-    saved = load_notebook("mynb")
+    saved = load_orbit("mynb")
     assert saved is not None, "ingestion was discarded when the run failed"
     assert [s.origin for s in saved.sources] == [str(src)]
     assert saved.turns == []
 
 
 def test_prepare_hands_the_model_the_ids_that_were_actually_persisted(tmp_path, monkeypatch):
-    """`append_sources` renumbers against the freshly-loaded notebook, so `_prepare` must return
-    THAT notebook, not its own pre-merge snapshot. Returning the snapshot would have the model cite
+    """`append_sources` renumbers against the freshly-loaded orbit, so `_prepare` must return
+    THAT orbit, not its own pre-merge snapshot. Returning the snapshot would have the model cite
     `s2` for a source persisted as `s3` — every citation in the run silently wrong. Caught by this
     slice's pre-implementation audit; pinned here so it can't regress.
 
     The concurrent write is injected DURING ingestion, which is the only window where the two
     disagree — a mutation-test of a first version of this test (which wrote concurrently before
-    `_prepare` ran) survived: snapshot and fresh notebook were identical, so nothing could tell
+    `_prepare` ran) survived: snapshot and fresh orbit were identical, so nothing could tell
     them apart, and the test passed against the very defect it was named for."""
     monkeypatch.chdir(tmp_path)
     new_src = tmp_path / "b.txt"
     new_src.write_text("brand new content", encoding="utf-8")
 
-    from rlm_notebook.notebook import append_sources, load_notebook, mutate_notebook
+    from penumbra.orbit import append_sources, load_orbit, mutate_orbit
 
     real_ingest = cli.ingest_sources_for
 
-    def _ingest_then_someone_else_writes(notebook, values):
-        ingested = real_ingest(notebook, values)
+    def _ingest_then_someone_else_writes(orbit, values):
+        ingested = real_ingest(orbit, values)
         # Another writer lands while this invocation is still parsing/fetching its own sources.
         other = Source(
             id="s1", kind="text", origin="added-by-someone-else",
             blocks=[SourceBlock(locator="whole", text="theirs")],
         )
-        mutate_notebook("mynb", lambda nb: append_sources(nb, [other]), create=True)
+        mutate_orbit("mynb", lambda nb: append_sources(nb, [other]), create=True)
         return ingested
 
     monkeypatch.setattr(cli, "ingest_sources_for", _ingest_then_someone_else_writes)
 
-    args = build_parser().parse_args(["ask", "q", "--source", str(new_src), "--notebook", "mynb"])
+    args = build_parser().parse_args(["ask", "q", "--source", str(new_src), "--orbit", "mynb"])
     prepared = cli._prepare(args)
     assert prepared is not None
-    notebook, corpus = prepared
+    orbit, corpus = prepared
 
-    persisted = load_notebook("mynb")
+    persisted = load_orbit("mynb")
     assert [s.origin for s in persisted.sources] == ["added-by-someone-else", str(new_src)]
     assert [s.id for s in persisted.sources] == ["s1", "s2"]
     # What the model is handed must match what is on disk, id for id — otherwise it cites an id
     # that points at different text, or at nothing.
-    assert [(s.id, s.origin) for s in notebook.sources] == [
+    assert [(s.id, s.origin) for s in orbit.sources] == [
         (s.id, s.origin) for s in persisted.sources
     ]
     assert "[[SRC:s2|" in corpus.blob()
@@ -537,25 +537,25 @@ def test_prepare_hands_the_model_the_ids_that_were_actually_persisted(tmp_path, 
 
 def test_cmd_guide_does_not_write_a_second_time(tmp_path, monkeypatch, capsys):
     """`_prepare` already persisted any newly ingested sources, so `guide` has nothing left to
-    write. A trailing `save_notebook` here would be a second write path holding a pre-run
+    write. A trailing `save_orbit` here would be a second write path holding a pre-run
     snapshot — exactly the shape this slice removed."""
-    src = _seed_notebook(monkeypatch, tmp_path)
+    src = _seed_orbit(monkeypatch, tmp_path)
 
-    from rlm_notebook.notebook import add_note, load_notebook, mutate_notebook
+    from penumbra.orbit import add_note, load_orbit, mutate_orbit
 
     class _StubGuide:
         def run(self, **kwargs):
-            mutate_notebook("mynb", lambda nb: add_note(nb, "written during the guide run"), create=True)
+            mutate_orbit("mynb", lambda nb: add_note(nb, "written during the guide run"), create=True)
             return Summary(text="a summary", citations=[])
 
     monkeypatch.setitem(cli._GUIDE_TASKS, "summary", _StubGuide)
     monkeypatch.setattr(cli, "setup", lambda config: config)
-    monkeypatch.setattr(cli.NotebookConfig, "from_env", classmethod(lambda cls: cls()))
+    monkeypatch.setattr(cli.PenumbraConfig, "from_env", classmethod(lambda cls: cls()))
 
-    args = build_parser().parse_args(["guide", "summary", "--source", str(src), "--notebook", "mynb"])
+    args = build_parser().parse_args(["guide", "summary", "--source", str(src), "--orbit", "mynb"])
     assert _cmd_guide(args) == 0
 
-    saved = load_notebook("mynb")
+    saved = load_orbit("mynb")
     assert [n.text for n in saved.notes] == ["written during the guide run"]
 
 
@@ -580,12 +580,12 @@ def test_the_audio_command_offers_the_same_three_lengths_as_the_web_ui():
 
 def test_the_audio_command_passes_the_chosen_length_to_the_task(monkeypatch, tmp_path):
     """The CLI half of invariant 63. An independent review hardcoded `target_length="default"` at
-    the call site and the WHOLE suite stayed green: the flag became inert — the `RN_OCR_PROVIDER`
+    the call site and the WHOLE suite stayed green: the flag became inert — the `PN_OCR_PROVIDER`
     shape (invariant 7) on the entry point no test covered. The API half was pinned; this was not.
     """
 
-    from rlm_notebook import cli
-    from rlm_notebook.schema import PodcastScript, Source, SourceBlock
+    from penumbra import cli
+    from penumbra.schema import PodcastScript, Source, SourceBlock
 
     source = Source(
         id="s1", kind="text", origin="o",
@@ -600,14 +600,14 @@ def test_the_audio_command_passes_the_chosen_length_to_the_task(monkeypatch, tmp
 
     monkeypatch.setattr(cli, "_prepare", lambda args: (None, Corpus([source])))
     monkeypatch.setattr(cli, "GeneratePodcastScript", lambda *a, **kw: _FakeTask())
-    monkeypatch.setenv("RN_MAIN_MODEL", "test/model")
-    monkeypatch.setenv("RN_OUTPUT_LANGUAGE", "English")
-    monkeypatch.delenv("RN_INTERPRETER", raising=False)
+    monkeypatch.setenv("PN_MAIN_MODEL", "test/model")
+    monkeypatch.setenv("PN_OUTPUT_LANGUAGE", "English")
+    monkeypatch.delenv("PN_INTERPRETER", raising=False)
 
     for tier in ("short", "long"):
         seen.clear()
         # Parsed by the REAL parser rather than hand-built, so a flag added to the shared
-        # `_add_source_and_notebook_args` cannot make this test fail for a reason unrelated to
+        # `_add_source_and_orbit_args` cannot make this test fail for a reason unrelated to
         # what it checks — and so the namespace it drives is the one the product builds.
         args = cli.build_parser().parse_args(["audio", "--length", tier, "--out", str(tmp_path / "a.mp3")])
         cli._cmd_audio(args)
@@ -619,8 +619,8 @@ def test_the_audio_command_passes_the_chosen_length_to_the_task(monkeypatch, tmp
 def _audio_cli(monkeypatch, seen, *, script=None):
     """The `audio` command with its model call faked, so a test can drive the real argument parsing
     and the real `_cmd_audio` body without a model, a network call or a sandbox."""
-    from rlm_notebook import cli
-    from rlm_notebook.schema import PodcastScript, Source, SourceBlock
+    from penumbra import cli
+    from penumbra.schema import PodcastScript, Source, SourceBlock
 
     source = Source(
         id="s1", kind="text", origin="o", blocks=[SourceBlock(locator="whole", text="content")]
@@ -640,16 +640,16 @@ def _audio_cli(monkeypatch, seen, *, script=None):
 
     monkeypatch.setattr(cli, "_prepare", lambda args: (None, Corpus([source])))
     monkeypatch.setattr(cli, "GeneratePodcastScript", lambda *a, **kw: _FakeTask())
-    monkeypatch.setenv("RN_MAIN_MODEL", "test/model")
-    monkeypatch.setenv("RN_OUTPUT_LANGUAGE", "English")
-    monkeypatch.delenv("RN_INTERPRETER", raising=False)
+    monkeypatch.setenv("PN_MAIN_MODEL", "test/model")
+    monkeypatch.setenv("PN_OUTPUT_LANGUAGE", "English")
+    monkeypatch.delenv("PN_INTERPRETER", raising=False)
     return cli
 
 
 def test_every_run_taking_subcommand_offers_trace():
     """On the SHARED argument helper, not per command. A rule with one silent exception is the kind
     that gets rediscovered as a bug report (invariant 46 records the same lesson for `/title`)."""
-    from rlm_notebook import cli
+    from penumbra import cli
 
     parser = cli.build_parser()
     for command in ("ask", "guide", "audio"):
@@ -742,7 +742,7 @@ def test_a_model_failure_is_not_reported_as_a_bad_trace_path(monkeypatch, tmp_pa
     """
     import types
 
-    from rlm_notebook import cli
+    from penumbra import cli
 
     out = tmp_path / "t.jsonl"
     args = types.SimpleNamespace(trace=str(out))
@@ -804,27 +804,27 @@ def test_serve_reports_a_missing_api_extra_instead_of_an_import_traceback(monkey
     rc = cli.main(["serve"])
     assert rc == 2
     err = capsys.readouterr().err
-    assert "api" in err and "rlm-notebook[api]" in err
+    assert "api" in err and "penumbra[api]" in err
 
 
 def test_serve_starts_and_serves_with_no_model_configured(monkeypatch, tmp_path):
     """A server with no model configured must still start, and its settings page must answer.
 
-    `NotebookConfig.from_env` raises `SystemExit` whenever `RN_MAIN_MODEL` is unset, which is right
+    `PenumbraConfig.from_env` raises `SystemExit` whenever `PN_MAIN_MODEL` is unset, which is right
     for `ask`/`guide`/`audio` and wrong here: the settings page invariant 41 built for exactly that
     operator is served BY this process, so refusing to start would make it unreachable.
 
     This asserts the BEHAVIOUR. It replaces a test that scanned `_cmd_serve`'s source for the
-    strings `from_env` and `NotebookConfig`, which a mutation walked straight past: move the call
+    strings `from_env` and `PenumbraConfig`, which a mutation walked straight past: move the call
     into a module-level helper and the forbidden words leave the scanned body while the defect
     stays. A source scan cannot see through one function call; a request can.
     """
     fastapi_testclient = pytest.importorskip("fastapi.testclient")
-    monkeypatch.delenv("RN_MAIN_MODEL", raising=False)
-    monkeypatch.delenv("RN_API_KEY", raising=False)
+    monkeypatch.delenv("PN_MAIN_MODEL", raising=False)
+    monkeypatch.delenv("PN_API_KEY", raising=False)
     monkeypatch.chdir(tmp_path)
 
-    from rlm_notebook import api, auth
+    from penumbra import api, auth
 
     # Loopback base URL and the token, for the reason `test_api.py::_authed_client` records:
     # `TestClient` defaults to the DNS name `testserver`, which invariant 77's Host check refuses.
@@ -834,7 +834,7 @@ def test_serve_starts_and_serves_with_no_model_configured(monkeypatch, tmp_path)
         headers={"Authorization": f"Bearer {auth.api_token()}"},
     ) as client:
         assert client.get("/settings").status_code == 200
-        assert client.get("/notebooks").status_code == 200
+        assert client.get("/orbits").status_code == 200
         # The static page stays reachable WITHOUT the token (invariant 77) — it is the page that
         # reads the token, so gating it would make the server unusable.
         assert client.get("/").status_code == 200
@@ -866,7 +866,7 @@ def test_serve_binds_loopback_by_default(monkeypatch, capsys):
     assert rc == 0
     assert calls["host"] == "127.0.0.1", "the default bind must stay loopback"
     assert calls["port"] == 8000
-    assert calls["app"] == "rlm_notebook.api:app"
+    assert calls["app"] == "penumbra.api:app"
     assert "WARNING" not in capsys.readouterr().err, "a loopback bind must not warn"
 
 
@@ -874,7 +874,7 @@ def test_serve_binds_loopback_by_default(monkeypatch, capsys):
 def test_serve_warns_on_stderr_when_it_binds_beyond_this_machine(monkeypatch, capsys, host):
     """A non-loopback bind is ALLOWED and is not allowed to be QUIET.
 
-    On stderr specifically: the warning has to survive `rlm-notebook serve > log`, and it has to
+    On stderr specifically: the warning has to survive `penumbra serve > log`, and it has to
     reach `docker logs` from a container whose stdout is block-buffered.
 
     This used to assert the words "NO AUTHENTICATION", which invariant 77 made FALSE — there is a
@@ -895,8 +895,8 @@ def test_serve_warns_on_stderr_when_it_binds_beyond_this_machine(monkeypatch, ca
     assert "WARNING" not in captured.out, "the warning must not go to stdout"
 
 
-def test_serve_says_where_the_notebooks_will_be_written(monkeypatch, capsys, tmp_path):
-    """`notebooks/`, `traces/` and `audio/` are relative to the working directory (invariant 34),
+def test_serve_says_where_the_orbits_will_be_written(monkeypatch, capsys, tmp_path):
+    """`orbits/`, `traces/` and `audio/` are relative to the working directory (invariant 34),
     so where you start this decides where your data lives. On stderr, because stdout is
     block-buffered off a TTY and this line never reached `docker logs` at all."""
     monkeypatch.chdir(tmp_path)
@@ -938,7 +938,7 @@ def test_serve_bounds_its_graceful_shutdown_and_handles_a_hangup(monkeypatch):
 
     import uvicorn
 
-    from rlm_notebook import cli
+    from penumbra import cli
 
     passed: dict = {}
     installed: dict = {}
@@ -946,8 +946,8 @@ def test_serve_bounds_its_graceful_shutdown_and_handles_a_hangup(monkeypatch):
     monkeypatch.setattr(cli.signal, "signal", lambda sig, fn: installed.__setitem__(sig, fn))
     # `_cmd_serve` writes the minted token into the environment; registering it here makes
     # monkeypatch put the environment back afterwards.
-    monkeypatch.setenv("RN_API_TOKEN", "")
-    monkeypatch.delenv("RN_API_TOKEN")
+    monkeypatch.setenv("PN_API_TOKEN", "")
+    monkeypatch.delenv("PN_API_TOKEN")
 
     cli._cmd_serve(build_parser().parse_args(["serve"]))
 
@@ -977,7 +977,7 @@ def test_serve_shuts_down_when_the_parent_closes_its_stdin(monkeypatch):
     import threading
 
     raised = threading.Event()
-    monkeypatch.setenv("RN_EXIT_WITH_PARENT", "1")
+    monkeypatch.setenv("PN_EXIT_WITH_PARENT", "1")
     monkeypatch.setattr(cli.sys, "stdin", io.TextIOWrapper(io.BytesIO(b"")))
     monkeypatch.setattr(cli.signal, "raise_signal", lambda sig: raised.set())
     cli._exit_with_parent_if_asked()
@@ -989,7 +989,7 @@ def test_serve_ignores_stdin_unless_the_parent_asked(monkeypatch):
     manager): the watchdog is opt-in, and only the desktop shell opts in."""
     import threading
 
-    monkeypatch.delenv("RN_EXIT_WITH_PARENT", raising=False)
+    monkeypatch.delenv("PN_EXIT_WITH_PARENT", raising=False)
     before = {t.name for t in threading.enumerate()}
     cli._exit_with_parent_if_asked()
     assert "exit-with-parent" not in {t.name for t in threading.enumerate()} - before
@@ -1002,7 +1002,7 @@ def test_the_access_log_never_carries_the_api_token():
 
     record = logging.LogRecord(
         "uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d', (
-            "127.0.0.1:5000", "GET", "/notebooks/nb/runs/r1/stream?token=abc123&x=1", "1.1", 200,
+            "127.0.0.1:5000", "GET", "/orbits/nb/runs/r1/stream?token=abc123&x=1", "1.1", 200,
         ), None,
     )
     assert cli.RedactToken().filter(record) is True

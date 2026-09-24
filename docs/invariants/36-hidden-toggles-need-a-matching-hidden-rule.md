@@ -1,6 +1,6 @@
 # Invariant 36: Hidden toggles need a matching hidden rule
 
-**An element in `rlm_notebook/web/` that is toggled with `hidden` never gets an author `display` rule without a matching `[hidden]` rule, and `tests/test_web_assets.py` fails the build if one does.**
+**An element in `penumbra/web/` that is toggled with `hidden` never gets an author `display` rule without a matching `[hidden]` rule, and `tests/test_web_assets.py` fails the build if one does.**
 
 `hidden` works through the browser stylesheet's `[hidden] { display: none }`, and any author `display` declaration outranks it regardless of specificity. This shipped broken twice: `.modal-overlay { display: flex }` left an overlay permanently visible whose `inset: 0` swallowed every click on the page, and `.ticker-detail` left the reasoning log permanently expanded. In both cases the JavaScript was correct, so only the stylesheet could show the fault.
 

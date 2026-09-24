@@ -1,7 +1,7 @@
 [project]
-name = "rlm-notebook"
+name = "penumbra"
 version = "0.1.0"
-description = "An RLM-driven notebook: paste in sources of any kind, ask grounded questions with verifiable citations, and get a distilled research artifact."
+description = "A personal knowledge hub: capture sources of any kind, ask grounded questions with verifiable citations, and take a distilled research artifact away."
 readme = "README.md"
 # NO UPPER BOUND, and it is now honest rather than aspirational. It was: `rapidocr-onnxruntime`
 # declared `Requires-Python <3.13`, so `pip install` could not resolve this project on 3.13 at all
@@ -16,7 +16,7 @@ authors = [{ name = "Boik Su" }]
 keywords = [
     "rlm",
     "rlm-harness",
-    "notebook",
+    "knowledge-hub",
     "rag",
     "research",
     "agent",
@@ -91,7 +91,7 @@ dependencies = [
     "onnxruntime>=1.17",
     "pytesseract>=0.3.10",
     # Default TTS backend for the Audio Overview (audio.py/tts.py) — free, no API key needed, so
-    # `rlm-notebook audio` works out of the box. Same "ship a working default, not just a pluggable
+    # `penumbra audio` works out of the box. Same "ship a working default, not just a pluggable
     # interface" reasoning as the OCR backends above.
     "edge-tts>=7.2.8",
     # YouTube caption ingestion (parsers/youtube.py) — captions only, never video/audio download.
@@ -101,14 +101,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The HTTP API (api.py) is an ADDITIONAL surface, not the core CLI use case every `rlm-notebook
+# The HTTP API (api.py) is an ADDITIONAL surface, not the core CLI use case every `penumbra
 # ask` user needs — unlike OCR/TTS (invariants 7/15: those ship in `dependencies` because they're
 # needed for the CORE product to work at all), running a web server is opt-in. Mirrors
 # ctx-distillery's own precedent (its `cli` extra) for a usage-mode-specific dependency.
 api = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
-    # Starlette's multipart form parsing (POST /notebooks/{id}/sources/upload, invariant 30) needs
+    # Starlette's multipart form parsing (POST /orbits/{id}/sources/upload, invariant 30) needs
     # this at runtime but neither fastapi nor starlette declare it as a hard dependency — it was a
     # transitive dependency of something else in this graph, silently, until adding yt-dlp shifted
     # dependency resolution enough that it stopped being pulled in and the upload tests broke with
@@ -117,12 +117,12 @@ api = [
 ]
 
 # Run the planner and/or sub-LM on a Claude Pro/Max SUBSCRIPTION instead of an API key
-# (`RN_MAIN_MODEL`/`RN_SUB_MODEL` = `claude-agent-sdk/<id>`), via rlm-harness's `ClaudeAgentLM`,
+# (`PN_MAIN_MODEL`/`PN_SUB_MODEL` = `claude-agent-sdk/<id>`), via rlm-harness's `ClaudeAgentLM`,
 # injected by `config.setup` (AGENTS.md invariant 35). Installs the SDK that adapter needs; it ALSO
 # needs the Claude Code CLI installed and logged in — a runtime prerequisite pip cannot express.
 subscription = ["claude-agent-sdk>=0.1.60"]
 
-# A fully LOCAL TTS provider (`RN_TTS_PROVIDER=chatterbox`): no network, no API key, and none of
+# A fully LOCAL TTS provider (`PN_TTS_PROVIDER=chatterbox`): no network, no API key, and none of
 # the undocumented-endpoint grey area `edge-tts` operates in. Deliberately an EXTRA, not a core
 # dependency: it pulls ~109 packages including torch and transformers (measured, ~1GB installed),
 # and model weights download on first use — invariant 15's "works out of the box" rests on the
@@ -138,7 +138,7 @@ subscription = ["claude-agent-sdk>=0.1.60"]
 #     ImportError and sets its watermarker to None, so the failure surfaces as an uninformative
 #     `TypeError: 'NoneType' object is not callable` several seconds into model loading.
 #     Disclosed cost: this pin constrains the whole environment of anyone installing
-#     `rlm-notebook[chatterbox]`, not just this package. It is upstream's to remove, not ours.
+#     `penumbra[chatterbox]`, not just this package. It is upstream's to remove, not ours.
 # Every entry carries `python_full_version >= '3.13'`, and that marker is load-bearing rather than
 # tidy. `chatterbox-tts` pins `numpy<2.0.0` below 3.13 and allows numpy 2 at and above it — and
 # uv's lock is UNIVERSAL, so an unmarked chatterbox dragged numpy back to 1.26.4 for every 3.11 and
@@ -177,7 +177,7 @@ subscription-sdk = ["claude-agent-sdk>=0.1.60"]
 default-groups = ["dev", "subscription-sdk"]
 
 [project.scripts]
-rlm-notebook = "rlm_notebook.cli:main"
+penumbra = "penumbra.cli:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -188,14 +188,14 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["rlm_notebook"]
-# The web UI's static assets (rlm_notebook/web/*.html/*.css/*.js) live INSIDE this package
+packages = ["penumbra"]
+# The web UI's static assets (penumbra/web/*.html/*.css/*.js) live INSIDE this package
 # deliberately, not in a top-level web/ directory — a top-level directory has no packaging entry
 # here and would work from a git checkout but silently vanish from an installed wheel (found during
 # the web UI's pre-implementation design audit). hatchling's default VCS-based file selection
 # already includes every git-tracked file under a declared package's directory, non-.py files
 # included, so no separate `artifacts`/`force-include` entry is needed on top of the line above —
-# verified by building a wheel and confirming `rlm_notebook/web/index.html` is actually inside it.
+# verified by building a wheel and confirming `penumbra/web/index.html` is actually inside it.
 
 [tool.ruff]
 line-length = 110
