@@ -44,8 +44,6 @@ __pycache__/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 
-# Built by playground/build.py — regenerate rather than edit.
-/playground/dist/
 
 # Coverage data — a local run artifact, never source.
 .coverage
