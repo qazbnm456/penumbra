@@ -13,8 +13,30 @@ import asyncio
 import json
 import os
 import signal
+import subprocess
 import sys
 from pathlib import Path
+
+
+def kill_tree(pid: int) -> None:
+    """Kill a worker and everything it spawned, on every platform the desktop app ships to.
+
+    POSIX: `killpg` on the group the worker leads (`start_new_session=True` below), which takes a
+    stuck Deno grandchild with it (invariant 22). Windows has no process groups in that sense and
+    no `os.killpg` or `SIGKILL` at all, so every call site used to raise `AttributeError` there;
+    `taskkill /T /F` walks the child tree instead. A process that is already gone is success.
+    """
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(pid)],
+            capture_output=True,
+            check=False,  # "not found" means it already exited, which is the outcome we wanted
+        )
+        return
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
 
 
 class RunError(RuntimeError):
@@ -33,10 +55,7 @@ class Run:
         `start_run` made the worker its own group leader), not just the worker's own PID — a
         Deno grandchild the worker spawned shares that group and dies with it. A `ProcessLookupError`
         means the run already finished on its own; that's success, not a failure to report."""
-        try:
-            os.killpg(self.process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        kill_tree(self.process.pid)
 
 
 async def start_run(

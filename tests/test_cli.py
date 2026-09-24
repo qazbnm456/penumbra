@@ -967,3 +967,47 @@ def test_serve_bounds_its_graceful_shutdown_and_handles_a_hangup(monkeypatch):
     monkeypatch.setattr(cli.signal, "raise_signal", raised.append)
     hangup(signal.SIGHUP, None)
     assert raised == [signal.SIGTERM], f"a hangup was handed on as {raised}, not SIGTERM"
+
+
+def test_serve_shuts_down_when_the_parent_closes_its_stdin(monkeypatch):
+    """The desktop shell holds `serve`'s stdin open; a shell that is killed runs no teardown, and
+    the server it started used to keep running with nobody to stop it. EOF on stdin is the signal
+    that survives any way the parent can die, and it takes the SIGTERM path Ctrl-C takes."""
+    import io
+    import threading
+
+    raised = threading.Event()
+    monkeypatch.setenv("RN_EXIT_WITH_PARENT", "1")
+    monkeypatch.setattr(cli.sys, "stdin", io.TextIOWrapper(io.BytesIO(b"")))
+    monkeypatch.setattr(cli.signal, "raise_signal", lambda sig: raised.set())
+    cli._exit_with_parent_if_asked()
+    assert raised.wait(5), "EOF on stdin did not start a shutdown"
+
+
+def test_serve_ignores_stdin_unless_the_parent_asked(monkeypatch):
+    """A terminal user's `serve` must not quit because stdin is closed (`< /dev/null`, a service
+    manager): the watchdog is opt-in, and only the desktop shell opts in."""
+    import threading
+
+    monkeypatch.delenv("RN_EXIT_WITH_PARENT", raising=False)
+    before = {t.name for t in threading.enumerate()}
+    cli._exit_with_parent_if_asked()
+    assert "exit-with-parent" not in {t.name for t in threading.enumerate()} - before
+
+
+def test_the_access_log_never_carries_the_api_token():
+    """`EventSource` and `<audio src>` cannot send a header, so those URLs carry `?token=`, and
+    uvicorn logged them in full into the file the desktop app offers to show."""
+    import logging
+
+    record = logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d', (
+            "127.0.0.1:5000", "GET", "/notebooks/nb/runs/r1/stream?token=abc123&x=1", "1.1", 200,
+        ), None,
+    )
+    assert cli.RedactToken().filter(record) is True
+    line = record.getMessage()
+    assert "abc123" not in line and "token=[redacted]&x=1" in line, line
+
+    config = cli._log_config()
+    assert "redact_token" in config["handlers"]["access"]["filters"]

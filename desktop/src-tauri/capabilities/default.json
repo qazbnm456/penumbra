@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The splash page is local and needs no command. The web UI is served over http://127.0.0.1 and is deliberately given no IPC at all: it talks to its own server, never to the shell.",
+  "windows": [],
+  "permissions": []
+}

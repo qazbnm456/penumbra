@@ -150,6 +150,8 @@ const STRINGS = {
     "kind.pdf": "PDF",
     "kind.text": "文字",
     "kind.youtube": "YouTube",
+    "err.desktopWhere": "在桌面版裡，這些設定在「檔案 > 開啟設定檔…」，改完後用「檔案 > 重新啟動伺服器」套用。",
+    "err.desktopRestart": "可以用「檔案 > 重新啟動伺服器」重新啟動它。",
     "chat.needSource": "請先加入來源，每個回答都以你的來源為依據。",
     "panels.label": "筆記本面板",
     "chat.export": "匯出",
@@ -365,6 +367,7 @@ const STRINGS = {
     // The actionable half of a server failure, without the status code, the exception class,
     // the OpenSSL source line or the shell incantation.
     "err.noModel": "還沒有設定模型。請設定 RN_MAIN_MODEL 並重新啟動伺服器。",
+    "err.fakeIp": "這個連結被解析成保留位址，通常是假 IP 模式的代理或 VPN（Clash、Surge）在回應 DNS。把 RN_FETCH_ALLOW_CIDRS 設成它使用的範圍（常見的是 198.18.0.0/15），再重新啟動伺服器。",
     "err.refusedTarget": "這個位址不在可以抓取的範圍內。",
     "err.unreachable": "連不上這個位址。",
     "err.runTimedOut": "這次執行超過時間上限而被中止。較長的 Podcast 需要更多時間：把 RN_RUN_TIMEOUT_SECONDS 調高後再試一次。",

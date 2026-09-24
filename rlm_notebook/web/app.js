@@ -174,8 +174,33 @@ function captureApiToken() {
   // them the application.
   try {
     const url = new URL(window.location.href);
+    // The desktop shell passes both in the FRAGMENT (`#token=…&shell=desktop`), which the browser
+    // never sends, so the token stays out of the server's access log. Folded into the query view
+    // here and the fragment cleared, so everything below reads one place.
+    let rewritten = false;
+    if (/^#(token|shell)=/.test(url.hash)) {
+      new URLSearchParams(url.hash.slice(1)).forEach((value, key) => url.searchParams.set(key, value));
+      url.hash = "";
+      rewritten = true;
+    }
+    // The desktop shell opens the page with `shell=desktop`. Remembered for the session, so a
+    // Reload (which no longer has the parameter) still knows, and stripped with the token.
+    if (url.searchParams.get("shell") === "desktop") {
+      try {
+        sessionStorage.setItem("rlmnb-shell", "desktop");
+      } catch {
+        // blocked storage: only the wording of a few error messages depends on this
+      }
+      url.searchParams.delete("shell");
+      rewritten = true;
+    }
     const fromUrl = url.searchParams.get("token");
-    if (!fromUrl) return;
+    if (!fromUrl) {
+      // Only when something was actually removed: a bare `replaceState` would also wipe the
+      // history entry's state, which the notebook router reads on Back.
+      if (rewritten) window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+      return;
+    }
     apiTokenMemo = fromUrl;
     try {
       localStorage.setItem(API_TOKEN_KEY, fromUrl);
@@ -2083,6 +2108,7 @@ const CANCELLED_STATUS = /\b499\b/;
 const SIZE_REFUSED = /\b413\b.*exceeding the (\d+)-byte limit/;
 const NO_MODEL = /RN_MAIN_MODEL is not set|No LM is loaded/;
 const REFUSED_TARGET = /is not a permitted external|resolves to a disallowed address/;
+const FAKE_IP_HINT = /fake-IP proxy|RN_FETCH_ALLOW_CIDRS/;
 //: Everything a fetch can fail with that the reader cannot act on: DNS, TLS, resets, timeouts. The
 //: message behind these is `<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in
 //: violation of protocol (_ssl.c:1028)>` — four lines of Python and OpenSSL internals, in the
@@ -2201,6 +2227,29 @@ const TRAILING_BLOB = /([^\s{])\s*[-—:]?\s*\{[\s\S]*\}\s*$/;
 //: a run UUID, a signal number, a shell command. Each branch below replaces one of those with the
 //: thing it means; anything unrecognised keeps its sentence and loses only the class-name prefix
 //: and a leading status code.
+function isDesktopShell() {
+  try {
+    return sessionStorage.getItem("rlmnb-shell") === "desktop";
+  } catch {
+    return false;
+  }
+}
+
+// **An error that names an environment variable has to say where that variable lives.** In a
+// terminal it is the shell's environment; in the desktop app there is no shell to set it in, and
+// the settings live in a file the File menu opens. `restart` is for an error whose fix is only to
+// start the server again, which the desktop app does from the same menu.
+function withShellHint(text, kind = "config") {
+  if (!isDesktopShell()) return text;
+  const hint = kind === "restart"
+    ? t("err.desktopRestart", "File > Restart Server starts it again.")
+    : t(
+      "err.desktopWhere",
+      "In the desktop app, these settings are in File > Open Configuration File…, and File > Restart Server applies them."
+    );
+  return `${text} ${hint}`;
+}
+
 function readableError(text) {
   //: UNWRAP FIRST, then recognise. A `litellm` failure reaches the podcast and the overview as a
   //: Python exception repr with the message inside quotes and a literal two-character `\n` in it,
@@ -2211,10 +2260,10 @@ function readableError(text) {
   if (repr) raw = repr[2];
   raw = raw.replace(/\\n/g, " ").replace(/\s+/g, " ").trim();
   if (NO_SERVER.test(raw.trim())) {
-    return t(
+    return withShellHint(t(
       "err.noServer",
       "Lost contact with the rlm-notebook server. Check that it is still running, then try again."
-    );
+    ), "restart");
   }
   if (CANCELLED_RUN.test(raw)) return t("run.wasStopped", "You stopped this one.");
   if (CANCELLED_STATUS.test(raw) && !FROM_FETCH.test(raw)) {
@@ -2224,16 +2273,26 @@ function readableError(text) {
     // The env-var name stays — it is the actionable half, and this is a tool its reader installed.
     // The `set -a; . ./.env; set +a` incantation does not: a shell command in a chat bubble is the
     // product speaking in the terminal's voice.
-    return t("err.noModel", "No model is configured. Set RN_MAIN_MODEL and restart the server.");
+    return withShellHint(t("err.noModel", "No model is configured. Set RN_MAIN_MODEL and restart the server."));
+  }
+  //: **A refusal that names its own fix must keep it.** Behind a fake-IP proxy (Clash, Surge,
+  //: Mihomo) every public hostname resolves into a reserved range, so the guard refuses EVERY link,
+  //: and the server's message says which setting fixes that (invariant 76). Collapsing it into the
+  //: generic sentence below left a reader who could not add a single URL with no idea why.
+  if (REFUSED_TARGET.test(raw) && FAKE_IP_HINT.test(raw)) {
+    return withShellHint(t(
+      "err.fakeIp",
+      "This link resolved to a reserved address, which usually means a fake-IP proxy or VPN (Clash, Surge) is answering DNS. Set RN_FETCH_ALLOW_CIDRS to the range it uses, often 198.18.0.0/15, and restart the server."
+    ));
   }
   if (REFUSED_TARGET.test(raw)) {
     return t("err.refusedTarget", "That address is not one this can fetch.");
   }
   if (RUN_TIMED_OUT.test(raw)) {
-    return t(
+    return withShellHint(t(
       "err.runTimedOut",
       "This run hit the time limit and was stopped. A long Audio Overview can need more time: raise RN_RUN_TIMEOUT_SECONDS and try again."
-    );
+    ));
   }
   if (HTML_BODY.test(raw)) {
     return t(
@@ -2294,23 +2353,23 @@ function readableError(text) {
   const model = (raw.match(MODEL_TAG) || [])[1] || "";
   const fromProvider = fromProviderNotAUrl(raw);
   if (fromProvider && REPLY_TOO_LONG.test(raw)) {
-    return t("err.replyTooLong", "This model will not produce a reply as long as this build asks for. Lower RN_MAX_TOKENS and restart the server.");
+    return withShellHint(t("err.replyTooLong", "This model will not produce a reply as long as this build asks for. Lower RN_MAX_TOKENS and restart the server."));
   }
   if (fromProvider && CONTEXT_TOO_LONG.test(raw)) {
     return t("err.contextTooLong", "The sources are longer than this model can read at once. Remove one, or use a model with a larger context.");
   }
   if (fromProvider && BAD_KEY.test(raw)) {
-    return model
+    return withShellHint(model
       ? t("err.badKey", `The model provider rejected the API key for ${model}. Check RN_API_KEY and restart the server.`, { model })
-      : t("err.badKeyPlain", "The model provider rejected the API key. Check RN_API_KEY and restart the server.");
+      : t("err.badKeyPlain", "The model provider rejected the API key. Check RN_API_KEY and restart the server."));
   }
   if (fromProvider && OVER_QUOTA.test(raw)) {
     return t("err.overQuota", "The model provider refused: rate limit or quota. Wait and try again, or check your plan.");
   }
   if (fromProvider && NO_SUCH_MODEL.test(raw)) {
-    return model
+    return withShellHint(model
       ? t("err.noSuchModel", `Your provider has no model called ${model}. Check RN_MAIN_MODEL and restart the server.`, { model })
-      : t("err.noSuchModelPlain", "Your provider does not have that model. Check RN_MAIN_MODEL and restart the server.");
+      : t("err.noSuchModelPlain", "Your provider does not have that model. Check RN_MAIN_MODEL and restart the server."));
   }
   if (BAD_FILE_TYPE.test(raw)) {
     return t("err.badFileType", "That file type is not supported. PDF, TXT and Markdown work.");

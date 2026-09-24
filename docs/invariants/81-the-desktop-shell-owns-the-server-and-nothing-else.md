@@ -1,0 +1,17 @@
+# Invariant 81: The desktop shell owns the server and nothing else
+
+**The desktop shell (`desktop/src-tauri/src/lib.rs`) gives the web UI no IPC at all, and the server it starts can never outlive it: the shell holds the server's stdin as a pipe and `serve` shuts down when that pipe closes (`RN_EXIT_WITH_PARENT`).**
+
+The web UI in the desktop app is the same page a browser loads, talking to the same server over HTTP with the same token. That is what keeps every rule written for the browser true in the app: the token on every request (77), no local paths through the API (26 and 30), keys only in the environment (41), links shown but inert in answers (55). Tauri makes it easy to hand a page a command bridge, and a bridge would be the first way for anything the page renders, including the full text of an attacker's captured page, to reach the file system or a process. The page does not need one. What a browser tab provided and a bare webview does not (saving downloads, printing, opening other sites in a real browser) the shell does itself, from its own menu and its own download and navigation handlers, without the page asking.
+
+The server's lifetime is the shell's one real job, and the case that matters is the unclean exit. A shell that quits stops the server itself: SIGTERM to the server alone, whose graceful shutdown kills each run's process group (22), then the server's own group after a grace period. But a shell that crashes, is force-quit or receives SIGKILL runs no teardown, and it was measured: after a SIGTERM to the app the server stayed up, still able to run and bill a model call nobody could see or stop, breaking invariant 47's promise that every run is visible and stoppable. A pipe closes however its owner dies, on every platform, so `serve` reads stdin to EOF on a daemon thread and raises SIGTERM when it arrives. It is opt-in, because a terminal user's `serve` with stdin closed (`< /dev/null`, a service manager) must not quit.
+
+Three smaller decisions follow the same line:
+
+- **The token is minted per launch, set after the configuration file's values, and handed to the page in the URL fragment.** Every variable the shell owns (the token, the lifeline, the interpreter's isolation, `PATH`) is set after the file, so no line in it can pin the token or turn the lifeline off. The fragment is never sent to the server; in the query string, uvicorn's access log wrote the token into the log file the File menu offers to show. The live stream and the podcast's `<audio>` still carry `?token=`, because neither can send a header, so `serve` also blanks `token=` out of every access-log line (`cli.RedactToken`).
+- **The port is remembered.** The web UI keeps its per-reader choices in `localStorage`, which is scoped to the origin, and the origin includes the port. A fresh port each launch would forget the interface language and theme every time.
+- **Keys live in a configuration file the File menu opens**, never on the settings page, for invariant 41's reason: that page is writable by every token holder.
+
+The web UI learns it is in the desktop app from a `shell=desktop` fragment parameter, remembered for the session and stripped from the address bar with the token. It uses that for one thing only: an error that names an `RN_*` setting also says where that setting lives in the desktop app.
+
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

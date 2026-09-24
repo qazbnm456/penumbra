@@ -389,3 +389,16 @@ def test_a_run_that_hit_the_time_limit_is_not_reported_as_a_network_fault():
 
     # ...and a SOURCE URL that really is unreachable still says so.
     assert "address" in source_url.lower(), source_url
+
+
+def test_a_fake_ip_refusal_keeps_the_setting_that_fixes_it():
+    """Behind a fake-IP proxy every link is refused, and the server's sentence names the fix. The
+    generic "not one this can fetch" dropped it, and a user could not add a single URL."""
+    raw = (
+        "refused: 'https://example.com/' resolves to a disallowed address "
+        "(if you are behind a fake-IP proxy or split-DNS VPN, set RN_FETCH_ALLOW_CIDRS)"
+    )
+    (cleaned,) = _clean(raw)
+    assert "RN_FETCH_ALLOW_CIDRS" in cleaned and "198.18.0.0/15" in cleaned, cleaned
+    (plain,) = _clean("refused: 'file:///etc' is not a permitted external http(s) URL")
+    assert plain == "That address is not one this can fetch."
