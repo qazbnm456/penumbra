@@ -1,0 +1,95 @@
+name: Desktop
+
+# The desktop shell on every platform it ships to. Two jobs:
+#
+# - `check` compiles and unit-tests the Rust shell on each OS. It is the only thing that would
+#   notice a Windows- or Linux-only compile error in a shell developed on a Mac.
+# - `bundle` builds the full installers (a bundled Python with rlm-notebook installed, plus deno)
+#   and uploads them as workflow artifacts. It publishes nothing by itself.
+#
+# Each target builds on its own runner, because the wheels inside the bundled Python (numpy,
+# onnxruntime, pypdfium2) are platform-specific; `build_runtime.py` refuses a cross build.
+
+# MANUAL ONLY for now (Actions > Desktop > Run workflow). Every job here runs on three or four
+# operating systems, and the multi-platform builds wait until the macOS app is stable; add the
+# push/pull_request/tag triggers back then.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest, ubuntu-22.04]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux webview dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: Test the shell
+        working-directory: desktop/src-tauri
+        run: cargo test --locked
+
+  bundle:
+    name: bundle (${{ matrix.target }})
+    needs: check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14, target: aarch64-apple-darwin }
+          - { os: macos-15-intel, target: x86_64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux webview and bundler dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf file
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: Install the Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+      - name: Assemble the bundled runtime
+        run: uv run --no-project python desktop/scripts/build_runtime.py --target ${{ matrix.target }}
+      # Unsigned for now: macOS gets an ad-hoc signature (tauri.conf.json `signingIdentity: "-"`),
+      # Windows and Linux none. Signing and notarization are added here once there is a Developer
+      # ID; see desktop/README.md.
+      - name: Build the installers
+        working-directory: desktop/src-tauri
+        run: cargo tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rlm-notebook-${{ matrix.target }}
+          path: |
+            desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            desktop/src-tauri/target/release/bundle/msi/*.msi
+            desktop/src-tauri/target/release/bundle/nsis/*.exe
+            desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+            desktop/src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error

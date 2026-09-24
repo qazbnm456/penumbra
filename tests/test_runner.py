@@ -171,3 +171,23 @@ def test_start_run_puts_the_worker_in_its_own_session_not_the_servers(tmp_path):
 
     asyncio.run(_go())
 
+
+
+def test_kill_tree_uses_taskkill_on_windows(monkeypatch):
+    """Windows has no `os.killpg` and no `SIGKILL`, so every cancel path raised `AttributeError`
+    there. `kill_tree` walks the child tree with `taskkill /T /F` instead; this pins that branch on
+    any host by pretending to be Windows."""
+    calls = []
+    monkeypatch.setattr(runner.os, "name", "nt")
+    monkeypatch.setattr(runner.subprocess, "run", lambda argv, **kw: calls.append(argv))
+    runner.kill_tree(4242)
+    assert calls == [["taskkill", "/T", "/F", "/PID", "4242"]]
+
+
+def test_kill_tree_treats_an_exited_process_as_success():
+    """A pid with no live process group is the ordinary case of a run that finished on its own."""
+    import subprocess
+
+    done = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+    done.wait()
+    runner.kill_tree(done.pid)  # must not raise

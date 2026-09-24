@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "rlm-notebook",
+  "version": "0.1.0",
+  "identifier": "tw.boik.rlm-notebook",
+  "build": {
+    "frontendDist": "../splash"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "Capture anything, ask questions grounded in it, take a cited artifact away.",
+    "copyright": "MIT",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "runtime/": "runtime/"
+    },
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "13.0"
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0"]
+      }
+    }
+  }
+}

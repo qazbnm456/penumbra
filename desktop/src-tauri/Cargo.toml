@@ -1,0 +1,34 @@
+[package]
+name = "rlm-notebook-desktop"
+version = "0.1.0"
+description = "Desktop shell for rlm-notebook"
+authors = ["qazbnm456"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "rlm_notebook_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+getrandom = "0.2"
+open = "5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sys-locale = "0.3"
+url = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

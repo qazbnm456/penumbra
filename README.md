@@ -46,6 +46,10 @@ rlm-notebook ask "what does it say about X?" --source ./paper.pdf
 rlm-notebook serve         # the HTTP API and the web UI, on http://127.0.0.1:8000/
 ```
 
+### As a desktop app
+
+`desktop/` builds a native app for macOS, Windows and Linux that bundles its own Python and deno, so nothing else needs installing. Model settings go in a configuration file its File menu opens. See `desktop/README.md` for building, where data lives and the current state of signing.
+
 ### In a container
 
 The image carries deno and tesseract, so it is the one install that is complete on its own:
@@ -234,7 +238,7 @@ Every run shows that it is running, with elapsed time and a Stop, and the Trajec
 - There is no Video Overview, no ingestion of uploaded audio or video files, and no audio transcription. YouTube captions are supported, but only captions.
 - There is no rubric, eval or RL-export member, unlike this project's sibling tools.
 - There are no accounts and no authorization on the HTTP API. One shared token authenticates the app, and everyone who holds it has full access.
-- There is no desktop app package yet. Tauri is the intended shell.
+- The desktop installers are not signed with a developer identity yet (see `desktop/README.md`).
 
 ## Licensing
 

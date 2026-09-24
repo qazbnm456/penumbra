@@ -23,9 +23,12 @@ from __future__ import annotations
 import argparse
 import contextlib
 import ipaddress
+import logging
 import os
+import re
 import signal
 import sys
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -515,6 +518,63 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
+class RedactToken(logging.Filter):
+    """Blank the API token out of uvicorn's access log.
+
+    The browser cannot put a header on an `EventSource` or an `<audio src>`, so those requests carry
+    the token as `?token=` (invariant 77), and uvicorn logged every such URL in full. The desktop
+    app writes that log to a file its File menu offers to show, which is exactly the file somebody
+    attaches to a bug report.
+    """
+
+    _TOKEN = re.compile(r"(token=)[^&\s\"]+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                self._TOKEN.sub(r"\1[redacted]", a) if isinstance(a, str) else a for a in record.args
+            )
+        return True
+
+
+def _log_config() -> dict | None:
+    """uvicorn's own logging configuration, with `RedactToken` on the access handler. `None` (keep
+    uvicorn's default) when that configuration cannot be found, e.g. under a stub `uvicorn`."""
+    import copy
+
+    try:
+        from uvicorn.config import LOGGING_CONFIG
+    except ImportError:
+        return None
+
+    config = copy.deepcopy(LOGGING_CONFIG)
+    config.setdefault("filters", {})["redact_token"] = {"()": "rlm_notebook.cli.RedactToken"}
+    config["handlers"]["access"].setdefault("filters", []).append("redact_token")
+    return config
+
+
+def _exit_with_parent_if_asked() -> None:
+    """Shut down when the process that started us is gone, if it asked for that.
+
+    The desktop shell sets `RN_EXIT_WITH_PARENT=1` and keeps our stdin open as a pipe. A shell that
+    QUITS stops the server itself, but one that is killed, crashes or is force-quit runs no
+    teardown at all, and the server it started kept running with nobody left to stop it: measured,
+    a SIGTERM to the app left `serve` alive. The pipe closes however the parent dies, on every
+    platform, so reading it to EOF is the one signal that cannot be missed. On EOF this takes the
+    same graceful path as Ctrl-C, which also ends every in-flight run (invariant 22).
+    """
+    if os.environ.get("RN_EXIT_WITH_PARENT") != "1":
+        return
+
+    def _watch() -> None:
+        with contextlib.suppress(Exception):
+            while sys.stdin.buffer.read(65536):
+                pass
+        signal.raise_signal(signal.SIGTERM if hasattr(signal, "SIGTERM") else signal.SIGINT)
+
+    threading.Thread(target=_watch, name="exit-with-parent", daemon=True).start()
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     """Run the API and the web UI it serves.
 
@@ -627,14 +687,19 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     def _hangup(_signum, _frame):
         signal.raise_signal(signal.SIGTERM)
 
-    with contextlib.suppress(ValueError):  # not the main thread (a test, an embedded host)
-        signal.signal(signal.SIGHUP, _hangup)
+    _exit_with_parent_if_asked()
+    # Windows has no SIGHUP at all, and `signal.SIGHUP` raised AttributeError there before uvicorn
+    # ever started. The desktop shell stops the server itself on every platform.
+    if hasattr(signal, "SIGHUP"):
+        with contextlib.suppress(ValueError):  # not the main thread (a test, an embedded host)
+            signal.signal(signal.SIGHUP, _hangup)
     uvicorn.run(
         "rlm_notebook.api:app",
         host=args.host,
         port=args.port,
         reload=args.reload,
         timeout_graceful_shutdown=3,
+        **({"log_config": log_config} if (log_config := _log_config()) else {}),
     )
     return 0
 

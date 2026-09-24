@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>rlm-notebook</title>
+<style>
+  :root {
+    --bg: oklch(97.5% 0.008 75);
+    --text: oklch(22% 0.03 260);
+    --dim: oklch(42% 0.02 260);
+    --accent: oklch(54% 0.16 55);
+    --bad: oklch(52% 0.18 27);
+    --well: oklch(94% 0.01 75);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: oklch(20% 0.015 55);
+      --text: oklch(93% 0.015 75);
+      --dim: oklch(75% 0.015 75);
+      --accent: oklch(75% 0.15 55);
+      --bad: oklch(72% 0.15 27);
+      --well: oklch(25% 0.015 55);
+    }
+  }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: grid; place-items: center; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  main { width: min(36rem, 100% - 2rem); text-align: center; }
+  h1 { font: 600 1.35rem/1.3 Georgia, "Times New Roman", serif; margin: 0 0 0.5rem; }
+  .mark { width: 3rem; height: 0.35rem; border-radius: 1rem; background: var(--accent); margin: 0 auto 1.5rem;
+          animation: pulse 1.4s ease-in-out infinite; }
+  .error .mark { animation: none; background: var(--bad); }
+  p { color: var(--dim); margin: 0; }
+  pre { text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--well);
+        padding: 0.75rem 1rem; border-radius: 6px; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace;
+        max-height: 50vh; overflow: auto; margin-top: 1.25rem; }
+  pre:empty { display: none; }
+  .hint { margin-top: 1rem; font-size: 13px; }
+  .hint[hidden] { display: none; }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+  @media (prefers-reduced-motion: reduce) { .mark { animation: none; } }
+</style>
+</head>
+<body>
+<main id="main">
+  <div class="mark" aria-hidden="true"></div>
+  <h1 id="status" role="status">Starting rlm-notebook…</h1>
+  <p id="sub">The first start can take a few seconds.</p>
+  <pre id="detail"></pre>
+  <p class="hint" id="hint" hidden>File &gt; Show Server Log has the whole log. File &gt; Restart Server tries again.</p>
+</main>
+<script>
+  // The OS language, Traditional Chinese or English, matching the shell's own menu.
+  const zh = /^zh-(hant|tw|hk|mo)/i.test(navigator.language || "");
+  const WORDS = zh
+    ? { starting: "正在啟動 rlm-notebook…", failed: "rlm-notebook 無法啟動",
+        sub: "第一次啟動可能要幾秒鐘。",
+        hint: "「檔案 > 顯示伺服器紀錄」可以看完整紀錄，「檔案 > 重新啟動伺服器」可以再試一次。" }
+    : { starting: "Starting rlm-notebook…", failed: "rlm-notebook could not start",
+        sub: "The first start can take a few seconds.",
+        hint: "File > Show Server Log has the whole log. File > Restart Server tries again." };
+  if (zh) document.documentElement.lang = "zh-Hant";
+  document.getElementById("status").textContent = WORDS.starting;
+  document.getElementById("sub").textContent = WORDS.sub;
+  document.getElementById("hint").textContent = WORDS.hint;
+  // Called by the shell (`window.eval`); this page has no IPC and needs none.
+  window.setStatus = (state, error, detail) => {
+    document.getElementById("status").textContent = WORDS[state] || state;
+    document.getElementById("sub").hidden = error;
+    document.getElementById("detail").textContent = detail || "";
+    document.getElementById("hint").hidden = !error;
+    document.getElementById("main").classList.toggle("error", !!error);
+  };
+</script>
+</body>
+</html>

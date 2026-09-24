@@ -102,7 +102,6 @@ import contextlib
 import json
 import logging
 import os
-import signal
 import sys
 import tempfile
 import threading
@@ -2414,10 +2413,9 @@ async def cancel_run(notebook_id: str, run_id: str) -> dict:
         ]
         for other in also:
             _CANCELLED_BEFORE_SPAWN.add(other)
-            try:
-                os.killpg(_RUN_PROCESSES[other].pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, AttributeError, KeyError):
-                pass
+            proc = _RUN_PROCESSES.get(other)
+            if proc is not None:
+                runner.kill_tree(proc.pid)
         return {
             "cancelled": run_id,
             "run_id": run_id,
@@ -2426,10 +2424,7 @@ async def cancel_run(notebook_id: str, run_id: str) -> dict:
         }
     # The WHOLE process group, exactly as `runner.Run.cancel` does and for the same reason
     # (invariant 22): a stuck Deno grandchild must not survive as an orphan.
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass  # already gone on its own — success, not a failure to report
+    runner.kill_tree(process.pid)  # already gone on its own is success, not a failure
     return {"cancelled": run_id, "run_id": run_id}
 
 

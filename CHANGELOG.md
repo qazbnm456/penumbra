@@ -67,6 +67,14 @@ Each entry states what the product does now and why. The reasoning behind each r
 - A `Dockerfile` carries the two binaries no Python manifest can express, `deno` and `tesseract`. `playground/` builds a static, backend-free demo of the web UI from recorded notebooks.
 - The CLI can ingest, ask, generate guides and podcasts, and write a trace with `--trace`. It cannot reach the Inbox or manage notebooks.
 
+#### The desktop app
+
+- `desktop/` is a Tauri 2 app for macOS 13 or later, Windows and Linux. It bundles a relocatable Python with rlm-notebook installed and the deno binary, so nothing else needs installing. A relocatable interpreter was chosen over a freezer such as PyInstaller because dspy and litellm import by name at run time. The installers are about 800 MB unpacked, almost all of it the dependency set.
+- The shell starts `serve` on a remembered loopback port with a per-launch token (passed in the URL fragment, and blanked out of the access log wherever a URL must still carry it), shows the web UI in a native window, lets the page receive dropped files, saves downloads, prints with File > Print and opens other sites in the system browser. The web UI gets no IPC (invariant 81). Restarts are serialised and repeated presses fold into one, so a Restart pressed during a start can no longer pair an old token with a new server.
+- If the app is killed rather than quit, the server shuts itself down when its stdin pipe closes; measured before the fix, it stayed up and could keep billing a run nobody could stop.
+- Model settings live in a configuration file the File menu opens in a text editor (no app claims `.env`, so handing it to the OS did nothing), and errors that name an `RN_*` setting say where to find it in the app. A fetch refused because a fake-IP proxy rewrites DNS now says so and names `RN_FETCH_ALLOW_CIDRS`, instead of the generic "not one this can fetch". The menu and the splash follow the OS language.
+- The builds are unsigned: macOS carries an ad-hoc signature on the app and every bundled binary, Windows and Linux none. A manually run CI workflow checks the shell and builds every installer on all three platforms; the Windows and Linux builds have not been run yet.
+
 ### Changed
 
 - The agent guide is `AGENTS.md`, an index of 80 invariants with one argument file each under `docs/invariants/`. `CLAUDE.md` is a one-line bridge.
@@ -94,6 +102,7 @@ These are the few failures that shaped the current design. Smaller fixes are not
 - Removing a source re-verifies every saved citation on screen right away, not only after a reload.
 - A stored desktop layout choice (the collapsed Studio) no longer breaks narrow windows, and tooltip and control styles no longer override each other because of CSS source order.
 - Dark-theme printing produced cream text on white paper; print now always uses the light palette.
+- Cancelling a run called `os.killpg`, and `serve` set a SIGHUP handler; neither exists on Windows, so a cancel raised and `serve` crashed at startup there. Cancellation now kills the process tree portably (`runner.kill_tree`).
 - Five `margin: -var(...)` declarations were invalid CSS and silently dropped, including the one centring the podcast scrubber's thumb; a test now rejects the pattern.
 - A PDF that failed to parse reported the server's temporary file path; the error now names the uploaded file.
 
@@ -115,4 +124,3 @@ These are the few failures that shaped the current design. Smaller fixes are not
 
 - Guides are not persisted, and a guide run that outlives a notebook switch cannot be recovered.
 - The in-memory run maps have no multi-worker story, and the API has one shared token with no accounts.
-- The Tauri shell is not built. It will need to require macOS with Safari 16.2 or later (for `color-mix()`), and to provide downloads and a print command.

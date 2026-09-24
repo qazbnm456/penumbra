@@ -33,6 +33,8 @@ What exists:
 
 The API is the only place a run is isolated in a subprocess (`runner.py` and `worker.py`); `cli.py` runs in-process.
 
+`desktop/` is a Tauri 2 shell for macOS, Windows and Linux that bundles a Python with rlm-notebook installed plus deno, starts `serve` on loopback and shows the web UI in a native window (invariant 81). `desktop/scripts/build_runtime.py` assembles the runtime on each platform, and `.github/workflows/desktop.yml` checks the shell and builds the installers on all three, run by hand only.
+
 `rlm-notebook serve` starts the API and the web UI on loopback by default (invariant 25). The `Dockerfile` carries the two system binaries no Python manifest can express: `deno`, which every live run needs (invariant 9), and `tesseract`, the OCR fallback (invariant 7). `playground/` builds the same web UI into a static, backend-free demo from recorded notebooks; it has its own `README.md` and `smoke.mjs`, and CI runs neither (`.github/workflows/ci.yml` is pytest and ruff only).
 
 Still unbuilt. Do not assume any of these exist because a design discussion mentioned them:
@@ -41,8 +43,9 @@ Still unbuilt. Do not assume any of these exist because a design discussion ment
 - There is no multi-worker `uvicorn` story for the in-memory maps: `_ACTIVE_RUNS`, `_RUN_PROCESSES`, `_BUSY`, `_DISTIL`, `_CANCELLED_BEFORE_SPAWN`, `intake._SHARED` and `inbox._INITIALIZED`. The notebook file and the Inbox database are safe across processes; those maps are not.
 - The API has one shared token and no accounts, sessions or per-user authorization (25, 77).
 - `cli.py` cannot reach the Inbox (78, 79, 80), and it has no notebook-management verbs: no list, rename or delete. The API and the web UI have all three.
-- Folders and archives cannot be captured, because invariant 26 keeps local paths out of the API and the native shell that would supply them is unbuilt.
-- The Tauri desktop shell and the browser extension are unbuilt, so every capture today is a paste, a drop or an upload in a browser tab.
+- Folders and archives cannot be captured, because invariant 26 keeps local paths out of the API and the desktop shell does not supply them.
+- The browser extension is unbuilt, and the desktop shell adds no capture of its own, so every capture is still a paste, a drop or an upload into the web UI.
+- The desktop installers are not signed with a developer identity: macOS builds carry an ad-hoc signature, Windows and Linux builds none.
 - Word, Slides and Docs native formats are not parsed, and full audio transcription is not done. YouTube captions do ship.
 
 ## Invariants: do not break
@@ -220,3 +223,5 @@ This index does not grow. An entry that has gained a second paragraph has taken 
 79. **A capture always lands: submitting creates a `queued` node before anything is fetched, a parse failure becomes a `failed` node that keeps its message, and intake (`intake.py`) runs one item at a time.** A worker that dies on one bad link would otherwise leave every later capture `queued` forever, which looks exactly like still working. ([why](docs/invariants/79-a-capture-always-lands.md))
 
 80. **Capture makes no model call unless the operator turns it on: distillation (`distill.py`) is a separate pass, off by default and bounded by an environment-only cap, and a failed summary leaves the node at `ready_undistilled` instead of costing the capture.** With your own API key and a habit of throwing everything in, distilling at intake by default would silently spend 200 calls on a 200-bookmark import. ([why](docs/invariants/80-capture-never-pays-for-a-summary.md))
+
+81. **The desktop shell (`desktop/src-tauri/src/lib.rs`) gives the web UI no IPC, and the server it starts cannot outlive it: `serve` reads the stdin pipe the shell holds and shuts down when it closes (`RN_EXIT_WITH_PARENT`).** A bridge would be the first path from rendered page text to the file system, and a killed shell runs no teardown; measured, the server stayed up and could keep billing a run nobody could stop. ([why](docs/invariants/81-the-desktop-shell-owns-the-server-and-nothing-else.md))
