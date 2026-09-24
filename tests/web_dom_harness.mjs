@@ -1649,6 +1649,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       "const DISTIL_BATCH_CAP = 50;\n" +
         "const distilWatch = { status: null, polling: false, failures: 0, stopping: false };\n" +
         "function paintDistilControls() {} function watchDistil() {} function refreshTopologyViews() {}\n" +
+        "async function distilEstimate() { return null; }\n" +
         `${extract("distilOrbitControl")}\nreturn { distilOrbitControl, distilWatch };`
     )(elt, t, async () => ({}), () => {}, (m) => m, { querySelectorAll: () => [] });
     const idle = run.distilOrbitControl("sleep", 3);
@@ -1718,6 +1719,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       "const DISTIL_BATCH_CAP = 50;\n" +
         "const distilWatch = { status: { running: true, done: 2, total: 5 }, polling: true, failures: 0, stopping: false, slug: 'coffee' };\n" +
         "function paintDistilControls() {} function watchDistil() {} function refreshTopologyViews() {}\n" +
+        "async function distilEstimate() { return null; }\n" +
         `${extract("distilOrbitControl")}\nreturn { distilOrbitControl };`
     )(elt, t, async () => ({}), () => {}, (m) => m);
     return {

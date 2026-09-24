@@ -32,6 +32,7 @@ What exists:
 - `horizon.py`, Tier 0: a global capture Horizon (a SQLite index plus `horizon/nodes/<id>.json`) whose nodes are filed into orbits (invariant 78). `intake.py` is its serial capture queue (79), and `distill.py` is the separate summary pass (80). All three are reachable at `/horizon/*` and from the web UI, where the Horizon is the default screen.
 - A Horizon ask: a question over everything kept, a tag or an entity. `search.py` is its full-text index (character pairs for CJK) and its selection, `asks.py` its history, and it is reachable at `/horizon/ask*` and from the ask dock at the foot of the screen.
 - A star map of the Horizon and a knowledge graph of each orbit, drawn from summaries' entities and tags (`topology.py`, `/horizon/topology`, `/horizon/graph`).
+- Summaries split by length: one call for a short capture, `DistillLongDocument` (`distill_long.py`) for a long one. Concept alignment (`align.py`) merges entity names into an alias table (`concepts.py`) that every reader applies, and filing suggestions (`filing.py`) are computed locally from shared entities and tags.
 
 The API is the only place a run is isolated in a subprocess (`runner.py` and `worker.py`); `cli.py` runs in-process.
 
@@ -198,7 +199,7 @@ This index does not grow. An entry that has gained a second paragraph has taken 
 
 66. **Every task's pre-SUBMIT validator is `instructions.make_grounded_validator` (schema plus "no `[[SRC:...]]` marker in the model's own prose"), and SUBMIT belongs on a later REPL turn than the call that validated.** A run once printed the verdict beside its SUBMIT and shipped the very character it had just been warned about. ([why](docs/invariants/66-the-pre-submit-validator.md))
 
-67. **The pre-SUBMIT validator checks each citation's coordinate against the corpus the run was given, and the six tasks share one base class instead of six identical `__init__` methods.** A model once wrote the section heading it was citing into `locator`, which made every citation in an overview unverifiable. ([why](docs/invariants/67-the-validator-checks-citation-coordinates.md))
+67. **The pre-SUBMIT validator checks each citation's coordinate against the corpus the run was given, and every grounded task shares one base class (`GroundedTask`) instead of its own copy of `__init__`.** A model once wrote the section heading it was citing into `locator`, which made every citation in an overview unverifiable. ([why](docs/invariants/67-the-validator-checks-citation-coordinates.md))
 
 68. **A wall-clock backstop scales with the work requested (`schema.PODCAST_TIMEOUT_FACTOR`).** A `long` podcast asking for 60 to 90 utterances could not fit under the 300s default it shipped with. ([why](docs/invariants/68-the-timeout-scales-with-the-tier.md))
 
@@ -224,6 +225,6 @@ This index does not grow. An entry that has gained a second paragraph has taken 
 
 79. **A capture always lands: submitting creates a `queued` node before anything is fetched, a parse failure becomes a `failed` node that keeps its message, and intake (`intake.py`) runs one item at a time.** A worker that dies on one bad link would otherwise leave every later capture `queued` forever, which looks exactly like still working. ([why](docs/invariants/79-a-capture-always-lands.md))
 
-80. **Capture makes no model call unless the operator turns it on: distillation (`distill.py`) is a separate pass, off by default and bounded by an environment-only cap, and a failed summary leaves the node at `ready_undistilled` instead of costing the capture.** With your own API key and a habit of throwing everything in, distilling at intake by default would silently spend 200 calls on a 200-bookmark import. ([why](docs/invariants/80-capture-never-pays-for-a-summary.md))
+80. **Capture makes no model call unless the operator turns it on: distillation (`distill.py`) is a separate pass, off by default and bounded by an environment-only cap, a failed summary leaves the node at `ready_undistilled` instead of costing the capture, and concept alignment runs only at the end of a pass the reader pressed.** With your own API key and a habit of throwing everything in, distilling at intake by default would silently spend 200 calls on a 200-bookmark import. ([why](docs/invariants/80-capture-never-pays-for-a-summary.md))
 
 81. **The desktop shell (`desktop/src-tauri/src/lib.rs`) gives the workspace no IPC and the island only three fixed, dataless navigations (`/__shell/open`, `/menu`, `/rest`), and the server it starts cannot outlive it: `serve` reads the stdin pipe the shell holds and shuts down when it closes (`PN_EXIT_WITH_PARENT`).** A bridge would be the first path from rendered page text to the file system, and a killed shell runs no teardown; measured, the server stayed up and could keep billing a run nobody could stop. ([why](docs/invariants/81-the-desktop-shell-owns-the-server-and-nothing-else.md))

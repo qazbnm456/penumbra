@@ -206,6 +206,15 @@
         <button type="button" class="pending-do" id="distil-btn"></button>
       </p>
 
+      <!-- Filing suggestions: captures that probably belong in an orbit they are not in, by the
+           entities and tags they share with it. Computed locally; nothing is filed until the
+           reader presses Add. -->
+      <div class="suggest" id="suggest" hidden>
+        <button type="button" class="suggest-head" id="suggest-head" aria-expanded="false"
+                aria-controls="suggest-list"></button>
+        <ol class="suggest-list" id="suggest-list" hidden></ol>
+      </div>
+
       <!-- The summary pass is the one action here that spends the reader's money, and it used to
            be the only one with no way to report that it had failed. `role="status"` rather than
            `alert`: it is the outcome of something they pressed, not an interruption. -->

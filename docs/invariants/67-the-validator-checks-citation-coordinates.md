@@ -1,6 +1,8 @@
 # Invariant 67: The validator checks citation coordinates
 
-**The pre-SUBMIT validator checks each citation's coordinate against the corpus the run was given, and the six tasks share one base class instead of six identical `__init__` methods.**
+**The pre-SUBMIT validator checks each citation's coordinate against the corpus the run was given, and every grounded task shares one base class (`GroundedTask`) instead of its own copy of `__init__`.**
+
+The check is structural: anything in the output carrying both `source_id` and `locator` is a coordinate. That is how `DistillLongDocument`'s entity mentions are checked without a line of their own, and the host checks them once more after the run (`distill.from_long`).
 
 The failure was specific: every web source is one block with locator `whole`, and a model wrote the section heading it was citing into `locator`, which made every citation in an overview unverifiable.
 

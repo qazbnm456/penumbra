@@ -19,6 +19,18 @@
     <div class="horizon" aria-hidden="true">
       <div class="pull"></div><div class="pull"></div><div class="pull"></div>
       <div class="accretion"></div><div class="core"></div>
+      <!-- Shown on hover only: three states in one glyph. The arc is how much of the Horizon is
+           summarised (it breathes while a pass runs), the ring inside it is the Horizon itself
+           (it spins faster while something is being read), and the four dots are filing
+           suggestions waiting, like signal bars. -->
+      <svg class="duo" viewBox="0 0 60 66" aria-hidden="true">
+        <path class="duo-track" d="M 10.9 47.1 A 27 27 0 1 1 49.1 47.1"></path>
+        <path class="duo-arc" id="duo-arc" pathLength="100" d="M 10.9 47.1 A 27 27 0 1 1 49.1 47.1"></path>
+        <circle class="duo-dot" cx="18" cy="58" r="2.3"></circle>
+        <circle class="duo-dot" cx="25.5" cy="61.5" r="2.3"></circle>
+        <circle class="duo-dot" cx="34.5" cy="61.5" r="2.3"></circle>
+        <circle class="duo-dot" cx="42" cy="58" r="2.3"></circle>
+      </svg>
     </div>
   </main>
   <div class="motes" id="motes" aria-hidden="true"></div>

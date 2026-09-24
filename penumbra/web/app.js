@@ -8138,8 +8138,39 @@ function updateStreamFoot() {
     horizonEl("distil-btn").textContent = t("horizon.distil", `Summarise ${distilBatchSize()}`, {
       n: distilBatchSize(),
     });
+    // A long capture is an RLM run, several calls rather than one, and the note says so before the
+    // press (invariant 80). Fetched, not guessed: only the server knows which captures are long.
+    void distilEstimate(null).then((est) => {
+      if (!est || note.hidden) return;
+      const base = t("horizon.pendingSummaries", `${horizonState.undistilled} not summarised yet`,
+        { n: horizonState.undistilled });
+      const extra = est.long
+        ? t("horizon.longNote", `${est.long} are long and take several model calls each.`, { n: est.long })
+        : "";
+      horizonEl("pending-count").textContent = [base, extra,
+        t("horizon.alignNote", "A pass may end by matching new entities, one more run.")]
+        .filter(Boolean).join(uiLang().startsWith("zh") ? "" : " ");
+    });
   }
   renderDistilError();
+}
+
+//: The server's count of what summarising would cost, cached briefly per scope so a repaint does
+//: not refetch it. `null` scope is the whole Horizon.
+const distilEstimates = new Map();
+
+async function distilEstimate(slug) {
+  const key = slug || "";
+  const hit = distilEstimates.get(key);
+  if (hit && Date.now() - hit.at < 5000) return hit.value;
+  let value = null;
+  try {
+    value = await api(`/horizon/distil/estimate${slug ? `?orbit=${encodeURIComponent(slug)}` : ""}`);
+  } catch {
+    value = null;
+  }
+  distilEstimates.set(key, { at: Date.now(), value });
+  return value;
 }
 
 //: ONE definition of how many this press will pay for, read by the label and by the request. Two
@@ -8162,21 +8193,31 @@ function renderDistilError() {
   const errline = horizonEl("distil-error");
   const distil = horizonState.distil || {};
   const failed = Number(distil.failed || 0);
-  if ((!failed && !distil.error) || distil.running) {
+  const alignError = (horizonState.align && horizonState.align.error) || "";
+  if ((!failed && !distil.error && !alignError) || distil.running) {
     errline.hidden = true;
     errline.textContent = "";
     return;
   }
   errline.hidden = false;
   errline.textContent = "";
+  if (!failed && !distil.error) {
+    // Only alignment failed: the summaries are saved, and the line says what did not happen. It
+    // takes the same dismiss below, which clears both on the server.
+    errline.appendChild(elt("span", "distil-error-count",
+      t("horizon.alignFailed", "New entities were not matched")));
+    errline.appendChild(elt("span", "distil-error-why", readableError(alignError)));
+  }
   // TWO different sentences, because they are two different facts. A pass that ran and lost some
   // nodes has a COUNT; a pass that could not start has none, and saying "1 could not be summarised"
   // when nothing was attempted is the status line claiming something the page is not doing.
-  const lead = failed
-    ? t("horizon.distilFailedCount", `${failed} could not be summarised`, { n: failed })
-    : t("horizon.distilNoStart", "The summary pass could not start");
-  errline.appendChild(elt("span", "distil-error-count", lead));
-  if (distil.error) errline.appendChild(elt("span", "distil-error-why", readableError(distil.error)));
+  if (failed || distil.error) {
+    const lead = failed
+      ? t("horizon.distilFailedCount", `${failed} could not be summarised`, { n: failed })
+      : t("horizon.distilNoStart", "The summary pass could not start");
+    errline.appendChild(elt("span", "distil-error-count", lead));
+    if (distil.error) errline.appendChild(elt("span", "distil-error-why", readableError(distil.error)));
+  }
   //: **A dismiss, because this was otherwise IMMORTAL.** The error is process state on the server
   //: and only the START of the next pass ever cleared it, so one failed batch installed this
   //: banner above the stream for the life of the server — for every visitor, not just the one who
@@ -8192,6 +8233,7 @@ function renderDistilError() {
     try {
       const reply = await api("/horizon/distil/dismiss", { method: "POST" });
       horizonState.distil = reply;
+      horizonState.align = { running: false, error: "" };
     } catch {
       // A pass started in another tab owns these fields (409). Leave the line alone and let the
       // next poll say what is true now.
@@ -8262,6 +8304,7 @@ async function refreshHorizon({ reset = false, newIds = new Set() } = {}) {
   if (viewIsHorizon() && viewMode("horizon") === "map" && Date.now() - (starMap.lastRender || 0) > 3000) {
     void renderStarMap();
   }
+  if (viewIsHorizon()) void refreshSuggestions();
   let data;
   try {
     data = await api(
@@ -8308,6 +8351,7 @@ async function pollIntake() {
   const strip = horizonEl("intake-strip");
   const distil = status.distil || { running: false, done: 0, total: 0, failed: 0, error: "" };
   horizonState.distil = distil;
+  horizonState.align = status.align || { running: false, error: "" };
   const parsing = Boolean(status.current) || status.pending > 0;
   const busy = parsing || distil.running;
   strip.hidden = !busy;
@@ -8325,7 +8369,9 @@ async function pollIntake() {
         ? t("horizon.pending", `${status.pending} waiting`, { n: status.pending })
         : "";
     } else {
-      horizonEl("intake-what").textContent = t("horizon.summarising", "Summarising");
+      horizonEl("intake-what").textContent = horizonState.align && horizonState.align.running
+        ? t("map.aligning", "Matching new entities to known ones")
+        : t("horizon.summarising", "Summarising");
       // Failures are counted IN THE STRIP too, not only after the pass. A pass where every call is
       // failing should look different at node three from one that is working, rather than reading
       // as progress right up until it disappears.
@@ -10178,7 +10224,7 @@ function renderStarMapCard() {
 //: redraw of the map or the graph, and a running pass's progress and Stop used to live inside one:
 //: selecting an entity mid-pass put the spend button back with no Stop while the pass kept billing.
 //: Every control paints from this, and one poll keeps it current.
-const distilWatch = { status: null, polling: false, failures: 0, stopping: false, slug: null };
+const distilWatch = { status: null, polling: false, failures: 0, stopping: false, slug: null, aligning: false };
 
 function watchDistil() {
   if (distilWatch.polling) return;
@@ -10200,6 +10246,7 @@ async function pollDistilWatch() {
   }
   const wasRunning = Boolean(distilWatch.status && distilWatch.status.running);
   distilWatch.status = reply.distil || { running: false };
+  distilWatch.aligning = Boolean(reply.align && reply.align.running);
   if (!distilWatch.status.running) distilWatch.stopping = false;
   paintDistilControls();
   if (distilWatch.status.running) {
@@ -10210,6 +10257,9 @@ async function pollDistilWatch() {
   distilWatch.slug = null;
   if (wasRunning) {
     if (distilWatch.status.error) notify(readableError(distilWatch.status.error));
+    else if (reply.align && reply.align.error) {
+      notify(`${t("horizon.alignFailed", "New entities were not matched")}: ${readableError(reply.align.error)}`);
+    }
     refreshTopologyViews();
   }
 }
@@ -10238,10 +10288,14 @@ function distilOrbitControl(slug, count) {
       const ours = distilWatch.slug === slug;
       control.appendChild(elt("span", "distil-orbit-cost", distilWatch.failures >= 3
         ? t("map.distilLost", "Cannot reach the server to check progress. Still trying.")
-        : ours
-          ? t("map.distilling", `Summarising ${status.done || 0} of ${status.total || 0}`,
-            { done: status.done || 0, total: status.total || 0 })
-          : t("map.distilElsewhere", "A summary pass is running.")));
+        : distilWatch.aligning
+          // The stage that is actually running (invariant 60): the summaries are done and saved,
+          // and the pass is now deciding which new names are the same entity.
+          ? t("map.aligning", "Matching new entities to known ones")
+          : ours
+            ? t("map.distilling", `Summarising ${status.done || 0} of ${status.total || 0}`,
+              { done: status.done || 0, total: status.total || 0 })
+            : t("map.distilElsewhere", "A summary pass is running.")));
       const stop = elt("button", "btn run-stop", distilWatch.stopping
         ? t("run.stopping", "Stopping\u2026") : t("run.stop", "\u23f9 Stop"));
       stop.type = "button";
@@ -10264,6 +10318,18 @@ function distilOrbitControl(slug, count) {
     const go = elt("button", "btn", t("map.distil", `Summarise ${n}`, { n }));
     go.type = "button";
     const cost = elt("span", "distil-orbit-cost", t("map.distilCost", `Runs the model ${n} times.`, { n }));
+    // Corrected from the server's count once it arrives: a long capture takes several calls.
+    // Replaced by the server's bound once it arrives: long documents take several calls, and every
+    // pass may end with one concept-alignment run, so the honest figure is a range (invariant 80).
+    void distilEstimate(slug).then((est) => {
+      if (!est || !cost.isConnected) return;
+      cost.textContent = n === est.count
+        ? t("map.distilCostRange",
+          `Runs the model ${est.calls_min} to at most ${est.calls_max} times, matching new entities included.`,
+          { min: est.calls_min, max: est.calls_max })
+        : t("map.distilCostLong",
+          `At least ${n} model calls; long documents and matching new entities take more.`, { n });
+    });
     go.addEventListener("click", async () => {
       go.disabled = true;
       let reply;
@@ -10292,6 +10358,107 @@ function distilOrbitControl(slug, count) {
   };
   control.paintDistil();
   return control;
+}
+
+// --- filing suggestions ---------------------------------------------------------------------------
+
+const suggest = { items: [], open: false, lastFetch: 0 };
+
+async function ensureOrbitTitles() {
+  if (orbitTitles.size) return;
+  try {
+    const listed = await api("/orbits");
+    (listed.orbits || []).forEach((o) => {
+      orbitTitles.set(o.slug, o.title || o.derived_title || t("app.untitled", "Untitled orbit"));
+    });
+  } catch {
+    /* rows fall back to a neutral label */
+  }
+}
+
+async function refreshSuggestions({ force = false } = {}) {
+  if (!force && Date.now() - suggest.lastFetch < 5000) return;
+  suggest.lastFetch = Date.now();
+  let data;
+  try {
+    data = await api("/horizon/suggestions");
+  } catch {
+    return;
+  }
+  await ensureOrbitTitles();
+  suggest.items = data.suggestions || [];
+  renderSuggestions();
+}
+
+function renderSuggestions() {
+  const suggestBox = horizonEl("suggest");
+  const head = horizonEl("suggest-head");
+  const suggestList = horizonEl("suggest-list");
+  const n = suggest.items.length;
+  suggestBox.hidden = !n;
+  if (!n) {
+    suggest.open = false;
+    return;
+  }
+  head.textContent = t("suggest.head", `${n} could be filed into an orbit`, { n });
+  head.setAttribute("aria-expanded", suggest.open ? "true" : "false");
+  suggestList.hidden = !suggest.open;
+  suggestList.textContent = "";
+  suggest.items.forEach((item) => {
+    const where = orbitLabelForSlug(item.orbit) || t("suggest.anOrbit", "an orbit");
+    const row = elt("li", "suggest-row");
+    row.appendChild(elt("span", "suggest-title", item.title));
+    const why = [...item.shared, ...item.tags.map((tag) => `#${tag}`)].join(t("list.sep", ", "));
+    row.appendChild(elt("span", "suggest-why", t("suggest.why", `Into ${where}: both name ${why}`,
+      { where, why })));
+    const add = elt("button", "btn", t("suggest.add", "Add"));
+    add.type = "button";
+    add.addEventListener("click", async () => {
+      add.disabled = true;
+      try {
+        await api(`/horizon/${encodeURIComponent(item.node_id)}/promote`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orbit_id: item.orbit, create: false }),
+        });
+      } catch (err) {
+        add.disabled = false;
+        notify(readableError(err.message));
+        return;
+      }
+      await refreshSuggestions({ force: true });
+      void refreshHorizon();
+    });
+    const no = elt("button", "btn", t("suggest.no", "Not this"));
+    no.type = "button";
+    no.addEventListener("click", async () => {
+      no.disabled = true;
+      try {
+        await api("/horizon/suggestions/dismiss", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ node_id: item.node_id, orbit: item.orbit }),
+        });
+      } catch (err) {
+        no.disabled = false;
+        notify(readableError(err.message));
+        return;
+      }
+      await refreshSuggestions({ force: true });
+    });
+    const actions = elt("span", "suggest-actions");
+    actions.appendChild(add);
+    actions.appendChild(no);
+    row.appendChild(actions);
+    suggestList.appendChild(row);
+  });
+}
+
+function initSuggestions() {
+  horizonEl("suggest-head").addEventListener("click", () => {
+    suggest.open = !suggest.open;
+    renderSuggestions();
+  });
 }
 
 // --- the knowledge graph --------------------------------------------------------------------------
@@ -10584,6 +10751,36 @@ function renderGraphPanel(litCaptures) {
   }
   panel.appendChild(elt("p", "card-kicker", kicker));
   panel.appendChild(elt("h2", "card-title", heading));
+  const entry = graphState.selected ? data.entities.find((e) => e.name === graphState.selected) : null;
+  if (entry && entry.aliases && entry.aliases.length) {
+    // Names concept alignment folded into this one, each one press from being itself again.
+    panel.appendChild(elt("p", "card-kicker", t("graph.aliases", "Also written as")));
+    const merged = elt("div", "card-chips");
+    entry.aliases.forEach((alias) => {
+      const chip = elt("span", "card-chip", alias);
+      const undo = elt("button", "alias-undo", t("graph.unmerge", "Separate"));
+      undo.type = "button";
+      undo.setAttribute("aria-label", t("graph.unmergeLabel", `Separate ${alias}`, { name: alias }));
+      undo.addEventListener("click", async () => {
+        undo.disabled = true;
+        try {
+          await api("/horizon/aliases/remove", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ alias }),
+          });
+        } catch (err) {
+          undo.disabled = false;
+          notify(readableError(err.message));
+          return;
+        }
+        void renderGraph();
+      });
+      chip.appendChild(undo);
+      merged.appendChild(chip);
+    });
+    panel.appendChild(merged);
+  }
   panel.appendChild(elt("p", "card-meta", t("graph.inCaptures", `${items.length} captures`, { n: items.length })));
   const left = (data.omitted && data.omitted.entities) || 0;
   if (left && !graphState.lens && !graphState.selected) {
@@ -10680,6 +10877,7 @@ function initAskH() {
 initAskH();
 initDock();
 initViewModes();
+initSuggestions();
 
 //: The address bar decides the first screen, so a reload lands where the reader was and a link to a
 //: orbit opens that orbit. `replace: true` on the way in: the first entry is this one, not a

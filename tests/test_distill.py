@@ -511,3 +511,112 @@ def test_a_corrupt_blocks_file_fails_one_node_without_ending_the_batch(tmp_path)
     )
     for other in (made[0], made[2]):
         assert horizon.get_node(other.id, base_dir=base).state == "ready"
+
+
+# --- one call for a short document, an RLM run for a long one ------------------------------------
+
+from penumbra.schema import EntityMention, LongDistillation
+
+
+def _doc(text: str, blocks: int = 1):
+    from penumbra.schema import Source, SourceBlock
+
+    size = max(1, len(text) // blocks)
+    parts = [text[i : i + size] for i in range(0, len(text), size)]
+    return Source(
+        id="nd-0000000000000001", kind="web", origin="https://x.example/a",
+        blocks=[SourceBlock(locator=f"page:{i + 1}", text=part) for i, part in enumerate(parts)],
+    )
+
+
+def test_a_short_document_is_read_whole_by_one_call():
+    seen = {}
+
+    def run(*, sources, language):
+        seen["sources"] = sources
+        return distill.Distillation(title="t")
+
+    text = "x" * 9_000 + " THE END"
+    distill.distil_source(_doc(text), run=run, run_long=lambda *_: pytest.fail("not long"))
+    assert "THE END" in seen["sources"], "a short document was cut to a prefix"
+
+
+def test_a_long_document_goes_to_the_rlm_runner():
+    called = {}
+
+    def run_long(source, language):
+        called["chars"] = distill.text_length(source)
+        return distill.Distillation(title="long")
+
+    long_doc = _doc("y" * (distill.SHORT_LIMIT + 1))
+    result = distill.distil_source(long_doc, run=lambda **_: pytest.fail("short"), run_long=run_long)
+    assert result.title == "long"
+    assert called["chars"] == distill.SHORT_LIMIT + 1
+
+
+def test_without_a_runner_a_long_document_still_gets_a_one_call_summary():
+    long_doc = _doc("z" * (distill.SHORT_LIMIT + 50))
+    got = distill.distil_source(long_doc, run=lambda **_: distill.Distillation(title="t"))
+    assert got.title == "t"
+
+
+def test_a_failed_long_run_leaves_the_node_unsummarised_with_the_reason():
+    errors = []
+
+    def boom(source, language):
+        raise RuntimeError("worker died")
+
+    got = distill.distil_source(_doc("y" * (distill.SHORT_LIMIT + 1)), run_long=boom, on_error=errors.append)
+    assert got is None
+    assert "worker died" in str(errors[0])
+
+
+def test_the_host_drops_an_entity_whose_coordinate_is_not_a_real_block():
+    doc = _doc("a" * 300, blocks=3).model_copy(update={"id": "s1"})
+    result = LongDistillation(
+        title="T", summary="S", tags=["Sleep"],
+        entities=[
+            EntityMention(name="REM", source_id="s1", locator="page:2"),
+            EntityMention(name="Invented", source_id="s1", locator="Chapter One"),
+            EntityMention(name="Elsewhere", source_id="s2", locator="page:1"),
+        ],
+    )
+    got = distill.from_long(result, doc)
+    assert got.entities == ["REM"]
+    assert got.tags == ["sleep"]
+
+
+def test_the_section_map_names_every_block_or_groups_them():
+    small = distill.section_map(_doc("abc " * 100, blocks=4))
+    assert small.splitlines()[0].startswith("400 characters in 4 blocks")
+    assert "page:1 (" in small and "page:4 (" in small
+    many = distill.section_map(_doc("w" * 4000, blocks=400))
+    assert len(many.splitlines()) <= distill._MAP_LINES + 1
+    assert " .. " in many, "a document with many blocks was not mapped by runs"
+
+
+def test_the_long_task_is_grounded_and_validates_entity_coordinates():
+    from penumbra import distill_long
+    from penumbra.instructions import GroundedTask
+
+    assert issubclass(distill_long.DistillLongDocument, GroundedTask)
+    assert "validate_longdistillation" in distill_long.DistillLongDocument.instructions
+    assert distill_long.DistillLongDocument.output_model is LongDistillation
+
+
+
+def test_the_automatic_pass_leaves_long_captures_for_a_press(tmp_path):
+    from penumbra import horizon
+
+    base = tmp_path / "h"
+    long_id = horizon.node_id_for("https://x.example/long")
+    short_id = horizon.node_id_for("https://x.example/short")
+    for node_id, url, text in ((long_id, "https://x.example/long", "y" * (distill.SHORT_LIMIT + 1)),
+                               (short_id, "https://x.example/short", "short")):
+        horizon.add_pending_node(url, "web", base_dir=base)
+        doc = _doc(text).model_copy(update={"id": node_id, "origin": url})
+        horizon.store_blocks(node_id, doc, base_dir=base)
+    done = distill.distil_pending(base_dir=base, run=lambda **_: distill.Distillation(title="t"),
+                                  run_long=lambda *_: pytest.fail("a long document ran"), defer_long=True)
+    assert done == [short_id]
+    assert horizon.get_node(long_id, base_dir=base).state == "ready_undistilled"

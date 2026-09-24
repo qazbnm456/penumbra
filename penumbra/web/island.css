@@ -205,6 +205,83 @@ body[data-busy] .pull {
   }
 }
 
+/* --- the status glyph, on hover only ----------------------------------------------------------- */
+
+/* Around the 40px ring: the SVG's own frame puts the ring at its centre line, the arc over it and
+   the dots under it. */
+.duo {
+  position: absolute;
+  left: -10px;
+  top: -8px;
+  width: 60px;
+  height: 66px;
+  overflow: visible;
+  opacity: 0;
+  transition: opacity 200ms ease;
+  pointer-events: none;
+}
+
+body[data-state="hover"] .duo {
+  opacity: 1;
+}
+
+.duo-track {
+  fill: none;
+  stroke: oklch(34% 0.01 75);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+}
+
+.duo-arc {
+  fill: none;
+  stroke: var(--copper);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-dasharray: var(--done, 0) 100;
+  transition: stroke-dasharray 600ms ease;
+}
+
+/* A pass running: the arc breathes and grows as each capture is summarised. */
+body[data-summarising] .duo-arc {
+  animation: breathe 1.2s ease-in-out infinite;
+}
+
+/* Something is being read: the ring turns faster. */
+body[data-reading] .accretion {
+  animation-duration: 1s;
+  opacity: 1;
+}
+
+.duo-dot {
+  fill: oklch(34% 0.01 75);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.duo-dot.is-lit {
+  fill: var(--copper);
+}
+
+/* A new suggestion: its dot pops once. */
+.duo-dot.is-new {
+  animation: pop 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes breathe {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes pop {
+  0% {
+    transform: scale(0.2);
+  }
+  60% {
+    transform: scale(1.4);
+  }
+}
+
 /* --- results ---------------------------------------------------------------------------------- */
 
 /* Taken in: the core swallows and the ring flares once. */
@@ -308,7 +385,9 @@ body[data-result="bad"] .accretion {
   body[data-state="armed"] .pull,
   body[data-busy] .pull,
   body[data-result="ok"] .core,
-  body[data-result="bad"] .horizon {
+  body[data-result="bad"] .horizon,
+  body[data-summarising] .duo-arc,
+  .duo-dot.is-new {
     animation: none;
   }
 

@@ -7476,3 +7476,83 @@ button.card-chip:hover {
 .lenses[hidden] {
   display: none;
 }
+
+.alias-undo {
+  margin-left: var(--space-2);
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--accent-text);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* --- Filing suggestions ------------------------------------------------------------------------ */
+.suggest {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.suggest-head {
+  align-self: flex-start;
+  font-family: var(--sans);
+  font-size: var(--text-md);
+  color: var(--accent-text);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.suggest-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.suggest-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-1) var(--space-5);
+  align-items: center;
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+}
+
+.suggest-title {
+  font-size: var(--text-md);
+  overflow-wrap: anywhere;
+}
+
+.suggest-why {
+  grid-column: 1;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.suggest-actions {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  gap: var(--space-2);
+}
+
+.suggest[hidden],
+.suggest-list[hidden] {
+  display: none;
+}
+
+.view-horizon.is-map .suggest {
+  width: 100%;
+  max-width: var(--ib-measure);
+  margin-left: auto;
+  margin-right: auto;
+}
