@@ -570,6 +570,34 @@ const SCENARIOS = {
     }));
   },
 
+  // The real inline renderer over one paragraph, flattened to `tag:text` pairs.
+  markdownInline() {
+    build();
+    const render = new Function(
+      "document",
+      ["MD_FENCE", "MD_HEADING", "MD_QUOTE", "MD_BULLET", "MD_ORDERED", "MD_RULE",
+        "MD_TABLE_DIVIDER", "MD_INLINE"].map(constant).join("\n") + "\n" +
+        ["mdIsSpace", "mdIsWord"].map(constant).join("\n") + "\n" +
+        ["mdLines", "mdLinkAt", "mdMarkerOpens", "mdMarkerCloses", "mdFindClose", "renderInline",
+         "mdTableRowCells", "renderMarkdownInto"].map(extract).join("\n") +
+        "\nreturn renderMarkdownInto;"
+    )(doc);
+    const text = "~~Chunk size~~ matters less than overlap, and ~ alone or a~~b stays plain.";
+    const root = new El("", "div");
+    render(root, text, (parent, from, to) => {
+      const leaf = new El("", "#text");
+      leaf.textContent = text.slice(from, to);
+      parent.appendChild(leaf);
+    });
+    const out = [];
+    const walk = (node) => node.children.forEach((kid) => {
+      if (kid.tagName === "#TEXT") out.push(`${node.tagName}:${kid.textContent}`);
+      else walk(kid);
+    });
+    walk(root);
+    return { parts: out };
+  },
+
   //: **The product's signature interaction, executed.** `DESIGN.md` §2 calls the stroke "the
   //: literal visual expression of the product's core value", and it was bound to `click` and
   //: `mouseenter` alone: no `tabindex`, no `role`, no key handler. A recorded Tab walk of a whole
@@ -1063,11 +1091,12 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     doc._all[".citation[data-ref-key]"] = [turnStroke, podcastStroke, fragHead, fragEnd];
 
     const helpers = ["referenceKey", "collectReferences", "pastedExcerpt", "sourceDisplayName", "sourceLabel",
-      "citationHoverLabel", "renumberStrokes", "renderSourceItem"].map(extract).join("\n");
+      "citationHoverLabel", "renumberStrokes", "kindLabel", "readableFlag", "renderSourceItem"].map(extract).join("\n");
     const run = new Function(
       "state", "t", "document", "window", "api", "store", "confirmAction", "notify", "renderChatOverview",
       "showSourceViewer", "prettyOrigin", "refreshReferenceView",
-      constant("REFERENCE_KEY_SEP") + "\n" + helpers + constant("PASTED_SNIPPET_CAP") + "\n" +
+      constant("REFERENCE_KEY_SEP") + "\n" + constant("FLAG_KEYS") + "\n" + helpers +
+        constant("PASTED_SNIPPET_CAP") + "\n" +
         "return { renderSourceItem, renumberStrokes };"
     );
     let fns;
@@ -1453,7 +1482,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       `${constant("activeRuns")}\n${constant("RUN_GUARDED")}\n` +
         `${constant("RUN_GUARDED_ON_RECOVERY")}\n${extract("syncRunGuards")}\n` +
         `${extract("noteRunStarted")}\n${extract("noteRunFinished")}\n` +
-        `${extract("runStatus")}\n` +
+        `${extract("i18nText")}\n${extract("runStatus")}\n` +
         "return { runStatus, busy: () => activeRuns.has('nb-1') };"
     )(
       doc,

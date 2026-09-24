@@ -580,7 +580,7 @@ function runStatus({ notebookId, runIds, label, onCancel }) {
   const stop = document.createElement("button");
   stop.type = "button";
   stop.className = "btn run-stop";
-  stop.textContent = t("run.stop", "\u23f9 Stop");
+  i18nText(stop, "run.stop", "\u23f9 Stop");
   node.appendChild(stop);
 
   // The step list still exists — it is what counts the steps for the pill and what tracks which
@@ -896,8 +896,8 @@ function renderTickerAffordance(runId) {
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "ticker-toggle trace-face";
-  toggle.textContent = t("err.stepsLoad", "Steps");
-  toggle.dataset.tip = t("traj.open", "Open the run's trajectory");
+  i18nText(toggle, "err.stepsLoad", "Steps");
+  i18nTip(toggle, "traj.open", "Open the run's trajectory");
   // **An affordance whose only possible outcome is an apology is not an affordance.** This pill was
   // rendered unconditionally, so a run that FAILED before producing a trace still offered it - and
   // pressing it raised a native `alert()` carrying a raw run UUID. Two independent reviews found
@@ -926,8 +926,11 @@ function renderTickerAffordance(runId) {
     //: A `role="status"` so the sentence is ANNOUNCED. The pill changing its own label is a visual
     //: event; without a live region a screen-reader user presses a button and is told nothing.
     toggle.setAttribute("role", "status");
-    toggle.textContent = t("traj.none", "This run left no trace.");
+    i18nText(toggle, "traj.none", "This run left no trace.");
+    // All three, or the next language switch would put the tip back on a pill with nothing to open.
     delete toggle.dataset.tip;
+    delete toggle.dataset.i18nTip;
+    delete toggle.dataset.i18nTipSource;
   });
 
   wrapper.appendChild(toggle);
@@ -990,6 +993,89 @@ function plural(n, word) {
   return `${Number(n).toLocaleString()} ${word}${Number(n) === 1 ? "" : "s"}`;
 }
 
+// **The server speaks English; the interface may not.** Injection-scan flags and a citation's
+// "why unverified" reason are English sentences built on the server, so a zh-Hant reader got an
+// English line inside a Chinese card. Each known sentence maps to a key; anything unrecognised is
+// shown as the server wrote it, which is still true, only untranslated.
+//
+// Keyed on the EXACT flag text `injection_scan.py` emits. `tests/test_server_sentences.py` checks that
+// every description there has an entry here, so a new pattern cannot ship untranslated silently.
+const FLAG_KEYS = {
+  "text telling a model to ignore its instructions": [
+    "flag.ignoreInstructions", "text telling a model to ignore its instructions"],
+  "text trying to reassign the model's role": ["flag.reassignRole", "text trying to reassign the model's role"],
+  "a chat role label (System:/User:/Assistant:) opening a line": [
+    "flag.roleLabel", "a chat role label (System:/User:/Assistant:) opening a line"],
+  "text telling a model to disregard its rules": [
+    "flag.disregardRules", "text telling a model to disregard its rules"],
+  "text asking a model to reveal its prompt or credentials": [
+    "flag.revealSecrets", "text asking a model to reveal its prompt or credentials"],
+  "a long run of base64-like characters (possibly an encoded payload)": [
+    "flag.base64", "a long run of base64-like characters (possibly an encoded payload)"],
+};
+
+function readableFlag(flag) {
+  const known = FLAG_KEYS[flag];
+  return known ? t(known[0], known[1]) : flag;
+}
+
+// The two shapes `citations.verify_citations` writes. Python's repr quotes with single quotes, and the list
+// of known locators can run to hundreds of pages, so only the first few are named.
+function readableReason(reason, name) {
+  const text = String(reason || "");
+  const unquote = (v) => v.replace(/^['"]|['"]$/g, "");
+  let m = text.match(/^no source with id (.+) in this notebook$/);
+  if (m) {
+    const id = name || unquote(m[1]);
+    return t("cite.reasonNoSource", `There is no source ${id} in this notebook. It may have been removed.`, { id });
+  }
+  m = text.match(/^source (.+) has no block at locator (.+); known locators: \[(.*)\]$/);
+  if (m) {
+    const id = name || unquote(m[1]);
+    const locator = unquote(m[2]);
+    const all = m[3].split(",").map((v) => unquote(v.trim())).filter(Boolean);
+    const shown = all.slice(0, 6).join(", ") + (all.length > 6 ? ", …" : "");
+    // `whole` is the coordinate for a one-block source; "has no whole" reads as a typo.
+    if (locator === "whole") {
+      return t("cite.reasonNoWhole", `${id} is split into parts, so a citation has to name one: ${shown}.`, {
+        id, known: shown,
+      });
+    }
+    return t("cite.reasonNoBlock", `Source ${id} has no ${locator}. It has: ${shown}.`, {
+      id, locator, known: shown,
+    });
+  }
+  return text;
+}
+
+// A source's KIND as a reader-facing word. The values are the schema's (`web`, `pdf`, `text`,
+// `youtube`), which read as code in a Chinese interface; an unknown kind shows as stored.
+function kindLabel(kind) {
+  const labels = { web: "web", pdf: "pdf", text: "text", youtube: "youtube" };
+  return kind in labels ? t(`kind.${kind}`, labels[kind]) : kind;
+}
+
+// **A label drawn by a renderer that a language switch does not re-run.** `applyStaticI18n`
+// re-translates anything carrying `data-i18n`, so tagging the element with its key and its ENGLISH
+// source is enough; the source must be the English text, not whatever `t()` returned, or switching
+// back to English would fall back to the Chinese. The steps pill and the "audio is gone" line kept
+// their first language until the next repaint that happened to rebuild them.
+function i18nText(el, key, fallback, vars) {
+  el.textContent = t(key, fallback, vars);
+  if (!vars) {
+    el.dataset.i18n = key;
+    el.dataset.i18nSource = fallback;
+  }
+  return el;
+}
+
+function i18nTip(el, key, fallback) {
+  el.dataset.tip = t(key, fallback);
+  el.dataset.i18nTip = key;
+  el.dataset.i18nTipSource = fallback;
+  return el;
+}
+
 function sourceDisplayName(source) {
   //: **The scraped TITLE first, because that is the source's name.** This returned the host, so the
   //: one human-readable identifier the product has — the thing the Inbox's whole "if recall cannot
@@ -1049,7 +1135,7 @@ function renderSourceMeta(source) {
   ]);
 
   if (source.flags && source.flags.length) {
-    rows.push([t("source.flags", "Flagged"), source.flags.join("; ")]);
+    rows.push([t("source.flags", "Flagged"), source.flags.map(readableFlag).join("; ")]);
   }
 
   rows.forEach(([term, value, href]) => {
@@ -1764,7 +1850,9 @@ function renderUiLanguageRow(body) {
   wrap.appendChild(select);
 
   const help = document.createElement("div");
-  help.className = "setting-help";
+  // The same class every other row's help line uses; `setting-help` had no rule at all, so this one
+  // line rendered at full size and full contrast, unlike the four below it.
+  help.className = "setting-source";
   help.textContent = t(
     "settings.uiLanguageHelp",
     "Only affects the text on this screen, never what the model writes."
@@ -2604,7 +2692,7 @@ function renderSourceItem(source) {
 
   const kind = document.createElement("div");
   kind.className = "src-kind";
-  kind.textContent = source.kind;
+  kind.textContent = kindLabel(source.kind);
   open.appendChild(kind);
 
   // A PREVIEW CARD when the page told us what it is: its own title, a line of its own description,
@@ -2647,7 +2735,7 @@ function renderSourceItem(source) {
     // The flag is advisory and gates nothing (invariant 6), so it says what was seen and — via the
     // tooltip — what that means. It used to print the raw regex, which a user reasonably asked
     // about; a warning nobody can act on teaches people to ignore the ones that matter.
-    flags.textContent = `\u26a0 ${source.flags.join(", ")}`;
+    flags.textContent = `\u26a0 ${source.flags.map(readableFlag).join(", ")}`;
     flags.dataset.tip = t(
       "sources.flagHelp",
       "Found in this source's own text, not in your question. It is not blocked and answers can still cite it. This is a heads-up that the source contains something that looks like an instruction to a model."
@@ -2933,7 +3021,11 @@ function printReferenceList() {
     const source = (state.sources || []).find((s) => s.id === ref.source_id);
     const where = ref.locator && ref.locator !== "whole" ? ` · ${ref.locator}` : "";
     const item = elt("li", null, `${source ? sourceLabel(source) : ref.source_id}${where}`);
-    if (ref.verified === false) item.appendChild(elt("em", null, ` (${t("copy.unverified", "unverified")})`));
+    // Not `<em>`: most CJK faces have no italic, so the browser slants the glyphs itself, and a
+    // synthesised oblique 未驗證 reads as a rendering fault on paper. Weight carries it instead.
+    if (ref.verified === false) {
+      item.appendChild(elt("span", "print-unverified", t("copy.unverifiedTag", " (unverified)")));
+    }
     if (ref.quote) item.appendChild(elt("blockquote", null, ref.quote));
     list.appendChild(item);
   });
@@ -3166,6 +3258,9 @@ const MD_INLINE = [
   { open: "`", close: "`", tag: "code", className: "md-code" },
   { open: "**", close: "**", tag: "strong" },
   { open: "__", close: "__", tag: "strong" },
+  // GFM strikethrough. Models write it ("~~chunk size~~ matters less than overlap"), and printed
+  // raw, the tildes read as noise and the retraction the writer meant is lost.
+  { open: "~~", close: "~~", tag: "del" },
   { open: "*", close: "*", tag: "em" },
   { open: "_", close: "_", tag: "em" },
 ];
@@ -3738,8 +3833,9 @@ function regenerateTurnButton(question) {
   button.type = "button";
   // The same `.ticker-toggle` shape as the steps pill beside it: one row, one weight.
   button.className = "ticker-toggle trace-face";
-  button.textContent = t("chat.regenerateTurn", "\u21bb Regenerate");
-  button.dataset.tip = t(
+  i18nText(button, "chat.regenerateTurn", "\u21bb Regenerate");
+  i18nTip(
+    button,
     "chat.regenerateTurnTip",
     "Ask this question again and replace this answer. Costs a full model run.",
   );
@@ -3928,11 +4024,14 @@ function renderChatOverview() {
   const body = renderAnswerWithCitations(overview.text, overview.citations || [], overview.run_id);
   body.className = "chat-overview-body";
   el.appendChild(body);
-  // No cache guard: the affordance loads the record from the server when this page has none, which
-  // is every run after a reload.
-  if (overview.run_id) {
-    el.appendChild(renderTickerAffordance(overview.run_id));
-  }
+  // The same one-row footer an answer has, so the overview above the thread does not end in two
+  // lines of chrome right over an answer that ends in one. No cache guard on the steps pill: it
+  // loads the record from the server when this page has none, which is every run after a reload.
+  const footer = elt("div", "turn-footer");
+  const refs = body.lastElementChild;
+  if (refs && refs.classList.contains("reference-link")) footer.appendChild(refs);
+  if (overview.run_id) footer.appendChild(renderTickerAffordance(overview.run_id));
+  if (footer.children.length) el.appendChild(footer);
   el.appendChild(saveAsNoteButton(overview.text));
   el.appendChild(
     copyButton(() =>
@@ -5239,10 +5338,10 @@ function renderPodcast(body, { utterances, runId, audioSrc, stale, suffix, offse
   if (missing) {
     const gone = elt("div", "podcast-gone");
     gone.appendChild(
-      elt(
-        "span",
-        "podcast-gone-why",
-        t("podcast.audioGone", "This episode's audio is gone. The transcript is still here.")
+      i18nText(
+        elt("span", "podcast-gone-why"),
+        "podcast.audioGone",
+        "This episode's audio is gone. The transcript is still here."
       )
     );
     body.appendChild(gone);
@@ -6081,10 +6180,10 @@ function referenceOrigin(source) {
     try {
       return new URL(source.origin).hostname.replace(/^www\./, "");
     } catch {
-      return source.kind;
+      return kindLabel(source.kind);
     }
   }
-  return source.kind;
+  return kindLabel(source.kind);
 }
 
 // Reciprocal highlight: pointing at a reference lights up the strokes it backs, and pointing at a
@@ -6214,7 +6313,7 @@ function renderReferenceView() {
         if (reference.reason) {
           const detail = document.createElement("p");
           detail.className = "ref-card-why-detail";
-          detail.textContent = reference.reason;
+          detail.textContent = readableReason(reference.reason, source ? sourceLabel(source) : "");
           cardBody.appendChild(detail);
         }
       }

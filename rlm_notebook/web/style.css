@@ -1592,9 +1592,10 @@ body.is-resizing .cols {
 
 .transport-scrub::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 0.75rem;
-  height: 0.75rem;
-  margin-top: -var(--space-1); /* centres the thumb on a 3px track; WebKit has no `align` for this */
+  --thumb: 0.75rem;
+  width: var(--thumb);
+  height: var(--thumb);
+  margin-top: calc((3px - var(--thumb)) / 2); /* centres the thumb on a 3px track; WebKit has no `align` for this */
   border: 0;
   border-radius: 50%;
   background: var(--accent);
@@ -2405,7 +2406,7 @@ body.is-resizing .cols {
    Podcast or Notes were; hover titles carry the per-control detail, this carries the one sentence
    that has to be visible without hovering anything. */
 .panel-sub {
-  margin: -var(--space-0) 0 var(--space-5);
+  margin: calc(-1 * var(--space-0)) 0 var(--space-5);
   font-size: var(--text-md);
   line-height: 1.5;
   color: var(--text-faint);
@@ -3325,9 +3326,10 @@ select:hover {
   position: absolute;
   left: 0.85rem;
   top: 50%;
-  width: 0.85rem;
-  height: 0.85rem;
-  margin-top: -var(--space-3);
+  --spinner: 0.85rem;
+  width: var(--spinner);
+  height: var(--spinner);
+  margin-top: calc(var(--spinner) / -2);
   border: 2px solid color-mix(in oklch, var(--bg) 45%, transparent);
   border-top-color: var(--bg);
   border-radius: 50%;
@@ -4212,6 +4214,11 @@ body.is-resizing .studio-grip {
   display: none;
 }
 
+/* The overview is a flex column with its own gap, which already spaces the row. */
+.chat-overview > .turn-footer {
+  margin-top: 0;
+}
+
 /* The row owns the spacing; each item's own top margin would stagger the row. */
 .turn-footer > .reference-link,
 .turn-footer > .ticker-affordance,
@@ -4395,11 +4402,12 @@ body.is-resizing .studio-grip {
 /* The server's own reason string — a coordinate and the locators that DO exist. Diagnostic rather
    than prose, so it is set apart from the sentence above rather than blended into it. */
 .ref-card-why-detail {
-  margin: -var(--space-1) 0 var(--space-3);
+  margin: calc(-1 * var(--space-1)) 0 var(--space-3);
   padding: 0 var(--space-3);
   color: var(--text-faint);
-  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: var(--text-2xs);
+  /* A translated sentence now (`readableReason`), not the verifier's raw repr, so the interface
+     face: monospace set the Chinese version in whatever CJK fallback the mono stack lands on. */
+  font-size: var(--text-xs);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -6530,7 +6538,7 @@ body[data-view="inbox"] .notebook-picker {
    the head rather than to a control that no longer has a box of its own. */
 .node-head {
   padding: var(--space-0) var(--space-1);
-  margin: -var(--space-0) -var(--space-1);
+  margin: calc(-1 * var(--space-0)) calc(-1 * var(--space-1));
 }
 
 
@@ -6633,6 +6641,10 @@ body[data-view="inbox"] .notebook-picker {
     break-before: auto;
     margin-top: var(--space-8);
     font-size: var(--text-sm);
+  }
+
+  .print-unverified {
+    font-weight: 600;
   }
 
   .print-references blockquote {

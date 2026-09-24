@@ -893,3 +893,13 @@ def test_the_print_stylesheet_drops_the_shell_and_keeps_the_thread():
     assert ".chat-history" in printed and "overflow: visible" in printed
     # ...and a turn is not split down the middle of a page.
     assert "break-inside: avoid" in printed
+
+
+def test_strikethrough_renders_as_a_deletion_not_as_tildes():
+    """Models write GFM strikethrough, and the hand-written renderer (invariant 55) printed the
+    tildes raw: "~~Chunk size~~ is less important than overlap" lost the retraction it meant."""
+    parts = _run("markdownInline")["parts"]
+    assert "DEL:Chunk size" in parts, parts
+    assert not any("~~Chunk" in p for p in parts), parts
+    # A lone tilde, or a pair inside a word with nothing to close it, stays plain text.
+    assert any("~ alone" in p for p in parts), parts
