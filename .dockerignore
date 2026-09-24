@@ -3,7 +3,6 @@
 orbits/
 traces/
 audio/
-playground/dist/
 docs/
 tests/
 *.mp3

@@ -64,7 +64,7 @@ Each entry states what the product does now and why. The reasoning behind each r
 - `penumbra serve` starts the API and the web UI on loopback. Every request needs the API token the server prints, and a non-loopback `--host` warns, because the token authenticates the app and there is still no per-user authorization (invariants 25 and 77).
 - `serve` quits on one Ctrl-C or a terminal hangup even with a run in flight, and it kills the run's whole process group, so no worker keeps billing after the server is gone (invariant 22).
 - A model string prefixed `claude-agent-sdk/` runs that role on the user's Claude subscription (invariant 35).
-- A `Dockerfile` carries the two binaries no Python manifest can express, `deno` and `tesseract`. `playground/` builds a static, backend-free demo of the web UI from recorded orbits.
+- A `Dockerfile` carries the two binaries no Python manifest can express, `deno` and `tesseract`.
 - The CLI can ingest, ask, generate guides and podcasts, and write a trace with `--trace`. It cannot reach the Horizon or manage orbits.
 
 #### The desktop app
@@ -118,6 +118,7 @@ These are the few failures that shaped the current design. Smaller fixes are not
 
 ### Decided against
 
+- A public demo page. A static, server-free replay of the web UI (`playground/`) ran at `boik.tw/rlm-notebook`; it showed a NotebookLM-style product that Penumbra no longer is, so the page was taken down and the builder removed.
 - Concurrent source ingestion, because PDFium crashes under it (invariant 3).
 - A Traditional Chinese OCR recognition model and a layout-detection model as shipped defaults, because measured accuracy did not justify them.
 - A phone layout. This is a desktop application, and the server binds loopback.

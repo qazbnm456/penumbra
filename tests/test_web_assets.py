@@ -2363,8 +2363,8 @@ def test_every_class_the_horizon_creates_has_a_rule():
     # **And the MARKUP, which this check did not read for three rounds.** It scanned only classes
     # `app.js` creates, so `#capture-pick` - written in `index.html`, the keyboard and touch route to
     # a file - shipped with no rule at all and wore the UA's `buttonface`: measured 2.34:1 in Study,
-    # the one native-chrome element in the product, on the default screen and on the public
-    # playground page. A class is a class wherever it is written.
+    # the one native-chrome element in the product, on the default screen. A class is a class
+    # wherever it is written.
     html = (WEB / "index.html").read_text(encoding="utf-8")
     horizon_markup = html[html.index('id="view-horizon"') : html.index('id="view-orbit"')]
     for match in re.findall(r'class="([^"]+)"', horizon_markup):
@@ -3163,73 +3163,6 @@ def test_a_failed_answer_offers_the_same_retry_a_failed_capture_does():
     assert "turn-failed-why" in branch, "the failure branch no longer shows the reason"
 
 
-def test_every_endpoint_the_app_calls_has_a_playground_route():
-    """**The playground is the product's front door, and its own guard does not run in CI.**
-
-    `playground/smoke.mjs` extracts every `api("…")` path out of `app.js` and drives it through the
-    shim's router precisely so an endpoint added to the app cannot silently 404 on the static page.
-    `.github/workflows/ci.yml` runs neither `build.py` nor `smoke.mjs`, so the guard was only as
-    good as somebody remembering — and nobody did: round twelve added `POST /horizon/distil/dismiss`
-    to `api.py` and `app.js` and not to the shim, which an independent review found by running the
-    smoke test by hand.
-
-    This is the same correspondence, checked from the source in CI. It cannot replace the smoke
-    test — that one executes the router and this reads a list — but it catches the drift that
-    actually happens, which is a new endpoint nobody mirrored.
-    """
-    app = _blank_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
-    shim = (Path(__file__).resolve().parents[1] / "playground" / "src" / "shim.js").read_text(
-        encoding="utf-8"
-    )
-
-    # `api("…")` / `api(`…`)`, with the method from an adjacent `method:` — smoke.mjs's own regex.
-    called = set()
-    for m in re.finditer(r"api\(\s*(?:`([^`]*)`|\"([^\"]*)\")\s*(?:,\s*\{([^}]*)\})?", app):
-        raw = (m.group(1) or m.group(2) or "").replace("${", "\x00").split("\x00")[0]
-        raw = re.sub(r"\$\{[^}]*\}", "X", (m.group(1) or m.group(2) or ""))
-        if not raw.startswith("/"):
-            continue
-        method = re.search(r'method:\s*"(\w+)"', m.group(3) or "")
-        called.add((method.group(1) if method else "GET", raw))
-    assert len(called) > 15, f"the extractor stopped matching; it found {len(called)}"
-
-    # Every `route(METHOD, "pattern")` the shim registers, plus the write-list tuples.
-    #: Three spellings, because the shim uses all three: a plain string, a template literal, and
-    #: the bare `NB` constant (`route("GET", NB, …)`), which is an orbit path on its own.
-    patterns = [
-        (m.group(1), m.group(2) if m.group(2) is not None else m.group(3) or "${NB}")
-        for m in re.finditer(
-            r'route\(\s*"(\w+)"\s*,\s*(?:"([^"]*)"|`([^`]*)`|NB\b)', shim
-        )
-    ]
-    patterns += [
-        (m.group(1), m.group(2)) for m in re.finditer(r'\[\s*"(\w+)"\s*,\s*"([^"]*)"\s*\]', shim)
-    ]
-    # `NB` is the shim's own shorthand for an orbit path segment.
-    compiled = [
-        (method, re.compile("^" + pattern.replace("${NB}", "/orbits/([^/]+)") + "$"))
-        # `NB` is a JS const, so a pattern using it arrives here as `${NB}` from the template
-        # literal above; a plain string pattern has no placeholder to expand.
-        for method, pattern in patterns
-    ]
-
-    unrouted = sorted(
-        f"{method} {path}"
-        for method, path in called
-        # `X` stands in for an interpolated segment, exactly as smoke.mjs fills it.
-        #: The QUERY STRING is not part of a route: the shim matches on the path and reads `u`
-        #: for the rest, exactly as the real server's handler reads its parameters.
-        if not any(
-            m == method and rx.match(path.split("?")[0].replace("X", "seg"))
-            for m, rx in compiled
-        )
-    )
-    assert not unrouted, (
-        "the app calls an endpoint the playground shim does not route, so the static page answers "
-        "`no playground route` where the real app works:\n  " + "\n  ".join(unrouted)
-    )
-
-
 def test_the_page_declares_a_doctype():
     """**Without one the whole product renders in quirks mode**, and it did.
 
@@ -3242,7 +3175,7 @@ def test_the_page_declares_a_doctype():
     decimals, and `scrollingElement` is the wrong element for any future code that touches it.
 
     It has to be the very FIRST thing in the file: a comment or a blank line before it is fine to a
-    parser, but anything that is content is not, and `playground/build.py` copies this file.
+    parser, but anything that is content is not.
     """
     html = (WEB / "index.html").read_text(encoding="utf-8")
     assert html.lstrip().lower().startswith("<!doctype html>"), (

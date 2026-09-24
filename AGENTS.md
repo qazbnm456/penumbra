@@ -35,7 +35,7 @@ The API is the only place a run is isolated in a subprocess (`runner.py` and `wo
 
 `desktop/` is a Tauri 2 shell for macOS, Windows and Linux that bundles a Python with Penumbra installed plus deno, starts `serve` on loopback and shows the web UI in a native window (invariant 81). `desktop/scripts/build_runtime.py` assembles the runtime on each platform, and `.github/workflows/desktop.yml` checks the shell and builds the installers on all three, run by hand only.
 
-`penumbra serve` starts the API and the web UI on loopback by default (invariant 25). The `Dockerfile` carries the two system binaries no Python manifest can express: `deno`, which every live run needs (invariant 9), and `tesseract`, the OCR fallback (invariant 7). `playground/` builds the same web UI into a static, backend-free demo from recorded orbits; it has its own `README.md` and `smoke.mjs`, and CI runs neither (`.github/workflows/ci.yml` is pytest and ruff only).
+`penumbra serve` starts the API and the web UI on loopback by default (invariant 25). The `Dockerfile` carries the two system binaries no Python manifest can express: `deno`, which every live run needs (invariant 9), and `tesseract`, the OCR fallback (invariant 7).
 
 Still unbuilt. Do not assume any of these exist because a design discussion mentioned them:
 

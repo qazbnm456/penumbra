@@ -167,11 +167,10 @@ function forgetApiToken() {
 
 function captureApiToken() {
   // The WHOLE body is guarded. This runs at top level, so anything it throws takes every
-  // `init*()` below it down with it and the page renders blank — and the environments this has to
-  // survive are not all browsers: `playground/` copies this file verbatim, and `smoke.mjs` reads
-  // it into a Node `vm` context, where `URL` is not a global at all (it is a WHATWG addition, not
-  // an ECMAScript intrinsic). Failing soft costs the reader one re-opened URL; failing hard costs
-  // them the application.
+  // `init*()` below it down with it and the page renders blank — and not every context that loads
+  // this file is a browser: a Node `vm` context has no `URL` global at all (it is a WHATWG
+  // addition, not an ECMAScript intrinsic). Failing soft costs the reader one re-opened URL;
+  // failing hard costs them the application.
   try {
     const url = new URL(window.location.href);
     // The desktop shell passes both in the FRAGMENT (`#token=…&shell=desktop`), which the browser
@@ -7555,8 +7554,8 @@ function syncAddressBar(orbitId, { replace = false } = {}) {
     const how = replace ? "replaceState" : "pushState";
     window.history[how]({ nb: orbitId || "" }, "", next);
   } catch {
-    // Same reasoning as `captureApiToken`: no `URL`/`history` here (the playground's `vm` context
-    // is one), and losing the address bar must never cost the reader the application.
+    // Same reasoning as `captureApiToken`: no `URL`/`history` in some contexts (a Node `vm` is
+    // one), and losing the address bar must never cost the reader the application.
   }
 }
 
@@ -8805,8 +8804,7 @@ function facetLabels(books) {
     //: minute matched on all four and came out as three byte-identical rail entries - the exact
     //: failure this ladder exists to prevent, reached by running out of ladder. An ordinal is the
     //: only suffix guaranteed to differ, it is what a file manager does for the same reason, and it
-    //: is not the orbit's id: invariant 37 keeps the handle off a label, and a round-five review
-    //: found it leaking onto the public playground for precisely that reason.
+    //: is not the orbit's id: invariant 37 keeps the handle off a label.
     (b, label, at) => `${label} (${at + 1})`,
   ];
   const out = new Map(books.map((b) => [b.id, rungs[0](b)]));
