@@ -33,8 +33,9 @@ const HOVER_DELAY: Duration = Duration::from_millis(160);
 const LEAVE_GRACE: Duration = Duration::from_millis(380);
 /// How far a press must travel before it counts as a drag rather than a click.
 const DRAG_DISTANCE: f64 = 12.0;
-/// The longest the island stays open after a drop if the page never says it is done.
-const SWALLOW_BACKSTOP: Duration = Duration::from_millis(4000);
+/// The longest the island stays open after a release over it if the page never says it took a
+/// drop: a drag cancelled with Escape ends the same way, and must not leave it open for long.
+const SWALLOW_BACKSTOP: Duration = Duration::from_millis(1600);
 /// How long the page's shrink animation takes; the window is only made small after it.
 const SHRINK_AFTER: Duration = Duration::from_millis(320);
 
@@ -52,13 +53,16 @@ impl Rect {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Geometry {
     /// `top` for the notch or a screen's top centre, `left` for the left edge.
     pub edge: &'static str,
     /// How much of the window's top the hardware hides: the notch's height, or 0. The page keeps
     /// its content below it, because the display has no pixels there.
     pub inset: f64,
+    /// The menu-bar screen's height, measured with the rest on the main thread, for turning
+    /// AppKit's bottom-left pointer coordinates into the top-left ones the window is placed in.
+    pub screen_h: f64,
     pub rest: Rect,
     pub hover: Rect,
     pub armed: Rect,
@@ -85,6 +89,16 @@ impl State {
 
 static GEOMETRY: Mutex<Option<Geometry>> = Mutex::new(None);
 static WATCHING: AtomicBool = AtomicBool::new(false);
+/// Bumped on every state change, so a delayed shrink can tell whether the island reopened while it
+/// waited. Without it a Rest -> Armed within the shrink delay left a notch-sized window under a
+/// page drawing the open shape, and the drop fell through to whatever was underneath.
+static EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// How often the screens are re-measured: a display plugged in, the lid closed, a resolution
+/// change. Measuring once at launch left the notch shape stranded on the wrong screen.
+const REMEASURE_EVERY: Duration = Duration::from_secs(4);
+/// The loop's pace when nothing is near: at rest, no button held, the pointer far away. 16ms is
+/// only needed while something could happen within a frame.
+const IDLE_TICK: Duration = Duration::from_millis(120);
 /// Set by the page (`/__shell/rest`) once a drop has been swallowed: the page, not the pointer,
 /// knows when that happened.
 static REST_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -188,34 +202,41 @@ fn watch(app: AppHandle) {
     let mut away_since: Option<Instant> = None;
     let mut swallow_until: Option<Instant> = None;
     let mut was_dragging = false;
-    let mut press_origin: Option<(f64, f64)> = None;
+    let mut press: Option<Press> = None;
+    let mut measured_at = Instant::now();
+    let mut tick = TICK;
     loop {
-        thread::sleep(TICK);
+        thread::sleep(tick);
+        if measured_at.elapsed() >= REMEASURE_EVERY {
+            measured_at = Instant::now();
+            remeasure(&app, state);
+        }
         let (Some(geo), Some((px, py))) = (geometry(), platform::pointer(&app)) else {
             continue;
         };
-        // **A held button is not a drag.** Clicking the island twice held the button over it and
-        // armed it as if something were being dragged in. A drag here is a press that STARTED
-        // somewhere else and has MOVED since; a press that starts on the island is a click.
+        // **A held button is not a drag, and neither is every drag.** Clicking the island held the
+        // button over it, and selecting text or moving a window near the top of the screen is a
+        // press that moves: both opened it as a drop target. A drag here is a press that started
+        // off the island, has moved, and (where the platform can tell) is a real drag-and-drop:
+        // on macOS the drag pasteboard changes when one begins.
         let pressed = platform::button_down();
         if !pressed {
-            press_origin = None;
-        } else if press_origin.is_none() {
-            press_origin = Some((px, py));
+            press = None;
+        } else if press.is_none() {
+            press = Some(Press { x: px, y: py, pasteboard: platform::drag_pasteboard() });
         }
-        let dragging = match press_origin {
-            Some((ox, oy)) => {
-                !geo.hover.contains(ox, oy, 4.0) && ((px - ox).powi(2) + (py - oy).powi(2)).sqrt() > DRAG_DISTANCE
-            }
-            None => false,
-        };
+        let dragging = press.is_some_and(|p| {
+            !geo.hover.contains(p.x, p.y, 4.0)
+                && ((px - p.x).powi(2) + (py - p.y).powi(2)).sqrt() > DRAG_DISTANCE
+                && platform::drag_began_since(p.pasteboard)
+        });
         let now = Instant::now();
 
         let rest_asked = REST_REQUESTED.swap(false, Ordering::SeqCst);
         let next = match state {
             _ if rest_asked => State::Rest,
-            // After a drop the island stays open until the page says it has finished, however the
-            // pointer moves (the backstop is only there if that message never comes).
+            // After a release over it the island waits for the page to say it took a drop (it
+            // then asks for rest itself); the backstop covers a drag cancelled with Escape.
             State::Swallow => match swallow_until {
                 Some(until) if now < until => State::Swallow,
                 _ => State::Rest,
@@ -250,18 +271,24 @@ fn watch(app: AppHandle) {
             }
         };
         was_dragging = dragging;
+        // Slow down only when nothing can happen within a frame.
+        tick = if next == State::Rest && !pressed && !geo.armed.contains(px, py, 300.0) { IDLE_TICK } else { TICK };
         if next == state {
             continue;
         }
         away_since = None;
         hover_since = None;
+        let epoch = EPOCH.fetch_add(1, Ordering::SeqCst) + 1;
         match next {
             State::Rest => {
                 tell(&app, State::Rest, &geo);
                 let app = app.clone();
                 thread::spawn(move || {
                     thread::sleep(SHRINK_AFTER);
-                    place(&app, geo.rest);
+                    // Only if nothing reopened it while the page was shrinking.
+                    if EPOCH.load(Ordering::SeqCst) == epoch {
+                        place(&app, geo.rest);
+                    }
                 });
             }
             State::Hover => {
@@ -280,11 +307,39 @@ fn watch(app: AppHandle) {
     }
 }
 
+#[derive(Clone, Copy)]
+struct Press {
+    x: f64,
+    y: f64,
+    /// The drag pasteboard's change count when the button went down, where the platform has one.
+    pasteboard: Option<i64>,
+}
+
+/// Re-measure on the main thread (AppKit's screen APIs require it) and, if the island is at rest,
+/// move it to where the notch now is.
+fn remeasure(app: &AppHandle, state: State) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let before = geometry();
+        measure(&handle);
+        let after = geometry();
+        if state == State::Rest && after != before {
+            if let Some(geo) = after {
+                place(&handle, geo.rest);
+                tell(&handle, State::Rest, &geo);
+            }
+        }
+    });
+}
+
 #[cfg(target_os = "macos")]
 mod platform {
     use super::{Geometry, Rect};
     use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSEvent, NSScreen, NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior};
+    use objc2_app_kit::{
+        NSEvent, NSPasteboard, NSPasteboardNameDrag, NSScreen, NSStatusWindowLevel, NSWindow,
+        NSWindowCollectionBehavior,
+    };
     use tauri::{AppHandle, WebviewWindow};
 
     /// The notch, measured from the screen that carries the menu bar. A screen without one gets a
@@ -311,6 +366,7 @@ mod platform {
         Some(Geometry {
             edge: "top",
             inset: if top > 0.0 { top } else { 0.0 },
+            screen_h: frame.size.height,
             rest,
             hover: Rect { x: centre - hover_w / 2.0, y: 0.0, w: hover_w, h: bar + 52.0 },
             armed: Rect { x: centre - armed_w / 2.0, y: 0.0, w: armed_w, h: bar + 118.0 },
@@ -339,22 +395,26 @@ mod platform {
     }
 
     /// The pointer in the same top-left, point-based space the window is placed in. AppKit measures
-    /// from the bottom-left of the menu-bar screen.
+    /// from the bottom-left of the menu-bar screen, whose height the last measurement recorded.
     pub fn pointer(_app: &AppHandle) -> Option<(f64, f64)> {
         let at = NSEvent::mouseLocation();
-        let height = super::geometry().map(|_| primary_height())?;
+        let height = super::geometry()?.screen_h;
         Some((at.x, height - at.y))
     }
 
-    fn primary_height() -> f64 {
-        use std::sync::OnceLock;
-        static HEIGHT: OnceLock<f64> = OnceLock::new();
-        *HEIGHT.get_or_init(|| {
-            // Measured once, on whichever thread first asks; the menu-bar screen's height does not
-            // change while the app runs often enough to matter for a hover target.
-            let mtm = unsafe { MainThreadMarker::new_unchecked() };
-            NSScreen::screens(mtm).firstObject().map(|s| s.frame().size.height).unwrap_or(900.0)
-        })
+    /// The drag pasteboard's change count. It moves when a drag-and-drop session begins, and only
+    /// then: selecting text or moving a window never touches it.
+    pub fn drag_pasteboard() -> Option<i64> {
+        // SAFETY: a system constant, valid for the life of the process.
+        let name = unsafe { NSPasteboardNameDrag };
+        Some(NSPasteboard::pasteboardWithName(name).changeCount() as i64)
+    }
+
+    pub fn drag_began_since(at_press: Option<i64>) -> bool {
+        match (at_press, drag_pasteboard()) {
+            (Some(before), Some(now)) => now != before,
+            _ => true,
+        }
     }
 
     /// A drag is a held primary button. Readable without any permission.
@@ -377,6 +437,7 @@ mod platform {
         Some(Geometry {
             edge: "left",
             inset: 0.0,
+            screen_h: height,
             rest: Rect { x: 0.0, y: mid - 70.0, w: 5.0, h: 140.0 },
             hover: Rect { x: 0.0, y: mid - 60.0, w: 300.0, h: 120.0 },
             armed: Rect { x: 0.0, y: mid - 100.0, w: 400.0, h: 200.0 },
@@ -384,6 +445,16 @@ mod platform {
     }
 
     pub fn float_above_menu_bar(_app: &AppHandle, _window: &WebviewWindow) {}
+
+    /// No portable drag-session signal here: a press that started off the island and moved is
+    /// taken as a drag.
+    pub fn drag_pasteboard() -> Option<i64> {
+        None
+    }
+
+    pub fn drag_began_since(_at_press: Option<i64>) -> bool {
+        true
+    }
 
     pub fn pointer(app: &AppHandle) -> Option<(f64, f64)> {
         let at = app.cursor_position().ok()?;

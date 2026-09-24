@@ -138,3 +138,44 @@ def test_an_upload_that_creates_the_first_orbit_titles_it_in_the_readers_languag
     node_id = resp.json()["nodes"][0]["id"]
     assert _filed(node_id) == [api.FIRST_ORBIT_ID]
     assert load_orbit(api.FIRST_ORBIT_ID).title == "第一個軌道"
+
+
+def test_a_filing_failure_never_fails_the_capture(client, monkeypatch):
+    """Invariant 79: a capture always lands. Filing is a convenience on top of it."""
+
+    def boom(*a, **kw):
+        raise RuntimeError("filing broke")
+
+    monkeypatch.setattr(horizon, "promote_node", boom)
+    resp = client.post("/horizon", json={"texts": ["kept even though filing failed"]})
+    assert resp.status_code == 200
+    node_id = resp.json()["nodes"][0]["id"]
+    assert horizon.get_node(node_id) is not None
+
+
+def test_a_crashing_after_parse_hook_does_not_stall_intake(client, monkeypatch):
+    """The hook runs on the intake worker; if it raised out, every later capture would sit at
+    `queued`, which looks exactly like still working (invariant 79)."""
+    def boom(node_id):
+        raise RuntimeError("the hook broke")
+
+    monkeypatch.setattr(api, "_file_into_landing_orbit", boom)
+    ids = [
+        client.post("/horizon", json={"urls": [f"https://example.com/{n}"]}).json()["nodes"][0]["id"]
+        for n in ("one", "two")
+    ]
+    for _ in range(150):
+        if all(horizon.get_node(i).state == "ready_undistilled" for i in ids):
+            break
+        time.sleep(0.02)
+    assert [horizon.get_node(i).state for i in ids] == ["ready_undistilled"] * 2
+
+
+def test_the_cap_is_measured_on_the_real_blob_not_the_text(client, monkeypatch):
+    """Markers and separators are part of what invariant 8 caps: a 50-character paste becomes 68
+    characters of blob (`[[SRC:s10|whole]]` and a newline). A cap between the two must refuse it."""
+    text = "x" * 50
+    monkeypatch.setattr(api, "max_corpus_chars", lambda: 60)
+    node_id = client.post("/horizon", json={"texts": [text]}).json()["nodes"][0]["id"]
+    time.sleep(0.2)
+    assert horizon.memberships_for(node_id) == [], "text alone (50) fits; the real blob does not"

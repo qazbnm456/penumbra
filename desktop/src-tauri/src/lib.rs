@@ -589,9 +589,12 @@ fn boot(app: AppHandle) {
 /// times over a few seconds, which costs nothing once it has landed.
 fn splash_failure(window: &WebviewWindow, detail: &str) {
     // The workspace may be hidden (the island is the app at rest), and a failure nobody can see is
-    // the worst kind.
-    let _ = window.show();
-    let _ = window.set_focus();
+    // the worst kind. Through `open_workspace`, so the app also becomes a regular one with a Dock
+    // icon and a menu bar: a background app whose server failed has no island either, and would
+    // otherwise leave no way to quit.
+    let app = window.app_handle().clone();
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || open_workspace(&handle));
     for _ in 0..10 {
         splash(window, "failed", true, detail);
         thread::sleep(Duration::from_millis(300));
