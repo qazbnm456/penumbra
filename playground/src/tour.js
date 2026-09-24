@@ -1,4 +1,4 @@
-/* rlm-notebook PLAYGROUND — helpers, tour data, and the extra chrome.
+/* penumbra PLAYGROUND — helpers, tour data, and the extra chrome.
  *
  * Loaded BEFORE `shim.js`, which calls into `window.rlmPlayground` for the four things that need a
  * judgement rather than a route: which recorded run to replay, how to shape a ticker event, what a
@@ -14,7 +14,7 @@
 
   // --- which recorded run to replay -------------------------------------------------------------
   //: Traces are keyed by the run id of the run that HAPPENED; the playground's run ids are minted
-  //: fresh by `app.js` each time. So the pick is by TASK and notebook, and a miss degrades to a
+  //: fresh by `app.js` each time. So the pick is by TASK and orbit, and a miss degrades to a
   //: short synthesised sequence rather than an empty ticker (invariant 29: a missing trace costs
   //: one affordance, never the page).
   const TASK_FOR = {
@@ -60,8 +60,8 @@
   PG.trajectory = (run) => run.trajectory;
 
   // --- Guide tabs -------------------------------------------------------------------------------
-  //: Only the overview is persisted onto a notebook (invariant 38), and a Guide artifact is not —
-  //: so `summary` and `faq` can be served from what this notebook REALLY produced (the overview is
+  //: Only the overview is persisted onto an orbit (invariant 38), and a Guide artifact is not —
+  //: so `summary` and `faq` can be served from what this orbit REALLY produced (the overview is
   //: `GenerateSummary` + `GenerateFAQ`'s output), and `timeline`/`insight` have no recorded
   //: artifact at all.
   //:
@@ -80,7 +80,7 @@
           question: q,
           answer:
             "Ask this in the Chat panel and you will see it answered with citations you can check. " +
-            "The playground replays the questions this notebook really produced.",
+            "The playground replays the questions this orbit really produced.",
           citations: [],
         })),
         run_id: ov.run_id,
@@ -92,19 +92,19 @@
     // faq, `data.events` for timeline.
     //
     // The old payload carried a `note` field that `app.js` reads NOWHERE. Two consequences, both
-    // live on every notebook: summary and insight reached `renderAnswerWithCitations(undefined)`
+    // live on every orbit: summary and insight reached `renderAnswerWithCitations(undefined)`
     // and died in `mdLines` with "Cannot read properties of undefined (reading 'split')", after a
     // seven-second fake run; and faq and timeline fell to the product's own empty state, which says
     // the sources "didn't produce enough" — a false claim about the reader's own sources, on the
     // one page whose entire premise is that nothing here is fabricated.
     const lang = typeof uiLang === "function" ? uiLang() : "en";
     const note = lang === "zh-Hant"
-      ? "這個工作室頁籤會發動一次真實的模型執行，而這個展示頁只重播這本筆記本真正產出過的東西。" +
-        "裝起 rlm-notebook、對著你自己的來源跑一次就會有。這裡沒有任何東西是編造的。"
+      ? "這個工作室頁籤會發動一次真實的模型執行，而這個展示頁只重播這個軌道真正產出過的東西。" +
+        "裝起 penumbra、對著你自己的來源跑一次就會有。這裡沒有任何東西是編造的。"
       : "This Studio tab runs a live model call, and the playground only replays artifacts this " +
-        "notebook actually produced. Install rlm-notebook and run it against your own sources to " +
+        "orbit actually produced. Install penumbra and run it against your own sources to " +
         "generate one. Nothing here is fabricated.";
-    const heading = lang === "zh-Hant" ? "這本筆記本沒有這一項" : "Not recorded for this notebook";
+    const heading = lang === "zh-Hant" ? "這個軌道沒有這一項" : "Not recorded for this orbit";
     if (kind === "faq") {
       return { kind, items: [{ question: heading, answer: note, citations: [] }], run_id: null };
     }
@@ -139,9 +139,9 @@
     // run on a machine, not a browser tab" — an implementation detail with no referent for someone
     // who does not yet know what they are looking at. It made the product sound worse than it is.
     // Say what the product does; the demo boundary is a one-line aside, not an apology.
-    // THE INBOX IS THE FIRST SCREEN, and for a while the script behaved as though it were not:
-    // fifteen steps, every one of them a control in the three-column notebook, reached by opening
-    // that notebook before the reader had seen anything. The half of the product the redesign was
+    // THE HORIZON IS THE FIRST SCREEN, and for a while the script behaved as though it were not:
+    // fifteen steps, every one of them a control in the three-column orbit, reached by opening
+    // that orbit before the reader had seen anything. The half of the product the redesign was
     // FOR - throw it in, let it be read, find it again, file it when you know what it is for - had
     // no step at all.
     //
@@ -150,16 +150,16 @@
     // recorded page can honestly offer - look, and touch the control - and say plainly which part
     // needs the real app. Find and opening a row are NOT in that set: both are reads, both are
     // answered from the recorded index, and both do exactly what they do in the product.
-    inboxIntro: {
+    horizonIntro: {
       en: ["Everything lands here first",
-           "This is the Inbox. A link, a thought, a PDF: it goes in without you deciding what it " +
+           "This is the Horizon. A link, a thought, a PDF: it goes in without you deciding what it " +
            "is for, and it is read in the background.\n\nClick the field to carry on. Actually " +
            "keeping something is the one thing this recorded page cannot do for you."],
       "zh-Hant": ["每樣東西都先落在這裡",
-           "這是收納袋。一個連結、一個念頭、一份 PDF，先丟進來，不用先決定它要幹嘛，背景會自己去讀。" +
+           "這是視界。一個連結、一個念頭、一份 PDF，先丟進來，不用先決定它要幹嘛，背景會自己去讀。" +
            "\n\n點一下輸入框就可以繼續。真的把東西收進來，是這個錄好的展示頁唯一做不到的事。"],
     },
-    inboxFind: {
+    horizonFind: {
       en: ["Find it again months later",
            "Type two or three letters into Find.\n\nIt searches the distilled title, summary, " +
            "tags and entities: the description of the thing, not the words you have " +
@@ -168,7 +168,7 @@
            "在「找東西」那欄打兩三個字。\n\n它查的是整理過的標題、摘要、標籤和人事物：查的是這東西「是什麼」，不是你早就忘掉的那幾個字。下面每一列都是真的收進來的，摘要也是" +
            "真的跑過模型寫出來的。"],
     },
-    inboxOpen: {
+    horizonOpen: {
       en: ["Open one",
            "Press the dot at the left of any row.\n\nIt opens in place: the text as it was " +
            "captured, the tags it was given, and where it came from. Nothing is filed anywhere " +
@@ -177,34 +177,34 @@
            "按任一列左邊的圓點。\n\n它會就地展開：收進來當時的原文、它拿到的標籤，還有它從哪來的。" +
            "現在還沒歸檔到任何地方，也不一定要歸。"],
     },
-    inboxEnter: {
-      en: ["Go into a notebook",
-           "A notebook is one facet of yourself, and filing something into one is a deliberate " +
-           "act, which is why nothing above has been filed yet.\n\nPress the notebook in the " +
+    horizonEnter: {
+      en: ["Go into an orbit",
+           "An orbit is one facet of yourself, and filing something into one is a deliberate " +
+           "act, which is why nothing above has been filed yet.\n\nPress the orbit in the " +
            "rail on the left (on a narrow window, its name at the top). The rest of the tour " +
            "happens inside it, starting from empty."],
-      "zh-Hant": ["進去一本筆記本",
-           "一本筆記本就是你的一個面向，把東西歸進去是一個刻意的動作，所以上面那些都還沒被歸走。" +
-           "\n\n按左邊清單裡的那本筆記本進去（視窗窄的時候，按上面的名字）。接下來的導覽都在裡面，" +
+      "zh-Hant": ["進入一個軌道",
+           "一個軌道就是你的一個面向，把東西歸進去是一個刻意的動作，所以上面那些都還沒被歸走。" +
+           "\n\n按左邊清單裡的那個軌道進去（視窗窄的時候，按上面的名字）。接下來的導覽都在裡面，" +
            "從空的開始。"],
     },
     sources: {
       en: ["Add the sources",
-           "Press Add source. This notebook's sources arrive one after another.\n\n" +
+           "Press Add source. This orbit's sources arrive one after another.\n\n" +
            "In your own copy this box takes a URL, pasted text or a PDF, and scanned pages are " +
            "read with OCR."],
       "zh-Hant": ["加入來源",
-           "按下「加入來源」，這本筆記本的來源會一則一則進來。\n\n" +
+           "按下「加入來源」，這個軌道的來源會一則一則進來。\n\n" +
            "在你自己裝的版本裡，這個欄位可以貼網址、貼文字、上傳 PDF，掃描檔會自動做 OCR。"],
     },
     overview: {
       // Name the button, do not say "press the button". If the spotlight fails to land the reader
       // still knows what to look for, and the label is the same string the product renders.
-      en: ["Open the notebook",
+      en: ["Open the orbit",
            "Press ✨ Summarise and suggest questions in the middle column.\n\nIt is a real model " +
            "run, and it does both: a summary of the whole corpus, and the questions worth asking " +
            "first. The reasoning in the status line was recorded from the run that produced it."],
-      "zh-Hant": ["替筆記本開個場",
+      "zh-Hant": ["替軌道開個場",
            "按中間欄的「✨ 整理重點並建議問題」。\n\n這是真實的模型執行，兩件事一起做：整份語料的" +
            "重點，加上幾個值得先問的問題。狀態列跑過去的推理，是當初產出它時錄下來的。"],
     },
@@ -311,12 +311,12 @@
     },
     compare: {
       en: ["Compare the two languages",
-           "The notebook name at the top left is a picker. Six notebooks: three answered in " +
+           "The orbit name at the top left is a picker. Six orbits: three answered in " +
            "English, three in Traditional Chinese, built from the same sources.\n\nOnly the " +
            "output language differs. The writing follows the reader; every quoted passage stays " +
            "in the words of its source."],
       "zh-Hant": ["比一下兩種語言",
-           "左上角那個筆記本名字可以點開換一本。六本：三本用英文回答，三本用繁體中文，來源是同一批。" +
+           "左上角那個軌道名字可以點開換一個。六個：三個用英文回答，三個用繁體中文，來源是同一批。" +
            "\n\n差別只在輸出語言。文字跟著讀者走，引文則留在來源自己的用字。"],
     },
   };
@@ -337,13 +337,13 @@
   const UI = {
     en: {
       simulated: "SIMULATED",
-      simulatedTip: "No server, no model, no network. Real notebooks and real recorded reasoning, " +
+      simulatedTip: "No server, no model, no network. Real orbits and real recorded reasoning, " +
         "replayed in your browser.",
-      restart: "↺ Restart", restartTip: "Start the walkthrough again from an empty notebook",
+      restart: "↺ Restart", restartTip: "Start the walkthrough again from an empty orbit",
       install: "↓ Install", installTip: "How to install and run it for real",
       github: "★ GitHub", githubTip: "Source, documentation and design notes",
       close: "Close",
-      footer: "A playground: the rlm-notebook web UI itself, running against recorded data in " +
+      footer: "A playground: the penumbra web UI itself, running against recorded data in " +
         "your browser. Nothing is sent anywhere and nothing is kept.",
       simulatedLine: "Recorded demo. No server, no model, no network.",
       footerLink: "See how it is built",
@@ -351,12 +351,12 @@
     },
     "zh-Hant": {
       simulated: "示範模式",
-      simulatedTip: "沒有伺服器、沒有模型、沒有連線。真實的筆記本與真實的推理紀錄，在你的瀏覽器裡重播。",
-      restart: "↺ 重新開始", restartTip: "從空的筆記本重跑一次導覽",
+      simulatedTip: "沒有伺服器、沒有模型、沒有連線。真實的軌道與真實的推理紀錄，在你的瀏覽器裡重播。",
+      restart: "↺ 重新開始", restartTip: "從空的軌道重跑一次導覽",
       install: "↓ 安裝", installTip: "怎麼實際裝起來用",
       github: "★ GitHub", githubTip: "原始碼、文件與設計紀錄",
       close: "關閉",
-      footer: "這是示範頁：rlm-notebook 的網頁介面本體，跑在你的瀏覽器裡，讀的是預先錄好的資料。" +
+      footer: "這是示範頁：penumbra 的網頁介面本體，跑在你的瀏覽器裡，讀的是預先錄好的資料。" +
         "沒有任何東西被送出，也沒有留下任何東西。",
       simulatedLine: "示範模式。沒有伺服器、沒有模型、沒有連線。",
       footerLink: "看它是怎麼做的",
@@ -370,43 +370,43 @@
     return typeof v === "function" ? v(...args) : v;
   };
 
-  //: A row to open, and therefore an Inbox worth touring. An empty `fixtures.inbox` is a real
+  //: A row to open, and therefore a Horizon worth touring. An empty `fixtures.horizon` is a real
   //: build (`build.py` takes what is on the author's machine), and two steps pointing at an empty
   //: stream would be the "press something that is not there" failure the rest of this file is a
   //: record of avoiding.
   //:
   //: Read from the FIXTURE, never by counting rows. `skipIf` is polled and skipping is permanent,
-  //: so a DOM count skips the step the first time it lands mid-re-render; see `PG.hasInbox`.
-  const hasStream = () => PG.hasInbox;
+  //: so a DOM count skips the step the first time it lands mid-re-render; see `PG.hasHorizon`.
+  const hasStream = () => PG.hasHorizon;
 
   PG.SCRIPT = [
-    { id: "inbox-intro", key: "inboxIntro", side: "bottom", align: "start",
+    { id: "horizon-intro", key: "horizonIntro", side: "bottom", align: "start",
       target: "#capture-form", touch: "#capture-form",
-      // No `skipIf`: the field is the Inbox's defining control and is there whether or not anything
+      // No `skipIf`: the field is the Horizon's defining control and is there whether or not anything
       // has been captured yet. The two steps after it read the stream, so those do skip.
-      done: () => !!PG.touched["inbox-intro"] },
-    { id: "inbox-find", key: "inboxFind", side: "bottom", align: "start", target: ".find",
+      done: () => !!PG.touched["horizon-intro"] },
+    { id: "horizon-find", key: "horizonFind", side: "bottom", align: "start", target: ".find",
       skipIf: () => !hasStream(),
-      // Two characters, not one: `refreshInbox` re-queries on every keystroke, and a step that
+      // Two characters, not one: `refreshHorizon` re-queries on every keystroke, and a step that
       // completes on the first letter moves the popover while the reader is still typing into it.
       done: () => ((document.getElementById("stream-search") || {}).value || "").trim().length >= 2 },
     // **`is-open`, NOT `aria-expanded`.** driver.js writes `aria-expanded="true"` onto whatever it
     // spotlights, as part of its own stage bookkeeping - so a predicate reading that attribute was
     // satisfied by the act of arming the step, and "open a row" completed itself before the reader
     // could see it. (It is also a lie to a screen reader on any target that owns the attribute for
-    // real, which `#notebook-current` does.) `is-open` is the app's own class and driver touches
+    // real, which `#orbit-current` does.) `is-open` is the app's own class and driver touches
     // nothing but `driver-active-element`.
-    { id: "inbox-open", key: "inboxOpen", side: "right", align: "start",
+    { id: "horizon-open", key: "horizonOpen", side: "right", align: "start",
       target: "#stream .node .node-open",
       skipIf: () => !hasStream(),
       done: () => !!document.querySelector("#stream .node.is-open") },
     // THE DOOR, and `enters` rather than `fulfil`. Both make "Next" call the product's own
-    // `openNotebook`, so a reader who does not want to hunt for the rail gets exactly the state
+    // `openOrbit`, so a reader who does not want to hunt for the rail gets exactly the state
     // pressing it would have produced - but `fulfil` names a STAGE the shim advances, and this
     // step advances none. Saying `fulfil: "enter"` claimed one that does not exist.
-    { id: "inbox-enter", key: "inboxEnter", side: "right", align: "start", enters: true,
-      target: () => `#facet-list .facet:nth-child(${PG.facetIndex || 1}), #facet-list .facet, #notebook-current`,
-      done: () => document.body.dataset.view === "notebook" },
+    { id: "horizon-enter", key: "horizonEnter", side: "right", align: "start", enters: true,
+      target: () => `#facet-list .facet:nth-child(${PG.facetIndex || 1}), #facet-list .facet, #orbit-current`,
+      done: () => document.body.dataset.view === "orbit" },
     {
       id: "sources",
       key: "sources",
@@ -451,14 +451,14 @@
       fulfil: "turn2", skipIf: (p) => p.turnsTotal < 2,
       done: (p) => p.turns >= 2 || PG.isRunning("ask") },
     // The mirror of `watch-ask`, which the first question has and the second did not: the run was
-    // live with nothing pointing at it. Carries `ask2`'s `skipIf`, or on a one-turn notebook it
+    // live with nothing pointing at it. Carries `ask2`'s `skipIf`, or on a one-turn orbit it
     // would find no run in flight and complete on its first tick.
     { id: "watch-ask2", key: "watchAsk2", target: ".run-status, .run-log, .chat-history",
       side: "top", align: "start", dwell: true, kind: "ask",
       skipIf: (p) => p.turnsTotal < 2, done: () => !PG.isRunning("ask") },
     // AFTER the second question, and that ordering is load-bearing. This step points at the ⌁ pill,
     // which `app.js` renders only `if (turn.run_id)`. The tour reveals turn 0 first, and the three
-    // English notebooks have no run id on turn 0 (their trace was collected), so at the old
+    // English orbits have no run id on turn 0 (their trace was collected), so at the old
     // position there was no pill to ring on the DEFAULT English landing scenario. All six have a
     // traced turn 1.
     { id: "trace", key: "trace", side: "right", align: "start",
@@ -473,7 +473,7 @@
       // the copy said to press ⌁, so pressing the ringed control started another run instead of
       // opening the drawer, and the step could never complete.
       target: ".turn:last-of-type .ticker-affordance .ticker-toggle, .turn .ticker-affordance .ticker-toggle",
-      // SKIPS WHEN THERE IS NO PILL, and two of the six demo notebooks are that case: their traces
+      // SKIPS WHEN THERE IS NO PILL, and two of the six demo orbits are that case: their traces
       // aged out under retention (invariant 34), so `build.py` withholds the run id and `app.js`
       // renders the pill only `if (turn.run_id)`. `nb-d22c2a9a` has no traced turn AND no traced
       // overview, so there is no ⌁ anywhere on its page. Without this the step waits on a control
@@ -522,10 +522,10 @@
         const a = document.querySelector("#podcast-body audio");
         return !!a && a.currentTime > 1.5;
       } },
-    // The PRODUCT's notebook picker, not a button the playground added. There used to be a second
+    // The PRODUCT's orbit picker, not a button the playground added. There used to be a second
     // one in the header opening a modal of its own; the dropdown already lists all six with their
     // source and turn counts, and switching is what it is for.
-    { id: "compare", key: "compare", target: "#notebook-current", side: "bottom", align: "start",
+    { id: "compare", key: "compare", target: "#orbit-current", side: "bottom", align: "start",
       done: () => false, last: true },
   ];
 

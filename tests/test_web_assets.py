@@ -1,4 +1,4 @@
-"""Static checks on `rlm_notebook/web/` — the zero-build UI has no test runner of its own.
+"""Static checks on `penumbra/web/` — the zero-build UI has no test runner of its own.
 
 These assert on the SOURCE TREE rather than on rendered behavior, deliberately. The bug that
 prompted the first one is invisible to every layer this project can otherwise test: the Python
@@ -28,7 +28,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-WEB = Path(__file__).resolve().parent.parent / "rlm_notebook" / "web"
+WEB = Path(__file__).resolve().parent.parent / "penumbra" / "web"
 
 
 def _strip_css_comments(css: str) -> str:
@@ -188,7 +188,7 @@ def test_no_innerhtml_with_interpolated_content():
 
 def test_every_init_function_is_actually_called():
     """Two features shipped inert because their `init*()` was never wired into the boot sequence:
-    the header's notebook title (which therefore never displayed at all) and the settings button
+    the header's orbit title (which therefore never displayed at all) and the settings button
     (dead on click, reported by a user). Both came from a scripted edit whose anchor didn't match,
     which `str.replace` silently ignores.
 
@@ -210,8 +210,8 @@ def test_every_init_function_is_actually_called():
 def test_no_event_is_subscribed_twice_inside_one_init_function():
     """`store.emit` runs subscribers in registration order, so two handlers for the same event
     inside one `init*` function are a silent ordering trap: the persisted podcast rendered on
-    `notebook:switched` and was then blanked by a `clearPlayer` subscriber registered a few lines
-    later, so an episode never appeared on notebook open — the entire point of persisting it.
+    `orbit:switched` and was then blanked by a `clearPlayer` subscriber registered a few lines
+    later, so an episode never appeared on orbit open — the entire point of persisting it.
 
     Two subscribers for one event across DIFFERENT panels is normal and correct (each renders its
     own region); two inside one function are almost always one undoing the other."""
@@ -252,8 +252,8 @@ def test_every_long_running_action_offers_a_way_to_stop_it():
     the chat overview, each Guide kind and the podcast all mount the shared `runStatus`, which is
     what carries the pulsing dot, the elapsed timer and the Stop button.
 
-    Also pins that Stop cancels by RUN ID rather than by notebook: `/overview` fires two runs and
-    `_ACTIVE_RUNS` holds one slot per notebook, so a notebook-scoped cancel would leave the second
+    Also pins that Stop cancels by RUN ID rather than by orbit: `/overview` fires two runs and
+    `_ACTIVE_RUNS` holds one slot per orbit, so an orbit-scoped cancel would leave the second
     run burning a model call to completion.
     """
     js = (WEB / "app.js").read_text(encoding="utf-8")
@@ -379,7 +379,7 @@ def test_the_interface_language_is_separate_from_the_output_language():
     # resolution weighs (invariant 69) — what this pins is the SEPARATION: `i18n.js` knows nothing
     # about the OUTPUT language, so the two settings can never collapse into one.
     assert "localStorage" in i18n
-    assert "RN_OUTPUT_LANGUAGE" not in i18n
+    assert "PN_OUTPUT_LANGUAGE" not in i18n
     #: The `traj.meta.*` keys are translation LABELS for trace fields, keyed on the field's own name
     #: so the lookup stays `t(\`traj.meta.${key}\`, …)` — `traj.meta.output_language` is the Chinese
     #: word for a chip in the Trajectory drawer, not this file participating in the SETTING. Stripped
@@ -397,18 +397,18 @@ def test_the_interface_language_is_separate_from_the_output_language():
     assert "hant|tw|hk|mo" in raw
 
 
-def test_the_notebook_id_never_appears_in_the_picker():
-    """The id is an internal handle (invariant 37). It used to be the ONLY way to reach a notebook —
+def test_the_orbit_id_never_appears_in_the_picker():
+    """The id is an internal handle (invariant 37). It used to be the ONLY way to reach an orbit —
     a bare text box plus a datalist of `id (N sources, M turns)` — which put the handle and machine
-    metadata in front of the name. Notebooks are located by title now."""
+    metadata in front of the name. Orbits are located by title now."""
     html = (WEB / "index.html").read_text(encoding="utf-8")
     js = (WEB / "app.js").read_text(encoding="utf-8")
 
-    assert "notebook-input" not in html and "notebook-input" not in js
+    assert "orbit-input" not in html and "orbit-input" not in js
     assert "<datalist" not in html
-    assert 'id="notebook-current"' in html and 'id="notebook-menu"' in html
-    # The row is built from the TITLE; the id is only ever a value passed to openNotebook.
-    row = js[js.index("function renderNotebookRow(") : js.index("function startRename(")]
+    assert 'id="orbit-current"' in html and 'id="orbit-menu"' in html
+    # The row is built from the TITLE; the id is only ever a value passed to openOrbit.
+    row = js[js.index("function renderOrbitRow(") : js.index("function startRename(")]
 
     # THROUGH the helper, not only at the call site. The row now renders `facetLabel(nb)`, and an
     # earlier version of that function fell back to the id when a person had chosen a short one -
@@ -451,9 +451,9 @@ def test_the_notebook_id_never_appears_in_the_picker():
     # tooltip only from `book.title`, because `derived_title` is the server's 60-character cut and
     # hovering a shortened label produced a tooltip that was ALSO cut, broken mid-word. A later
     # reviewer measured the consequence: rail labels ellipsise at 154px against a 238px natural
-    # width with no way to read them at all, in the one place a notebook's label IS its identity.
+    # width with no way to read them at all, in the one place an orbit's label IS its identity.
     # Neither "show a fragment as if complete" nor "show nothing" is right. Show it, and MARK it.
-    rail = js[js.index("async function renderFacets(") : js.index("function inboxQuery(")]
+    rail = js[js.index("async function renderFacets(") : js.index("function horizonQuery(")]
     assert "item.title = fuller" in rail, "a label that does not fit needs a way to be read"
     marking = rail[rail.index("const raw = book.title") : rail.index("item.title = fuller")]
     assert "PASTED_SNIPPET_CAP" in marking and "\\u2026" in marking, (
@@ -461,7 +461,7 @@ def test_the_notebook_id_never_appears_in_the_picker():
         "assertion used to prevent by banning it outright"
     )
     assert "nb.title" in row or "facetLabel(nb)" in row
-    # The id may be COMPARED (is this the current notebook?) and PASSED (openNotebook), but it must
+    # The id may be COMPARED (is this the current orbit?) and PASSED (openOrbit), but it must
     # never be rendered: no assignment of it to any textContent.
     shown = re.findall(r"\.textContent\s*=\s*([^;]+);", row)
     assert shown, row
@@ -472,11 +472,11 @@ def test_no_id_reaches_visible_text_anywhere_in_the_app():
     """Invariant 37, checked GLOBALLY instead of inside two functions.
 
     The per-function version above is the one that caught the first violation, and its narrowness
-    is what let the second one through. When the Inbox was built, `nodeActions` grew a `<select>`
-    of notebooks built from `book.title || book.id` and a "filed in" line built from
-    `m.notebook_id`, and both shipped: the tripwire sliced `renderNotebookRow` and `facetLabel`, and
-    neither of those is `nodeActions`. An independent review found it - the rail called a notebook
-    "Christopher Alexander" while the picker beside it called the same notebook `reading`, in the
+    is what let the second one through. When the Horizon was built, `nodeActions` grew a `<select>`
+    of orbits built from `book.title || book.id` and a "filed in" line built from
+    `m.orbit_id`, and both shipped: the tripwire sliced `renderOrbitRow` and `facetLabel`, and
+    neither of those is `nodeActions`. An independent review found it - the rail called an orbit
+    "Christopher Alexander" while the picker beside it called the same orbit `reading`, in the
     one control where the reader has to CHOOSE.
 
     A rule about every place a label is READ cannot be tested by naming the places. So this walks
@@ -488,7 +488,7 @@ def test_no_id_reaches_visible_text_anywhere_in_the_app():
     #: COMMENTS BLANKED, offsets preserved. Every rule here bans a token, so the comment that
     #: explains the ban trips it — `_strip_js_comments`' docstring records all three doing exactly
     #: that on their first run, and this scan was the one place still reading the raw file. It fired
-    #: on a comment saying "`promote_node` writes `slug(notebook_id)`", which is prose about the
+    #: on a comment saying "`promote_node` writes `slug(orbit_id)`", which is prose about the
     #: server, not an id reaching the DOM. Blanked rather than removed so the line numbers this test
     #: reports stay true.
     js = _blank_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
@@ -534,7 +534,7 @@ def test_no_id_reaches_visible_text_anywhere_in_the_app():
     offenders = []
     for line, expr in visible:
         stripped = lookup.sub("", expr)
-        if re.search(r"\b\w+\.id\b|\bnotebook_id\b|\bnode_id\b", stripped):
+        if re.search(r"\b\w+\.id\b|\borbit_id\b|\bnode_id\b", stripped):
             offenders.append(f"app.js:{line}: {expr}")
     assert not offenders, (
         "an id is reaching the DOM as visible text (invariant 37 - the id is a HANDLE):\n"
@@ -542,30 +542,30 @@ def test_no_id_reaches_visible_text_anywhere_in_the_app():
     )
 
     # The scan above reads EXPRESSIONS, so it sees `elt("option", null, book.id)` and misses
-    # `(m) => m.notebook_id` mapped into a list that is joined into a `t()` interpolation three
+    # `(m) => m.orbit_id` mapped into a list that is joined into a `t()` interpolation three
     # lines later - which is exactly how the second violation was written, and it survived the
     # first version of this test. Following a value across a `.map()` and a `.join()` is dataflow,
     # and a regex does not do dataflow.
     #
     # So the membership field gets a rule of its own, and it is a rule about the SHAPE of every
-    # read rather than about where the value ends up. `notebook_id` names a notebook and has no
+    # read rather than about where the value ends up. `orbit_id` names an orbit and has no
     # other job, so in this file it may only ever be a LOOKUP KEY or a URL segment. Anything else -
     # returning it from an arrow, pushing it into an array, concatenating it - is banned outright,
     # whether or not this test can prove where it lands.
-    for m in re.finditer(r"\bnotebook_id\b", js):
+    for m in re.finditer(r"\borbit_id\b", js):
         line = js[: m.start()].count("\n") + 1
         before, after = js[max(0, m.start() - 40) : m.start()], js[m.end() : m.end() + 2]
         is_lookup = bool(
             re.search(r"(?:\.(?:get|set|has|delete)|encodeURIComponent)\(\s*\w*\.?$", before.rstrip())
             and after.startswith(")")
         )
-        # The third allowed shape: a key in a request BODY. `JSON.stringify({ notebook_id: ... })`
+        # The third allowed shape: a key in a request BODY. `JSON.stringify({ orbit_id: ... })`
         # is the wire name of the promote endpoint's field, not a label - the id belongs there and
         # nowhere a reader can see.
         is_wire_key = after.startswith(":") and before.rstrip().endswith(("{", ","))
         assert is_lookup or is_wire_key, (
-            f"app.js:{line}: `notebook_id` may only be a lookup key, a URL segment or a request-body "
-            f"field (invariant 37). Resolve it to a label first: ...{before[-40:]}notebook_id{after}"
+            f"app.js:{line}: `orbit_id` may only be a lookup key, a URL segment or a request-body "
+            f"field (invariant 37). Resolve it to a label first: ...{before[-40:]}orbit_id{after}"
         )
 
 
@@ -707,7 +707,7 @@ def test_the_studio_rail_thresholds_cannot_oscillate():
 def test_the_markdown_renderer_never_creates_a_navigable_link():
     """A markdown link is SHOWN, never clickable, and that is a security decision rather than an
     omission. Invariant 1 refuses to let the model reach a URL because a prompt-injected source
-    could steer it into exfiltrating notebook contents to an attacker-chosen address; an `<a href>`
+    could steer it into exfiltrating orbit contents to an attacker-chosen address; an `<a href>`
     in an answer is the same hazard with the reader's click as the transport, arriving dressed as a
     citation-grounded reference.
 
@@ -753,7 +753,7 @@ def test_the_markdown_renderer_builds_nodes_rather_than_markup():
 
 def test_the_chat_overview_lives_inside_the_thread_and_is_always_put_back():
     """Invariant 57's structure, pinned. The overview is `#chat-history`'s first child now, so any
-    path that clears the list without re-appending it silently DELETES the notebook's front page —
+    path that clears the list without re-appending it silently DELETES the orbit's front page —
     which is the risk the invariant names and accepts, and nothing was checking it.
 
     Two assertions because the hazard has two halves: the markup has to nest it, and the code has to
@@ -898,7 +898,7 @@ def test_a_message_naming_an_action_ships_with_that_action():
 
 def test_the_chat_placeholder_only_appears_while_its_sentence_is_true():
     """"Ask a question once you've added a source" is a precondition, and it was gated on TURNS
-    alone — so a notebook with eight sources and no conversation still told the reader to add one.
+    alone — so an orbit with eight sources and no conversation still told the reader to add one.
     A user reported it as confusing, which it is: the page was describing a step they had already
     taken."""
     script = (WEB / "app.js").read_text(encoding="utf-8")
@@ -936,7 +936,7 @@ def test_the_chat_placeholder_only_appears_while_its_sentence_is_true():
     )
 
 
-def test_a_citations_number_comes_from_the_notebook_wide_reference_order():
+def test_a_citations_number_comes_from_the_orbit_wide_reference_order():
     """A stroke labelled "2" and the References row labelled "2" have to be the same thing — the
     renderer's own comment claimed exactly that while numbering 1..n WITHIN each artifact, so an
     overview citing two sources numbered them 1 and 2, the next answer numbered its first citation
@@ -972,7 +972,7 @@ def test_a_citations_number_comes_from_the_notebook_wide_reference_order():
 
 
 def test_regenerating_the_overview_renumbers_the_thread():
-    """A new overview changes which coordinates come FIRST in the notebook-wide order, so strokes
+    """A new overview changes which coordinates come FIRST in the orbit-wide order, so strokes
     already on screen would keep numbers pointing at the wrong rows until the next reload."""
     script = (WEB / "app.js").read_text(encoding="utf-8")
     # Emitted from more than one place (removing a source re-verifies the turns too); what this
@@ -1068,7 +1068,7 @@ def test_the_podcast_button_offers_the_action_that_fits_the_state():
     end = script.index("\nfunction ", start + 1)
     body = script[start:end]
 
-    sync = body[body.index("function syncGenerateButton") : body.index("store.on(\"notebook:switched\"")]
+    sync = body[body.index("function syncGenerateButton") : body.index("store.on(\"orbit:switched\"")]
     assert "state.podcast" in sync, "the button no longer looks at whether an episode exists"
     assert "podcast.stale" in sync, "the button no longer distinguishes a stale episode"
     # Primary ONLY in the no-episode branch. Comparing POSITIONS passed with the regenerate branch
@@ -1092,7 +1092,7 @@ def test_the_podcast_button_offers_the_action_that_fits_the_state():
         "the most expensive action in the product may not wear the same fill as the free one"
     )
     # And it has to be re-synced everywhere the state can change, or the label lies.
-    for trigger in ('store.on("notebook:switched"', 'store.on("sources:changed"'):
+    for trigger in ('store.on("orbit:switched"', 'store.on("sources:changed"'):
         at = body.index(trigger)
         assert "syncGenerateButton" in body[at : at + 400], f"{trigger} does not re-sync the button"
     assert "syncGenerateButton();" in body[body.index("renderPodcast(body, {", body.index("try {")) :], (
@@ -1420,7 +1420,7 @@ def test_the_interface_language_is_actually_sent():
     api_fn = re.search(r"async function api\(path, options\)\s*\{(.*?)\n\}", js, re.DOTALL)
     assert api_fn, "the api() choke point is gone"
     body = api_fn.group(1)
-    assert '"X-RLM-Interface-Language": uiLangName()' in body, body
+    assert '"X-Penumbra-Interface-Language": uiLangName()' in body, body
     # It must reach fetch: building `opts` and then passing `options` sends nothing.
     assert "fetch(path, opts)" in body, body
 
@@ -1478,11 +1478,11 @@ def test_a_repaint_cannot_delete_the_overviews_progress_and_stop():
     # The guard must come BEFORE the clear, or it protects nothing.
     assert guard.start() < body.index('el.textContent = ""'), body[:300]
 
-    # ...and every path out of the run must release it, or the panel is frozen forever. A notebook
-    # SWITCH matters most: without it the new notebook keeps the old run's status node.
+    # ...and every path out of the run must release it, or the panel is frozen forever. An orbit
+    # SWITCH matters most: without it the new orbit keeps the old run's status node.
     gen = re.search(r"async function generateOverview\(\)\s*\{(.*?)\n\}\n", js, re.DOTALL)
     # The ok and error exits release through `releaseIfMine()` (only while this run still owns the
-    # panel — an overview ending in another notebook must not release that notebook's); cancel
+    # panel — an overview ending in another orbit must not release that orbit's); cancel
     # releases inline. Three exits, each accounted for.
     assert gen, "generateOverview is gone"
     exits = gen.group(1)
@@ -1490,25 +1490,25 @@ def test_a_repaint_cannot_delete_the_overviews_progress_and_stop():
     assert releases >= 3, (
         "not every exit from generateOverview releases the panel"
     )
-    switched = re.search(r'store\.on\("notebook:switched", \(\) => \{(.*?)\n  \}\)', js, re.DOTALL)
+    switched = re.search(r'store\.on\("orbit:switched", \(\) => \{(.*?)\n  \}\)', js, re.DOTALL)
     assert switched and "overviewRunning = false" in switched.group(1), (
-        "switching notebooks leaves the previous run owning the new notebook's overview panel"
+        "switching orbits leaves the previous run owning the new orbit's overview panel"
     )
 
 
-def test_a_superseded_overview_note_never_lands_in_another_notebooks_panel():
-    """`!live()` covers two different situations. A second press of Generate on the SAME notebook is
-    a supersede and should say so; a NOTEBOOK SWITCH means `#chat-overview` now belongs to a
-    different notebook, and writing there overwrites ITS overview with a note about a run it never
+def test_a_superseded_overview_note_never_lands_in_another_orbits_panel():
+    """`!live()` covers two different situations. A second press of Generate on the SAME orbit is
+    a supersede and should say so; a ORBIT SWITCH means `#chat-overview` now belongs to a
+    different orbit, and writing there overwrites ITS overview with a note about a run it never
     started."""
     js = (WEB / "app.js").read_text(encoding="utf-8")
     gen = re.search(r"async function generateOverview\(\)\s*\{(.*?)\n\}\n", js, re.DOTALL)
     assert gen, "generateOverview is gone"
     calls = re.findall(r"supersededNote\(el\)", gen.group(1))
     assert calls, "the supersede note is gone entirely — a dropped response reads as a hang"
-    guarded = re.findall(r"if \(generation === notebookGeneration\) supersededNote\(el\)", gen.group(1))
+    guarded = re.findall(r"if \(generation === orbitGeneration\) supersededNote\(el\)", gen.group(1))
     assert len(guarded) == len(calls), (
-        f"{len(calls) - len(guarded)} supersede note(s) can still land in another notebook's panel"
+        f"{len(calls) - len(guarded)} supersede note(s) can still land in another orbit's panel"
     )
 
 
@@ -1542,7 +1542,7 @@ def test_the_overviews_ticker_never_calls_the_whole_action_finished():
 
 def test_the_chat_composer_is_frozen_while_an_overview_generates():
     """Asked for twice by the user. NOT needed for correctness — the two runs are independent, both
-    writes land under the per-notebook lock (invariant 34), and neither repaint can delete the
+    writes land under the per-orbit lock (invariant 34), and neither repaint can delete the
     other's run (invariants 60, 71) — but a question asked into a thread whose overview is being
     rewritten reads as two things fighting, whether or not they are.
 
@@ -1555,15 +1555,15 @@ def test_the_chat_composer_is_frozen_while_an_overview_generates():
     assert 'store.emit("chat:pending", { pending: true })' in body, "the composer is never frozen"
     # Every exit must thaw it, or one failed generation locks the composer for the session.
     # Inline on cancel; through `releaseIfMine()` on ok and error, which thaws only the composer of
-    # the notebook that asked (a run ending in A must not unlock B mid-question).
+    # the orbit that asked (a run ending in A must not unlock B mid-question).
     inline = body.count('store.emit("chat:pending", { pending: false })') - 1  # minus the helper's own
     releases = inline + body.count("releaseIfMine();")
     assert "const releaseIfMine = () => {" in body, "the ok/error release helper is gone"
     assert releases >= 3, f"only {releases} of the exits thaw the composer (need cancel/ok/error)"
-    # ...including a notebook switch, which strands the run rather than ending it.
-    switched = re.search(r'store\.on\("notebook:switched", \(\) => \{(.*?)\n  \}\)', js, re.DOTALL)
+    # ...including an orbit switch, which strands the run rather than ending it.
+    switched = re.search(r'store\.on\("orbit:switched", \(\) => \{(.*?)\n  \}\)', js, re.DOTALL)
     assert switched and 'pending: false' in switched.group(1), (
-        "switching notebooks leaves the new notebook's composer frozen by the old run"
+        "switching orbits leaves the new orbit's composer frozen by the old run"
     )
     # The THREAD is never cleared — history must not be destroyed to signal a transient state.
     assert "state.turns = []" not in body and "history.textContent" not in body
@@ -1720,7 +1720,7 @@ def test_regenerating_a_turn_goes_through_the_same_flow_as_asking():
 
 
 def test_regenerate_replaces_only_a_matching_last_turn():
-    """Server-side half. Checked inside the lock against the notebook as it is THEN, because the
+    """Server-side half. Checked inside the lock against the orbit as it is THEN, because the
     snapshot the handler read may be minutes old — and a request that arrives after someone else
     asked something new must append rather than overwrite a turn it did not mean to.
 
@@ -1730,11 +1730,11 @@ def test_regenerate_replaces_only_a_matching_last_turn():
     sharper than the trap AGENTS.md's Verify section records and misreports a missing dependency as
     a broken feature.
     """
-    api_src = (Path(__file__).resolve().parent.parent / "rlm_notebook" / "api.py").read_text(
+    api_src = (Path(__file__).resolve().parent.parent / "penumbra" / "api.py").read_text(
         encoding="utf-8"
     )
     src = api_src[api_src.index("async def ask(") :]
-    persist = src[src.index("def _persist(") : src.index("await _mutate_or_http(notebook_id, _persist")]
+    persist = src[src.index("def _persist(") : src.index("await _mutate_or_http(orbit_id, _persist")]
     assert "body.regenerate" in persist and "nb.turns[-1].question == body.question" in persist, persist
     assert "nb.turns[-1] = turn" in persist and "nb.turns.append(turn)" in persist, persist
 
@@ -1747,7 +1747,7 @@ def test_the_clear_conversation_control_appears_only_when_there_is_one():
     # independent review inverted the condition (`.length > 0`) and the suite stayed green: every
     # substring the first version checked was still present, just saying the opposite.
     assert re.search(
-        r"clearBtn\.hidden\s*=\s*!state\.notebookId\s*\|\|\s*!\(state\.turns", js
+        r"clearBtn\.hidden\s*=\s*!state\.orbitId\s*\|\|\s*!\(state\.turns", js
     ), "the visibility condition no longer hides the control on an empty thread"
 
     # ...and the WIRING. The same review deleted every call site — leaving `#chat-clear` with the
@@ -1757,17 +1757,17 @@ def test_the_clear_conversation_control_appears_only_when_there_is_one():
     #
     # SIX sites: the three handlers below, the clear handler's own re-sync after it empties the
     # thread, the initial paint at the tail of `initChatPanel`, and a question's success path (the
-    # FIRST answer in a fresh notebook is when Clear gains something to clear — it stayed hidden
+    # FIRST answer in a fresh orbit is when Clear gains something to clear — it stayed hidden
     # until the next question). An exact count rather than a floor, so DELETING one fails here.
     assert js.count("syncClearBtn();") == 6, (
         f"syncClearBtn is called from {js.count('syncClearBtn();')} places, expected 6 — the three "
         f"handlers, the clear handler's own re-sync, and the initial paint"
     )
-    # Scoped to `initChatPanel`: `notebook:switched` is subscribed in FOUR init functions, and an
+    # Scoped to `initChatPanel`: `orbit:switched` is subscribed in FOUR init functions, and an
     # unscoped search matched the source viewer's one — a test that reads "the handler" has to say
     # WHICH handler in a file where several spell the same event.
     panel = js[js.index("function initChatPanel()") : js.index("\nfunction renderGuideContent")]
-    for event in ("chat:turnAdded", "chat:rerender", "notebook:switched"):
+    for event in ("chat:turnAdded", "chat:rerender", "orbit:switched"):
         handler = re.search(rf'store\.on\("{event}",(.*?)\n  \}}\);', panel, re.DOTALL)
         assert handler and "syncClearBtn();" in handler.group(1), (
             f"initChatPanel's {event} handler no longer re-syncs the clear control"
@@ -1991,7 +1991,7 @@ def test_no_stylesheet_fallback_hardcodes_a_colour():
 
 
 def test_a_regenerate_asks_for_a_fresh_run_and_a_first_generate_does_not():
-    """`dspy.LM` defaults to `cache=True`. A user pressed Regenerate on an unchanged notebook and
+    """`dspy.LM` defaults to `cache=True`. A user pressed Regenerate on an unchanged orbit and
     got a run with ZERO model calls in 3.4 seconds that replayed the previous one byte-identically
     — same turns, same reasoning text, the same two validator failures — while the drawer honestly
     reported no usage and no per-turn timing, which reads as a broken panel.
@@ -2168,7 +2168,7 @@ def test_studio_regenerate_is_shown_only_when_there_is_something_to_regenerate()
     show_kind = show_kind[: show_kind.index("\n  function ")]
     assert "showRegenerate(kind)" in show_kind, "selecting a tab re-decides it"
 
-    for handler in ("notebook:switched", "sources:changed"):
+    for handler in ("orbit:switched", "sources:changed"):
         arm = panel[panel.index(handler) : panel.index(handler) + 220]
         assert "showKind(" in arm, f"{handler} must re-render through showKind, which re-decides it"
 
@@ -2256,7 +2256,7 @@ def test_every_server_url_the_browser_fetches_itself_carries_the_token():
     lines = (WEB / "app.js").read_text(encoding="utf-8").splitlines()
     offenders = []
     for index, line in enumerate(lines):
-        if "`/notebooks/" not in line and "`/settings" not in line:
+        if "`/orbits/" not in line and "`/settings" not in line:
             continue
         if line.lstrip().startswith("//"):
             continue
@@ -2279,10 +2279,10 @@ def test_a_forgotten_withtoken_would_actually_be_caught():
     app = (WEB / "app.js").read_text(encoding="utf-8")
     broken = app.replace(
         "        withToken(\n"
-        "          `/notebooks/${encodeURIComponent(notebookId)}/runs/${encodeURIComponent(runId)}"
+        "          `/orbits/${encodeURIComponent(orbitId)}/runs/${encodeURIComponent(runId)}"
         "/stream`\n"
         "        )",
-        "        `/notebooks/${encodeURIComponent(notebookId)}/runs/${encodeURIComponent(runId)}"
+        "        `/orbits/${encodeURIComponent(orbitId)}/runs/${encodeURIComponent(runId)}"
         "/stream`",
         1,
     )
@@ -2290,7 +2290,7 @@ def test_a_forgotten_withtoken_would_actually_be_caught():
     offenders = []
     lines = broken.splitlines()
     for index, line in enumerate(lines):
-        if "`/notebooks/" not in line and "`/settings" not in line:
+        if "`/orbits/" not in line and "`/settings" not in line:
             continue
         if line.lstrip().startswith("//"):
             continue
@@ -2301,7 +2301,7 @@ def test_a_forgotten_withtoken_would_actually_be_caught():
     assert offenders, "the unwrapped EventSource URL was not caught — the tripwire does nothing"
 
 
-# --- the Inbox surface -----------------------------------------------------------------------------
+# --- the Horizon surface -----------------------------------------------------------------------------
 
 
 def _strip_js_comments(source: str) -> str:
@@ -2333,12 +2333,12 @@ def _strip_css_comments(source: str) -> str:
     return re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
 
 
-def _inbox_js() -> str:
-    body = (WEB / "app.js").read_text(encoding="utf-8").split("// THE INBOX (Tier 0)", 1)[1]
+def _horizon_js() -> str:
+    body = (WEB / "app.js").read_text(encoding="utf-8").split("// THE HORIZON (Tier 0)", 1)[1]
     return _strip_js_comments(body)
 
 
-def test_every_class_the_inbox_creates_has_a_rule():
+def test_every_class_the_horizon_creates_has_a_rule():
     """**A class with no rule fails silently, and in three different directions.**
 
     Found on the first pass of this surface, all three by this check rather than by looking:
@@ -2352,7 +2352,7 @@ def test_every_class_the_inbox_creates_has_a_rule():
     import re
 
     css = (WEB / "style.css").read_text(encoding="utf-8")
-    js = _inbox_js()
+    js = _horizon_js()
 
     created: set[str] = set()
     for match in re.findall(r'elt\("[a-zA-Z0-9]+",\s*"([^"]+)"', js):
@@ -2366,52 +2366,52 @@ def test_every_class_the_inbox_creates_has_a_rule():
     # the one native-chrome element in the product, on the default screen and on the public
     # playground page. A class is a class wherever it is written.
     html = (WEB / "index.html").read_text(encoding="utf-8")
-    inbox_markup = html[html.index('id="view-inbox"') : html.index('id="view-notebook"')]
-    for match in re.findall(r'class="([^"]+)"', inbox_markup):
+    horizon_markup = html[html.index('id="view-horizon"') : html.index('id="view-orbit"')]
+    for match in re.findall(r'class="([^"]+)"', horizon_markup):
         created.update(match.split())
 
     styled = set(re.findall(r"\.([a-zA-Z][\w-]*)", css))
     missing = sorted(name for name in created if name not in styled)
-    assert not missing, f"the Inbox creates these classes and nothing styles them: {missing}"
+    assert not missing, f"the Horizon creates these classes and nothing styles them: {missing}"
 
 
-def test_the_inbox_never_builds_markup_from_a_string():
+def test_the_horizon_never_builds_markup_from_a_string():
     """Invariant 55, on the surface that renders the most attacker-influenced text in the product: a
     captured page's title, a model-written summary, and the full text of anything at all."""
-    js = _inbox_js()
+    js = _horizon_js()
     for banned in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
-        assert banned not in js, f"the Inbox surface uses {banned}"
+        assert banned not in js, f"the Horizon surface uses {banned}"
 
 
-def test_the_inbox_never_renders_a_remote_image():
+def test_the_horizon_never_renders_a_remote_image():
     """Invariant 51, which is also this surface's whole design brief. `og:image` is why there is no
     thumbnail to recognise a node by, and why recall here is typographic instead. An `<img>` added
     later would quietly undo both the privacy rule and the design."""
-    js = _inbox_js()
+    js = _horizon_js()
     css = (WEB / "style.css").read_text(encoding="utf-8")
-    inbox_css = _strip_css_comments(css.split("   THE INBOX (Tier 0)", 1)[1])
+    horizon_css = _strip_css_comments(css.split("   THE HORIZON (Tier 0)", 1)[1])
     assert 'elt("img"' not in js and 'createElement("img")' not in js
 
     # The rule is NO REMOTE FETCH, which is not the same as no background-image - an earlier version
     # of this test banned the property outright and refused a chevron drawn as an inline data URI,
     # which carries no request at all. Every `url()` on this surface has to be a `data:` URI.
-    for reference in re.findall(r"url\(([^)]*)\)", inbox_css):
-        assert reference.strip("\"' ").startswith("data:"), f"remote reference on the Inbox: {reference}"
+    for reference in re.findall(r"url\(([^)]*)\)", horizon_css):
+        assert reference.strip("\"' ").startswith("data:"), f"remote reference on the Horizon: {reference}"
 
 
 def test_the_reading_face_is_actually_used_on_the_surface_it_was_chosen_for():
     """Literata was picked in Phase 1 for "content meant to be read at length" and then never
     applied: `.reading-face` sat unused for three phases while DESIGN.md described a typographic
-    identity the browser never rendered. The Inbox's title and summary are that content."""
+    identity the browser never rendered. The Horizon's title and summary are that content."""
     css = (WEB / "style.css").read_text(encoding="utf-8")
-    inbox_css = css.split("   THE INBOX (Tier 0)", 1)[1]
+    horizon_css = css.split("   THE HORIZON (Tier 0)", 1)[1]
     for selector in (".node-title", ".node-summary", ".capture-input"):
         # ANCHORED at the start of a line, so a descendant rule like
         # `.node:hover .node-title { color: … }` is not mistaken for the element's own. The
         # unanchored version read that hover rule and reported the reading face missing - a test
         # failing on a correct change, which is the worst kind, because the reflex is to undo the
         # change rather than the test.
-        block = re.split(rf"^{re.escape(selector)} \{{", inbox_css, maxsplit=1, flags=re.MULTILINE)
+        block = re.split(rf"^{re.escape(selector)} \{{", horizon_css, maxsplit=1, flags=re.MULTILINE)
         assert len(block) == 2, f"{selector} has no rule of its own"
         assert "var(--serif)" in block[1].split("}", 1)[0], f"{selector} is not set in the reading face"
 
@@ -2447,9 +2447,9 @@ def test_every_latin_face_is_paired_with_a_cjk_fallback():
 
 def test_no_accent_bar_wider_than_a_hairline():
     """`border-left` wider than 1px as a section accent is the most overused touch in admin UIs and
-    reads as a rendering mistake at any width beyond a divider. Nine of them predated the Inbox,
-    including one on `.chat-overview`, the first element you see on entering a notebook, while the
-    Inbox's own stylesheet carried a comment citing the ban. Two were carrying an ACCENT and gave it
+    reads as a rendering mistake at any width beyond a divider. Nine of them predated the Horizon,
+    including one on `.chat-overview`, the first element you see on entering an orbit, while the
+    Horizon's own stylesheet carried a comment citing the ban. Two were carrying an ACCENT and gave it
     up for a background swatch; the rest are blockquote-shaped and keep the hairline the ban allows.
     """
     import re
@@ -2467,7 +2467,7 @@ def test_the_settings_page_renders_every_setting_the_server_stores():
     RENDERED. So a setting the server stores and the page does not draw is not merely
     unreachable - it is destroyed by the next legitimate save of anything else. That is exactly
     what happened to `auto_distil`: `GET`/`PUT /settings` carried it from the day it was added,
-    `rlm_notebook/web/` never mentioned it, and an operator who hand-edited the settings file to
+    `penumbra/web/` never mentioned it, and an operator who hand-edited the settings file to
     turn it on lost it the next time they changed a voice. An independent review reproduced the
     whole loop through the UI.
 
@@ -2475,7 +2475,7 @@ def test_the_settings_page_renders_every_setting_the_server_stores():
     same shape invariant 28 uses for the guide task registries, and for the same reason: the browser
     cannot import `config.py`.
     """
-    from rlm_notebook.config import settings_state
+    from penumbra.config import settings_state
 
     js = (WEB / "app.js").read_text(encoding="utf-8")
     rows = js[js.index("function settingRows()") : js.index("// The INTERFACE language row.")]
@@ -2683,7 +2683,7 @@ def test_every_reader_facing_failure_goes_through_readable_error():
 
     # **CLEAN, THEN WRAP.** `showCaptureNote` is the plain display half and does NOT clean; it takes
     # a sentence this file composed. It used to clean, and both of its callers handed it
-    # `t("inbox.captureFailed", ...)` - the raw error already folded into a translated sentence - so
+    # `t("horizon.captureFailed", ...)` - the raw error already folded into a translated sentence - so
     # the cleaning ran on the WRAPPER and every strip inside `readableError` matched nothing. The
     # note printed `收不進來：422: could not ingest: PdfiumError: …`. A string something else has
     # already wrapped is the wrong string to clean, and this is the shape that says so.
@@ -2694,7 +2694,7 @@ def test_every_reader_facing_failure_goes_through_readable_error():
             depth += (js[i] == "(") - (js[i] == ")")
             i += 1
         arg = js[m.end() : i - 1]
-        # A sentence composed HERE is fine (`inbox.someRefused` names the reader's own files). A
+        # A sentence composed HERE is fine (`horizon.someRefused` names the reader's own files). A
         # SERVER message is not, whether raw or already folded into a translated wrapper.
         if ".message" in arg or "readableError" in arg:
             wrapped.append(js[: m.start()].count("\n") + 1)
@@ -2716,9 +2716,9 @@ def test_every_reader_facing_failure_goes_through_readable_error():
 def test_the_two_failure_headings_use_the_same_colour_token():
     """**One rule, two elements, and it kept being applied to one of them.**
 
-    `.node-error-head` (Inbox) and `.turn-failed-head` (chat) are the same element on the two
+    `.node-error-head` (Horizon) and `.turn-failed-head` (chat) are the same element on the two
     surfaces: a bold sans heading sitting on a tinted error block, saying the thing failed. The
-    Inbox's was measured on that block rather than on the page, came out 4.27 / 4.37 against AA's
+    Horizon's was measured on that block rather than on the page, came out 4.27 / 4.37 against AA's
     4.5, and was moved from `--bad` to `--text` with the reasoning written into the rule. The chat's
     was left on `--bad`, at the same two numbers, and an independent review re-measured and
     re-reported it a round later.
@@ -2771,7 +2771,7 @@ def test_the_capture_picker_offers_exactly_what_the_server_accepts():
     Read from `ingest._ALLOWED_UPLOAD_SUFFIXES` rather than pinned here, because a list copied into
     a test is a third place to drift.
     """
-    from rlm_notebook.ingest import _ALLOWED_UPLOAD_SUFFIXES
+    from penumbra.ingest import _ALLOWED_UPLOAD_SUFFIXES
 
     html = (WEB / "index.html").read_text(encoding="utf-8")
     for element in ("capture-file", "source-file"):
@@ -2790,8 +2790,8 @@ def test_the_capture_picker_offers_exactly_what_the_server_accepts():
 def test_every_epoch_timestamp_is_multiplied_before_it_becomes_a_date():
     """**The server sends epoch SECONDS; `new Date()` takes milliseconds.**
 
-    `facetLabels`' tie-breaker rung read `new Date(b.updated_at)` and every notebook in the product
-    resolved to 1970-01-22 - a date 56 years wrong, byte-identical across notebooks, printed by the
+    `facetLabels`' tie-breaker rung read `new Date(b.updated_at)` and every orbit in the product
+    resolved to 1970-01-22 - a date 56 years wrong, byte-identical across orbits, printed by the
     one rung that exists BECAUSE the three above it tied. So the disambiguator disambiguated
     nothing, and was long enough that the rail's 13rem clamp ellipsised it away as well.
 
@@ -2820,14 +2820,14 @@ def test_every_epoch_timestamp_is_multiplied_before_it_becomes_a_date():
 def test_the_facet_label_ladder_cannot_run_out_of_rungs():
     """**A disambiguating ladder whose last rung can still tie has not disambiguated anything.**
 
-    `facetLabels` exists because two notebooks with the same derived sentence must still be told
+    `facetLabels` exists because two orbits with the same derived sentence must still be told
     apart in the rail. Every rung it had read a PROPERTY - the label, the title, the source count,
-    the timestamp - and properties can be equal: three notebooks promoted from one source in the
+    the timestamp - and properties can be equal: three orbits promoted from one source in the
     same minute matched on all four, and the rail rendered three byte-identical entries. The ladder
     reached its end and gave up silently, which is the failure it was written to prevent.
 
     So the last rung must be one that CANNOT tie. An ordinal is the only such suffix, and it is not
-    the notebook id - invariant 37 keeps the handle off a label. This pins the property rather than
+    the orbit id - invariant 37 keeps the handle off a label. This pins the property rather than
     the implementation: run the real ladder over a worst case and require distinct labels.
     """
     js = (WEB / "app.js").read_text(encoding="utf-8")
@@ -2855,11 +2855,11 @@ def test_every_row_that_opens_something_has_a_real_button_to_open_it():
     """**A row you can only open with a mouse is a row a keyboard user cannot open.**
 
     This project has three list rows that expand or reveal on click, and it learned the lesson once
-    per row instead of once. The Inbox node got `button.node-open` after round 3 found the same
+    per row instead of once. The Horizon node got `button.node-open` after round 3 found the same
     thing; the references row got `button.ref-card-head`; the SOURCE row was still a bare `<li>`
     with a click handler two rounds later, and the only focusable control in it was the destructive
     `✕`. A keyboard user could delete a source and had no way to read one - and reading one is
-    `GET /notebooks/{id}/sources/{source_id}`, one of the three deliberate whole-document exposures
+    `GET /orbits/{id}/sources/{source_id}`, one of the three deliberate whole-document exposures
     (invariant 31), so the mouse-only route was the entire feature.
 
     Pinned per row rather than by a generic "anything with a click handler must be focusable" scan,
@@ -2927,7 +2927,7 @@ def test_every_live_stream_can_be_closed_by_someone_who_did_not_open_it():
 
     `openTicker` returned only a promise and kept its `EventSource` in a closure. That is fine for
     the four callers that await a request and receive a terminal event — and a real leak for
-    `reattachInFlightRuns`, which opens one per RECOVERED run on every notebook open and awaits
+    `reattachInFlightRuns`, which opens one per RECOVERED run on every orbit open and awaits
     nothing. Measured at six opens: the page could no longer make ANY request to its own server
     (`fetch` stalled past eight seconds, six established sockets, Chrome's per-origin HTTP/1.1 cap)
     while `curl` answered the same server in two milliseconds. A run outliving a few navigations is
@@ -2965,7 +2965,7 @@ def test_every_aria_modal_surface_actually_behaves_like_one():
     walked the page behind the scrim — and the fix built `openModal`/`closeModal`/`trapTab`/
     `inertEverythingExcept`. The Trajectory drawer, which invariant 70 calls "where a run's
     reasoning lives", was never wired to any of it: it took no focus, inerted nothing, and six Tabs
-    reached the wordmark, the notebook picker, Settings, the URL field and the destructive ✕ that
+    reached the wordmark, the orbit picker, Settings, the URL field and the destructive ✕ that
     removes a source. `aria-modal` makes that worse than an honest non-modal, because it hides the
     page behind from a screen reader's virtual cursor while leaving it reachable by Tab.
 
@@ -3039,7 +3039,7 @@ def test_no_fullwidth_punctuation_leaks_into_an_english_string():
     """**U+FF0B is a FULLWIDTH plus**: it belongs in a CJK run and reads as a stray wide glyph in an
     English one. It was fixed in `index.html` and left in `app.js`, where it labels the SAME
     affordance - and at 375 the facet rail is hidden, so the `app.js` one is the only route to a new
-    notebook on a phone. The two sites, one rule, one of them done: this project's recurring shape.
+    orbit on a phone. The two sites, one rule, one of them done: this project's recurring shape.
 
     Scoped to the English DEFAULTS in `app.js`/`index.html`; `i18n.js`'s zh-Hant table is where
     fullwidth punctuation is correct.
@@ -3144,7 +3144,7 @@ def test_a_failed_answer_offers_the_same_retry_a_failed_capture_does():
 
     The chat's failure branch rendered a heading, the reason and the steps pill and stopped — and
     the composer has already cleared by then, so the reader retyped their question by hand after a
-    failure they did not cause. The Inbox's failed row has offered "Try again" since it shipped.
+    failure they did not cause. The Horizon's failed row has offered "Try again" since it shipped.
 
     The same factory as the successful branch, deliberately: `.turn-regenerate` is hidden by a
     stylesheet rule on any turn but the last, so a mid-thread failure cannot offer to redo an answer
@@ -3169,7 +3169,7 @@ def test_every_endpoint_the_app_calls_has_a_playground_route():
     `playground/smoke.mjs` extracts every `api("…")` path out of `app.js` and drives it through the
     shim's router precisely so an endpoint added to the app cannot silently 404 on the static page.
     `.github/workflows/ci.yml` runs neither `build.py` nor `smoke.mjs`, so the guard was only as
-    good as somebody remembering — and nobody did: round twelve added `POST /inbox/distil/dismiss`
+    good as somebody remembering — and nobody did: round twelve added `POST /horizon/distil/dismiss`
     to `api.py` and `app.js` and not to the shim, which an independent review found by running the
     smoke test by hand.
 
@@ -3195,7 +3195,7 @@ def test_every_endpoint_the_app_calls_has_a_playground_route():
 
     # Every `route(METHOD, "pattern")` the shim registers, plus the write-list tuples.
     #: Three spellings, because the shim uses all three: a plain string, a template literal, and
-    #: the bare `NB` constant (`route("GET", NB, …)`), which is a notebook path on its own.
+    #: the bare `NB` constant (`route("GET", NB, …)`), which is an orbit path on its own.
     patterns = [
         (m.group(1), m.group(2) if m.group(2) is not None else m.group(3) or "${NB}")
         for m in re.finditer(
@@ -3205,9 +3205,9 @@ def test_every_endpoint_the_app_calls_has_a_playground_route():
     patterns += [
         (m.group(1), m.group(2)) for m in re.finditer(r'\[\s*"(\w+)"\s*,\s*"([^"]*)"\s*\]', shim)
     ]
-    # `NB` is the shim's own shorthand for a notebook path segment.
+    # `NB` is the shim's own shorthand for an orbit path segment.
     compiled = [
-        (method, re.compile("^" + pattern.replace("${NB}", "/notebooks/([^/]+)") + "$"))
+        (method, re.compile("^" + pattern.replace("${NB}", "/orbits/([^/]+)") + "$"))
         # `NB` is a JS const, so a pattern using it arrives here as `${NB}` from the template
         # literal above; a plain string pattern has no placeholder to expand.
         for method, pattern in patterns
@@ -3258,10 +3258,10 @@ def test_no_role_is_declared_without_the_contract_it_promises():
 
     `aria-selected` did not appear ONCE anywhere in the product. The four Studio tabs all reported
     "not selected", so which of Studio / Podcast / References / Notes was showing was conveyed by an
-    underline and nothing else; the notebook menu declared `role="listbox"` with `role="option"` on
+    underline and nothing else; the orbit menu declared `role="listbox"` with `role="option"` on
     `<button>`s that had a rename button as a sibling, which is not a valid listbox in any assistive
     technology. SC 4.1.2 Name, Role, VALUE — the same class round twelve fixed for the citation
-    span, one element short of the two controls the right column and all notebook switching depend
+    span, one element short of the two controls the right column and all orbit switching depend
     on. Claiming a role and keeping none of its contract is worse than claiming none.
 
     This pins the MARKUP contract, which is what a fifth tab would break. The runtime half — that
@@ -3278,7 +3278,7 @@ def test_no_role_is_declared_without_the_contract_it_promises():
         assert 'aria-controls="' in tab, f"a tab that names no panel: {tab[:120]}"
         assert re.search(r'\bid="[^"]+"', tab), f"a tab a panel cannot point back at: {tab[:120]}"
 
-    # `section` too: the phone's panel switch controls the three notebook COLUMNS, which are sections.
+    # `section` too: the phone's panel switch controls the three orbit COLUMNS, which are sections.
     panels = re.findall(r'<(?:div|section)[^>]*role="tabpanel"[^>]*>', markup)
     #: NOT one panel per tab: the Guide strip is four tabs over ONE body, which `showKind` re-points
     #: `aria-labelledby` at as it switches. What has to hold is that every reference RESOLVES, in
@@ -3318,9 +3318,9 @@ def test_type_and_spacing_come_from_a_scale_rather_than_a_literal():
 
     24 distinct `rem` font sizes and 29 distinct `rem` spacing values had accumulated — ten of the
     font sizes between 0.68 and 0.85rem, steps of 0.16-0.32px that nobody can perceive and that
-    guaranteed no two labels in different components ever agreed. Inside the SAME Inbox failure
+    guaranteed no two labels in different components ever agreed. Inside the SAME Horizon failure
     banner: `.distil-error` at 0.78 with `.distil-error-count` at 0.76. The strongest evidence it
-    was drift rather than a decision is that the Inbox rebuild reached for a scale and, finding
+    was drift rather than a decision is that the Horizon rebuild reached for a scale and, finding
     none, defined `--ib-gap` scoped to itself.
 
     This is the rule that keeps it from coming back, and it is a rule about LITERALS: a new
@@ -3416,7 +3416,7 @@ def test_the_client_only_reads_guide_fields_the_schema_declares():
     So this reads the SCHEMA. Every `event.x` / `item.x` / `utterance.x` in `app.js` must be a field
     the corresponding pydantic model declares, which is the one direction a fixture cannot fake.
     """
-    from rlm_notebook import schema
+    from penumbra import schema
 
     whole = _blank_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
 

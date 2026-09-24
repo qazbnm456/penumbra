@@ -38,7 +38,7 @@ jobs:
         with:
           node-version: "20"
       - name: Sync
-        # --extra api: so tests/test_api.py (which imports rlm_notebook.api at module scope) is
+        # --extra api: so tests/test_api.py (which imports penumbra.api at module scope) is
         # actually collected and run, not silently skipped. The `api` extra is opt-in for END
         # USERS (pyproject.toml) but CI must still exercise it.
         run: uv sync --python ${{ matrix.python-version }} --extra api

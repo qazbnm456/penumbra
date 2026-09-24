@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from _pdf_fixtures import make_text_pdf, make_text_pdf_bytes
 
-from rlm_notebook.ingest import (
+from penumbra.ingest import (
     ingest_new,
     ingest_one,
     ingest_pasted_text,
@@ -14,7 +14,7 @@ from rlm_notebook.ingest import (
     is_url,
     with_injection_flags,
 )
-from rlm_notebook.schema import Source, SourceBlock
+from penumbra.schema import Source, SourceBlock
 
 
 def test_is_url():
@@ -54,8 +54,8 @@ def test_ingest_one_dispatches_a_youtube_url_to_parse_youtube_not_parse_web(monk
     def fake_parse_web(url, source_id, **kwargs):
         raise AssertionError("a YouTube URL must never reach parse_web")
 
-    monkeypatch.setattr("rlm_notebook.ingest.parse_youtube", fake_parse_youtube)
-    monkeypatch.setattr("rlm_notebook.ingest.parse_web", fake_parse_web)
+    monkeypatch.setattr("penumbra.ingest.parse_youtube", fake_parse_youtube)
+    monkeypatch.setattr("penumbra.ingest.parse_web", fake_parse_web)
 
     source = ingest_one("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "s1")
 
@@ -199,7 +199,7 @@ def test_kind_for_agrees_with_ingest_ones_own_dispatch(tmp_path, monkeypatch):
     """The tripwire the factoring exists for, in the shape invariant 28 already uses for the two
     guide registries: don't assert that two things agree, MAKE them fail when they stop.
 
-    `kind_for` was extracted from `ingest_one` so the Inbox can record a node before anything is
+    `kind_for` was extracted from `ingest_one` so the Horizon can record a node before anything is
     parsed (invariant 79). Invariant 79's own argument for the extraction is "a second dispatch is
     how a `.pdf` URL ends up filed as `web`" — which is only true while something checks. Mutating
     `kind_for` to always return `"text"` was previously caught by one incidental assertion, and
@@ -209,7 +209,7 @@ def test_kind_for_agrees_with_ingest_ones_own_dispatch(tmp_path, monkeypatch):
     Drives the REAL `ingest_one` with each parser replaced by a recorder, so the branch actually
     taken is what gets compared — not a second reading of the same `if` chain.
     """
-    from rlm_notebook import ingest as ingest_module
+    from penumbra import ingest as ingest_module
 
     taken: list[str] = []
 
@@ -252,7 +252,7 @@ def test_kind_for_agrees_with_ingest_ones_own_dispatch(tmp_path, monkeypatch):
 
 
 def test_the_kind_guess_and_the_parse_take_the_same_branch(monkeypatch, tmp_path):
-    """`kind_for` exists so the Inbox can file a node before anything is fetched (invariant 79), and
+    """`kind_for` exists so the Horizon can file a node before anything is fetched (invariant 79), and
     both its docstring and `ingest_one`'s said it had been "factored out" of the parse. It had not:
     each held its own copy of the same four-branch chain, which is precisely the second dispatch
     that comment warns produces a `.pdf` URL filed as `web`.
@@ -260,7 +260,7 @@ def test_the_kind_guess_and_the_parse_take_the_same_branch(monkeypatch, tmp_path
     They share one chain now. This pins that they cannot disagree — for everything except a URL,
     where `parse_web` sniffs content type and a corrected kind is the documented design.
     """
-    from rlm_notebook import ingest
+    from penumbra import ingest
 
     took: list[str] = []
 
@@ -298,7 +298,7 @@ def test_the_kind_guess_and_the_parse_take_the_same_branch(monkeypatch, tmp_path
 def test_a_refused_pdf_upload_names_the_file_not_the_servers_temp_path(monkeypatch):
     """The parser only ever sees the temp file, so its message named `/var/folders/…/tmpXXXX`, which
     the reader who dropped `scan.pdf` could make nothing of — and which is the server's own path."""
-    from rlm_notebook import ingest as ingest_module
+    from penumbra import ingest as ingest_module
 
     def refuse(path, source_id, **kwargs):
         raise ValueError(f"no extractable text in {path!r}, even with OCR")

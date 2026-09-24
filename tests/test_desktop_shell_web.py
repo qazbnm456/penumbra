@@ -17,7 +17,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-APP = (Path(__file__).resolve().parents[1] / "rlm_notebook" / "web" / "app.js").read_text(encoding="utf-8")
+APP = (Path(__file__).resolve().parents[1] / "penumbra" / "web" / "app.js").read_text(encoding="utf-8")
 
 
 def _fn(name: str) -> str:
@@ -41,7 +41,7 @@ const localStorage = { setItem: (k, v) => { store[k] = v; }, getItem: (k) => sto
 const sessionStorage = { setItem: (k, v) => { session[k] = v; }, getItem: (k) => session[k] ?? null };
 const history = { calls: [], replaceState(_s, _t, u) { this.calls.push(u); } };
 const window = { location: { href: HREF }, history };
-const API_TOKEN_KEY = "rlmnb-api-token"; let apiTokenMemo = null;
+const API_TOKEN_KEY = "penumbra-api-token"; let apiTokenMemo = null;
 const t = (key, fallback) => fallback;
 """
 
@@ -62,7 +62,7 @@ def test_the_token_and_the_shell_flag_come_from_the_fragment_and_leave_no_trace(
     assert got["urls"], "the address bar was never rewritten"
     final = got["urls"][-1]
     assert "abc123" not in final and "token" not in final and "shell" not in final, final
-    assert final == "/?nb=rag", "the notebook route must survive the strip"
+    assert final == "/?nb=rag", "the orbit route must survive the strip"
 
 
 def test_a_plain_page_load_does_not_rewrite_history():
@@ -83,7 +83,7 @@ def test_the_desktop_hint_appears_only_inside_the_shell():
         + _fn("isDesktopShell")
         + _fn("withShellHint")
         + '\nconst before = withShellHint("No model is configured.");'
-        '\nsession["rlmnb-shell"] = "desktop";'
+        '\nsession["penumbra-shell"] = "desktop";'
         '\nconst after = withShellHint("No model is configured.");'
         '\nconst restart = withShellHint("Lost contact.", "restart");'
         "\nprocess.stdout.write(JSON.stringify({before, after, restart}));"

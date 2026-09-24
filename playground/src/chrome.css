@@ -1,4 +1,4 @@
-/* rlm-notebook PLAYGROUND — chrome only.
+/* penumbra PLAYGROUND — chrome only.
  *
  * Uses the application's OWN custom properties (`--surface-*`, `--border`, `--text*`, `--accent`,
  * `--ok`, `--radius*`), so both themes and any future palette change are inherited rather than
@@ -72,13 +72,13 @@ a.pg-btn { text-decoration: none; color: inherit; display: inline-flex; align-it
   font-size: 11px; letter-spacing: 0.01em;
 }
 
-/* No modal section any more: the scenario picker was the product's own notebook dropdown all along,
+/* No modal section any more: the scenario picker was the product's own orbit dropdown all along,
    and the install sheet was a copy of the README. Both are deleted, and so is the `modal()` helper
    that built them, so `.pg-overlay` also leaves the pointer-events opt-in list below. */
 /* The body is a scroller, so the foot needs a rule between them: without one the last row runs
    under the Close button and reads as clipped rather than scrolled. */
 
-/* The scenario picker's own styles are GONE with it. The product's notebook dropdown does the job,
+/* The scenario picker's own styles are GONE with it. The product's orbit dropdown does the job,
    so there is nothing here to style and nothing here to break: two heading rules were lost as
    collateral from one edit inside this block, and the block that replaced them was the third
    attempt at a surface the product already had. */
@@ -266,7 +266,7 @@ a.pg-btn { text-decoration: none; color: inherit; display: inline-flex; align-it
   }
 }
 
-/* Icons alone still do not fit a phone. Measured at 375: the crumb and the notebook picker end at
+/* Icons alone still do not fit a phone. Measured at 375: the crumb and the orbit picker end at
    x = 229 and the five remaining controls need 164px of the 134 that are left. ONE of the three
    has to go, and it is the one whose destination the other two already reach, since Install links
    into the repo (`#install-and-run`) and the footer links into it again. Never Install itself: it

@@ -1,6 +1,6 @@
 # Invariant 76: The SSRF carve-out for fake-IP resolvers
 
-**The SSRF guard's DNS check accepts an operator-supplied carve-out (`RN_FETCH_ALLOW_CIDRS`), resolved in one place (`web.allow_nets`) that both host-side fetchers read.**
+**The SSRF guard's DNS check accepts an operator-supplied carve-out (`PN_FETCH_ALLOW_CIDRS`), resolved in one place (`web.allow_nets`) that both host-side fetchers read.**
 
 A split-DNS VPN or fake-IP proxy (Clash, Mihomo or Surge, with a default range of `198.18.0.0/16`) answers every public hostname with a synthetic address in a reserved range. `resolved_host_is_safe` then refuses it, correctly on the information it has, and every web and YouTube ingestion on that machine fails with "resolves to a disallowed address". The guard is not wrong; it cannot tell the operator's own resolver from an attacker's redirect, which is why the carve-out must be opt-in and supplied by the operator rather than inferred.
 
@@ -16,7 +16,7 @@ The accepted cost: a split-DNS VPN that maps internal names into RFC 1918 space 
 
 ## One reader, read at the boundary
 
-`parsers/youtube.py` imports `web.allow_nets` rather than reading the variable again, so the two fetchers can never disagree about what is permitted (invariant 13's one-copy rule for a guard); a source-tree assertion pins it. It is resolved on every call, never cached at import, so tests and a long-running server see changes. `config.fetch_allow_cidrs` is a standalone reader, not a `NotebookConfig` field, for invariant 30's reason: ingesting a URL has nothing to do with whether a model is configured.
+`parsers/youtube.py` imports `web.allow_nets` rather than reading the variable again, so the two fetchers can never disagree about what is permitted (invariant 13's one-copy rule for a guard); a source-tree assertion pins it. It is resolved on every call, never cached at import, so tests and a long-running server see changes. `config.fetch_allow_cidrs` is a standalone reader, not a `PenumbraConfig` field, for invariant 30's reason: ingesting a URL has nothing to do with whether a model is configured.
 
 An unparseable entry raises instead of being skipped, which inverts `rlm_harness.tools.parse_cidrs`. Skipping is right for a tool the model calls mid-run, and wrong for an operator setting read once: dropping the only entry restores full strictness and reproduces the exact symptom the setting was meant to fix, with nothing connecting the two. The resulting `SystemExit` is handled as invariant 24 requires, so a malformed value is a clean 500, not an escaped exception, and the refusal names the variable, because otherwise it looks exactly like a genuine SSRF refusal.
 

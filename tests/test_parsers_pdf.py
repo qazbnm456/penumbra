@@ -11,9 +11,9 @@ from _pdf_fixtures import (
     make_two_column_pdf,
 )
 
-from rlm_notebook.parsers import _ocr
-from rlm_notebook.parsers import pdf as pdf_module
-from rlm_notebook.parsers.pdf import (
+from penumbra.parsers import _ocr
+from penumbra.parsers import pdf as pdf_module
+from penumbra.parsers.pdf import (
     _OCR_REPLACES_TEXT_BY,
     _SUSPECT_TEXT_BELOW,
     parse_pdf,
@@ -278,7 +278,7 @@ def _ocr_orderings(pdf_path):
     import pypdfium2 as pdfium
     from rapidocr import RapidOCR
 
-    from rlm_notebook.parsers._ocr import _quiet_rapidocr, reading_order
+    from penumbra.parsers._ocr import _quiet_rapidocr, reading_order
 
     _quiet_rapidocr()
     page = pdfium.PdfDocument(str(pdf_path))[0]
@@ -367,7 +367,7 @@ def test_two_threads_cannot_parse_two_pdfs_at_once(monkeypatch):
     import threading
     import time
 
-    from rlm_notebook.schema import Source, SourceBlock
+    from penumbra.schema import Source, SourceBlock
 
     windows: list[tuple[float, float]] = []
     recorder_lock = threading.Lock()

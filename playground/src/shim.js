@@ -1,4 +1,4 @@
-/* rlm-notebook PLAYGROUND — the network shim.
+/* penumbra PLAYGROUND — the network shim.
  *
  * `app.js` is the SHIPPED application, copied verbatim and never edited. It reaches the network in
  * exactly three ways, and this file replaces all three before `app.js` is evaluated:
@@ -42,23 +42,23 @@
 
   //: THE STAGE. A demo that opens with everything already in it demonstrates nothing — the reader
   //: sees a finished screenshot and learns neither what the product does nor that they did it. So
-  //: the notebook is revealed a piece at a time, and each piece is revealed by the reader pressing
+  //: the orbit is revealed a piece at a time, and each piece is revealed by the reader pressing
   //: the product's OWN control. `view()` is the filter; the routes below advance it.
   //:
   //: The underlying fixture is never mutated by staging — `stage` only says how much of it is
   //: visible yet — so Reset is a counter reset, not a reload.
   const stages = new Map();
   const blankStage = () => ({ sources: 0, overview: false, turns: 0, podcast: null });
-  //: `view` clamps with `slice(0, n)`, so Infinity means "everything this notebook actually has".
+  //: `view` clamps with `slice(0, n)`, so Infinity means "everything this orbit actually has".
   const fullStage = () => ({ sources: Infinity, overview: true, turns: Infinity, podcast: "default" });
 
-  //: The tour builds ONE notebook up from nothing, and that notebook alone starts empty. Every other
+  //: The tour builds ONE orbit up from nothing, and that orbit alone starts empty. Every other
   //: one opens complete, because the reader reaching them has finished the tour and is browsing:
   //: handing them a blank workspace would read as the demo being broken, not as a lesson.
   //:
-  //: This is what lets the playground use the PRODUCT's own notebook picker instead of a second one
-  //: bolted onto the header. That picker calls `openNotebook(id)` in place, with no reload to
-  //: re-stage anything, so an unstaged notebook has to be worth looking at on arrival.
+  //: This is what lets the playground use the PRODUCT's own orbit picker instead of a second one
+  //: bolted onto the header. That picker calls `openOrbit(id)` in place, with no reload to
+  //: re-stage anything, so an unstaged orbit has to be worth looking at on arrival.
   const tourOwns = new Set();
   PG.beginTour = (id) => {
     tourOwns.add(id);
@@ -70,8 +70,8 @@
     return stages.get(id);
   }
 
-  //: The reveal is capped by what the notebook really has. Pressing "add source" a fourth time on a
-  //: three-source notebook must not invent a fourth.
+  //: The reveal is capped by what the orbit really has. Pressing "add source" a fourth time on a
+  //: three-source orbit must not invent a fourth.
   function view(nb, st) {
     const podcast = st.podcast && nb.podcast ? { ...nb.podcast, stale: false } : null;
     return {
@@ -86,8 +86,8 @@
   async function full(id) {
     if (!live.has(id)) {
       const f = await fixtures();
-      if (!f.notebooks[id]) return null;
-      live.set(id, structuredClone(f.notebooks[id]));
+      if (!f.orbits[id]) return null;
+      live.set(id, structuredClone(f.orbits[id]));
     }
     return live.get(id);
   }
@@ -96,18 +96,18 @@
   //: loads before it, so the guard is not optional.
   const uiText = (en, zh) => ((typeof uiLang === "function" ? uiLang() : "en") === "zh-Hant" ? zh : en);
 
-  async function notebook(id) {
+  async function orbit(id) {
     const nb = await full(id);
     return nb && view(nb, stageOf(id));
   }
 
-  //: A MUTATING handler gets the live notebook and answers with the view. `notebook()` returns what
+  //: A MUTATING handler gets the live orbit and answers with the view. `orbit()` returns what
   //: `view` built — a NEW object with `sources`/`turns` sliced — so a handler that took it and
   //: spliced an array changed a copy that was thrown away with the response. Every mutation except
   //: notes was lost on the next read (notes survived only because `view` spreads them by reference,
   //: which is what hid the whole class): a deleted source came back, a rename showed in the header
-  //: and then reverted the moment `refreshNotebookList` re-fetched, a cleared conversation
-  //: reappeared. `openNotebook` runs on the tour's own Next button, so the reader saw it happen.
+  //: and then reverted the moment `refreshOrbitList` re-fetched, a cleared conversation
+  //: reappeared. `openOrbit` runs on the tour's own Next button, so the reader saw it happen.
   //:
   //: Mutate LIVE, respond with the VIEW. The stage's counts stay as they are: they are a reveal
   //: ceiling, and `slice(0, n)` past a shortened array is still the whole array.
@@ -116,7 +116,7 @@
     // A 404, never `null`. Returning nothing made the route resolve to no Response at all, which
     // is not a status a caller can read — the smoke suite hit it as `Cannot read properties of
     // null (reading 'status')` while probing route shapes with a placeholder id.
-    if (!nb) return notFound("no such notebook in this playground");
+    if (!nb) return notFound("no such orbit in this playground");
     const refused = apply(nb);
     return refused || json(view(nb, stageOf(id)));
   }
@@ -124,25 +124,25 @@
   //: THE DEMO STARTS FROM SCRATCH ON EVERY LOAD. Resetting the shim's stage is not enough: the
   //: workspace persists its own preferences, and this is a teaching page, so anything a reader
   //: changed last visit must not decide what they see this visit. It went wrong exactly there.
-  //: `rlmnb-studio-view` survives a reload, so once anyone had reached the Podcast tab the tour's
+  //: `penumbra-studio-view` survives a reload, so once anyone had reached the Podcast tab the tour's
   //: "open the Podcast tab" step was already satisfied before it was ever shown, and it vanished.
-  //: `rlmnb-podcast-length` is the same shape one step later, and a collapsed or hand-narrowed
+  //: `penumbra-podcast-length` is the same shape one step later, and a collapsed or hand-narrowed
   //: Studio column would strand both.
   //:
-  //: `rlmnb-ui-lang` and `rlmnb-theme` are deliberately NOT here. Those are how the reader is
+  //: `penumbra-ui-lang` and `penumbra-theme` are deliberately NOT here. Those are how the reader is
   //: LOOKING at the page rather than anything the tour teaches, and clearing them would undo the
   //: reader's own toggle every time they refreshed.
   //:
-  //: `rlmnb-api-token` IS here, and it is the one key on this list that is not about the tour.
+  //: `penumbra-api-token` IS here, and it is the one key on this list that is not about the tour.
   //: This page has no backend at all — every request is answered by the shim below — so a token
   //: can do nothing here but sit in a public demo page's storage. It is workspace state, not a
   //: reader preference, so the exemption above does not apply to it.
   const WORKSPACE_KEYS = [
-    "rlmnb-studio-view",
-    "rlmnb-studio-collapsed",
-    "rlmnb-studio-width",
-    "rlmnb-podcast-length",
-    "rlmnb-api-token",
+    "penumbra-studio-view",
+    "penumbra-studio-collapsed",
+    "penumbra-studio-width",
+    "penumbra-podcast-length",
+    "penumbra-api-token",
   ];
   //: At MODULE SCOPE, and that is what makes it work without touching the DOM: `index.html` loads
   //: `shim.js` before `app.js`, so the keys are already gone by the time the workspace reads them
@@ -168,22 +168,22 @@
       stages.clear();
     }
     resetWorkspacePrefs();
-    // A reset re-runs the tour, so whichever notebook it starts on has to go back to empty. The set
-    // is kept: `openInitial` re-announces its pick, and a notebook the tour once owned should not
+    // A reset re-runs the tour, so whichever orbit it starts on has to go back to empty. The set
+    // is kept: `openInitial` re-announces its pick, and an orbit the tour once owned should not
     // silently become a browse-it-whole one on the next pass.
     for (const owned of tourOwns) stages.set(owned, blankStage());
   };
   PG.scenarios = async () => (await fixtures()).scenarios;
 
-  //: Whether this build HAS an Inbox to tour, read from the FIXTURE and not from the stream.
+  //: Whether this build HAS a Horizon to tour, read from the FIXTURE and not from the stream.
   //: `skipIf` is polled and its effect is permanent (the director does `this.index += 1`), so a
   //: predicate that counts `#stream .node` skips its step for good the first time it happens to be
   //: sampled mid-re-render - and the step before these types into Find, which re-renders the
   //: stream on every keystroke. "Open a row" vanished from the script every single run.
-  PG.hasInbox = false;
+  PG.hasHorizon = false;
   fixtures().then(
     (f) => {
-      PG.hasInbox = (f.inbox || []).length > 0;
+      PG.hasHorizon = (f.horizon || []).length > 0;
     },
     () => {
       /* no fixtures is a broken build, not a tour decision to make here */
@@ -191,7 +191,7 @@
   );
 
   //: Skipping a step must FULFIL it, not step over it. The stage is what every later step reads, so
-  //: a skip that only advanced the script left the notebook empty and stranded everything
+  //: a skip that only advanced the script left the orbit empty and stranded everything
   //: downstream: with no sources, `renderChatOverview` returns early, `#chat-overview` stays hidden,
   //: and step 2 hunts for a button that was never built. The reader was told to press something
   //: that did not exist because of a button they had pressed one step earlier.
@@ -246,7 +246,7 @@
         title: origin,
         description:
           "Added on this demo page, so there is nothing behind it to read. Answers below still " +
-          "come from the notebook's own sources.",
+          "come from the orbit's own sources.",
       },
     };
   }
@@ -266,21 +266,21 @@
   const ROUTES = [];
   const route = (method, pattern, handler) =>
     ROUTES.push({ method, re: new RegExp(`^${pattern}$`), handler });
-  const NB = "/notebooks/([^/]+)";
+  const NB = "/orbits/([^/]+)";
 
-  route("GET", "/notebooks", async () => {
+  route("GET", "/orbits", async () => {
     const f = await fixtures();
     const items = [];
     for (const s of f.scenarios) {
-      const nb = await notebook(s.id);
-      // Field names are `NotebookSummary`'s, not invented ones: the picker row reads
+      const nb = await orbit(s.id);
+      // Field names are `OrbitSummary`'s, not invented ones: the picker row reads
       // `source_count`/`turn_count`/`updated_at`, and a near-miss here renders "undefined sources"
       // rather than failing — which is why the smoke test asserts the shape and not just the 200.
       items.push({
         id: nb.id,
         // The key a membership is written with. Recorded scenario ids are already slug-safe, so it
         // equals the id here — but the field has to EXIST, or every filed node on the playground
-        // renders "In a deleted notebook" the way the real app did before `NotebookSummary` grew it.
+        // renders "In a deleted orbit" the way the real app did before `OrbitSummary` grew it.
         slug: nb.id,
         title: nb.title,
         derived_title: nb.derived_title,
@@ -289,12 +289,12 @@
         updated_at: Date.now() / 1000 - f.scenarios.indexOf(s) * 3600,
       });
     }
-    return json({ notebooks: items, unreadable: [] });
+    return json({ orbits: items, unreadable: [] });
   });
 
   route("GET", NB, async (m) => {
-    const nb = await notebook(decodeURIComponent(m[1]));
-    return nb ? json(nb) : notFound(`notebook ${m[1]} not found`);
+    const nb = await orbit(decodeURIComponent(m[1]));
+    return nb ? json(nb) : notFound(`orbit ${m[1]} not found`);
   });
 
   route("GET", `${NB}/sources/([^/]+)`, async (m) => {
@@ -313,20 +313,20 @@
   //: so the control never appears broken.
   async function addSource(id) {
     const nb = await full(id);
-    // AN ID THIS PAGE HAS NEVER HEARD OF, which the product's own "＋ New notebook" mints in two
+    // AN ID THIS PAGE HAS NEVER HEARD OF, which the product's own "＋ New orbit" mints in two
     // clicks (`app.js` generates `nb-<uuid8>` and the workspace opens empty). `full` returns null
     // for it and every handler here dereferenced that, so adding a source answered
     // `500 playground shim error: Cannot read properties of null` and `app.js` put it in an alert.
-    // A refusal that says why is the honest answer: this page replays recorded notebooks and has
+    // A refusal that says why is the honest answer: this page replays recorded orbits and has
     // nothing to ingest with.
     if (!nb) {
       return json({
         detail: uiText(
-          "This is a playground: it replays six recorded notebooks and has no ingestion behind it, "
-          + "so a new notebook has nothing to add. Pick one from the notebook menu, or install "
-          + "rlm-notebook to use your own sources.",
-          "這是展示頁：它重播六本錄好的筆記本，背後沒有真的擷取功能，所以新的筆記本沒有東西可以加。"
-          + "從上方的筆記本選單挑一本，或是裝起 rlm-notebook 用你自己的來源。",
+          "This is a playground: it replays six recorded orbits and has no ingestion behind it, "
+          + "so a new orbit has nothing to add. Pick one from the orbit menu, or install "
+          + "penumbra to use your own sources.",
+          "這是展示頁：它重播六個錄好的軌道，背後沒有真的擷取功能，所以新的軌道沒有東西可以加。"
+          + "從上方的軌道選單挑一個，或是裝起 Penumbra 用你自己的來源。",
         ),
       }, 422);
     }
@@ -386,12 +386,12 @@
     nb.turns = [];
   }));
 
-  // Deleting a NOTEBOOK is refused rather than simulated. Every other write here edits the
+  // Deleting a ORBIT is refused rather than simulated. Every other write here edits the
   // in-memory copy of a recorded scenario, which is fine because a reload restores it — but a
-  // playground that lets a visitor remove the three notebooks the tour is built from is a page that
+  // playground that lets a visitor remove the three orbits the tour is built from is a page that
   // can be emptied by its first reader. A 501 says the same thing the capture writes say.
   route("DELETE", NB, async () =>
-    json({ detail: "This is a recorded demo \u2014 the notebooks here are fixtures." }, 501)
+    json({ detail: "This is a recorded demo \u2014 the orbits here are fixtures." }, 501)
   );
 
   route("PUT", `${NB}/title`, async (m, req) => {
@@ -402,24 +402,24 @@
     });
   });
 
-  route("POST", `${NB}/title`, async (m) => json(await notebook(decodeURIComponent(m[1]))));
+  route("POST", `${NB}/title`, async (m) => json(await orbit(decodeURIComponent(m[1]))));
 
-  // --- Tier 0, the Inbox ------------------------------------------------------------------------
+  // --- Tier 0, the Horizon ------------------------------------------------------------------------
   //
   // **The pivot broke this page and nothing noticed**, which is the failure `playground/README.md`
   // claims is impossible ("It cannot rot into a mock-up of a UI we no longer ship"). The shim
-  // intercepted `/notebooks*` and `/settings*` only; the byte-copied `app.js` now boots into
-  // `showInbox()` and immediately asks for `/inbox`, so the demo's FIRST SCREEN rendered
+  // intercepted `/orbits*` and `/settings*` only; the byte-copied `app.js` now boots into
+  // `showHorizon()` and immediately asks for `/horizon`, so the demo's FIRST SCREEN rendered
   // "（錯誤）404: File not found" under a tour pointing at a button that was not there. CI runs
   // neither `build.py` nor `smoke.mjs`, so the only thing that would have caught it is a person
   // opening the page.
   //
-  // A READ-ONLY Inbox: the playground has no server, and capture, distillation and promotion all
+  // A READ-ONLY Horizon: the playground has no server, and capture, distillation and promotion all
   // write. Anything that would mutate answers honestly rather than pretending, which is the same
   // contract the rest of this shim already keeps.
-  const inboxNodes = () =>
+  const horizonNodes = () =>
     fixtures().then((f) =>
-      (f.inbox || []).map((n, i) => ({
+      (f.horizon || []).map((n, i) => ({
         id: n.id || `nd-demo${i}`,
         kind: n.kind || "text",
         origin: n.origin || "pasted:demo",
@@ -437,8 +437,8 @@
       }))
     );
 
-  route("GET", "/inbox", async (m, req, u) => {
-    const all = await inboxNodes();
+  route("GET", "/horizon", async (m, req, u) => {
+    const all = await horizonNodes();
     const q = (u.searchParams.get("q") || "").trim().toLowerCase();
     const terms = q ? q.split(/\s+/) : [];
     const hit = (n) =>
@@ -458,7 +458,7 @@
     });
   });
 
-  route("GET", "/inbox/status", async () =>
+  route("GET", "/horizon/status", async () =>
     json({
       running: false,
       current: null,
@@ -467,13 +467,13 @@
     })
   );
 
-  route("GET", "/inbox/([^/]+)", async (m) => {
-    const node = (await inboxNodes()).find((n) => n.id === m[1]);
-    return node ? json({ node, notebooks: [] }) : notFound(`no node ${m[1]}`);
+  route("GET", "/horizon/([^/]+)", async (m) => {
+    const node = (await horizonNodes()).find((n) => n.id === m[1]);
+    return node ? json({ node, orbits: [] }) : notFound(`no node ${m[1]}`);
   });
 
-  route("GET", "/inbox/([^/]+)/source", async (m) => {
-    const node = (await inboxNodes()).find((n) => n.id === m[1]);
+  route("GET", "/horizon/([^/]+)/source", async (m) => {
+    const node = (await horizonNodes()).find((n) => n.id === m[1]);
     if (!node) return notFound(`no node ${m[1]}`);
     return json({ blocks: [{ locator: "whole", text: node.summary || node.origin }] });
   });
@@ -481,16 +481,16 @@
   // Everything that WRITES. The playground has no server; saying so is better than a 404 that
   // reads like a bug in the app.
   for (const [method, pattern] of [
-    ["POST", "/inbox"],
-    ["POST", "/inbox/upload"],
-    ["POST", "/inbox/distil"],
-    // Routes are anchored (`^…$`), so this needs its own entry — `/inbox/distil` does not cover it.
+    ["POST", "/horizon"],
+    ["POST", "/horizon/upload"],
+    ["POST", "/horizon/distil"],
+    // Routes are anchored (`^…$`), so this needs its own entry — `/horizon/distil` does not cover it.
     // Missing it was caught by `smoke.mjs`'s own route-coverage check, which CI does not run; the
     // pytest beside it does now, so the next endpoint cannot drift the same way.
-    ["POST", "/inbox/distil/dismiss"],
-    ["POST", "/inbox/cancel"],
-    ["POST", "/inbox/([^/]+)/promote"],
-    ["DELETE", "/inbox/([^/]+)"],
+    ["POST", "/horizon/distil/dismiss"],
+    ["POST", "/horizon/cancel"],
+    ["POST", "/horizon/([^/]+)/promote"],
+    ["DELETE", "/horizon/([^/]+)"],
   ]) {
     route(method, pattern, async () =>
       json({ detail: "This is a recorded demo \u2014 capturing and filing need the real app." }, 501)
@@ -546,7 +546,7 @@
 
   // --- the run-taking endpoints -----------------------------------------------------------------
   // These are the ones a real deployment pays a model for. Here they replay what the model ACTUALLY
-  // produced for this notebook, after a delay long enough that the run status, the Stop button and
+  // produced for this orbit, after a delay long enough that the run status, the Stop button and
   // the live ticker all behave the way they do in the product — a run that returned instantly would
   // hide the entire "watch it think" surface this page exists to show.
   //: Long enough to WATCH. At 2.6s the ticker replayed ten real trace events in 260ms each, which
@@ -570,7 +570,7 @@
   //: counting up, and the result the next step needs nowhere in sight.
   //:
   //: `finishRun` resolves the pending wait instead of cancelling the request, so the response still
-  //: arrives and the notebook still reaches the state it would have — the reader skipped the WAIT,
+  //: arrives and the orbit still reaches the state it would have — the reader skipped the WAIT,
   //: not the outcome.
   //:
   //: CANCELLING IS THE OTHER CASE, and it is the opposite one: the reader wants the outcome NOT to
@@ -608,7 +608,7 @@
     const body = await req.json();
     PG.announce(body.run_id, id, "ask");
     if ((await during("ask", RUN_MS)).cancelled) return json(view(nb, st));
-    // The reader is guided to send the question this notebook really asked, so the turn revealed is
+    // The reader is guided to send the question this orbit really asked, so the turn revealed is
     // the NEXT recorded one. A question typed freehand still lands on it — with the recorded
     // question kept, because the recorded ANSWER is the one thing here that cannot be improvised.
     const idx = body.regenerate && st.turns > 0 ? st.turns - 1 : st.turns;
@@ -617,7 +617,7 @@
     if (!body.regenerate) st.turns = Math.min(st.turns + 1, nb.turns.length);
     return json({
       // `text`, matching `AskResponse`. `app.js` happens to `void` this reply and rebuild from the
-      // notebook, so the wrong name was inert — and would stop being inert the first time anyone
+      // orbit, so the wrong name was inert — and would stop being inert the first time anyone
       // read it, which is exactly the shape of the `/audio` bug that reached a reader.
       text: pick.answer,
       citations: pick.citations,
@@ -638,7 +638,7 @@
   });
 
   route("POST", `${NB}/guide/([a-z]+)`, async (m, req) => {
-    const nb = await notebook(decodeURIComponent(m[1]));
+    const nb = await orbit(decodeURIComponent(m[1]));
     const body = await req.json().catch(() => ({}));
     PG.announce(body.run_id, nb.id, `guide:${m[2]}`);
     if ((await during("guide", RUN_MS)).cancelled) return json({ cancelled: true });
@@ -655,12 +655,12 @@
     // edge-tts), so generating an episode waits noticeably longer than a chat turn. The wait is
     // part of what the demo is honest about.
     if ((await during("audio", RUN_MS * 1.6)).cancelled) return json(view(nb, st));
-    // This notebook holds ONE recorded episode at ONE tier (invariant 42). Whichever length button
+    // This orbit holds ONE recorded episode at ONE tier (invariant 42). Whichever length button
     // was pressed, the episode returned is the recorded one — and the page names its real tier
     // rather than implying the button re-generated it.
     st.podcast = body.length || "default";
     const out = view(nb, st);
-    // FLAT, matching `api.AudioResponse` — NOT the nested `{podcast}` of `NotebookResponse`. This
+    // FLAT, matching `api.AudioResponse` — NOT the nested `{podcast}` of `OrbitResponse`. This
     // endpoint is the one place the two shapes differ, and the shim had the wrong one: `app.js`
     // reads `data.utterances.length` straight off the reply, so pressing Generate died with
     // "Cannot read properties of undefined" and the demo's headline artifact never appeared.
@@ -682,9 +682,9 @@
     // Anything that is not one of OUR API paths is a real asset request (fixtures, audio) and goes
     // to the network untouched.
     if (
-      !url.pathname.startsWith("/notebooks") &&
+      !url.pathname.startsWith("/orbits") &&
       !url.pathname.startsWith("/settings") &&
-      !url.pathname.startsWith("/inbox")
+      !url.pathname.startsWith("/horizon")
     ) {
       return realFetch(input, init);
     }
@@ -703,7 +703,7 @@
   };
 
   // --- 2. EventSource ---------------------------------------------------------------------------
-  // Replays the REAL trace recorded for this notebook, paced so the ticker reads like a live run.
+  // Replays the REAL trace recorded for this orbit, paced so the ticker reads like a live run.
   // A run id with no recorded trace still streams — a short synthesised sequence — because a
   // missing trace must degrade one affordance and never the page (invariant 29).
   const announced = new Map();
@@ -730,7 +730,7 @@
       this.dispatchEvent(ev);
     }
     async _start() {
-      const m = this.url.match(/\/notebooks\/([^/]+)\/runs\/([^/]+)\/stream/);
+      const m = this.url.match(/\/orbits\/([^/]+)\/runs\/([^/]+)\/stream/);
       const runId = m ? decodeURIComponent(m[2]) : "";
       const f = await fixtures();
       const meta = announced.get(runId);
@@ -752,18 +752,18 @@
   window.EventSource = PlaygroundEventSource;
 
   // --- 3. <audio> -------------------------------------------------------------------------------
-  // `player.src = "/notebooks/…/audio/file"` is a browser-issued request, invisible to `fetch`. The
+  // `player.src = "/orbits/…/audio/file"` is a browser-issued request, invisible to `fetch`. The
   // property setter is the only seam, and rewriting there keeps `app.js` untouched.
   //: THE DOWNLOAD LINK IS A FOURTH INTERCEPTION POINT. `app.js` sets `download.href = audioSrc`,
   //: an ANCHOR, which the media-element hook below never sees — so `↓ Download` resolved
-  //: `/notebooks/{id}/audio/file` against the site root and 404'd, while the tour's own copy says
+  //: `/orbits/{id}/audio/file` against the site root and 404'd, while the tour's own copy says
   //: it gives you the file. A capture-phase listener rewrites the href on the way to the click,
   //: which is late enough that `renderPodcast` has already set it and early enough that the
   //: navigation uses the new value.
   document.addEventListener("click", (event) => {
     const a = event.target && event.target.closest && event.target.closest("a[download][href]");
     if (!a) return;
-    const m = a.getAttribute("href").match(/\/notebooks\/([^/]+)\/audio\/file/);
+    const m = a.getAttribute("href").match(/\/orbits\/([^/]+)\/audio\/file/);
     if (m) a.href = asset(`audio/${decodeURIComponent(m[1])}.mp3`);
   }, true);
 
@@ -776,7 +776,7 @@
     },
     set(value) {
       const s = String(value);
-      const m = s.match(/\/notebooks\/([^/]+)\/audio\/file/);
+      const m = s.match(/\/orbits\/([^/]+)\/audio\/file/);
       media.set.call(this, m ? asset(`audio/${decodeURIComponent(m[1])}.mp3`) : value);
     },
   });

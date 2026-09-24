@@ -2,7 +2,7 @@
 
 **This file exists because 869 green tests covered a feature that had never once run.**
 
-`POST /inbox/distil` was dead in every shipped configuration. `config.setup()` — the only caller of
+`POST /horizon/distil` was dead in every shipped configuration. `config.setup()` — the only caller of
 `rlm_harness.configure`, and therefore the only thing that gives `dspy` a model — was invoked in
 `cli.py` and in `worker.py`, and `worker.py` is the isolated subprocess every `RLMTask` runs in
 (invariant 21). That is why `ask`, the guides, the podcast and `_resolve_language` all work.
@@ -13,11 +13,11 @@ back `ValueError: No LM is loaded` and returned to `ready_undistilled`.
 The suite could not see it, and the reason is worth stating plainly: **every other distillation test
 monkeypatches `distill.distil_source`** — precisely the function whose real body could not work.
 Patching the unit under test at exactly the seam where the bug lives makes a green suite say nothing
-at all. An independent review found it by pointing `RN_BASE_URL` at a stub and noticing that zero
+at all. An independent review found it by pointing `PN_BASE_URL` at a stub and noticing that zero
 HTTP requests arrived.
 
 So the scenario here patches NOTHING on the way down: an OpenAI-compatible HTTP server on loopback,
-`RN_*` pointed at it, and an assertion that real bytes arrive. Offline in the sense the rest of the
+`PN_*` pointed at it, and an assertion that real bytes arrive. Offline in the sense the rest of the
 suite is offline — 127.0.0.1 is not the network.
 
 **It runs in a FRESH INTERPRETER, and that is not fussiness.** Two process-global caches make an
@@ -50,8 +50,8 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient
 
-from rlm_notebook import api, auth, inbox, intake
-from rlm_notebook.schema import Source, SourceBlock
+from penumbra import api, auth, horizon, intake
+from penumbra.schema import Source, SourceBlock
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -92,13 +92,13 @@ _SCENARIO = textwrap.dedent(
 
     auto = os.environ.get("SCENARIO_AUTO") or ""
     os.environ.update(
-        RN_MAIN_MODEL="openai/gpt-4o-mini",
-        RN_SUB_MODEL="openai/gpt-4o-mini",
-        RN_API_KEY="sk-stub",
-        RN_BASE_URL="http://127.0.0.1:%d/v1" % port,
+        PN_MAIN_MODEL="openai/gpt-4o-mini",
+        PN_SUB_MODEL="openai/gpt-4o-mini",
+        PN_API_KEY="sk-stub",
+        PN_BASE_URL="http://127.0.0.1:%d/v1" % port,
         # The toggle takes the word "on"; `SCENARIO_AUTO` additionally says WHICH non-queue path
-        # to exercise, and conflating the two set `RN_AUTO_DISTIL=paste`, which reads as off.
-        RN_AUTO_DISTIL="on" if auto else "",
+        # to exercise, and conflating the two set `PN_AUTO_DISTIL=paste`, which reads as off.
+        PN_AUTO_DISTIL="on" if auto else "",
     )
     os.chdir(tempfile.mkdtemp())
 
@@ -106,13 +106,13 @@ _SCENARIO = textwrap.dedent(
     dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=False)
 
     from fastapi.testclient import TestClient
-    from rlm_notebook import api, auth, inbox
-    from rlm_notebook.schema import Source, SourceBlock
+    from penumbra import api, auth, horizon
+    from penumbra.schema import Source, SourceBlock
 
     def seed(n):
         for i in range(n):
             text = "The body of note %d. " % i * 20
-            inbox.add_node(Source(id="s0", kind="text", origin="pasted:note %d" % i,
+            horizon.add_node(Source(id="s0", kind="text", origin="pasted:note %d" % i,
                                   blocks=[SourceBlock(locator="whole", text=text)]))
 
     out = {}
@@ -124,18 +124,18 @@ _SCENARIO = textwrap.dedent(
             seed(6)
             # BOTH non-queue capture paths, because both bypass the intake queue and the earlier
             # version of this test named both in its docstring and asserted only the paste. A
-            # reviewer removed `nudge()` from `/inbox/upload` and the suite stayed green.
+            # reviewer removed `nudge()` from `/horizon/upload` and the suite stayed green.
             which = os.environ.get("SCENARIO_AUTO")
             if which == "upload":
-                c.post("/inbox/upload", files={"file": ("dropped.md", b"a dropped note", "text/markdown")})
+                c.post("/horizon/upload", files={"file": ("dropped.md", b"a dropped note", "text/markdown")})
             else:
-                c.post("/inbox", json={"texts": ["a pasted note the auto pass should pick up"]})
+                c.post("/horizon", json={"texts": ["a pasted note the auto pass should pick up"]})
             # The status is SAMPLED while it runs. The auto pass used to report through nothing at
             # all - thirteen measured model calls behind `{running: false, done: 0, total: 0}` and a
             # hidden strip - so "it reached the model" was never the whole assertion.
             seen = []
             for _ in range(400):
-                st = c.get("/inbox/status").json()["distil"]
+                st = c.get("/horizon/status").json()["distil"]
                 seen.append(st)
                 if HITS and not st["running"] and st["done"]:
                     break
@@ -146,14 +146,14 @@ _SCENARIO = textwrap.dedent(
             time.sleep(0.3)
         else:
             seed(2)
-            out["undistilled_before"] = c.get("/inbox").json()["undistilled"]
-            out["started"] = c.post("/inbox/distil", json={"limit": 2}).json()
+            out["undistilled_before"] = c.get("/horizon").json()["undistilled"]
+            out["started"] = c.post("/horizon/distil", json={"limit": 2}).json()
             for _ in range(400):
-                out["distil"] = c.get("/inbox/status").json()["distil"]
+                out["distil"] = c.get("/horizon/status").json()["distil"]
                 if not out["distil"]["running"]:
                     break
                 time.sleep(0.05)
-        body = c.get("/inbox").json()
+        body = c.get("/horizon").json()
         out["hits"] = len(HITS)
         out["undistilled_after"] = body["undistilled"]
         out["states"] = sorted(n["state"] for n in body["nodes"])
@@ -165,7 +165,7 @@ _SCENARIO = textwrap.dedent(
 
 
 #: **Mutating a COPY of the tree does not test these.** The scenario runs as `sys.executable -c`,
-#: and `rlm_notebook` resolves through the editable install, not through the subprocess's cwd - so a
+#: and `penumbra` resolves through the editable install, not through the subprocess's cwd - so a
 #: mutation applied to a copied tree is invisible here and the test passes, which looks exactly like
 #: a test that does not catch it. A reviewer hit this and reported the seam as untested; it is not.
 #: To mutation-check anything in this file, mutate the REAL tree with the change staged
@@ -175,10 +175,10 @@ def _run_scenario(*, auto: str = "") -> dict:
     import os
 
     env = dict(os.environ)
-    # Every `RN_*` the outer environment might carry is cleared: the scenario sets its own, and an
+    # Every `PN_*` the outer environment might carry is cleared: the scenario sets its own, and an
     # operator running the suite with a real `.env` exported must not have their own model called.
     for name in list(env):
-        if name.startswith("RN_"):
+        if name.startswith("PN_"):
             del env[name]
     env["SCENARIO_AUTO"] = auto or ""
     proc = subprocess.run(
@@ -220,8 +220,8 @@ def test_the_auto_pass_reaches_the_model_through_an_upload():
     """**The other non-queue path, and the one the previous test only NAMED.**
 
     Its docstring said "an operator who turned the toggle on got nothing for a paste or a drop" and
-    then asserted the paste. A reviewer replaced `_inbox_queue().nudge()` in `/inbox/upload` with
-    `pass`, ran the suite green, then ran that tree as a real server with `RN_AUTO_DISTIL=on`: an
+    then asserted the paste. A reviewer replaced `_horizon_queue().nudge()` in `/horizon/upload` with
+    `pass`, ran the suite green, then ran that tree as a real server with `PN_AUTO_DISTIL=on`: an
     uploaded node stayed `ready_undistilled` forever and nothing reported anything. Two paths, two
     assertions.
     """
@@ -236,7 +236,7 @@ def test_the_auto_pass_reaches_the_model_through_a_paste():
 
     `_auto_distil_after_intake` runs on the intake queue's worker thread, so it needs the same
     configuration. It also only fires when the QUEUE goes idle — and pasted text and uploads never
-    enter the queue at all (both are bytes in hand; `capture_into_inbox` says so). A queue that was
+    enter the queue at all (both are bytes in hand; `capture_into_horizon` says so). A queue that was
     never busy never goes idle, so an operator who turned the toggle on got nothing for a paste or a
     drop: the two most common captures on a surface whose whole promise is "throw anything in".
     `IntakeQueue.nudge` is what closes it, and this asserts it through a paste specifically.
@@ -270,7 +270,7 @@ def _fresh_queue():
 def test_a_missing_model_is_reported_rather_than_counted_as_done(tmp_path, monkeypatch):
     """The half that made the other half invisible.
 
-    With no `RN_MAIN_MODEL` the pass cannot run at all. What it must NOT do is what it used to: tick
+    With no `PN_MAIN_MODEL` the pass cannot run at all. What it must NOT do is what it used to: tick
     `done` once per attempted node, finish at `total / total`, clear `running`, and leave the nodes
     untouched — a success shape, indistinguishable from fifty summaries that worked.
 
@@ -279,11 +279,11 @@ def test_a_missing_model_is_reported_rather_than_counted_as_done(tmp_path, monke
     configured one successfully.
     """
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("RN_MAIN_MODEL", raising=False)
+    monkeypatch.delenv("PN_MAIN_MODEL", raising=False)
     monkeypatch.setattr(api, "_MODEL_CONFIGURED", False)
 
     for n in range(2):
-        inbox.add_node(
+        horizon.add_node(
             Source(
                 id="s0",
                 kind="text",
@@ -295,9 +295,9 @@ def test_a_missing_model_is_reported_rather_than_counted_as_done(tmp_path, monke
     with TestClient(
         api.app, base_url="http://127.0.0.1", headers={"Authorization": f"Bearer {auth.api_token()}"}
     ) as client:
-        assert client.post("/inbox/distil", json={"limit": 2}).json()["started"] is True
+        assert client.post("/horizon/distil", json={"limit": 2}).json()["started"] is True
         for _ in range(400):
-            distil = client.get("/inbox/status").json()["distil"]
+            distil = client.get("/horizon/status").json()["distil"]
             if not distil["running"]:
                 break
             time.sleep(0.05)
@@ -308,8 +308,8 @@ def test_a_missing_model_is_reported_rather_than_counted_as_done(tmp_path, monke
         # the status line claiming something the page is not doing (invariant 60). The page says
         # "the summary pass could not start" for exactly this shape.
         assert distil["error"], "a pass that could not run reported nothing at all"
-        assert "RN_MAIN_MODEL" in distil["error"], distil["error"]
+        assert "PN_MAIN_MODEL" in distil["error"], distil["error"]
         assert distil["failed"] == 0, "nothing was attempted, so nothing can have failed"
         # `done` did not run ahead of the spend, and nothing was consumed.
         assert distil["done"] == 0
-        assert client.get("/inbox").json()["undistilled"] == 2
+        assert client.get("/horizon").json()["undistilled"] == 2

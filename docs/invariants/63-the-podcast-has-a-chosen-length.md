@@ -2,13 +2,13 @@
 
 **The podcast has a length, chosen at generation time, and the tiers are numbers rather than adjectives.**
 
-The tiers are `short`, `default` and `long`: about 3 to 5, 8 to 12 and 18 to 25 minutes, or 12 to 18, 30 to 45 and 60 to 90 turns. They are numbers because "aim for a natural episode length given how much the sources contain" did nothing: four measured episodes all landed near three minutes, and the eight-source notebook produced the shortest.
+The tiers are `short`, `default` and `long`: about 3 to 5, 8 to 12 and 18 to 25 minutes, or 12 to 18, 30 to 45 and 60 to 90 turns. They are numbers because "aim for a natural episode length given how much the sources contain" did nothing: four measured episodes all landed near three minutes, and the eight-source orbit produced the shortest.
 
-The length is chosen when generating, not on the settings page, because that is when a reader knows how long they want to listen, and changing it afterwards costs a model run plus synthesis. It also keeps invariant 41's surface narrow. Both entry points accept it (`POST /audio`'s `length`, `rlm-notebook audio --length`), and it reaches the model as a signature field, like `output_language`.
+The length is chosen when generating, not on the settings page, because that is when a reader knows how long they want to listen, and changing it afterwards costs a model run plus synthesis. It also keeps invariant 41's surface narrow. Both entry points accept it (`POST /audio`'s `length`, `penumbra audio --length`), and it reaches the model as a signature field, like `output_language`.
 
 `AudioOptions` subclasses `RunOptions` instead of re-declaring `run_id`, so a field added to the shared body later reaches `/audio` too. It keeps `extra="forbid"`, because pydantic drops unknown keys and `{"len": "long"}` would otherwise produce a default-length episode with no sign the option was ignored.
 
-The browser remembers the choice (`localStorage`, key `rlmnb-podcast-length`), not the server. It is a reader's habit, not a property of a notebook; one person who always wants long episodes should not impose that on a shared notebook. It is still sent with every generate request, because it changes what the model writes.
+The browser remembers the choice (`localStorage`, key `penumbra-podcast-length`), not the server. It is a reader's habit, not a property of an orbit; one person who always wants long episodes should not impose that on a shared orbit. It is still sent with every generate request, because it changes what the model writes.
 
 ## Calibration
 

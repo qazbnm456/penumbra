@@ -2197,6 +2197,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "penumbra-desktop"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.2.17",
+ "libc",
+ "open",
+ "serde",
+ "serde_json",
+ "sys-locale",
+ "tauri",
+ "tauri-build",
+ "url",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2540,21 +2555,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
-]
-
-[[package]]
-name = "rlm-notebook-desktop"
-version = "0.1.0"
-dependencies = [
- "getrandom 0.2.17",
- "libc",
- "open",
- "serde",
- "serde_json",
- "sys-locale",
- "tauri",
- "tauri-build",
- "url",
 ]
 
 [[package]]

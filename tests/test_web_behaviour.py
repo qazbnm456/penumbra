@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 HARNESS = Path(__file__).with_name("web_dom_harness.mjs")
-WEB = Path(__file__).resolve().parents[1] / "rlm_notebook" / "web"
+WEB = Path(__file__).resolve().parents[1] / "penumbra" / "web"
 
 
 def _run(scenario: str, mode: str | None = None) -> dict:
@@ -117,7 +117,7 @@ def test_a_panels_own_backdrop_and_the_toast_rail_are_not_the_page_behind_it():
 def test_a_modal_still_inerts_everything_that_really_is_behind_it():
     """The other side of the same rule: sparing two siblings must not spare the page."""
     result = _run("modalStillInertsThePage")
-    assert result["headerInert"] and result["inboxInert"], (
+    assert result["headerInert"] and result["horizonInert"], (
         "a modal no longer inerts the page behind it, which is the whole point of the mechanism"
     )
     assert result["backdropInert"], (
@@ -133,8 +133,8 @@ def test_a_live_stream_is_really_closed_and_a_second_open_does_not_orphan_the_fi
 
     Overwriting the map entry left the first stream with no handle: its own `onerror` looks the run
     up, finds the newer entry or nothing, and returns — so nothing could ever close it. Reachable by
-    asking in notebook A, navigating away, and coming back while it still runs. Same leak the map
-    was added to stop, re-entering per RUN instead of per notebook open.
+    asking in orbit A, navigating away, and coming back while it still runs. Same leak the map
+    was added to stop, re-entering per RUN instead of per orbit open.
     """
     result = _run("tickerLifecycle")
 
@@ -149,8 +149,8 @@ def test_a_live_stream_is_really_closed_and_a_second_open_does_not_orphan_the_fi
     )
     assert not second["secondClosed"], "the live stream was closed instead of the orphan"
 
-    # **The stale teardown.** `reattachInFlightRuns` remounts on every notebook open and its 2.5s
-    # poll outlives the mount that started it, so on the second Inbox↔notebook round trip during a
+    # **The stale teardown.** `reattachInFlightRuns` remounts on every orbit open and its 2.5s
+    # poll outlives the mount that started it, so on the second Horizon↔orbit round trip during a
     # run the PREVIOUS mount's `done({gone: true})` looked the run id up, found the NEW mount's
     # stream, and closed that — born at t+13324ms, killed 584ms later, no EventSource ever created
     # again, while the clock and Stop kept promising otherwise.
@@ -186,7 +186,7 @@ def test_a_run_in_flight_disables_the_controls_that_would_start_a_second_one():
 
     What it guards: after a reload, `reattachInFlightRuns` restores the run indicator and its Stop,
     but each control's own in-flight flag lives in the tab's memory and the tab is new. One press of
-    Generate podcast then bought a SECOND worker — two run ids, two `rlm_notebook.worker` processes,
+    Generate podcast then bought a SECOND worker — two run ids, two `penumbra.worker` processes,
     two status rows counting in parallel, nothing said.
     """
     result = _run("runGuards")
@@ -195,14 +195,14 @@ def test_a_run_in_flight_disables_the_controls_that_would_start_a_second_one():
         return {row["id"]: row for row in rows}
 
     idle, busy, reloaded, released, other = (
-        by_id(result[k]) for k in ("idle", "busy", "afterReload", "released", "otherNotebook")
+        by_id(result[k]) for k in ("idle", "busy", "afterReload", "released", "otherOrbit")
     )
 
     for control in ("podcast-generate", "guide-regenerate", "chat-starter-btn"):
         assert not idle[control]["off"], f"{control} starts disabled with nothing running"
         assert busy[control]["off"], (
             f"{control} is still pressable while a run is in flight - one press buys a second "
-            "billed worker on the same notebook"
+            "billed worker on the same orbit"
         )
         assert busy[control]["tip"], f"{control} is disabled with no reason given"
         assert reloaded[control]["off"], f"{control} came back live after a reload"
@@ -231,18 +231,18 @@ def test_a_run_in_flight_disables_the_controls_that_would_start_a_second_one():
         )
         assert rows["add-note"]["tip"] is None, "the guard took over another control's tooltip"
 
-    # A run on a DIFFERENT notebook is not this notebook's business.
+    # A run on a DIFFERENT orbit is not this orbit's business.
     for control in ("podcast-generate", "guide-regenerate", "chat-starter-btn"):
         assert not other[control]["off"], (
-            f"{control} was disabled by a run on another notebook - `activeRuns` is keyed per "
-            "notebook precisely so it is not"
+            f"{control} was disabled by a run on another orbit - `activeRuns` is keyed per "
+            "orbit precisely so it is not"
         )
 
     # **THE COMPOSER, and only after a reload.** The exemption's stated reason is "the pending turn
     # is its own guard" — true in this tab, and exactly what a new tab does not have. Measured: a
     # reload with a run in flight left `#ask-submit` live the instant you typed, and the last turn's
     # `↻ Regenerate` live too, each issuing a real `POST /ask` with a fresh run id. That is a second
-    # billed worker, and since `_ACTIVE_RUNS` keeps one slot per notebook (invariant 23), Stop then
+    # billed worker, and since `_ACTIVE_RUNS` keeps one slot per orbit (invariant 23), Stop then
     # reaches only the second and the first cannot be stopped at all.
     for control in ("ask-submit", "turn-regenerate-btn"):
         assert not idle[control]["off"], f"{control} is disabled with nothing running"
@@ -257,7 +257,7 @@ def test_a_run_in_flight_disables_the_controls_that_would_start_a_second_one():
         assert not released[control]["off"], f"{control} was left disabled after the run ended"
 
 
-def test_recovering_a_run_marks_the_notebook_so_the_composer_is_guarded_too():
+def test_recovering_a_run_marks_the_orbit_so_the_composer_is_guarded_too():
     """**The flag's whole lifecycle, run through `reattachInFlightRuns` itself.**
 
     The guard scenario above INJECTS the recovery flag, which proves the guard reads it and nothing
@@ -272,7 +272,7 @@ def test_recovering_a_run_marks_the_notebook_so_the_composer_is_guarded_too():
         result = _run("recovery", mode)
         mount = result["afterMount"]
         assert mount["flagged"], (
-            f"[{mode}] recovering a run did not mark the notebook, so the composer stays live and "
+            f"[{mode}] recovering a run did not mark the orbit, so the composer stays live and "
             "one press buys a second billed worker"
         )
         assert mount["guardSawFlag"], (
@@ -314,8 +314,8 @@ def test_a_recovered_run_that_failed_says_so_instead_of_offering_a_result():
     )
 
 
-def test_a_notebook_switch_during_a_run_does_not_kill_the_new_streams_trace():
-    """**The second Inbox↔notebook round trip killed the live trace for good.**
+def test_a_orbit_switch_during_a_run_does_not_kill_the_new_streams_trace():
+    """**The second Horizon↔orbit round trip killed the live trace for good.**
 
     Each `reattachInFlightRuns` mount starts a 2.5s poll that outlives it. On the second mount the
     FIRST mount's poll fired, found the run gone from its own snapshot, and tore down — closing the
@@ -331,11 +331,11 @@ def test_a_notebook_switch_during_a_run_does_not_kill_the_new_streams_trace():
     )
 
 
-def test_stopping_a_recovered_run_releases_the_notebook_too():
+def test_stopping_a_recovered_run_releases_the_orbit_too():
     """**Stop went through a second teardown, and the second one forgot the bookkeeping.**
 
     `onCancel` set `watching = false` and removed the row by hand, so the shared teardown's own
-    `if (!watching) return;` swallowed the ONLY `recoveredRuns.delete` in the file. The notebook then
+    `if (!watching) return;` swallowed the ONLY `recoveredRuns.delete` in the file. The orbit then
     stayed marked as recovering for the life of the tab, and every ordinary in-tab run afterwards
     took `#ask-submit` and `↻ Regenerate` away — exactly the lie the guard's comment refuses:
     "asking while an artifact generates is a reasonable thing to want".
@@ -345,7 +345,7 @@ def test_stopping_a_recovered_run_releases_the_notebook_too():
     result = _run("recovery", "stop")
     assert "error" not in result, result.get("error")
     assert result["flagCleared"], (
-        "Stop left the notebook marked as recovering, so every later in-tab run disables the "
+        "Stop left the orbit marked as recovering, so every later in-tab run disables the "
         "composer for the rest of the session"
     )
     assert result["finished"] == 1, "Stop did not end the status row, so the header dot stays lit"
@@ -377,16 +377,16 @@ def test_starting_a_run_is_what_makes_the_guard_fire():
     """
     result = _run("runBookkeeping")
 
-    assert result["idle"] == {"busy": False, "off": False}, "a notebook starts busy"
+    assert result["idle"] == {"busy": False, "off": False}, "an orbit starts busy"
     assert result["started"] == {"busy": True, "off": True}, (
-        "starting a run did not mark the notebook busy, so no guard can ever fire"
+        "starting a run did not mark the orbit busy, so no guard can ever fire"
     )
     # A COUNT, not a flag: `/overview` fires two runs, and one ending must not release the other.
     assert result["stillOne"] == {"busy": True, "off": True}, (
         "one of two runs ending released the guard while the other was still going"
     )
     assert result["ended"] == {"busy": False, "off": False}, "the guard never released"
-    # The header's run dot and the notebook list both repaint off this event.
+    # The header's run dot and the orbit list both repaint off this event.
     assert result["emitted"].count("runs:changed") == 4, (
         f"every start and finish must announce itself: {result['emitted']}"
     )
@@ -459,14 +459,14 @@ def test_the_call_that_starts_a_run_is_what_takes_the_guard():
     have, so every scenario stubbed it. It has one now, and this runs the real function.
 
     What it costs if it regresses is priced in money: `activeRuns` stays empty, `syncRunGuards`
-    releases every guard, and one press after a reload buys a second billed worker on a notebook
+    releases every guard, and one press after a reload buys a second billed worker on an orbit
     whose `_ACTIVE_RUNS` slot (invariant 23) means the first can then never be stopped.
     """
     result = _run("runStatusTakesTheGuard")
 
-    assert result["before"] == {"busy": False, "off": False}, "a notebook does not start busy"
+    assert result["before"] == {"busy": False, "off": False}, "an orbit does not start busy"
     assert result["during"] == {"busy": True, "off": True}, (
-        "calling runStatus did not mark the notebook busy, so no guard fired — the seam is open"
+        "calling runStatus did not mark the orbit busy, so no guard fired — the seam is open"
     )
     assert result["after"] == {"busy": False, "off": False}, "finish() must release the guard"
 
@@ -474,32 +474,32 @@ def test_the_call_that_starts_a_run_is_what_takes_the_guard():
 @pytest.mark.parametrize(
     ("mode", "note"),
     [
-        ("404-known", "That notebook is not here any more."),
-        ("corrupt", "notebooks/x.json exists but is not a valid notebook file"),
-        ("offline", "Lost contact with the rlm-notebook server"),
+        ("404-known", "That orbit is not here any more."),
+        ("corrupt", "orbits/x.json exists but is not a valid orbit file"),
+        ("offline", "Lost contact with the penumbra server"),
         ("server", "Something went wrong on the server"),
     ],
 )
-def test_a_failed_load_never_invents_an_empty_notebook(mode: str, note: str):
-    """**One dropped request fabricated the reader's notebook, permanently and silently.**
+def test_a_failed_load_never_invents_an_empty_orbit(mode: str, note: str):
+    """**One dropped request fabricated the reader's orbit, permanently and silently.**
 
-    `openNotebook`'s `catch` was bare, so every failure meant "does not exist yet". Blocking a
-    single request to a notebook with four sources and two turns rendered it as: title "Untitled
-    notebook", no sources, "Ask a question once you've added a source.", an empty notices rail, and
+    `openOrbit`'s `catch` was bare, so every failure meant "does not exist yet". Blocking a
+    single request to an orbit with four sources and two turns rendered it as: title "Untitled
+    orbit", no sources, "Ask a question once you've added a source.", an empty notices rail, and
     the `?nb=` dropped from the address bar. Four false statements about the reader's own data, no
     error, no retry, and it did not heal when the request started working again — while "Add source"
-    from that screen writes into a notebook the reader believes is empty.
+    from that screen writes into an orbit the reader believes is empty.
 
     It also discarded what the server had gone to the trouble of saying: invariant 27 makes a
-    corrupted notebook file a 409 carrying the sentence that says how to fix it, and the boot path
-    turned that into "that notebook is not here any more" — telling a reader their notebook was
+    corrupted orbit file a 409 carrying the sentence that says how to fix it, and the boot path
+    turned that into "that orbit is not here any more" — telling a reader their orbit was
     deleted when the server had just said it was broken and repairable.
     """
-    result = _run("openNotebookFailure", mode)
+    result = _run("openOrbitFailure", mode)
 
     assert result["opened"] is False, "a failed load must not report success"
     assert result["invented"] is False, (
-        "a notebook was installed into state from a failed request — this is the fabrication"
+        "an orbit was installed into state from a failed request — this is the fabrication"
     )
     assert result["switchedView"] is False, "the reader must be left where they were"
     assert len(result["notices"]) == 1, f"exactly one thing should be said: {result['notices']}"
@@ -511,15 +511,15 @@ def test_a_failed_load_never_invents_an_empty_notebook(mode: str, note: str):
 
 
 def test_a_freshly_minted_id_is_still_created_lazily():
-    """The one case the placeholder is FOR (invariant 37): the UI mints an id and the notebook is
+    """The one case the placeholder is FOR (invariant 37): the UI mints an id and the orbit is
     created by its first source, so a 404 there is expected rather than news. `fresh` is what
     separates it from a facet, a picker row or a bookmark naming something that should exist."""
-    result = _run("openNotebookFailure", "404-fresh")
+    result = _run("openOrbitFailure", "404-fresh")
 
     assert result["opened"] is True
-    assert result["invented"] is True, "a minted id must still open an empty notebook to work in"
+    assert result["invented"] is True, "a minted id must still open an empty orbit to work in"
     assert result["switchedView"] is True
-    assert result["notices"] == [], "minting a notebook is not an error to report"
+    assert result["notices"] == [], "minting an orbit is not an error to report"
 
 
 def test_a_citation_stroke_is_reachable_and_operable_without_a_mouse():
@@ -527,7 +527,7 @@ def test_a_citation_stroke_is_reachable_and_operable_without_a_mouse():
 
     `DESIGN.md` §2 calls the stroke "the literal visual expression of the product's core value", and
     it carried a `click` listener and nothing else: measured at runtime, `tabindex: null`,
-    `role: null`, `aria-label: null`. A recorded Tab walk of a whole notebook — 37 stops, Sources
+    `role: null`, `aria-label: null`. A recorded Tab walk of a whole orbit — 37 stops, Sources
     tabs through to Generate summary — reached not one citation, and a screen reader read it as
     ordinary prose that happened to do nothing. SC 2.1.1 (Keyboard) and SC 4.1.2 (Name, Role,
     Value), both Level A. At rest the only mark of a clickable stroke was `cursor: pointer` and a
@@ -588,20 +588,20 @@ def test_the_keyboard_shortcuts_reach_the_field_the_screen_is_for():
     ⌘K is one binding with one meaning — "start typing the thing this screen is for" — rather than
     two the reader has to tell apart.
     """
-    inbox = _run("shortcuts", "inbox")
-    assert inbox["cmdK"] == {"focus": "capture-input", "prevented": True}
-    assert inbox["cmdF"] == {"focus": "stream-search", "prevented": True}
-    assert inbox["cmdComma"]["opened"] == 1, "Cmd-, did not open Settings"
+    horizon = _run("shortcuts", "horizon")
+    assert horizon["cmdK"] == {"focus": "capture-input", "prevented": True}
+    assert horizon["cmdF"] == {"focus": "stream-search", "prevented": True}
+    assert horizon["cmdComma"]["opened"] == 1, "Cmd-, did not open Settings"
 
-    notebook = _run("shortcuts", "notebook")
-    assert notebook["cmdK"]["focus"] == "ask-input", "in a notebook the composer is the field"
+    orbit = _run("shortcuts", "orbit")
+    assert orbit["cmdK"]["focus"] == "ask-input", "in an orbit the composer is the field"
 
     # Ctrl is the same binding on Windows and Linux, which a Tauri build ships to as well.
-    assert inbox["ctrlK"]["focus"] == "capture-input"
+    assert horizon["ctrlK"]["focus"] == "capture-input"
 
 
 def test_a_shortcut_that_cannot_act_leaves_the_browsers_own_alone():
-    """**⌘F is the case that forces this.** The find field is hidden on an empty Inbox, so an
+    """**⌘F is the case that forces this.** The find field is hidden on an empty Horizon, so an
     unconditional `preventDefault` would take the browser's Find away and put nothing in its place:
     the reader presses a key they have used for thirty years and the page silently eats it.
 
@@ -620,7 +620,7 @@ def test_no_shortcut_swallows_a_bare_key_or_an_unbound_combination():
     """This product is mostly a text field, so a bare-letter shortcut would have to guess whether
     the reader is typing — and the guessing is where that class of bug lives. Modifier combinations
     only, and an unbound one is left entirely to the browser."""
-    for mode in ("inbox", "notebook", "no-find"):
+    for mode in ("horizon", "orbit", "no-find"):
         result = _run("shortcuts", mode)
         assert result["plainK"]["prevented"] is False, f"{mode}: a bare 'k' was swallowed"
         assert result["cmdP"]["prevented"] is False, f"{mode}: an unbound combination was swallowed"
@@ -672,7 +672,7 @@ def test_being_locked_out_replaces_the_app_rather_than_leaving_it_looking_live()
     """**Every affordance on a locked-out page was dead and none of them looked it.**
 
     Opening without `?token=` — which an ordinary bookmark does, and which is also what a
-    mis-handshaked Tauri sidecar produces — gave a facet rail, "+ New notebook", Settings, the theme
+    mis-handshaked Tauri sidecar produces — gave a facet rail, "+ New orbit", Settings, the theme
     toggle and a FOCUSED capture field, all of them inert in effect and live in appearance. The
     remedy was one line of body text telling the reader to hand-edit a URL, and there was no field
     anywhere in the product to paste a token into although the app already persists one.
@@ -702,7 +702,7 @@ def test_a_source_is_named_by_its_title_not_its_host():
     and the source viewer headed itself with the host. Three surfaces, one cause —
     `sourceDisplayName` returned the host and never looked at the scraped title.
 
-    The Inbox's whole thesis is that if recall cannot be visual it has to be typographic. A title
+    The Horizon's whole thesis is that if recall cannot be visual it has to be typographic. A title
     that is truncated everywhere and absent from the accessibility tree is neither.
     """
     result = _run("sourceName")
@@ -744,7 +744,7 @@ def test_reference_numbers_follow_reading_order_not_the_model_s_array():
 
     `collectReferences` iterates each artifact's citations as the model emitted them, so a model
     that cited a source out of the order it wrote about it produced marks running 1, 3, 4, 6, 5 down
-    a single answer — measured on a seeded notebook. The whole reason the model is forbidden from
+    a single answer — measured on a seeded orbit. The whole reason the model is forbidden from
     numbering its own citations is that there should be exactly one coherent scheme; a scheme that
     counts in emission order is not coherent to the reader, who meets them in prose order.
 
@@ -782,7 +782,7 @@ def test_reference_numbers_follow_reading_order_not_the_model_s_array():
     )
 
 
-def test_a_printed_notebook_carries_the_list_its_numbers_point_at():
+def test_a_printed_orbit_carries_the_list_its_numbers_point_at():
     """**Cmd+P printed superscript numbers with no list to look them up in.**
 
     `@media print` hides `.col-studio`, which is chrome, and `#panel-references` lives inside it,
@@ -793,7 +793,7 @@ def test_a_printed_notebook_carries_the_list_its_numbers_point_at():
     """
     result = _run("printReferences")
 
-    assert result["onTheInbox"] == 0, "the Inbox has no references and must not print any"
+    assert result["onTheHorizon"] == 0, "the Horizon has no references and must not print any"
     # Reading order (s1 is met first in the prose), and an unverified citation says so on paper.
     assert result["printed"] == [
         "a.txt · page:1 (unverified)q-s1",
@@ -801,7 +801,7 @@ def test_a_printed_notebook_carries_the_list_its_numbers_point_at():
     ], result["printed"]
     # Title + list, once each: a second print dialog must not stack a second of either.
     assert result["afterTwoPrints"] == 2, "a second print dialog stacked a second list or title"
-    # The notebook's name heads the page: print hides the header, which is the only place it was.
+    # The orbit's name heads the page: print hides the header, which is the only place it was.
     assert result["title"] == "Voyager notes" and result["titleFirst"], result
     assert result["afterPrint"] == 0, "the print-only list stayed on the screen afterwards"
 
@@ -830,7 +830,7 @@ def test_removing_a_source_re_verifies_every_surface_not_only_the_overview():
     assert result["fragments"] == [None, "2"], result["fragments"]
 
 
-def test_a_notebook_can_leave_the_product_as_an_artifact():
+def test_a_orbit_can_leave_the_product_as_an_artifact():
     """**The product could not hand over the thing it exists to produce.**
 
     `README.md` and `AGENTS.md` both describe the purpose as "get a distilled research artifact out
@@ -845,14 +845,14 @@ def test_a_notebook_can_leave_the_product_as_an_artifact():
     the panel shows — so what leaves carries its evidence rather than bare assertions.
     """
     result = _run("exportMarkdown")
-    doc = result["notebook"]
+    doc = result["orbit"]
 
-    # The whole notebook, in the order a reader would want it.
+    # The whole orbit, in the order a reader would want it.
     for expected in ("# Voyager notes", "## Sources", "## Overview", "## Conversation", "## Notes"):
         assert expected in doc, f"{expected!r} missing from the export:\n{doc}"
     assert "### When did it cross?" in doc, "a turn's question heads its answer"
     assert "In August 2012." in doc
-    assert "- check the power budget" in doc, "notes leave with the notebook"
+    assert "- check the power budget" in doc, "notes leave with the orbit"
 
     # References travel with the prose, numbered the way the panel numbers them, and an unverified
     # citation says so — the artifact must not launder a claim that failed verification.
@@ -876,7 +876,7 @@ def test_a_notebook_can_leave_the_product_as_an_artifact():
 
 
 def test_the_print_stylesheet_drops_the_shell_and_keeps_the_thread():
-    """`@media print` matched ZERO rules, so printing a notebook printed the app: header, facet
+    """`@media print` matched ZERO rules, so printing an orbit printed the app: header, facet
     rail, Sources panel, Studio, composer, and a conversation clipped at its scroller. Printing is
     the oldest way anyone takes a research artifact away."""
     import re

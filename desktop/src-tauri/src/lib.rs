@@ -1,8 +1,8 @@
-//! The desktop shell: a native window around the same web UI `rlm-notebook serve` ships.
+//! The desktop shell: a native window around the same web UI `penumbra serve` ships.
 //!
 //! The shell owns three things and nothing else:
 //!
-//! 1. **The server's lifetime.** It starts the bundled Python (`python -m rlm_notebook.cli serve`)
+//! 1. **The server's lifetime.** It starts the bundled Python (`python -m penumbra.cli serve`)
 //!    on a loopback port, with a token it minted itself, and stops it (and every run it spawned)
 //!    when the app quits.
 //! 2. **The window.** A splash page while the server comes up, then the web UI. Navigation is held
@@ -39,7 +39,7 @@ struct Server {
     child: Child,
     port: u16,
     token: String,
-    /// Held, never written. `serve` reads it to EOF (`RN_EXIT_WITH_PARENT`), so the server shuts
+    /// Held, never written. `serve` reads it to EOF (`PN_EXIT_WITH_PARENT`), so the server shuts
     /// itself down if this process dies without stopping it: a crash, a force quit, a SIGKILL.
     _lifeline: Option<std::process::ChildStdin>,
 }
@@ -62,10 +62,10 @@ fn runtime_dir(app: &AppHandle) -> Option<PathBuf> {
     app.path().resource_dir().ok().map(|dir| dir.join("runtime"))
 }
 
-/// The interpreter to run the server with. `RLMNB_PYTHON` wins, which is how `cargo tauri dev`
+/// The interpreter to run the server with. `PENUMBRA_PYTHON` wins, which is how `cargo tauri dev`
 /// runs against a source checkout's own `.venv` without bundling anything.
 fn python_path(app: &AppHandle) -> Option<PathBuf> {
-    if let Ok(value) = std::env::var("RLMNB_PYTHON") {
+    if let Ok(value) = std::env::var("PENUMBRA_PYTHON") {
         let path = PathBuf::from(value);
         return path.exists().then_some(path);
     }
@@ -79,7 +79,7 @@ fn python_path(app: &AppHandle) -> Option<PathBuf> {
 }
 
 fn config_path(app: &AppHandle) -> PathBuf {
-    data_dir(app).join("rlm-notebook.env")
+    data_dir(app).join("penumbra.env")
 }
 
 fn log_path(app: &AppHandle) -> PathBuf {
@@ -88,29 +88,92 @@ fn log_path(app: &AppHandle) -> PathBuf {
     dir.join("server.log")
 }
 
+// --- the rename ----------------------------------------------------------------------------------
+
+/// The app was called rlm-notebook, with the identifier `tw.boik.rlm-notebook`, and the OS keys the
+/// data folder on the identifier. Before anything creates the new folder, an old one beside it is
+/// moved into place, and its configuration file is renamed with every `RN_` setting spelled `PN_`.
+/// The server moves the data folders inside it (`notebooks/` to `orbits/`, `inbox/` to `horizon/`)
+/// on its own first start (`penumbra.legacy`). Nothing is merged: if both folders exist, the old
+/// one is left where it is.
+/// Set when the old data folder could not be moved. Boot then shows why instead of starting a
+/// server, because starting one would create an EMPTY new folder: the app would open with none of
+/// the reader's data, and every later launch would skip the move since the new folder now exists.
+static MIGRATION_ERROR: Mutex<Option<String>> = Mutex::new(None);
+
+fn migrate_from_rlm_notebook(app: &AppHandle) {
+    let Ok(new_dir) = app.path().app_data_dir() else {
+        return;
+    };
+    let Some(old_dir) = new_dir.parent().map(|p| p.join("tw.boik.rlm-notebook")) else {
+        return;
+    };
+    if old_dir.is_dir() && !new_dir.exists() {
+        if let Err(error) = fs::rename(&old_dir, &new_dir) {
+            *MIGRATION_ERROR.lock().unwrap_or_else(|p| p.into_inner()) = Some(format!(
+                "{}\n\n{}\n→ {}\n\n{error}",
+                word(
+                    "Your data from rlm-notebook could not be moved. Quit rlm-notebook if it is still running, then open Penumbra again. Nothing has been deleted.",
+                    "無法搬移 rlm-notebook 的資料。如果 rlm-notebook 還開著，請先結束它，再重新打開 Penumbra。沒有任何資料被刪除。",
+                ),
+                old_dir.display(),
+                new_dir.display(),
+            ));
+            return;
+        }
+    }
+    let old_config = new_dir.join("rlm-notebook.env");
+    let new_config = new_dir.join("penumbra.env");
+    if old_config.exists() && !new_config.exists() {
+        if let Ok(text) = fs::read_to_string(&old_config) {
+            let renamed: Vec<String> = text.lines().map(rename_legacy_setting).collect();
+            if fs::write(&new_config, renamed.join("\n") + "\n").is_ok() {
+                let _ = fs::remove_file(&old_config);
+            }
+        }
+    }
+}
+
+/// `RN_X=...` becomes `PN_X=...`, keeping an `export ` prefix or a leading `#` (a commented-out
+/// setting), and every other line exactly as it was.
+fn rename_legacy_setting(line: &str) -> String {
+    let (lead, rest) = match line.find(|c: char| !(c == '#' || c.is_whitespace())) {
+        Some(at) => line.split_at(at),
+        None => return line.to_string(),
+    };
+    let (export, rest) = match rest.strip_prefix("export ") {
+        Some(tail) => ("export ", tail),
+        None => ("", rest),
+    };
+    match rest.strip_prefix("RN_") {
+        Some(tail) => format!("{lead}{export}PN_{tail}"),
+        None => line.to_string(),
+    }
+}
+
 // --- configuration -----------------------------------------------------------------------------
 
 /// Written the first time someone opens the configuration file. Keys stay in this file, never on
 /// the settings page (invariant 41): a page every token holder can write must not hold a secret.
 const CONFIG_TEMPLATE: &str = "\
-# rlm-notebook desktop configuration.
+# Penumbra desktop configuration.
 #
 # One KEY=VALUE per line. Lines starting with # are ignored. After editing, choose
 # File > Restart Server for the change to take effect.
 #
 # The model every run uses. Required before you can ask a question.
-# RN_MAIN_MODEL=anthropic/claude-sonnet-5
-# RN_API_KEY=
+# PN_MAIN_MODEL=anthropic/claude-sonnet-5
+# PN_API_KEY=
 #
 # Optional: a separate, cheaper model for sub-calls, and a custom endpoint.
-# RN_SUB_MODEL=
-# RN_BASE_URL=
+# PN_SUB_MODEL=
+# PN_BASE_URL=
 #
 # Behind a fake-IP proxy or VPN (Clash, Surge, Mihomo), every link resolves into a reserved range
 # and is refused. Set this to the range your proxy uses (invariant 76):
-# RN_FETCH_ALLOW_CIDRS=198.18.0.0/15
+# PN_FETCH_ALLOW_CIDRS=198.18.0.0/15
 #
-# The full list of settings is in .env.example in the rlm-notebook repository.
+# The full list of settings is in .env.example in the Penumbra repository.
 ";
 
 /// `KEY=VALUE` lines, `#` comments, optional surrounding quotes. Only names made of capitals,
@@ -156,10 +219,10 @@ fn ensure_config(app: &AppHandle) -> PathBuf {
 }
 
 fn model_configured(app: &AppHandle) -> bool {
-    std::env::var("RN_MAIN_MODEL").is_ok()
+    std::env::var("PN_MAIN_MODEL").is_ok()
         || read_config(&config_path(app))
             .iter()
-            .any(|(k, v)| k == "RN_MAIN_MODEL" && !v.is_empty())
+            .any(|(k, v)| k == "PN_MAIN_MODEL" && !v.is_empty())
 }
 
 // --- port and token ----------------------------------------------------------------------------
@@ -197,7 +260,7 @@ fn mint_token() -> String {
 fn start_server(app: &AppHandle) -> Result<Server, String> {
     let python = python_path(app).ok_or_else(|| {
         "The bundled Python runtime is missing. Rebuild the app with desktop/scripts/build_runtime.py, \
-         or set RLMNB_PYTHON when running from a source checkout."
+         or set PENUMBRA_PYTHON when running from a source checkout."
             .to_string()
     })?;
     let data = data_dir(app);
@@ -209,7 +272,7 @@ fn start_server(app: &AppHandle) -> Result<Server, String> {
 
     let mut command = Command::new(&python);
     command
-        .args(["-m", "rlm_notebook.cli", "serve", "--port", &port.to_string()])
+        .args(["-m", "penumbra.cli", "serve", "--port", &port.to_string()])
         .current_dir(&data)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(log))
@@ -230,8 +293,8 @@ fn start_server(app: &AppHandle) -> Result<Server, String> {
         .env("PYTHONUTF8", "1")
         .env("DENO_DIR", data.join(".deno"))
         .env("PATH", search_path(app))
-        .env("RN_EXIT_WITH_PARENT", "1")
-        .env("RN_API_TOKEN", &token);
+        .env("PN_EXIT_WITH_PARENT", "1")
+        .env("PN_API_TOKEN", &token);
 
     #[cfg(unix)]
     {
@@ -366,6 +429,11 @@ fn boot(app: AppHandle) {
         let Some(window) = app.get_webview_window(WINDOW) else {
             return;
         };
+        let stuck = MIGRATION_ERROR.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        if let Some(message) = stuck {
+            splash_failure(&window, &message);
+            return;
+        }
         if window.url().map(|u| u.scheme() != "tauri" && u.host_str() != Some("tauri.localhost")).unwrap_or(false) {
             let _ = window.navigate(splash_url());
             thread::sleep(Duration::from_millis(300));
@@ -477,7 +545,7 @@ fn place_download(app: &AppHandle, suggested: &Path) -> PathBuf {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| "rlm-notebook-download".to_string());
+        .unwrap_or_else(|| "penumbra-download".to_string());
     let stem = Path::new(&name).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let ext = Path::new(&name).extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
     let mut candidate = dir.join(&name);
@@ -579,7 +647,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
 
     let mut menu = MenuBuilder::new(app);
     if cfg!(target_os = "macos") {
-        let app_menu = SubmenuBuilder::new(app, "rlm-notebook")
+        let app_menu = SubmenuBuilder::new(app, "Penumbra")
             .about(None)
             .separator()
             .services()
@@ -632,10 +700,11 @@ pub fn run() {
         .on_menu_event(|app, event| on_menu(app, event.id().as_ref()))
         .setup(|app| {
             let handle = app.handle().clone();
+            migrate_from_rlm_notebook(&handle);
             let nav = handle.clone();
             let dl = handle.clone();
             WebviewWindowBuilder::new(app, WINDOW, WebviewUrl::App("index.html".into()))
-                .title("rlm-notebook")
+                .title("Penumbra")
                 .inner_size(1440.0, 900.0)
                 .min_inner_size(900.0, 600.0)
                 // Tauri's own file-drop handler swallows the drag before the page sees it, so the
@@ -662,14 +731,16 @@ pub fn run() {
                     true
                 })
                 .build()?;
-            if !model_configured(&handle) {
+            // Not while a failed move is pending: writing the template would create the new folder.
+            let migration_pending = MIGRATION_ERROR.lock().map(|e| e.is_some()).unwrap_or(false);
+            if !migration_pending && !model_configured(&handle) {
                 ensure_config(&handle);
             }
             boot(handle);
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building the rlm-notebook desktop app");
+        .expect("error while building the Penumbra desktop app");
 
     app.run(|app, event| {
         if let RunEvent::Exit = event {
@@ -691,23 +762,34 @@ mod tests {
         let mut file = tempfile_path("cfg");
         writeln!(
             file.1,
-            "# comment\n\nRN_MAIN_MODEL=\"openai/gpt\"\nexport RN_API_KEY='sk-1'\nlower=no\nBAD KEY=x\nRN_BASE_URL = http://x/v1\n"
+            "# comment\n\nPN_MAIN_MODEL=\"openai/gpt\"\nexport PN_API_KEY='sk-1'\nlower=no\nBAD KEY=x\nPN_BASE_URL = http://x/v1\n"
         )
         .unwrap();
         let got = read_config(&file.0);
         assert_eq!(
             got,
             vec![
-                ("RN_MAIN_MODEL".into(), "openai/gpt".into()),
-                ("RN_API_KEY".into(), "sk-1".into()),
-                ("RN_BASE_URL".into(), "http://x/v1".into()),
+                ("PN_MAIN_MODEL".into(), "openai/gpt".into()),
+                ("PN_API_KEY".into(), "sk-1".into()),
+                ("PN_BASE_URL".into(), "http://x/v1".into()),
             ]
         );
         let _ = std::fs::remove_file(&file.0);
     }
 
+    #[test]
+    fn legacy_settings_are_renamed_and_nothing_else_is() {
+        use super::rename_legacy_setting as r;
+        assert_eq!(r("RN_MAIN_MODEL=x"), "PN_MAIN_MODEL=x");
+        assert_eq!(r("export RN_API_KEY='k'"), "export PN_API_KEY='k'");
+        assert_eq!(r("# RN_SUB_MODEL="), "# PN_SUB_MODEL=");
+        assert_eq!(r("# a comment about RN_ things"), "# a comment about RN_ things");
+        assert_eq!(r("RETURN_X=1"), "RETURN_X=1");
+        assert_eq!(r(""), "");
+    }
+
     fn tempfile_path(tag: &str) -> (std::path::PathBuf, std::fs::File) {
-        let path = std::env::temp_dir().join(format!("rlmnb-{tag}-{}.env", std::process::id()));
+        let path = std::env::temp_dir().join(format!("penumbra-{tag}-{}.env", std::process::id()));
         let file = std::fs::File::create(&path).unwrap();
         (path, file)
     }

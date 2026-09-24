@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<title>Penumbra</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="/style.css" />
+
+<!-- The first tab stop on the page, and the only way past a facet rail that grows with the number
+     of orbits: without it the capture field on the screen built for capture was the sixteenth
+     stop. Visible only when focused (`.skip-link:focus`), which is the whole convention. -->
+<a class="skip-link" href="#capture-input" data-i18n="app.skipToCapture">Skip to capture</a>
+
+<!-- **The locked-out state used to render the whole application as live.** Opening the page
+     without `?token=` (an ordinary bookmark loses the query string, and it is also what a
+     mis-handshaked Tauri sidecar produces) gave a facet rail, "+ New orbit", Settings, the theme
+     toggle and a FOCUSED capture field, all of them dead — and the only remedy was one line of body
+     text telling the reader to hand-edit a URL, with a literal backtick pair in it. There was no
+     field anywhere in the product to paste a token into, although the app already persists one.
+
+     So: an interstitial that REPLACES the surface. Nothing behind it is reachable until it
+     resolves — `inertEverythingExcept` does the same job here it does for the drawer. -->
+<div class="token-gate" id="token-gate" hidden>
+  <form class="token-gate-card" id="token-gate-form">
+    <h2 class="token-gate-head" data-i18n="token.head">This app needs its token</h2>
+    <p class="token-gate-why" data-i18n="token.why">
+      penumbra runs on your machine, and every request needs the token it printed when it started. Every browser on this machine can reach the server, so being local is not the same as being private.
+    </p>
+    <label class="token-gate-label" for="token-gate-input" data-i18n="token.label">
+      Paste the token the server printed
+    </label>
+    <input type="password" id="token-gate-input" class="token-gate-input" autocomplete="off"
+           spellcheck="false" autocapitalize="off" />
+    <p class="token-gate-hint" data-i18n="token.hint">
+      Lost it? Restart the server. It prints the token every time.
+    </p>
+    <p class="token-gate-error" id="token-gate-error" role="alert" hidden></p>
+    <button type="submit" class="btn btn-primary" data-i18n="token.submit">Unlock</button>
+  </form>
+</div>
+
+<div class="layout">
+  <header class="header">
+    <button type="button" id="new-orbit" class="wordmark" aria-label="Go to the Horizon" data-i18n-label="app.home" data-i18n-title="app.home" title="Go to the Horizon">Penumbra</button>
+
+    <!-- The place you are. TEXT, not a 32px icon chip: `.header-btn` is sized for a glyph and a
+         two-or-three character label folded into three stacked lines inside it. -->
+    <button type="button" id="horizon-home" class="crumb is-current"
+            data-i18n="horizon.home" data-i18n-title="horizon.homeTitle" title="Back to the Horizon">Horizon</button>
+    <span class="crumb-sep" aria-hidden="true">›</span>
+
+    <!-- The orbit is reached by its TITLE. The id is an internal handle (invariant 37) and was
+         previously the only way in — a bare text box plus a datalist of `id (N sources, M turns)`,
+         which put the handle and some metadata nobody asked for in front of the name. -->
+    <div class="orbit-picker">
+      <button type="button" class="orbit-current" id="orbit-current"
+              aria-haspopup="true" aria-controls="orbit-menu" aria-expanded="false"
+              data-tip="Switch orbit, rename, or start a new one"
+              data-i18n-tip="app.pickerTip">
+        <span class="orbit-current-title" id="orbit-title" data-i18n="app.noOrbit">No orbit open</span>
+        <span class="orbit-run-dot" id="orbit-run-dot" aria-hidden="true" hidden></span>
+        <span class="orbit-caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="orbit-menu" id="orbit-menu" hidden aria-label="Your orbits"></div>
+    </div>
+
+    <div class="header-actions">
+    <button id="settings-open" class="header-btn" aria-label="Settings" data-i18n-label="app.settings"
+            data-i18n-tip="app.settings" data-tip="Settings">⚙︎</button>
+
+    <button id="theme-toggle" class="header-btn" aria-label="Toggle theme" data-i18n-label="app.theme"
+            data-i18n-tip="app.theme" data-tip="Switch between light and dark">
+      ◐
+    </button>
+    </div>
+  </header>
+
+  <!-- THE HORIZON IS THE DEFAULT SURFACE. An orbit is a place you go INTO (invariant 78's two
+       tiers): everything captured lands here first, and only a deliberate promotion puts it in a
+       orbit. `#view-orbit` below is the previous three-column workspace, unchanged, now
+       behind this one.
+
+       Both views are toggled with `hidden`, and BOTH carry an explicit `[hidden] { display: none }`
+       in style.css. An author `display` beats the UA `[hidden]` rule regardless of specificity, and
+       `.cols` has one — invariant 36 records this shipping broken twice, and
+       tests/test_web_assets.py fails the build if either rule is missing. -->
+  <section class="view-horizon" id="view-horizon" aria-label="Horizon" data-i18n-label="horizon.home">
+    <!-- THE DOCUMENT HAD NO HEADINGS AT ALL. Not one `<h1>`..`<h6>` anywhere: the three panel heads
+         were divs, so the outline a screen-reader user navigates by started at a node row's `<h3>`
+         and there was no way to jump between the two views or the three panels. Visually hidden
+         because the header's crumb already says where you are on screen; the outline is the thing
+         that was missing, not a title. -->
+    <h1 class="sr-only" data-i18n="horizon.home">Horizon</h1>
+    <!-- The facets, made visible. Without this the two-tier model (invariant 78) existed only in
+         a header dropdown: you could promote a node into an orbit and never see that orbits
+         were the point. It also uses the width a single reading column leaves empty on a desktop,
+         which is the other half of why it is here. -->
+    <nav class="facets" id="facets" aria-label="Orbits" data-i18n-label="app.orbits">
+      <button type="button" class="facet is-current" id="facet-horizon" data-i18n="horizon.home">Horizon</button>
+      <div class="facet-rule" role="presentation"></div>
+      <div id="facet-list"></div>
+      <button type="button" class="facet facet-new" id="facet-new" data-i18n="horizon.newFacet">+ New orbit</button>
+    </nav>
+
+    <div class="horizon-scroll">
+    <div class="horizon-inner">
+
+      <!-- The 吸入口. ONE field, not three tabs: what you paste decides what it is. The orbit's
+           own source panel keeps its tabs, because "add a source to THIS orbit" is a deliberate
+           act; this is "throw it in". -->
+      <form class="capture" id="capture-form">
+        <label class="sr-only" for="capture-input" data-i18n="horizon.capture.label">Capture</label>
+        <textarea id="capture-input" class="capture-input" rows="1" autocomplete="off"
+                  data-i18n-placeholder="horizon.capture.placeholder"
+                  placeholder="Paste a link, or type a thought…"></textarea>
+        <button type="submit" class="capture-send" id="capture-send"
+                data-i18n-title="horizon.capture.send" title="Capture" aria-label="Capture" data-i18n-label="horizon.capture.send">
+          <span aria-hidden="true">&#8629;</span>
+        </button>
+      </form>
+      <!-- **A file must not need a mouse.** Dropping was the ONLY way to get one into the Horizon,
+           and invariants 26/30 make upload the only way to get a file in at all - so a keyboard
+           user, a touch user, or anyone on a phone could not capture a file into the screen whose
+           promise is "throw anything in". The input is visually hidden and driven by the button
+           beside the hint, which is a real control in the tab order. -->
+      <p class="capture-hint" id="capture-hint">
+        <span data-i18n="horizon.capture.hint">Links are fetched; text is kept as written.</span>
+        <button type="button" class="capture-pick" id="capture-pick"
+                data-i18n="horizon.capture.choose">Choose a file…</button>
+        <span data-i18n="horizon.capture.orDrop">or drop one anywhere on this page.</span>
+      </p>
+      <!-- `tabindex="-1"`: `sr-only` hides it visually but leaves it focusable, so tabbing the Horizon
+           landed on a 1x1 clipped box immediately after the button that drives it - an invisible
+           stop duplicating the control the reader had just passed. -->
+      <!-- EXACTLY what the server accepts, and no more. This listed `.markdown`, `.csv` and `.rst`
+           as well, none of which `ingest_upload` takes: picking one from this very control came
+           back `422 … unsupported file type '.csv' — expected one of ['.md', '.pdf', '.txt']`, a
+           misleading affordance on the screen whose promise is "throw anything in". It also
+           disagreed with `#source-file` one panel over, which had the right list. -->
+      <input type="file" id="capture-file" class="sr-only" tabindex="-1" multiple
+             accept=".txt,.md,.pdf" />
+
+      <!-- "That did not work", under the field it belongs to — which is the CAPTURE field. It was
+           rendered below the FIND field, two elements past the thing whose failures it reports, so
+           a failed drop announced itself under a search box. -->
+      <p class="capture-note" id="capture-note" role="status" hidden></p>
+
+      <!-- The other half of the product's promise. Capture is worthless if you cannot get it back,
+           and "find it by description, not by the words you have forgotten" is what the distilled
+           title, summary, tags and entities are FOR. Quieter than the capture field on purpose:
+           keeping is the primary act here, finding is the secondary one. -->
+      <div class="find" id="find">
+        <input type="search" id="stream-search" class="find-input" autocomplete="off"
+               data-i18n-placeholder="horizon.find" placeholder="Find something you kept…" />
+        <button type="button" class="find-clear" id="find-clear" hidden
+                data-i18n-title="horizon.findClear" title="Clear" aria-label="Clear" data-i18n-label="horizon.findClear">×</button>
+      </div>
+
+      <!-- Only present while something is running (invariants 47 and 60). It renders exactly what
+           GET /horizon/status returns and infers nothing. -->
+      <div class="intake-strip" id="intake-strip" hidden>
+        <span class="intake-dot" aria-hidden="true"></span>
+        <span class="intake-what" id="intake-what"></span>
+        <span class="intake-pending" id="intake-pending"></span>
+        <!-- What it CAN do, since it cannot do the obvious thing: the item being parsed finishes
+             (invariant 79 - a native PDFium parse cannot be interrupted without taking the process
+             with it), and everything still waiting is dropped and marked. -->
+        <button type="button" class="intake-stop" id="intake-stop"
+                data-i18n="horizon.stop" data-i18n-tip="horizon.stopTip"
+                data-tip="Stops what is waiting; whatever is being read right now finishes.">Stop</button>
+      </div>
+
+      <!-- Horizon-level facts and actions live ABOVE the stream, where the running strip already is.
+           This was a sticky bar at the foot; a sticky bar over a reading column permanently covers
+           a line of prose, and softening its edge only made the cut prettier. -->
+
+      <p class="pending-note" id="pending-note" hidden>
+        <span id="pending-count"></span>
+        <button type="button" class="pending-do" id="distil-btn"></button>
+      </p>
+
+      <!-- The summary pass is the one action here that spends the reader's money, and it used to
+           be the only one with no way to report that it had failed. `role="status"` rather than
+           `alert`: it is the outcome of something they pressed, not an interruption. -->
+      <p class="distil-error" id="distil-error" role="status" hidden></p>
+
+      <div class="stream" id="stream" role="list"></div>
+
+      <p class="stream-empty" id="stream-empty" role="status" aria-live="polite" data-i18n="horizon.empty">
+        Nothing here yet. Paste a link above and it stays.
+      </p>
+
+      <!-- Shown only on a genuinely empty Horizon, never over a search that found nothing. -->
+      <div class="first-run" id="first-run" hidden>
+        <p data-i18n="horizon.firstRun.keep">Anything you paste is kept as it was, and read in the background.</p>
+        <p data-i18n="horizon.firstRun.facets">Orbits are where you file things later, once you know what they are for.</p>
+        <p data-i18n="horizon.firstRun.cost">Summaries are a separate, deliberate step. Keeping costs nothing.</p>
+      </div>
+
+      <div class="stream-foot" id="stream-foot" hidden>
+        <button type="button" class="btn" id="stream-more"
+                data-i18n="horizon.more">Older</button>
+      </div>
+    </div>
+    </div>
+  </section>
+
+  <main class="cols" id="view-orbit" hidden>
+    <!-- The orbit's own name is in the header picker and changes per orbit; this is the
+         landmark heading for the view, which does not. -->
+    <h1 class="sr-only" data-i18n="app.workspace">Orbit</h1>
+    <!-- NARROW WINDOWS ONLY (below 640px: a narrow desktop window, or 400% zoom): one panel at a
+         time. Stacked, an orbit opened on the add-source form and the conversation began ~700px
+         down. At the TOP, so it never stacks a second bar under the chat composer. Hidden by the
+         stylesheet above 640px, where all three columns show. This is a desktop app; not a phone UI. -->
+    <div class="col-switch" id="col-switch" role="tablist" aria-label="Orbit panels"
+         data-i18n-label="panels.label">
+      <button type="button" role="tab" class="col-switch-tab" data-panel="sources" id="panel-tab-sources"
+              aria-controls="col-sources" aria-selected="false" tabindex="-1"
+              data-i18n="sources.head">Sources</button>
+      <button type="button" role="tab" class="col-switch-tab" data-panel="chat" id="panel-tab-chat"
+              aria-controls="col-chat" aria-selected="true" tabindex="0"
+              data-i18n="chat.head">Chat</button>
+      <button type="button" role="tab" class="col-switch-tab" data-panel="studio" id="panel-tab-studio"
+              aria-controls="col-studio" aria-selected="false" tabindex="-1"
+              data-i18n="studio.head">Studio</button>
+    </div>
+    <section class="col col-sources" id="col-sources" role="tabpanel" aria-labelledby="panel-tab-sources">
+      <h2 class="panel-head" data-i18n="sources.head">Sources</h2>
+
+      <form id="add-source-form" class="add-source">
+        <div class="tabs" id="source-kind-tabs" role="tablist" aria-label="How to add a source"
+             data-i18n-label="sources.howToAdd">
+          <button type="button" class="tab is-active" data-kind="url" role="tab" id="ktab-url" aria-controls="kind-body-url"
+                  aria-selected="true" data-i18n="sources.tab.url">URL</button>
+          <button type="button" class="tab" data-kind="text" role="tab" id="ktab-text" aria-controls="kind-body-text"
+                  aria-selected="false" data-i18n="sources.tab.text">Paste text</button>
+          <button type="button" class="tab" data-kind="file" role="tab" id="ktab-file" aria-controls="kind-body-file"
+                  aria-selected="false" data-i18n="sources.tab.file">File</button>
+        </div>
+
+        <div class="tab-body" data-kind-body="url" id="kind-body-url"
+             role="tabpanel" aria-labelledby="ktab-url">
+          <input type="url" id="source-url" placeholder="https://…" />
+          <p class="hint" data-i18n="sources.url.hint">A web page or a YouTube link. YouTube gives captions only, never the video or audio.</p>
+        </div>
+        <div class="tab-body" data-kind-body="text" id="kind-body-text"
+             role="tabpanel" aria-labelledby="ktab-text" hidden>
+          <textarea id="source-text" style="resize: vertical" rows="4" placeholder="Paste text to ingest…" data-i18n-placeholder="sources.text.placeholder"></textarea>
+        </div>
+        <div class="tab-body" data-kind-body="file" id="kind-body-file"
+             role="tabpanel" aria-labelledby="ktab-file" hidden>
+          <!-- The same shape the Horizon uses (`#capture-file` + `.capture-pick`), and for the same two
+             reasons: a raw `<input type="file">` renders the BROWSER's control, whose button text
+             comes from the OS locale - it read 選擇檔案 inside an English interface - and it is the
+             one native-chrome element left in a product that replaced every other one. -->
+        <input type="file" id="source-file" class="sr-only" tabindex="-1" accept=".pdf,.txt,.md" />
+        <button type="button" class="capture-pick" id="source-file-pick"
+                data-i18n="sources.choose">Choose a file…</button>
+        <span class="hint" id="source-file-name"></span>
+          <p class="hint" data-i18n="sources.file.hint">PDF, TXT or Markdown, one file at a time.</p>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block" data-i18n="sources.add">Add source</button>
+      </form>
+
+      <ul class="source-list" id="source-list"></ul>
+      <p class="empty-note" id="sources-empty" data-i18n="sources.empty">No sources yet. Add one above.</p>
+    </section>
+
+    <section class="col col-chat" id="col-chat" role="tabpanel" aria-labelledby="panel-tab-chat">
+      <h2 class="panel-head">
+        <span data-i18n="chat.head">Chat</span>
+        <!-- The way OUT. The product's stated purpose is "a distilled research artifact out the
+             other end" and until this existed the only export in the whole application was the
+             podcast's audio file. -->
+        <button type="button" class="panel-head-action" id="orbit-export"
+                data-i18n="chat.export" data-i18n-tip="chat.exportTip"
+                data-tip="Download this orbit (sources, overview, every answer and its references) as one Markdown file.">Export</button>
+        <button type="button" class="panel-head-action" id="chat-clear" hidden
+                data-i18n="chat.clear" data-i18n-tip="chat.clearTip"
+                data-tip="Delete every question and answer in this orbit. Sources, notes and the overview are kept.">Clear conversation</button>
+      </h2>
+
+      <div class="chat-history" id="chat-history">
+        <!-- The overview lives INSIDE the scrolling thread, as its first entry. It used to be a
+             sibling above it, `flex: 0 0 auto` with `max-height: 45%`, which permanently ate half
+             the chat column and squeezed the conversation into a strip — reported as the overview
+             covering the conversation. Everything that rebuilds this list goes through
+             `rebuildHistory`, which re-appends this node; that is what the old structure was
+             avoiding, and it is three lines. -->
+        <div class="chat-overview" id="chat-overview" hidden></div>
+        <p class="empty-note" id="chat-empty" data-i18n="chat.empty">Ask a question once you've added a source.</p>
+        <!-- An empty orbit's first move. "Add source" is disabled until its field has something in
+             it, so the page had no enabled primary action at all. These jump to the source form. -->
+        <div class="chat-start" id="chat-start" hidden>
+          <button type="button" class="btn btn-primary" data-start-kind="url" data-i18n="chat.startUrl">Paste a link</button>
+          <button type="button" class="btn" data-start-kind="text" data-i18n="chat.startText">Paste text</button>
+          <button type="button" class="btn" data-start-kind="file" data-i18n="chat.startFile">Upload a file</button>
+        </div>
+      </div>
+
+      <!-- The whole box is the field. The textarea has no chrome of its own; the surrounding form
+           carries the border and the focus ring, and the hint sits on its OWN row underneath, so
+           the Enter affordance can never overlap what someone is typing. Same structure Claude.ai,
+           ChatGPT and Slack all use, for that reason. -->
+      <form id="ask-form" class="ask-form">
+        <textarea id="ask-input" rows="1" placeholder="Ask a grounded question…" data-i18n-placeholder="chat.placeholder"></textarea>
+        <div class="ask-foot">
+          <span class="ask-hint">
+            <kbd class="keycap">⏎</kbd>
+            <span data-i18n="chat.enterHint">to send</span>
+            <span class="ask-hint-sep" aria-hidden="true">·</span>
+            <kbd class="keycap">⇧⏎</kbd>
+            <span data-i18n="chat.newlineHint">for a new line</span>
+          </span>
+          <button type="submit" class="ask-send" id="ask-submit" aria-label="Ask" data-i18n-label="chat.ask" disabled>
+            <span aria-hidden="true">↑</span>
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <!-- The right rail is FOUR views behind one switcher, and it collapses to a rail of icons.
+         It used to be three stacked sections in one scrolling column: Studio, then Podcast, then
+         Notes, each with its own heading and its own body, so an orbit with a generated guide and
+         an episode and a few notes was a column nobody could find anything in. Views also make room
+         for a fourth, References, which had nowhere to live before. -->
+    <section class="col col-studio" id="col-studio" role="tabpanel" aria-labelledby="panel-tab-studio">
+      <!-- Grab-and-drag the edge to size this panel, exactly as `cloud.projectdiscovery.io` does:
+           the grip stays put when the panel is collapsed, so it can be dragged back out. A width the
+           reader chose beats one of two states somebody else picked for them. -->
+      <div class="studio-resize" id="studio-resize" role="separator" aria-orientation="vertical"
+           aria-label="Resize panel" data-i18n-label="studio.resize" tabindex="0"
+           aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><span class="studio-grip" aria-hidden="true">⣿</span></div>
+      <div class="studio-bar">
+        <div class="studio-views" id="studio-views" role="tablist">
+          <!-- **A TAB LABEL HAS TO FIT ITS TAB.** `#col-studio` is a fixed 340px at every desktop
+               width, and "Summary &amp; analysis" ate enough of it that ALL FOUR English labels
+               ellipsised: "Summary & anal…", "Podc…", "Referen…", "Not…" — with no `title` to
+               recover them, because the tip only exists on the collapsed rail. "Podc…" and "Not…"
+               are not words. zh-Hant fit, so it was the default language that lost.
+
+               Shortened rather than tooltipped: the panel below a tab says what it holds, so
+               "Summary" loses nothing, and once the first label is short the other three fit as
+               they always should have. The tip is added anyway, for the narrow widths and the
+               longer translations this will meet later. -->
+          <button type="button" class="studio-view-tab is-active" data-view="studio" role="tab" id="tab-studio" aria-controls="panel-studio" aria-selected="true"
+                  data-tip="Summary and analysis of every source" data-i18n-tip="studio.headTip"><span class="tab-icon" aria-hidden="true">✦︎</span><span class="tab-label" data-i18n="studio.head">Studio</span></button>
+          <button type="button" class="studio-view-tab" data-view="podcast" role="tab" id="tab-podcast" aria-controls="panel-podcast" aria-selected="false"
+                  data-tip="A two-host audio overview" data-i18n-tip="podcast.headTip"><span class="tab-icon" aria-hidden="true">♪︎</span><span class="tab-label" data-i18n="podcast.head">Podcast</span></button>
+          <button type="button" class="studio-view-tab" data-view="references" role="tab" id="tab-references" aria-controls="panel-references" aria-selected="false"
+                  data-tip="Every passage this conversation has cited" data-i18n-tip="references.headTip"><span class="tab-icon" aria-hidden="true">❞︎</span><span class="tab-label" data-i18n="references.head">References</span></button>
+          <button type="button" class="studio-view-tab" data-view="notes" role="tab" id="tab-notes" aria-controls="panel-notes" aria-selected="false"
+                  data-tip="Your own scratchpad" data-i18n-tip="notes.headTip"><span class="tab-icon" aria-hidden="true">✎︎</span><span class="tab-label" data-i18n="notes.head">Notes</span></button>
+        </div>
+      </div>
+
+      <div class="studio-view" data-view-body="studio" id="panel-studio" role="tabpanel" aria-labelledby="tab-studio">
+      <p class="panel-sub" data-i18n="studio.sub">Made from your sources. Nothing here runs until you ask.</p>
+      <!-- Every tab explains itself on hover rather than spending rail space on a paragraph — the
+           same `data-tip` treatment `toolscout`/`cve-reverser` use for their own controls. -->
+      <div class="guide-tabs" id="guide-tabs" role="tablist" aria-label="Guide kinds"
+           data-i18n-label="studio.guideKinds">
+        <button type="button" class="tab is-active" data-i18n="studio.tab.summary" data-i18n-tip="studio.tip.summary" data-guide-kind="summary" role="tab" id="gtab-summary"
+                aria-controls="guide-body" aria-selected="true"
+                data-tip="A few paragraphs covering what all your sources say, with citations you can check.">Summary</button>
+        <button type="button" class="tab" data-i18n="studio.tab.faq" data-i18n-tip="studio.tip.faq" data-guide-kind="faq" role="tab" id="gtab-faq"
+                aria-controls="guide-body" aria-selected="false"
+                data-tip="The questions your sources actually answer, each with its answer and a citation.">FAQ</button>
+        <button type="button" class="tab" data-i18n="studio.tab.timeline" data-i18n-tip="studio.tip.timeline" data-guide-kind="timeline" role="tab" id="gtab-timeline"
+                aria-controls="guide-body" aria-selected="false"
+                data-tip="Dated events pulled out of your sources and put in order.">Timeline</button>
+        <button type="button" class="tab" data-i18n="studio.tab.insight" data-i18n-tip="studio.tip.insight" data-guide-kind="insight" role="tab" id="gtab-insight"
+                aria-controls="guide-body" aria-selected="false"
+                data-tip="The single most important takeaway, in one sentence.">Insight</button>
+      </div>
+      <button type="button" class="btn guide-regenerate" id="guide-regenerate" hidden
+              data-i18n="studio.regenerate" data-i18n-tip="studio.regenerateTip"
+              data-tip="Run this one again from your current sources.">↻ Regenerate</button>
+      <div class="guide-body" id="guide-body" role="tabpanel" aria-labelledby="gtab-summary"></div>
+
+      </div>
+
+      <div class="studio-view" data-view-body="podcast" id="panel-podcast" role="tabpanel" aria-labelledby="tab-podcast" hidden>
+      <div class="podcast-section">
+        <p class="panel-sub" data-i18n="podcast.sub">Two hosts discuss your sources, as an episode you can play or download.</p>
+        <!-- Chosen AT generation time, not in Settings: this is the moment a reader has an opinion
+             about how long they want to listen, and it costs a full model run plus synthesis to
+             change your mind afterwards. NotebookLM asks at the same point. -->
+        <div class="podcast-length" role="group" data-i18n-tip="podcast.lengthTip"
+             data-tip="How long an episode to aim for. Longer costs a longer model run and a longer synthesis.">
+          <span class="podcast-length-label" data-i18n="podcast.length">Length</span>
+          <button type="button" class="length-opt" data-length="short" aria-pressed="false" data-i18n="podcast.lenShort">Short</button>
+          <button type="button" class="length-opt is-active" data-length="default" aria-pressed="true" data-i18n="podcast.lenDefault">Medium</button>
+          <button type="button" class="length-opt" data-length="long" aria-pressed="false" data-i18n="podcast.lenLong">Long</button>
+        </div>
+        <button type="button" class="btn btn-block" id="podcast-generate"
+                data-i18n-tip="podcast.generateTip"
+                data-tip="Writes a two-host script grounded in your sources, then synthesizes it. This is the slowest operation here."
+                data-i18n="podcast.generate">Generate podcast</button>
+        <div class="podcast-body" id="podcast-body"></div>
+      </div>
+      </div>
+
+      <div class="studio-view" data-view-body="references" id="panel-references" role="tabpanel" aria-labelledby="tab-references" hidden>
+        <p class="panel-sub" data-i18n="references.sub">Every passage cited anywhere in this orbit, in one place.</p>
+        <div class="reference-view" id="reference-view"></div>
+        <p class="empty-note" id="references-empty" data-i18n="references.empty">Nothing cited yet. Ask a question or generate an overview.</p>
+      </div>
+
+      <div class="studio-view" data-view-body="notes" id="panel-notes" role="tabpanel" aria-labelledby="tab-notes" hidden>
+      <div class="notes-section">
+        <p class="panel-sub" data-i18n="notes.sub">Your own scratchpad. Save an answer from the chat with its ☆, then promote a note into a source so later questions can cite it.</p>
+        <form id="add-note-form" class="add-note">
+          <textarea id="note-text" rows="3" placeholder="Write a note…" data-i18n-placeholder="notes.placeholder"></textarea>
+          <button type="submit" class="btn btn-block" data-i18n="notes.add">Add note</button>
+        </form>
+        <ul class="note-list" id="note-list"></ul>
+        <p class="empty-note" id="notes-empty" data-i18n="notes.empty">No notes yet.</p>
+      </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- A SECOND overlay, reusing the `.modal-overlay` CLASS but never the source viewer's element:
+       that one owns `sourceViewerAbort`/`closeSourceViewer` and writes into #source-viewer-title
+       and #source-viewer-body. Markup here (not createElement) and toggled with `.hidden =`, which
+       is what makes tests/test_web_assets.py's extraction see it — invariant 36. -->
+  <!-- One place for "that did not work", and one real dialog for "are you sure". Both replace the
+       browser's `alert()`/`confirm()`, which stop the page, cannot be styled, and in the planned
+       Tauri shell become OS-level modals over the app. -->
+  <div class="modal-overlay" id="confirm-overlay" hidden>
+    <div class="modal modal-ask" role="dialog" aria-modal="true" aria-labelledby="confirm-text" tabindex="-1">
+      <div class="modal-body">
+        <p class="confirm-text" id="confirm-text"></p>
+        <div class="confirm-actions">
+          <button type="button" class="btn" id="confirm-no" data-i18n="app.cancel">Cancel</button>
+          <button type="button" class="btn btn-danger" id="confirm-yes" data-i18n="app.confirm">Delete</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="settings-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
+      <div class="modal-head">
+        <div id="settings-title" class="modal-title" data-i18n="settings.head">Settings</div>
+        <button type="button" class="modal-close" id="settings-close" aria-label="Close" data-i18n-label="modal.close">✕</button>
+      </div>
+      <div class="modal-body" id="settings-body"></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="source-viewer-overlay" hidden>
+    <div class="modal" id="source-viewer-modal" role="dialog" aria-modal="true" tabindex="-1">
+      <div class="modal-head">
+        <div id="source-viewer-title"></div>
+        <button type="button" class="modal-close" id="source-viewer-close" aria-label="Close" data-i18n-label="modal.close">✕</button>
+      </div>
+      <div class="modal-body" id="source-viewer-body"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Trajectory: a bottom sheet replaying one RLM run — a sibling project's own shape,
+     brought here because the inline step log put the model's own reasoning prose inside the chat
+     bubble, where a user reported it as unreadable and space-consuming. Two synchronized views on
+     the run's two clocks (see `trajectory.py`): the LEFT nav walks the planner's REPL turns, the
+     TOP strip is the tool timeline where segment width is proportional to real time. -->
+<!-- **OUTSIDE `.layout`, and that placement is the whole point.** `inertEverythingExcept` walks
+     from the open panel up to `<body>` inerting siblings, and `inert` is INHERITED by descendants —
+     so while this lived inside `.layout`, the Trajectory drawer (a body-level sibling) inerted
+     `.layout` and took the toast rail with it. `ALWAYS_LIVE` could never reach it, because it was
+     never a sibling on the drawer's walk path: a toast raised while the drawer was open rendered,
+     could not be dismissed, and was out of the accessibility tree — and `notify` defaults to
+     `life = 0` for a bad tone, so it did not expire either.
+     `position: fixed; z-index: 1200`, so moving it costs nothing visually. -->
+<div class="notices" id="notices" role="status" aria-live="polite"></div>
+
+<div class="traj-backdrop" id="traj-backdrop" hidden></div>
+<div class="traj-drawer" id="traj-drawer" role="dialog" aria-modal="true"
+     aria-label="Run trajectory" data-i18n-label="traj.head" hidden>
+  <div class="traj-head">
+    <span class="traj-id">
+      <span class="traj-tag" data-i18n="traj.title">Trajectory</span>
+      <span class="traj-name" id="traj-name"></span>
+    </span>
+    <span class="traj-stat" id="traj-stat"></span>
+    <select class="traj-pick" id="traj-run" aria-label="Run" data-i18n-label="traj.run"></select>
+    <span class="traj-tools">
+      <span class="traj-transport">
+        <button type="button" class="tctl" id="traj-prev" data-tip="Previous step" data-i18n-tip="traj.prev">⏮</button>
+        <button type="button" class="tctl" id="traj-play" data-tip="Replay at the run's real pace" data-i18n-tip="traj.play">▶</button>
+        <button type="button" class="tctl" id="traj-next" data-tip="Next step" data-i18n-tip="traj.next">⏭</button>
+        <button type="button" class="tctl tctl-speed" id="traj-speed" data-tip="Replay speed" data-i18n-tip="traj.speed">2×</button>
+      </span>
+      <button type="button" class="traj-icon" id="traj-expand" data-tip="Expand" data-i18n-tip="traj.expand">⤢</button>
+      <button type="button" class="traj-icon traj-x" id="traj-close" aria-label="Close" data-i18n-label="modal.close">✕</button>
+    </span>
+  </div>
+  <div class="traj-progress" id="traj-progress" hidden>
+    <span class="tp-label"></span>
+    <span class="tp-track"><span class="tp-fill"></span></span>
+  </div>
+  <div class="traj-notes">
+    <div class="traj-note" id="traj-note" hidden></div>
+    <div class="traj-note" id="traj-budget" hidden></div>
+  </div>
+  <div class="traj-timeline-wrap">
+    <div class="traj-axis">
+      <span data-i18n="traj.axis">TOOL TIME</span>
+      <span id="traj-axis-end"></span>
+    </div>
+    <div class="traj-timeline" id="traj-timeline"></div>
+  </div>
+  <div class="traj-main">
+    <div class="traj-nav">
+      <div class="traj-search-wrap">
+        <input type="search" class="traj-search" id="traj-search"
+               data-i18n-placeholder="traj.search" placeholder="search turns…">
+        <span class="traj-search-count" id="traj-search-count"></span>
+      </div>
+      <div class="traj-steps" id="traj-steps"></div>
+    </div>
+    <div class="traj-detail" id="traj-detail"></div>
+  </div>
+</div>
+
+<script src="/i18n.js"></script>
+<script src="/app.js"></script>

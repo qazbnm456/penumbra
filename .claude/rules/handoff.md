@@ -1,6 +1,6 @@
 # Context preservation (read before auto-compacting)
 
-`rlm-notebook` already routes durable knowledge into its tracked docs — keep using them, and when
+Penumbra already routes durable knowledge into its tracked docs — keep using them, and when
 the conversation is about to compact, preserve only what they do NOT already hold:
 
 - **Stable invariants** → the index in `AGENTS.md` (the rule + the one sentence that stops you

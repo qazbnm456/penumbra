@@ -5,14 +5,14 @@ of the code it governs, and `docs/invariants/` argues for a behaviour the suite 
 The **Scope note** is the exception. It is prose about what exists and what does not, and prose
 about existence is exactly the thing a test suite never notices going stale.
 
-It did go stale. The note was written while the Inbox was library-plus-HTTP, and said in two
+It did go stale. The note was written while the Horizon was library-plus-HTTP, and said in two
 places - once in the paragraph, once in the "Still unbuilt" list - that there is no UI for any of
 it. That survived the entire stage that BUILT the UI, with 869 green tests the whole way, because
 nothing in the suite reads a sentence.
 
 So the mechanically checkable halves get checked here. Not the prose: the SHAPE of the claim,
 BOTH WAYS. A test that only fires when a claim becomes too modest would have caught this one and
-nothing else; the same drift runs the other way the moment someone writes a `rlm-notebook inbox`
+nothing else; the same drift runs the other way the moment someone writes a `penumbra horizon`
 subcommand and leaves the note saying the command line cannot reach it.
 
 These are deliberately narrow. The Scope note will always carry claims no assertion can reach
@@ -38,15 +38,15 @@ def scope_note() -> str:
     return AGENTS[start : AGENTS.index("## Invariants", start)]
 
 
-def test_the_scope_note_agrees_with_the_web_ui_about_the_inbox():
+def test_the_scope_note_agrees_with_the_web_ui_about_the_horizon():
     """The claim that went stale, pinned in both directions."""
     note = scope_note()
-    app = (ROOT / "rlm_notebook" / "web" / "app.js").read_text(encoding="utf-8")
-    html = (ROOT / "rlm_notebook" / "web" / "index.html").read_text(encoding="utf-8")
+    app = (ROOT / "penumbra" / "web" / "app.js").read_text(encoding="utf-8")
+    html = (ROOT / "penumbra" / "web" / "index.html").read_text(encoding="utf-8")
 
-    # A UI for the Inbox means two things, and either alone would be a half-built claim: the markup
-    # declares the surface, and the script talks to the `/inbox` routes.
-    ui_exists = 'id="view-inbox"' in html and "/inbox" in app
+    # A UI for the Horizon means two things, and either alone would be a half-built claim: the markup
+    # declares the surface, and the script talks to the `/horizon` routes.
+    ui_exists = 'id="view-horizon"' in html and "/horizon" in app
 
     denials = [
         phrase
@@ -55,49 +55,49 @@ def test_the_scope_note_agrees_with_the_web_ui_about_the_inbox():
     ]
     if ui_exists:
         assert not denials, (
-            "the web UI renders the Inbox, but the Scope note still denies it: "
+            "the web UI renders the Horizon, but the Scope note still denies it: "
             f"{denials}. Fix the note, not this test."
         )
         # And it must positively say so - deleting the false sentence without replacing it leaves a
         # reader of the rulebook with no idea the default screen changed.
-        assert "web UI" in note and "Inbox" in note, (
-            "the Scope note has to SAY the Inbox has a UI, not merely stop denying it"
+        assert "web UI" in note and "Horizon" in note, (
+            "the Scope note has to SAY the Horizon has a UI, not merely stop denying it"
         )
     else:
         assert denials, (
-            "nothing renders the Inbox, so the Scope note must say so - a reader who assumes a UI "
+            "nothing renders the Horizon, so the Scope note must say so - a reader who assumes a UI "
             "exists because a design discussion mentioned it is exactly what that list is for"
         )
 
 
-def test_the_scope_note_agrees_with_cli_py_about_the_inbox():
+def test_the_scope_note_agrees_with_cli_py_about_the_horizon():
     """The half that is still TRUE, pinned so it stays honest when someone builds the other half.
 
     This is the direction the first test could not cover: a claim of absence that becomes false
-    when code is ADDED. `cli.py` gaining an inbox subcommand is a perfectly good change; shipping it
-    while the rulebook still tells the next reader the command line cannot reach the Inbox is not.
+    when code is ADDED. `cli.py` gaining a horizon subcommand is a perfectly good change; shipping it
+    while the rulebook still tells the next reader the command line cannot reach the Horizon is not.
     """
     note = scope_note()
-    cli = (ROOT / "rlm_notebook" / "cli.py").read_text(encoding="utf-8")
+    cli = (ROOT / "penumbra" / "cli.py").read_text(encoding="utf-8")
 
-    # A SURFACE, not a mention: an `add_parser("inbox")` or an import of the module. A stray word
-    # "inbox" inside a docstring is not a command, and matching on it would make this test fire on
+    # A SURFACE, not a mention: an `add_parser("horizon")` or an import of the module. A stray word
+    # "horizon" inside a docstring is not a command, and matching on it would make this test fire on
     # a comment.
     surface = bool(
-        re.search(r"add_parser\(\s*[\"']inbox", cli)
-        or re.search(r"^from rlm_notebook import .*\binbox\b", cli, re.MULTILINE)
-        or re.search(r"^from \.? ?inbox import|^from rlm_notebook\.inbox import", cli, re.MULTILINE)
+        re.search(r"add_parser\(\s*[\"']horizon", cli)
+        or re.search(r"^from penumbra import .*\bhorizon\b", cli, re.MULTILINE)
+        or re.search(r"^from \.? ?horizon import|^from penumbra\.horizon import", cli, re.MULTILINE)
     )
-    phrases = ("no `cli.py` surface", "command line cannot reach it", "`cli.py` cannot reach the Inbox")
+    phrases = ("no `cli.py` surface", "command line cannot reach it", "`cli.py` cannot reach the Horizon")
     denies = any(phrase in note for phrase in phrases)
 
     if surface:
         assert not denies, (
-            "cli.py has an inbox surface now; the Scope note still says it cannot reach the Inbox"
+            "cli.py has a horizon surface now; the Scope note still says it cannot reach the Horizon"
         )
     else:
         assert denies, (
-            "cli.py cannot reach the Inbox, and the Scope note has to keep saying so - it is the "
+            "cli.py cannot reach the Horizon, and the Scope note has to keep saying so - it is the "
             "asymmetry between the two entry points that invariant 20 is about"
         )
 

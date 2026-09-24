@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from rlm_notebook.schema import PodcastScript, Utterance
-from rlm_notebook.tts import EdgeTTSProvider, TTSError, get_tts_provider
+from penumbra.schema import PodcastScript, Utterance
+from penumbra.tts import EdgeTTSProvider, TTSError, get_tts_provider
 
 
 class _FakeCommunicate:
@@ -182,8 +182,8 @@ def test_get_tts_provider_raises_on_unknown_name():
 
 def test_default_voices_cover_the_common_language_spellings():
     """The language arrives either as a model-authored NAME ("Traditional Chinese") or as whatever
-    an operator typed into RN_OUTPUT_LANGUAGE ("zh-TW"), so matching is loose on purpose."""
-    from rlm_notebook.tts import default_voices_for
+    an operator typed into PN_OUTPUT_LANGUAGE ("zh-TW"), so matching is loose on purpose."""
+    from penumbra.tts import default_voices_for
 
     assert default_voices_for("Traditional Chinese") == default_voices_for("zh-TW")
     assert default_voices_for("Japanese")[0].startswith("ja-JP-")
@@ -195,7 +195,7 @@ def test_default_voices_cover_the_common_language_spellings():
 def test_an_unknown_language_keeps_the_configured_voices():
     """A wrong-language voice is bad; silently substituting one for a language nobody asked for is
     worse. Unknown means "no opinion", and the configured defaults stand."""
-    from rlm_notebook.tts import default_voices_for
+    from penumbra.tts import default_voices_for
 
     assert default_voices_for("Klingon") is None
     assert default_voices_for(None) is None
@@ -206,7 +206,7 @@ def test_every_mapped_voice_id_is_shaped_like_a_real_edge_tts_voice():
     """Every id in the table was read out of a real `edge_tts.list_voices()` response rather than
     written from memory — a plausible-looking but nonexistent voice fails only at synthesis time,
     after a real model call has already been spent on the script."""
-    from rlm_notebook.tts import _LANGUAGE_VOICES
+    from penumbra.tts import _LANGUAGE_VOICES
 
     for language, (host_a, host_b) in _LANGUAGE_VOICES.items():
         for voice in (host_a, host_b):
@@ -214,28 +214,28 @@ def test_every_mapped_voice_id_is_shaped_like_a_real_edge_tts_voice():
 
 
 def test_an_explicit_env_voice_beats_the_language_default(monkeypatch):
-    """An operator who set a voice meant it, whatever language the notebook resolved to. Read from
-    the RAW env, not by comparing against the default value: setting RN_TTS_VOICE_HOST_A to the
-    en-US default on a Chinese notebook is a choice, and an equality check would overrule it."""
-    from rlm_notebook.config import NotebookConfig, tts_voice_map
+    """An operator who set a voice meant it, whatever language the orbit resolved to. Read from
+    the RAW env, not by comparing against the default value: setting PN_TTS_VOICE_HOST_A to the
+    en-US default on a Chinese orbit is a choice, and an equality check would overrule it."""
+    from penumbra.config import PenumbraConfig, tts_voice_map
 
-    config = NotebookConfig(main_model="x")
-    monkeypatch.delenv("RN_TTS_VOICE_HOST_A", raising=False)
-    monkeypatch.delenv("RN_TTS_VOICE_HOST_B", raising=False)
+    config = PenumbraConfig(main_model="x")
+    monkeypatch.delenv("PN_TTS_VOICE_HOST_A", raising=False)
+    monkeypatch.delenv("PN_TTS_VOICE_HOST_B", raising=False)
     assert tts_voice_map(config, "Traditional Chinese")["host_a"].startswith("zh-TW-")
 
-    monkeypatch.setenv("RN_TTS_VOICE_HOST_A", "en-US-GuyNeural")
+    monkeypatch.setenv("PN_TTS_VOICE_HOST_A", "en-US-GuyNeural")
     resolved = tts_voice_map(config, "Traditional Chinese")
     assert resolved["host_a"] == "en-US-GuyNeural", "an explicit choice was overruled"
     assert resolved["host_b"].startswith("zh-TW-"), "the un-set voice should still follow the language"
 
 
 def test_no_language_falls_back_to_the_shipped_cast(monkeypatch):
-    from rlm_notebook.config import NotebookConfig, tts_voice_map
+    from penumbra.config import PenumbraConfig, tts_voice_map
 
-    monkeypatch.delenv("RN_TTS_VOICE_HOST_A", raising=False)
-    monkeypatch.delenv("RN_TTS_VOICE_HOST_B", raising=False)
-    config = NotebookConfig(main_model="x")
+    monkeypatch.delenv("PN_TTS_VOICE_HOST_A", raising=False)
+    monkeypatch.delenv("PN_TTS_VOICE_HOST_B", raising=False)
+    config = PenumbraConfig(main_model="x")
     assert tts_voice_map(config, None) == {
         "host_a": config.tts_voice_host_a,
         "host_b": config.tts_voice_host_b,
@@ -256,7 +256,7 @@ def test_each_provider_declares_its_own_format_and_voices():
     pinning: edge-tts has a cast per language, chatterbox is cross-lingual and has none — one pair
     of cloned voices speaks everything, so it returns `None` and hands the default to
     `fallback_voices`."""
-    from rlm_notebook.tts import get_tts_provider
+    from penumbra.tts import get_tts_provider
 
     edge, chatterbox = get_tts_provider("edge-tts"), get_tts_provider("chatterbox")
 
@@ -273,7 +273,7 @@ def test_chatterbox_is_registered_but_never_imported_by_default():
     """The extra is optional, so importing this package must not pull in torch. Registering the
     class is free; only `synthesize` imports anything.
 
-    Checked by re-importing `rlm_notebook.tts` in a SUBPROCESS: an independent review mutation-
+    Checked by re-importing `penumbra.tts` in a SUBPROCESS: an independent review mutation-
     proved the previous in-process version vacuous — it asserted a disjunction
     (`"torch" not in sys.modules or "chatterbox" not in sys.modules`) that a module-scope
     `import torch` in `tts.py` still satisfied, and in this process both are already imported by
@@ -282,13 +282,13 @@ def test_chatterbox_is_registered_but_never_imported_by_default():
     import subprocess
     import sys
 
-    from rlm_notebook.tts import _PROVIDERS, get_tts_provider
+    from penumbra.tts import _PROVIDERS, get_tts_provider
 
     assert "chatterbox" in _PROVIDERS
     get_tts_provider("chatterbox")  # constructing it must also be free
 
     probe = (
-        "import sys, rlm_notebook.tts as t;"
+        "import sys, penumbra.tts as t;"
         "t.get_tts_provider('chatterbox');"
         "print(sorted(m for m in sys.modules if m.split('.')[0] in "
         "{'torch','chatterbox','soundfile','librosa','transformers'}))"
@@ -307,14 +307,14 @@ def test_chatterbox_is_registered_but_never_imported_by_default():
 def test_the_shipped_reference_clips_exist_and_are_what_the_model_will_read():
     """Two distinguishable hosts depend on these files being INSIDE the installed package —
     chatterbox has exactly one built-in voice, so without them both hosts sound identical. They live
-    under `rlm_notebook/` for the same packaging reason the web assets do (invariant 29): a
+    under `penumbra/` for the same packaging reason the web assets do (invariant 29): a
     top-level directory has no entry in pyproject's wheel `packages` and would silently vanish.
 
     Also pins the ten-second trim: past `DEC_COND_LEN` (10s at 24kHz) only the speaker encoder reads
     the clip, so longer files would cost wheel size and buy nothing.
     """
 
-    from rlm_notebook.tts import BUILTIN_VOICE, shipped_voice_path
+    from penumbra.tts import BUILTIN_VOICE, shipped_voice_path
 
     assert shipped_voice_path(BUILTIN_VOICE) is None
     for name in ("host-a", "host-b"):
@@ -339,7 +339,7 @@ def test_expected_seconds_is_calibrated_against_real_measured_utterances():
     lets a loop through or rejects correct takes. These four durations are REAL chatterbox output
     measured on Apple Silicon, and the estimate must stay within 15% of each — the first draft used
     15 chars/second for Latin, which under-estimated the English line by a third."""
-    from rlm_notebook.tts import expected_seconds
+    from penumbra.tts import expected_seconds
 
     measured = [
         ("這兩艘探測器叫做 Voyager 1 和 Voyager 2，是 NASA 在一九七七年發射的。", 7.16),
@@ -351,17 +351,17 @@ def test_expected_seconds_is_calibrated_against_real_measured_utterances():
         assert 0.85 <= expected_seconds(text) / actual <= 1.15, (text[:20], expected_seconds(text))
 
     # And the reproduced 34.8s runaway on the first line must be over the ceiling.
-    from rlm_notebook.tts import ChatterboxProvider
+    from penumbra.tts import ChatterboxProvider
 
     assert 34.8 > expected_seconds(measured[0][0]) * ChatterboxProvider._RUNAWAY_FACTOR
     assert expected_seconds("") >= 1.0  # a floor, so a short line cannot give a near-zero ceiling
 
 
 def test_finding_audio_survives_a_provider_switch(tmp_path):
-    """An episode generated by edge-tts must keep playing after someone switches RN_TTS_PROVIDER to
+    """An episode generated by edge-tts must keep playing after someone switches PN_TTS_PROVIDER to
     chatterbox — so the reader looks for whichever format is present, and a regenerate clears
     every format rather than leaving the stale one beside the new one."""
-    from rlm_notebook.notebook import audio_path, clear_audio, find_audio
+    from penumbra.orbit import audio_path, clear_audio, find_audio
 
     mp3 = audio_path("nb", base_dir=tmp_path, suffix=".mp3")
     mp3.parent.mkdir(parents=True, exist_ok=True)
@@ -447,7 +447,7 @@ def test_sequence_offsets_charges_the_inter_utterance_gap_to_the_previous_line()
     Durations are deliberately all different: with equal ones a running-total bug and a correct
     implementation produce the same list.
     """
-    from rlm_notebook.tts import sequence_offsets
+    from penumbra.tts import sequence_offsets
 
     rate, gap = 24_000, 8_400  # 0.35s at 24kHz, KokoroProvider's own gap
     lengths = [24_000, 48_000, 12_000]  # 1.0s, 2.0s, 0.5s
@@ -472,7 +472,7 @@ def test_chatterbox_provider_offsets_and_runaway_guard(tmp_path, monkeypatch):
     """
     np = pytest.importorskip("numpy")
 
-    from rlm_notebook.tts import ChatterboxProvider, sequence_offsets
+    from penumbra.tts import ChatterboxProvider, sequence_offsets
 
     rate = 24_000
     seconds = {"one": 1.0, "two": 2.0, "three": 0.5}
@@ -543,7 +543,7 @@ def test_a_builtin_voice_mixed_with_a_clip_keeps_the_two_hosts_apart(tmp_path, m
     """
     np = pytest.importorskip("numpy")
 
-    from rlm_notebook.tts import ChatterboxProvider
+    from penumbra.tts import ChatterboxProvider
 
     class _Model:
         sr = 24_000
@@ -591,7 +591,7 @@ def test_chatterbox_retries_a_runaway_take_and_keeps_the_shortest_if_it_never_co
     would pay three slow generations per line."""
     np = pytest.importorskip("numpy")
 
-    from rlm_notebook.tts import ChatterboxProvider, expected_seconds
+    from penumbra.tts import ChatterboxProvider, expected_seconds
 
     rate = 24_000
     text = "Voyager 1 was launched by NASA in 1977 and is still returning data."
@@ -644,7 +644,7 @@ def test_chatterbox_retries_a_runaway_take_and_keeps_the_shortest_if_it_never_co
 def test_chatterbox_refuses_a_language_it_has_no_id_for(tmp_path, monkeypatch):
     """Synthesizing Korean with `language_id="en"` produces confident nonsense, so an unknown
     language fails loudly BEFORE any audio is written rather than guessing."""
-    from rlm_notebook.tts import ChatterboxProvider
+    from penumbra.tts import ChatterboxProvider
 
     with pytest.raises(TTSError) as excinfo:
         ChatterboxProvider._language_id("Klingon")
@@ -669,12 +669,12 @@ def test_an_unknown_language_falls_back_to_the_providers_own_cast_not_another_pr
     `config`'s shipped `en-US-GuyNeural`, an edge-tts name handed to a local model — a synthesis
     failure after a real model call had already been spent, the waste invariant 19 exists to
     prevent. Pinned for BOTH providers so neither can regain the other's names."""
-    from rlm_notebook.config import NotebookConfig, tts_voice_map
-    from rlm_notebook.tts import ChatterboxProvider
+    from penumbra.config import PenumbraConfig, tts_voice_map
+    from penumbra.tts import ChatterboxProvider
 
-    for name in ("RN_TTS_VOICE_HOST_A", "RN_TTS_VOICE_HOST_B"):
+    for name in ("PN_TTS_VOICE_HOST_A", "PN_TTS_VOICE_HOST_B"):
         monkeypatch.delenv(name, raising=False)
-    config = NotebookConfig(main_model="m", sub_model="m")
+    config = PenumbraConfig(main_model="m", sub_model="m")
 
     # Chatterbox is cross-lingual and has NO per-language cast, so every language lands on its
     # fallback — which must be its own shipped clips, never edge-tts's `en-US-GuyNeural`.
@@ -693,7 +693,7 @@ def test_the_settings_voice_pattern_accepts_both_providers_naming_schemes():
     """One edge-tts-shaped pattern rejected every local-provider voice, so the settings page could not
     name a voice for the provider a user had actually configured. Widening the SHAPES is not
     widening the CHARACTERS — the SSML hole invariant 41 closed stays closed."""
-    from rlm_notebook.config import _VOICE_PATTERN
+    from penumbra.config import _VOICE_PATTERN
 
     for voice in ("zh-TW-YunJheNeural", "en-US-GuyNeural", "host-a", "host-b", "built-in"):
         assert _VOICE_PATTERN.match(voice), voice
@@ -721,7 +721,7 @@ def test_chatterbox_validates_language_and_voices_before_anything_expensive_runs
     in edge-tts's map but not in `_CHATTERBOX_LANGUAGES` — every `/audio` request burned a whole
     RLM run and could never succeed.
     """
-    from rlm_notebook.tts import ChatterboxProvider, EdgeTTSProvider
+    from penumbra.tts import ChatterboxProvider, EdgeTTSProvider
 
     provider = ChatterboxProvider()
     cast = {"host_a": "host-a", "host_b": "host-b"}
@@ -747,7 +747,7 @@ def test_both_audio_entry_points_validate_before_running_the_model():
     seam to observe it through: `provider.validate(...)` must appear BEFORE the
     `GeneratePodcastScript` run in `cli.py`, and before `_run_isolated` in `api.py`."""
     # Anchored to THIS file, not the cwd — `tests/test_web_assets.py` already learned that lesson.
-    root = Path(__file__).resolve().parent.parent / "rlm_notebook"
+    root = Path(__file__).resolve().parent.parent / "penumbra"
 
     cli = (root / "cli.py").read_text()
     # Anchored on the CONSTRUCTION, not on `().run(`: the run moved inside a `_traced(...)` block
@@ -772,8 +772,8 @@ def test_the_voices_never_read_a_corpus_marker_aloud():
     Applied once at the boundary rather than inside each provider: there are two implementations and
     a third would silently ship without it.
     """
-    from rlm_notebook.schema import PodcastScript, Utterance
-    from rlm_notebook.tts import spoken_script
+    from penumbra.schema import PodcastScript, Utterance
+    from penumbra.tts import spoken_script
 
     script = PodcastScript(
         utterances=[
@@ -803,7 +803,7 @@ def test_both_entry_points_synthesize_the_stripped_script():
     for module in ("api", "cli"):
         # Resolved from THIS file: the suite chdirs into a tmp dir (conftest's isolation
         # fixture), so a relative path finds nothing.
-        root = Path(__file__).resolve().parent.parent / "rlm_notebook"
+        root = Path(__file__).resolve().parent.parent / "penumbra"
         source = (root / f"{module}.py").read_text(encoding="utf-8")
         calls = _re.findall(r"provider\.synthesize[,(]\s*([^,)]+)", source)
         assert calls, f"the extraction no longer sees {module}'s synthesize call"
@@ -821,8 +821,8 @@ def test_stripping_a_marker_only_line_does_not_lose_the_episode():
 
     A garbled line ships; a 502 does not. Same discipline as invariants 19/37/43.
     """
-    from rlm_notebook.schema import PodcastScript, Utterance
-    from rlm_notebook.tts import spoken_script
+    from penumbra.schema import PodcastScript, Utterance
+    from penumbra.tts import spoken_script
 
     script = PodcastScript(
         utterances=[

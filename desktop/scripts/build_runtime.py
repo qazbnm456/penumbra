@@ -1,18 +1,18 @@
-"""Assemble the runtime the desktop app ships: a relocatable Python with rlm-notebook installed in
+"""Assemble the runtime the desktop app ships: a relocatable Python with penumbra installed in
 it, plus the deno binary every live run needs.
 
     uv run python desktop/scripts/build_runtime.py        # then: cd desktop/src-tauri && cargo tauri build
 
 Output goes to `desktop/src-tauri/runtime/`, which `tauri.conf.json` bundles as a resource:
 
-    runtime/python/   bin/python3 (macOS, Linux) or python.exe (Windows), rlm-notebook in site-packages
+    runtime/python/   bin/python3 (macOS, Linux) or python.exe (Windows), penumbra in site-packages
     runtime/deno/     deno or deno.exe
 
 **Why a relocatable interpreter and not PyInstaller.** dspy and litellm import a great deal by
 name at run time, and a freezer that follows static imports misses them in ways that only show
 up on a user's first question. uv's managed interpreters are python-build-standalone builds that
 run from any directory, so the app ships an ordinary Python with an ordinary `site-packages`, and
-the server starts exactly as `python -m rlm_notebook.cli serve` does in a checkout.
+the server starts exactly as `python -m penumbra.cli serve` does in a checkout.
 
 **Build on the platform you ship to.** Wheels such as numpy, onnxruntime and pypdfium2 are
 platform-specific, so each OS and architecture is built on its own machine (the CI workflow runs
@@ -153,7 +153,7 @@ def main() -> int:
     if sys.platform == "darwin":
         adhoc_sign(OUT)
 
-    run(str(python), "-c", "import rlm_notebook.api, rlm_notebook.cli; print('rlm-notebook imports ok')")
+    run(str(python), "-c", "import penumbra.api, penumbra.cli; print('penumbra imports ok')")
     print(f"runtime for {args.target}: {size_of(OUT) / 1e6:.0f} MB in {OUT}")
     return 0
 

@@ -1,0 +1,58 @@
+# Invariant 78: The Horizon is an index, not a corpus
+
+**The Horizon (`horizon.py`) is an index, not a corpus: nothing at Tier 0 ever assembles a blob, and every write to it is a SQL delta (`update_node`; there is deliberately no `save_node`).**
+
+The one stated exception to the delta rule is `promote_node`'s `INSERT OR REPLACE` into `memberships`, whose four columns are all freshly supplied and which has no earlier row to preserve. The two rules answer different questions (how the Horizon coexists with invariant 8, and how it survives concurrent writers), but breaking either one turns the Horizon back into an orbit.
+
+## Why there are two tiers
+
+`config._DEFAULT_MAX_CORPUS_CHARS` is 8,000,000, a memory-safety cap on the sandbox, not a tuning knob. The whole corpus becomes one variable in the REPL, explored by searching and slicing under `max_iterations=25` and `max_llm_calls=30`. One source measured in this project was 69,859 characters; at that size an orbit tops out near a hundred sources, while a capture horizon is meant for thousands.
+
+```
+Tier 0  horizon.py     thousands of nodes, a SQLite index, never a blob
+                        ↓ filing (a copy)
+Tier 1  orbit.py  about 10 to 50 sources, one JSON file, the corpus blob, invariant 8
+```
+
+The rule is narrow and absolute: if anything at Tier 0 calls `Corpus.blob()` over the Horizon, invariant 8 applies to a collection designed to outgrow it. Anything Tier 0 reads from the text, such as distillation, search or a future embedding, reads one node's blocks or `Corpus.excerpt` over a bounded selection, never the whole Horizon.
+
+## A node is a parsed Source not yet bound to an orbit
+
+`ingest.ingest_one` already produces a fully parsed, citable `Source` on the host before any task exists (invariant 3), and `Source.marker()` computes `[[SRC:<id>|<locator>]]` from the id when the blob is built instead of storing it in the text (invariant 4). Blocks can therefore be stored with no id, and filing a node is re-numbering plus appending, not fetching again. The id comes from `orbit.append_sources`, from the persisted high-water mark (invariant 50), inside `mutate_orbit`'s lock (invariant 34).
+
+Filing does not consume the node. The node is what persists, and an orbit is a view over a selection of nodes, which is the "facets of yourself" premise. Removing a node therefore never removes a source already filed from it, because the source was copied and an orbit silently losing a cited source would break invariant 12.
+
+Filing matches on the node's own membership, never on the origin. `append_sources` dedupes by origin, and treating "appended nothing" as "this node is already here" let two different nodes with the same origin both record a membership pointing at the first node's source, while the second node's text never reached the orbit. An origin collision is now a loud `ValueError` naming the source that holds it, and filing the same node again stays idempotent, because the membership row identifies it.
+
+A node id for a URL is a hash of the origin alone, so capturing the same URL twice is one row, as invariant 12 requires, and a queued capture can get its id before anything is fetched (invariant 79). Every other origin folds the text into the hash, because a filename is not an identity: two different files named `notes.txt` used to become one node and the second file's content was silently discarded. The input is NFC-normalised first.
+
+An id the module mints is hex and filename-safe; an id it is handed is not. `node_blocks_path` validates the id against the exact minting pattern and asserts that the resulting path stays inside the nodes directory. Before that, `remove_node("../../orbits/mynb")` deleted a live orbit file, and an absolute id escaped the directory entirely, because `Path("horizon/nodes") / "/etc/x"` is `/etc/x`. `test_a_node_id_never_becomes_an_arbitrary_path` pins it.
+
+## The delta rule
+
+Invariant 34 records two faults: a caller reading a snapshot, doing something slow and writing the whole object back over everything written meanwhile, and two critical sections interleaving. Both apply to a global write surface, and distillation is exactly that slow step, a model call between reading a node and writing its summary.
+
+- `update_node(node_id, **fields)` emits `UPDATE nodes SET <only those fields> WHERE id = ?`.
+- There is no `save_node(node)`. A whole-object write is the fault itself, and in SQL it is even easier to write than in Python. The missing function is the guard.
+- An unknown field raises, which also keeps `id` and `created_at` out of reach.
+- Values are validated as well as column names. Checking only the name let `update_node(id, state="bogus")` commit, after which every read of the listing failed validation, so one bad write made the whole Horizon unreadable.
+
+The test reads the SQL that was emitted and asserts it names only the caller's columns, with no `SELECT` before it; a test of two sequential updates would also pass against a whole-row implementation.
+
+Interleaving is handled by a lock plus `ON CONFLICT`, not by a transaction; `horizon.py` has no multi-statement transactions, because `_connect` sets `isolation_level=None`. Eight threads capturing one origin at once used to produce seven `IntegrityError` failures, which `busy_timeout` never retries, and a row whose character count disagreed with the file on disk. `_CAPTURE_LOCK` now guards the read-then-insert within a process, `INSERT ... ON CONFLICT(id) DO NOTHING` lets a loser in another process pass without an error, and an existing blocks file is adopted rather than overwritten. This is weaker than `mutate_orbit`, which holds a cross-process lock across its read-modify-write.
+
+## SQLite traps
+
+`PRAGMA journal_mode=WAL` is the one statement `busy_timeout` does not protect: changing the journal mode needs an exclusive lock, and SQLite returns `SQLITE_BUSY` immediately instead of waiting. Setting it on every connection is a no-op once the mode is WAL, but while a new database is being created, concurrent writers race on the change itself; a concurrency test failed about one run in six. The pragma now runs once per process in `_initialize`, with a lock and a retry, and the same probe ran 60 of 60 clean. `test_connect_never_sets_the_journal_mode` is a source assertion, because the behavioural symptom is a one-in-six flake.
+
+The initialisation cache checks that the database file still exists. Without that, deleting `horizon/` under a running server leaves the path cached, `sqlite3.connect` creates an empty file, and every later call fails with `no such table: nodes`. The DDL is idempotent, so recovery costs one `stat` per connection.
+
+`busy_timeout` and `foreign_keys` are both per connection. Without the second, the `ON DELETE CASCADE` on `memberships` does nothing.
+
+## Not here
+
+There are no parsers beyond what `ingest_one` handles, no embeddings, no implicit edges, no graph and no cross-orbit search. The index carries `tags` and `entities` so a later feature can use them without a migration. WAL needs a real local filesystem and degrades or fails on a network share, as the orbit files already do, more quietly.
+
+---
+
+Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

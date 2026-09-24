@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "rlm-notebook",
+  "productName": "Penumbra",
   "version": "0.1.0",
-  "identifier": "tw.boik.rlm-notebook",
+  "identifier": "tw.boik.penumbra",
   "build": {
     "frontendDist": "../splash"
   },

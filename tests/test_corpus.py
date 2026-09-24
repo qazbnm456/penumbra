@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from rlm_notebook.corpus import Corpus, CorpusTooLargeError
-from rlm_notebook.schema import Source, SourceBlock
+from penumbra.corpus import Corpus, CorpusTooLargeError
+from penumbra.schema import Source, SourceBlock
 
 
 def _source(id_: str, text: str = "hello") -> Source:
@@ -66,12 +66,12 @@ def test_filtered_raises_on_unknown_id():
 
 def test_an_excerpt_samples_every_source_not_just_the_first():
     """`blob()[:n]` is what this replaced, and a user reported the consequence: a four-source
-    notebook was titled by transliterating source ONE's own paper title, because source one alone
+    orbit was titled by transliterating source ONE's own paper title, because source one alone
     was 69,859 characters against a 4,000-character window — sources two to four were never seen.
     Language resolution read the same prefix, which is worse: later sources in another language
     would have resolved the wrong one."""
-    from rlm_notebook.corpus import Corpus
-    from rlm_notebook.schema import Source, SourceBlock
+    from penumbra.corpus import Corpus
+    from penumbra.schema import Source, SourceBlock
 
     sources = [
         Source(
@@ -95,8 +95,8 @@ def test_an_excerpt_samples_every_source_not_just_the_first():
 
 
 def test_an_excerpt_of_one_source_is_still_its_opening():
-    from rlm_notebook.corpus import Corpus
-    from rlm_notebook.schema import Source, SourceBlock
+    from penumbra.corpus import Corpus
+    from penumbra.schema import Source, SourceBlock
 
     corpus = Corpus([
         Source(id="s1", kind="text", origin="o",
@@ -108,6 +108,6 @@ def test_an_excerpt_of_one_source_is_still_its_opening():
 
 
 def test_an_excerpt_of_an_empty_corpus_is_empty():
-    from rlm_notebook.corpus import Corpus
+    from penumbra.corpus import Corpus
 
     assert Corpus([]).excerpt(4000) == ""

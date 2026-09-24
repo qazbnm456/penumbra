@@ -5,7 +5,7 @@ this project's "LIVE run" caveat (AGENTS.md's Verify section) applies here too.
 
 The API only accepts http(s) URLs as sources (AGENTS.md invariant 26 — local file paths were an
 unauthenticated arbitrary-file-read vector, found and fixed after an independent review), so every
-test that needs a notebook with sources uses a fake `parse_web` (`_fake_web_ingestion` below)
+test that needs an orbit with sources uses a fake `parse_web` (`_fake_web_ingestion` below)
 rather than a real network call.
 """
 
@@ -25,15 +25,15 @@ from pydantic import ValidationError
 
 fastapi = pytest.importorskip("fastapi")
 # Only the two concurrency tests at the bottom need a real ASGI client (TestClient serialises
-# requests, so it cannot interleave two runs on one notebook). Skipped with fastapi if absent.
+# requests, so it cannot interleave two runs on one orbit). Skipped with fastapi if absent.
 httpx = pytest.importorskip("httpx")
 
 from _pdf_fixtures import make_text_pdf_bytes
 from fastapi.testclient import TestClient
 
-from rlm_notebook import api, auth, cli
-from rlm_notebook.notebook import load_notebook, notebook_path
-from rlm_notebook.schema import FAQ, KeyInsight, Summary, Timeline
+from penumbra import api, auth, cli
+from penumbra.orbit import load_orbit, orbit_path
+from penumbra.schema import FAQ, KeyInsight, Summary, Timeline
 
 _FAIL_URL = "https://example.com/fails-to-fetch"
 
@@ -50,8 +50,8 @@ def test_guide_task_registries_stay_in_sync_between_cli_and_api():
 
 @pytest.fixture(autouse=True)
 def _isolated_cwd(tmp_path, monkeypatch):
-    """Every notebook path this test suite touches is relative (`notebooks/<id>.json`) — isolate
-    each test into its own directory so tests can't see each other's notebook files."""
+    """Every orbit path this test suite touches is relative (`orbits/<id>.json`) — isolate
+    each test into its own directory so tests can't see each other's orbit files."""
     monkeypatch.chdir(tmp_path)
 
 
@@ -70,8 +70,8 @@ def _fake_web_ingestion(monkeypatch):
     """Fakes `ingest.parse_web` so every test that adds a `https://...` source never makes a real
     network call. `_FAIL_URL` is a sentinel the fake treats as a real ingestion failure, for the
     one test that needs to exercise `add_sources`'s error path."""
-    from rlm_notebook.parsers.web import FetchError
-    from rlm_notebook.schema import Source, SourceBlock
+    from penumbra.parsers.web import FetchError
+    from penumbra.schema import Source, SourceBlock
 
     def _fake_parse_web(url, source_id):
         if url == _FAIL_URL:
@@ -81,7 +81,7 @@ def _fake_web_ingestion(monkeypatch):
             blocks=[SourceBlock(locator="whole", text=f"content of {url}")],
         )
 
-    monkeypatch.setattr("rlm_notebook.ingest.parse_web", _fake_parse_web)
+    monkeypatch.setattr("penumbra.ingest.parse_web", _fake_parse_web)
 
 
 #: Loopback base URL AND the token, on every client this suite builds.
@@ -149,76 +149,76 @@ def _mock_runner(monkeypatch, result: dict, *, dotted_tasks: list[str] | None = 
 
 
 def _live_env(monkeypatch) -> None:
-    monkeypatch.setenv("RN_MAIN_MODEL", "test/model")
-    monkeypatch.delenv("RN_INTERPRETER", raising=False)
+    monkeypatch.setenv("PN_MAIN_MODEL", "test/model")
+    monkeypatch.delenv("PN_INTERPRETER", raising=False)
     # A forced language SKIPS `_resolve_language`'s model run entirely, which keeps every test that
     # isn't about language to exactly the runs it means to exercise. The resolution path has its own
     # tests below, which unset this.
-    monkeypatch.setenv("RN_OUTPUT_LANGUAGE", "English")
+    monkeypatch.setenv("PN_OUTPUT_LANGUAGE", "English")
 
 
 def _add_a_source(client) -> None:
-    resp = client.post("/notebooks/mynb/sources", json={"sources": ["https://example.com/a"]})
+    resp = client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
     assert resp.status_code == 200, resp.text
 
 
-# --- GET /notebooks (list) ----------------------------------------------------------------------
+# --- GET /orbits (list) ----------------------------------------------------------------------
 
 
-def test_list_notebooks_empty_when_none_exist(client):
-    resp = client.get("/notebooks")
+def test_list_orbits_empty_when_none_exist(client):
+    resp = client.get("/orbits")
     assert resp.status_code == 200
-    assert resp.json() == {"notebooks": [], "unreadable": []}
+    assert resp.json() == {"orbits": [], "unreadable": []}
 
 
-def test_list_notebooks_reports_the_notebooks_own_id_not_the_slugged_filename(client):
-    """`slug()` is lossy — a notebook id with characters outside `[A-Za-z0-9._-]` is folded before
+def test_list_orbits_reports_the_orbits_own_id_not_the_slugged_filename(client):
+    """`slug()` is lossy — an orbit id with characters outside `[A-Za-z0-9._-]` is folded before
     becoming a filename, so the listing must report the `id` stored INSIDE the file, not derive one
     from the filename stem (found during the pre-implementation blueprint audit)."""
-    resp = client.post("/notebooks/My Notebook!/sources", json={"sources": ["https://example.com/a"]})
+    resp = client.post("/orbits/My Orbit!/sources", json={"sources": ["https://example.com/a"]})
     assert resp.status_code == 200, resp.text
 
-    resp = client.get("/notebooks")
+    resp = client.get("/orbits")
 
     assert resp.status_code == 200
     body = resp.json()
     assert body["unreadable"] == []
-    assert len(body["notebooks"]) == 1
-    assert body["notebooks"][0]["id"] == "My Notebook!"
-    assert body["notebooks"][0]["source_count"] == 1
-    assert body["notebooks"][0]["turn_count"] == 0
+    assert len(body["orbits"]) == 1
+    assert body["orbits"][0]["id"] == "My Orbit!"
+    assert body["orbits"][0]["source_count"] == 1
+    assert body["orbits"][0]["turn_count"] == 0
 
 
-def test_list_notebooks_flags_a_corrupted_file_without_breaking_the_rest(client, tmp_path):
+def test_list_orbits_flags_a_corrupted_file_without_breaking_the_rest(client, tmp_path):
     _add_a_source(client)
-    corrupt_path = tmp_path / "notebooks" / "broken.json"
+    corrupt_path = tmp_path / "orbits" / "broken.json"
     corrupt_path.write_text('{"id": "broken", "sources": [}', encoding="utf-8")
 
-    resp = client.get("/notebooks")
+    resp = client.get("/orbits")
 
     assert resp.status_code == 200
     body = resp.json()
     assert body["unreadable"] == ["broken"]
-    assert [nb["id"] for nb in body["notebooks"]] == ["mynb"]
+    assert [nb["id"] for nb in body["orbits"]] == ["mynb"]
 
 
-# --- /notebooks/{id}/sources & GET /notebooks/{id} ----------------------------------------------
+# --- /orbits/{id}/sources & GET /orbits/{id} ----------------------------------------------
 
 
-def test_add_sources_creates_and_persists_a_notebook(client):
-    resp = client.post("/notebooks/mynb/sources", json={"sources": ["https://example.com/a"]})
+def test_add_sources_creates_and_persists_a_orbit(client):
+    resp = client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
 
     assert resp.status_code == 200
     body = resp.json()
     assert body["id"] == "mynb"
     assert len(body["sources"]) == 1
-    assert load_notebook("mynb") is not None  # actually persisted, not just returned
+    assert load_orbit("mynb") is not None  # actually persisted, not just returned
 
 
 def test_add_sources_extends_without_duplicating(client):
-    client.post("/notebooks/mynb/sources", json={"sources": ["https://example.com/a"]})
+    client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
     resp = client.post(
-        "/notebooks/mynb/sources",
+        "/orbits/mynb/sources",
         json={"sources": ["https://example.com/a", "https://example.com/b"]},
     )
 
@@ -228,7 +228,7 @@ def test_add_sources_extends_without_duplicating(client):
 
 
 def test_add_sources_accepts_pasted_text(client):
-    resp = client.post("/notebooks/mynb/sources", json={"texts": ["some pasted text"]})
+    resp = client.post("/orbits/mynb/sources", json={"texts": ["some pasted text"]})
 
     assert resp.status_code == 200
     body = resp.json()
@@ -239,30 +239,30 @@ def test_add_sources_accepts_pasted_text(client):
 
 def test_add_sources_dedupes_identical_pasted_text_within_one_call(client):
     resp = client.post(
-        "/notebooks/mynb/sources", json={"texts": ["same text", "same text", "same text"]}
+        "/orbits/mynb/sources", json={"texts": ["same text", "same text", "same text"]}
     )
     assert resp.status_code == 200
     assert len(resp.json()["sources"]) == 1
 
 
 def test_add_sources_dedupes_identical_pasted_text_across_calls(client):
-    client.post("/notebooks/mynb/sources", json={"texts": ["same text"]})
-    resp = client.post("/notebooks/mynb/sources", json={"texts": ["same text", "different text"]})
+    client.post("/orbits/mynb/sources", json={"texts": ["same text"]})
+    resp = client.post("/orbits/mynb/sources", json={"texts": ["same text", "different text"]})
 
     assert resp.status_code == 200
     assert len(resp.json()["sources"]) == 2
 
 
 def test_add_sources_rejects_blank_pasted_text(client):
-    resp = client.post("/notebooks/mynb/sources", json={"texts": ["real text", "   "]})
+    resp = client.post("/orbits/mynb/sources", json={"texts": ["real text", "   "]})
 
     assert resp.status_code == 422
-    assert load_notebook("mynb") is None  # rejected before anything was persisted
+    assert load_orbit("mynb") is None  # rejected before anything was persisted
 
 
 def test_add_sources_combines_urls_and_pasted_text_in_one_call(client):
     resp = client.post(
-        "/notebooks/mynb/sources",
+        "/orbits/mynb/sources",
         json={"sources": ["https://example.com/a"], "texts": ["pasted content"]},
     )
 
@@ -278,15 +278,15 @@ def test_add_sources_rejects_local_file_paths(client, tmp_path):
     secret = tmp_path / "secret.txt"
     secret.write_text("TOP SECRET CONTENTS", encoding="utf-8")
 
-    resp = client.post("/notebooks/mynb/sources", json={"sources": [str(secret)]})
+    resp = client.post("/orbits/mynb/sources", json={"sources": [str(secret)]})
 
     assert resp.status_code == 422
     assert "secret.txt" not in resp.text or "TOP SECRET" not in resp.text  # never echoes file contents
-    assert load_notebook("mynb") is None  # nothing was created, let alone populated
+    assert load_orbit("mynb") is None  # nothing was created, let alone populated
 
 
 def test_add_sources_reports_422_on_a_real_ingestion_failure(client):
-    resp = client.post("/notebooks/mynb/sources", json={"sources": [_FAIL_URL]})
+    resp = client.post("/orbits/mynb/sources", json={"sources": [_FAIL_URL]})
     assert resp.status_code == 422
 
 
@@ -296,50 +296,50 @@ def test_add_sources_reports_422_not_500_on_a_captionless_youtube_video(client, 
     feature's own pre-implementation audit before any code was written: a bare `RuntimeError`
     would satisfy neither `add_sources`'s nor `cli._prepare`'s `except (FetchError, ValueError,
     OSError)`, escaping as an unhandled 500 instead."""
-    from rlm_notebook.parsers.youtube import CaptionError
+    from penumbra.parsers.youtube import CaptionError
 
     def _fake_parse_youtube(url, source_id, **kwargs):
         raise CaptionError(f"no captions available for {url!r}")
 
-    monkeypatch.setattr("rlm_notebook.ingest.parse_youtube", _fake_parse_youtube)
+    monkeypatch.setattr("penumbra.ingest.parse_youtube", _fake_parse_youtube)
 
     resp = client.post(
-        "/notebooks/mynb/sources", json={"sources": ["https://www.youtube.com/watch?v=none"]}
+        "/orbits/mynb/sources", json={"sources": ["https://www.youtube.com/watch?v=none"]}
     )
     assert resp.status_code == 422
 
 
-def test_add_sources_reports_409_on_a_corrupted_notebook_file(client, tmp_path):
-    path = tmp_path / "notebooks" / "mynb.json"
+def test_add_sources_reports_409_on_a_corrupted_orbit_file(client, tmp_path):
+    path = tmp_path / "orbits" / "mynb.json"
     path.parent.mkdir(parents=True)
     path.write_text('{"id": "mynb", "sources": [}', encoding="utf-8")
 
-    resp = client.post("/notebooks/mynb/sources", json={"sources": []})
+    resp = client.post("/orbits/mynb/sources", json={"sources": []})
     assert resp.status_code == 409
 
 
 @pytest.mark.parametrize("odd_id", ["!!!", "...", "---", "\u6a21\u578b\u8981\u7761\u89ba"])
-def test_an_id_outside_the_latin_whitelist_is_a_usable_notebook_not_a_400(
+def test_an_id_outside_the_latin_whitelist_is_a_usable_orbit_not_a_400(
     client, monkeypatch, odd_id
 ):
     """These used to reduce to an empty slug and 400. A user reported the consequence: naming a
-    notebook in Chinese returned `400 invalid notebook id … reduces to an empty token`. `slug` now
+    orbit in Chinese returned `400 invalid orbit id … reduces to an empty token`. `slug` now
     falls back to `nb-<hash>` for any id the whitelist empties, so all of these are ordinary
-    notebooks — the read endpoints 404 (nothing there yet) and the write endpoints succeed.
+    orbits — the read endpoints 404 (nothing there yet) and the write endpoints succeed.
 
     This SUPERSEDES the earlier "400 not 500" test for these payloads; the 500 that invariant 27
     was created to fix is still gone, it is just no longer reachable by this input at all. Only a
     genuinely empty id still raises, which
-    `test_an_empty_notebook_id_is_still_a_400_on_every_id_taking_endpoint` covers.
+    `test_an_empty_orbit_id_is_still_a_400_on_every_id_taking_endpoint` covers.
     (`"////"` is deliberately absent: Starlette's path converter doesn't match a literal `/` inside
     one segment, so it 404s at the ROUTING layer, a different and already-safe path.)"""
     _live_env(monkeypatch)
-    assert client.get(f"/notebooks/{odd_id}").status_code == 404
-    assert client.post(f"/notebooks/{odd_id}/sources", json={"texts": ["hi"]}).status_code == 200
-    assert client.get(f"/notebooks/{odd_id}").json()["id"] == odd_id  # the id round-trips verbatim
+    assert client.get(f"/orbits/{odd_id}").status_code == 404
+    assert client.post(f"/orbits/{odd_id}/sources", json={"texts": ["hi"]}).status_code == 200
+    assert client.get(f"/orbits/{odd_id}").json()["id"] == odd_id  # the id round-trips verbatim
 
 
-def test_an_empty_notebook_id_is_still_a_400_on_every_id_taking_endpoint(client, monkeypatch):
+def test_an_empty_orbit_id_is_still_a_400_on_every_id_taking_endpoint(client, monkeypatch):
     """"You gave me nothing" stays a real client error — only "you gave me a name in your own
     language" stopped being one. Invariant 27's mapping (`ValueError` -> 400, never an unhandled
     500) is what this pins, and it sweeps every id-taking endpoint that existed when this was
@@ -352,20 +352,20 @@ def test_an_empty_notebook_id_is_still_a_400_on_every_id_taking_endpoint(client,
     created by (a review finding four endpoints that had each independently forgotten the arm)."""
     _live_env(monkeypatch)
     blank = "%20%20"
-    assert client.get(f"/notebooks/{blank}").status_code == 400
-    assert client.post(f"/notebooks/{blank}/sources", json={"texts": ["hi"]}).status_code == 400
-    assert client.post(f"/notebooks/{blank}/ask", json={"question": "x"}).status_code == 400
-    assert client.post(f"/notebooks/{blank}/guide/summary").status_code == 400
-    assert client.get(f"/notebooks/{blank}/sources/s1").status_code == 400
-    assert client.post(f"/notebooks/{blank}/notes", json={"text": "x"}).status_code == 400
-    assert client.delete(f"/notebooks/{blank}/notes/n1").status_code == 400
-    assert client.post(f"/notebooks/{blank}/notes/n1/promote").status_code == 400
+    assert client.get(f"/orbits/{blank}").status_code == 400
+    assert client.post(f"/orbits/{blank}/sources", json={"texts": ["hi"]}).status_code == 400
+    assert client.post(f"/orbits/{blank}/ask", json={"question": "x"}).status_code == 400
+    assert client.post(f"/orbits/{blank}/guide/summary").status_code == 400
+    assert client.get(f"/orbits/{blank}/sources/s1").status_code == 400
+    assert client.post(f"/orbits/{blank}/notes", json={"text": "x"}).status_code == 400
+    assert client.delete(f"/orbits/{blank}/notes/n1").status_code == 400
+    assert client.post(f"/orbits/{blank}/notes/n1/promote").status_code == 400
 
 
 def test_a_lone_surrogate_run_id_is_not_a_500(client, monkeypatch):
     """`run_id` is a plain JSON body field, and RFC 8259 permits unpaired surrogate escapes that
-    `json.loads` accepts. `_derive_run_id` calls `notebook.slug()` DIRECTLY, outside every
-    `notebook_path` error wrapper — so when `slug` gained a `raw.encode("utf-8")` it stopped being
+    `json.loads` accepts. `_derive_run_id` calls `orbit.slug()` DIRECTLY, outside every
+    `orbit_path` error wrapper — so when `slug` gained a `raw.encode("utf-8")` it stopped being
     total and this became an unauthenticated 500, reproduced by an independent review. `slug` must
     never raise for any `str`."""
     _live_env(monkeypatch)
@@ -375,7 +375,7 @@ def test_a_lone_surrogate_run_id_is_not_a_500(client, monkeypatch):
     # Sent as raw bytes, not `json=`: httpx refuses to ENCODE a lone surrogate, so the escape has
     # to travel as JSON source text and be decoded server-side by `json.loads`, which accepts it.
     resp = client.post(
-        "/notebooks/mynb/ask",
+        "/orbits/mynb/ask",
         content=rb'{"question": "x", "run_id": "\ud800"}',
         headers={"Content-Type": "application/json"},
     )
@@ -383,15 +383,15 @@ def test_a_lone_surrogate_run_id_is_not_a_500(client, monkeypatch):
     assert resp.status_code != 500, resp.text
 
 
-def test_get_notebook_404_when_missing(client):
-    resp = client.get("/notebooks/does-not-exist")
+def test_get_orbit_404_when_missing(client):
+    resp = client.get("/orbits/does-not-exist")
     assert resp.status_code == 404
 
 
-def test_get_notebook_returns_sources_and_turns(client):
+def test_get_orbit_returns_sources_and_turns(client):
     _add_a_source(client)
 
-    resp = client.get("/notebooks/mynb")
+    resp = client.get("/orbits/mynb")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -400,8 +400,8 @@ def test_get_notebook_returns_sources_and_turns(client):
     assert len(body["sources"]) == 1
 
 
-def test_get_notebook_includes_full_turn_history_with_freshly_verified_citations(client, monkeypatch):
-    """The web UI's Chat panel needs a re-opened notebook's past turns to render immediately, not
+def test_get_orbit_includes_full_turn_history_with_freshly_verified_citations(client, monkeypatch):
+    """The web UI's Chat panel needs a re-opened orbit's past turns to render immediately, not
     just a count — added when building the Phase 1 web UI. Citations are re-verified against the
     CURRENT corpus at read time, same discipline as a brand-new answer (AGENTS.md invariant 11)."""
     _live_env(monkeypatch)
@@ -413,9 +413,9 @@ def test_get_notebook_includes_full_turn_history_with_freshly_verified_citations
             "citations": [{"source_id": "s1", "locator": "whole", "quote": "hello"}],
         },
     )
-    client.post("/notebooks/mynb/ask", json={"question": "what?"})
+    client.post("/orbits/mynb/ask", json={"question": "what?"})
 
-    resp = client.get("/notebooks/mynb")
+    resp = client.get("/orbits/mynb")
 
     assert resp.status_code == 200
     turns = resp.json()["turns"]
@@ -425,17 +425,17 @@ def test_get_notebook_includes_full_turn_history_with_freshly_verified_citations
     assert turns[0]["citations"][0]["verified"] is True
 
 
-# --- GET /notebooks/{id}/sources/{source_id} -----------------------------------------------------
+# --- GET /orbits/{id}/sources/{source_id} -----------------------------------------------------
 
 
-def test_get_source_404_when_notebook_missing(client):
-    resp = client.get("/notebooks/does-not-exist/sources/s1")
+def test_get_source_404_when_orbit_missing(client):
+    resp = client.get("/orbits/does-not-exist/sources/s1")
     assert resp.status_code == 404
 
 
 def test_get_source_404_when_source_id_unknown(client):
     _add_a_source(client)
-    resp = client.get("/notebooks/mynb/sources/does-not-exist")
+    resp = client.get("/orbits/mynb/sources/does-not-exist")
     assert resp.status_code == 404
 
 
@@ -445,7 +445,7 @@ def test_get_source_returns_full_text_every_block(client):
     loop: click a citation, see the highlighted original passage."""
     _add_a_source(client)
 
-    resp = client.get("/notebooks/mynb/sources/s1")
+    resp = client.get("/orbits/mynb/sources/s1")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -462,75 +462,75 @@ def test_get_source_returns_full_text_every_block(client):
 def test_get_source_carries_the_preview_so_the_viewer_can_show_the_title(client):
     """The source viewer headed itself with the HOST (`example.com`) because this response had no
     `preview`, while every other surface already showed the page's own title. Same display-only
-    metadata the notebook response carries (invariant 51), and still never an image."""
-    from rlm_notebook.notebook import mutate_notebook
+    metadata the orbit response carries (invariant 51), and still never an image."""
+    from penumbra.orbit import mutate_orbit
 
     _add_a_source(client)
 
     def _titled(nb):
         nb.sources[0].preview = {"title": "A page about things", "site": "Example"}
 
-    mutate_notebook("mynb", _titled)
+    mutate_orbit("mynb", _titled)
 
-    body = client.get("/notebooks/mynb/sources/s1").json()
+    body = client.get("/orbits/mynb/sources/s1").json()
     assert body["preview"] == {"title": "A page about things", "site": "Example"}
 
 
-# --- /notebooks/{id}/notes -----------------------------------------------------------------------
+# --- /orbits/{id}/notes -----------------------------------------------------------------------
 
 
-def test_add_note_creates_and_persists_a_notebook(client):
-    """Mirrors `add_sources`: a brand-new notebook can start life by adding a note."""
-    resp = client.post("/notebooks/mynb/notes", json={"text": "a first note"})
+def test_add_note_creates_and_persists_a_orbit(client):
+    """Mirrors `add_sources`: a brand-new orbit can start life by adding a note."""
+    resp = client.post("/orbits/mynb/notes", json={"text": "a first note"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["notes"] == [{"id": "n1", "text": "a first note"}]
 
-    reloaded = client.get("/notebooks/mynb")
+    reloaded = client.get("/orbits/mynb")
     assert reloaded.json()["notes"] == [{"id": "n1", "text": "a first note"}]
 
 
 def test_add_note_rejects_blank_text(client):
-    resp = client.post("/notebooks/mynb/notes", json={"text": "   "})
+    resp = client.post("/orbits/mynb/notes", json={"text": "   "})
     assert resp.status_code == 422
 
 
-def test_delete_note_404_when_notebook_missing(client):
-    resp = client.delete("/notebooks/does-not-exist/notes/n1")
+def test_delete_note_404_when_orbit_missing(client):
+    resp = client.delete("/orbits/does-not-exist/notes/n1")
     assert resp.status_code == 404
 
 
 def test_delete_note_404_when_note_id_unknown(client):
-    client.post("/notebooks/mynb/notes", json={"text": "a note"})
-    resp = client.delete("/notebooks/mynb/notes/does-not-exist")
+    client.post("/orbits/mynb/notes", json={"text": "a note"})
+    resp = client.delete("/orbits/mynb/notes/does-not-exist")
     assert resp.status_code == 404
 
 
 def test_delete_note_removes_it_and_persists(client):
-    client.post("/notebooks/mynb/notes", json={"text": "a note"})
-    resp = client.delete("/notebooks/mynb/notes/n1")
+    client.post("/orbits/mynb/notes", json={"text": "a note"})
+    resp = client.delete("/orbits/mynb/notes/n1")
     assert resp.status_code == 200
     assert resp.json()["notes"] == []
 
-    reloaded = client.get("/notebooks/mynb")
+    reloaded = client.get("/orbits/mynb")
     assert reloaded.json()["notes"] == []
 
 
-def test_promote_note_404_when_notebook_missing(client):
-    resp = client.post("/notebooks/does-not-exist/notes/n1/promote")
+def test_promote_note_404_when_orbit_missing(client):
+    resp = client.post("/orbits/does-not-exist/notes/n1/promote")
     assert resp.status_code == 404
 
 
 def test_promote_note_404_when_note_id_unknown(client):
-    client.post("/notebooks/mynb/notes", json={"text": "a note"})
-    resp = client.post("/notebooks/mynb/notes/does-not-exist/promote")
+    client.post("/orbits/mynb/notes", json={"text": "a note"})
+    resp = client.post("/orbits/mynb/notes/does-not-exist/promote")
     assert resp.status_code == 404
 
 
 def test_promote_note_turns_it_into_a_source_and_persists(client):
-    client.post("/notebooks/mynb/notes", json={"text": "promote this text"})
+    client.post("/orbits/mynb/notes", json={"text": "promote this text"})
 
-    resp = client.post("/notebooks/mynb/notes/n1/promote")
+    resp = client.post("/orbits/mynb/notes/n1/promote")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -538,17 +538,17 @@ def test_promote_note_turns_it_into_a_source_and_persists(client):
     assert len(body["sources"]) == 1
     assert body["sources"][0]["kind"] == "text"
 
-    reloaded = client.get("/notebooks/mynb")
+    reloaded = client.get("/orbits/mynb")
     assert reloaded.json()["notes"] == []
     assert len(reloaded.json()["sources"]) == 1
 
 
-# --- /notebooks/{id}/ask -------------------------------------------------------------------------
+# --- /orbits/{id}/ask -------------------------------------------------------------------------
 
 
-def test_ask_404_when_notebook_missing(client, monkeypatch):
+def test_ask_404_when_orbit_missing(client, monkeypatch):
     _live_env(monkeypatch)
-    resp = client.post("/notebooks/does-not-exist/ask", json={"question": "what?"})
+    resp = client.post("/orbits/does-not-exist/ask", json={"question": "what?"})
     assert resp.status_code == 404
 
 
@@ -569,27 +569,27 @@ def test_ask_runs_isolated_and_returns_verified_citations(client, monkeypatch):
         dotted_tasks=dotted_tasks,
     )
 
-    resp = client.post("/notebooks/mynb/ask", json={"question": "what does it say?"})
+    resp = client.post("/orbits/mynb/ask", json={"question": "what does it say?"})
 
     assert resp.status_code == 200
     body = resp.json()
     assert body["text"] == "the answer"
     assert body["citations"][0]["verified"] is True
     assert body["citations"][1]["verified"] is False
-    assert dotted_tasks == ["rlm_notebook.task:AnswerQuestion"]
+    assert dotted_tasks == ["penumbra.task:AnswerQuestion"]
 
 
-def test_ask_persists_the_turn_to_the_notebook(client, monkeypatch):
+def test_ask_persists_the_turn_to_the_orbit(client, monkeypatch):
     _live_env(monkeypatch)
     _add_a_source(client)
     _mock_runner(monkeypatch, {"text": "the answer", "citations": []})
 
-    client.post("/notebooks/mynb/ask", json={"question": "what?"})
+    client.post("/orbits/mynb/ask", json={"question": "what?"})
 
-    notebook = load_notebook("mynb")
-    assert len(notebook.turns) == 1
-    assert notebook.turns[0].question == "what?"
-    assert notebook.turns[0].answer.text == "the answer"
+    orbit = load_orbit("mynb")
+    assert len(orbit.turns) == 1
+    assert orbit.turns[0].question == "what?"
+    assert orbit.turns[0].answer.text == "the answer"
 
 
 def test_ask_translates_a_run_error_into_502(client, monkeypatch):
@@ -605,30 +605,30 @@ def test_ask_translates_a_run_error_into_502(client, monkeypatch):
     monkeypatch.setattr(api.runner, "start_run", _fake_start_run)
     monkeypatch.setattr(api.runner, "wait_result", _fake_wait_result)
 
-    resp = client.post("/notebooks/mynb/ask", json={"question": "what?"})
+    resp = client.post("/orbits/mynb/ask", json={"question": "what?"})
     assert resp.status_code == 502
     assert "simulated crash" in resp.json()["detail"]
 
 
 def test_ask_reports_a_clean_500_when_the_server_is_misconfigured(client, monkeypatch):
-    """`NotebookConfig.from_env()` raises SystemExit when RN_MAIN_MODEL is unset — `_config()` must
+    """`PenumbraConfig.from_env()` raises SystemExit when PN_MAIN_MODEL is unset — `_config()` must
     convert that into an HTTP response, not let SystemExit escape the request handler."""
-    monkeypatch.delenv("RN_MAIN_MODEL", raising=False)
+    monkeypatch.delenv("PN_MAIN_MODEL", raising=False)
     _add_a_source(client)
 
-    resp = client.post("/notebooks/mynb/ask", json={"question": "what?"})
+    resp = client.post("/orbits/mynb/ask", json={"question": "what?"})
     assert resp.status_code == 500
-    assert "RN_MAIN_MODEL" in resp.json()["detail"]
+    assert "PN_MAIN_MODEL" in resp.json()["detail"]
 
 
-# --- /notebooks/{id}/guide/{kind} ----------------------------------------------------------------
+# --- /orbits/{id}/guide/{kind} ----------------------------------------------------------------
 
 
 def test_guide_404_on_unknown_kind(client, monkeypatch):
     _live_env(monkeypatch)
     _add_a_source(client)
 
-    resp = client.post("/notebooks/mynb/guide/not-a-real-kind")
+    resp = client.post("/orbits/mynb/guide/not-a-real-kind")
     assert resp.status_code == 404
 
 
@@ -637,7 +637,7 @@ def test_guide_summary(client, monkeypatch):
     _add_a_source(client)
     _mock_runner(monkeypatch, Summary(text="a summary", citations=[]).model_dump())
 
-    resp = client.post("/notebooks/mynb/guide/summary")
+    resp = client.post("/orbits/mynb/guide/summary")
 
     assert resp.status_code == 200
     assert resp.json()["text"] == "a summary"
@@ -649,7 +649,7 @@ def test_guide_faq(client, monkeypatch):
     faq = FAQ(items=[{"question": "q?", "answer": "a.", "citations": []}])
     _mock_runner(monkeypatch, faq.model_dump())
 
-    resp = client.post("/notebooks/mynb/guide/faq")
+    resp = client.post("/orbits/mynb/guide/faq")
 
     assert resp.status_code == 200
     assert resp.json()["items"][0]["question"] == "q?"
@@ -661,7 +661,7 @@ def test_guide_timeline(client, monkeypatch):
     timeline = Timeline(events=[{"when": "ch.1", "description": "it happens", "citations": []}])
     _mock_runner(monkeypatch, timeline.model_dump())
 
-    resp = client.post("/notebooks/mynb/guide/timeline")
+    resp = client.post("/orbits/mynb/guide/timeline")
 
     assert resp.status_code == 200
     assert resp.json()["events"][0]["when"] == "ch.1"
@@ -672,7 +672,7 @@ def test_guide_insight(client, monkeypatch):
     _add_a_source(client)
     _mock_runner(monkeypatch, KeyInsight(text="the one thing", citations=[]).model_dump())
 
-    resp = client.post("/notebooks/mynb/guide/insight")
+    resp = client.post("/orbits/mynb/guide/insight")
 
     assert resp.status_code == 200
     assert resp.json()["text"] == "the one thing"
@@ -684,11 +684,11 @@ def test_guide_dispatches_the_correct_task_per_kind(client, monkeypatch):
 
     dotted_tasks: list[str] = []
     _mock_runner(monkeypatch, Summary(text="x", citations=[]).model_dump(), dotted_tasks=dotted_tasks)
-    client.post("/notebooks/mynb/guide/summary")
-    assert dotted_tasks == ["rlm_notebook.guide:GenerateSummary"]
+    client.post("/orbits/mynb/guide/summary")
+    assert dotted_tasks == ["penumbra.guide:GenerateSummary"]
 
 
-# --- /notebooks/{id}/audio -----------------------------------------------------------------------
+# --- /orbits/{id}/audio -----------------------------------------------------------------------
 
 
 class _FakeTTSProvider:
@@ -751,9 +751,9 @@ def _podcast_script_result(utterances: list[dict] | None = None) -> dict:
     return {"utterances": utterances or []}
 
 
-def test_audio_404_when_notebook_missing(client, monkeypatch):
+def test_audio_404_when_orbit_missing(client, monkeypatch):
     _live_env(monkeypatch)
-    resp = client.post("/notebooks/does-not-exist/audio")
+    resp = client.post("/orbits/does-not-exist/audio")
     assert resp.status_code == 404
 
 
@@ -773,11 +773,11 @@ def test_audio_runs_isolated_and_returns_base64_encoded_audio(client, monkeypatc
     provider = _FakeTTSProvider(payload=b"real-mp3-payload")
     _fake_tts_provider(monkeypatch, provider)
 
-    resp = client.post("/notebooks/mynb/audio")
+    resp = client.post("/orbits/mynb/audio")
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert dotted_tasks == ["rlm_notebook.audio:GeneratePodcastScript"]
+    assert dotted_tasks == ["penumbra.audio:GeneratePodcastScript"]
     assert len(body["utterances"]) == 1
     assert body["utterances"][0]["speaker"] == "host_a"
     assert body["utterances"][0]["citations"][0]["verified"] is True
@@ -805,47 +805,47 @@ def _one_utterance_script() -> dict:
     return _podcast_script_result([{"speaker": "host_a", "text": "hello", "citations": []}])
 
 
-def test_a_notebook_cannot_be_deleted_while_its_episode_is_being_synthesized(client, monkeypatch):
+def test_a_orbit_cannot_be_deleted_while_its_episode_is_being_synthesized(client, monkeypatch):
     """**The 409 said "something is running" and only ever looked at spawned subprocesses.**
 
     `_ACTIVE_RUNS` empties the moment `_run_isolated` returns, and TTS synthesis — the longest phase
     of `/audio` — runs entirely after that. So a DELETE mid-synthesis answered `{"deleted": true}`,
-    and the handler then wrote the mp3 back beside a notebook that no longer existed: an orphan
-    `GET .../audio/file` served to whatever notebook next took that id. Driven through the real
+    and the handler then wrote the mp3 back beside an orbit that no longer existed: an orphan
+    `GET .../audio/file` served to whatever orbit next took that id. Driven through the real
     TestClient from inside `synthesize`, because that is the only place the window exists.
     """
     _live_env(monkeypatch)
     _add_a_source(client)
     _mock_runner(monkeypatch, _one_utterance_script())
-    provider = _DuringSynthesis(lambda: client.delete("/notebooks/mynb").status_code)
+    provider = _DuringSynthesis(lambda: client.delete("/orbits/mynb").status_code)
     _fake_tts_provider(monkeypatch, provider)
 
-    resp = client.post("/notebooks/mynb/audio")
+    resp = client.post("/orbits/mynb/audio")
 
     assert provider.seen == 409, f"a delete mid-synthesis answered {provider.seen}, not 409"
     assert resp.status_code == 200, resp.text
-    assert client.get("/notebooks/mynb/audio/file").status_code == 200
+    assert client.get("/orbits/mynb/audio/file").status_code == 200
     # ...and the guard is released afterwards, or nothing could ever be deleted again.
-    assert client.delete("/notebooks/mynb").status_code == 200
+    assert client.delete("/orbits/mynb").status_code == 200
     assert api._BUSY == {}
 
 
-def test_a_notebook_that_vanishes_mid_synthesis_takes_its_audio_with_it(client, monkeypatch):
+def test_a_orbit_that_vanishes_mid_synthesis_takes_its_audio_with_it(client, monkeypatch):
     """The one interleaving `_working_on` cannot close: DELETE checks its guard and then deletes
     across an `await`, so the file can still go between the two. Simulated by removing it directly.
     The record write refuses (`create=False`), and the mp3 written just before it must go too —
-    otherwise a later notebook of the same id is served someone else's episode."""
-    from rlm_notebook.notebook import delete_notebook, find_audio
+    otherwise a later orbit of the same id is served someone else's episode."""
+    from penumbra.orbit import delete_orbit, find_audio
 
     _live_env(monkeypatch)
     _add_a_source(client)
     _mock_runner(monkeypatch, _one_utterance_script())
-    _fake_tts_provider(monkeypatch, _DuringSynthesis(lambda: delete_notebook("mynb")))
+    _fake_tts_provider(monkeypatch, _DuringSynthesis(lambda: delete_orbit("mynb")))
 
-    resp = client.post("/notebooks/mynb/audio")
+    resp = client.post("/orbits/mynb/audio")
 
     assert resp.status_code == 404, resp.text
-    assert find_audio("mynb") is None, "an episode was left behind for a notebook that is gone"
+    assert find_audio("mynb") is None, "an episode was left behind for an orbit that is gone"
     assert api._BUSY == {}
 
 
@@ -889,34 +889,34 @@ def test_synthesis_runs_where_a_quitting_server_does_not_wait_for_it(client, mon
     _mock_runner(monkeypatch, _one_utterance_script())
     _fake_tts_provider(monkeypatch, _FakeTTSProvider())
 
-    assert client.post("/notebooks/mynb/audio").status_code == 200
+    assert client.post("/orbits/mynb/audio").status_code == 200
     assert "synthesize" in routed, f"synthesis did not go through `_abandonable`: {routed}"
 
 
-def test_notebook_response_carries_the_slug_so_client_run_ids_match_the_servers(client):
+def test_orbit_response_carries_the_slug_so_client_run_ids_match_the_servers(client):
     """The client builds its own run ids to open a live ticker on, and `_derive_run_id` prefixes
-    them with `slug(notebook_id)`. Building them from the RAW id left every trace link dead for any
-    id the slug changes — `"my notebook"`, or any non-Latin id, which invariant 10 exists to
+    them with `slug(orbit_id)`. Building them from the RAW id left every trace link dead for any
+    id the slug changes — `"my orbit"`, or any non-Latin id, which invariant 10 exists to
     support (found by an independent audit; the server-side guard had been fixed, the client had
     not). Returned by the server rather than re-implemented in JS, hash fallback and all."""
-    from rlm_notebook.notebook import slug
+    from penumbra.orbit import slug
 
-    for notebook_id in ("plain", "my notebook", "模型要睡覺"):
+    for orbit_id in ("plain", "my orbit", "模型要睡覺"):
         created = client.post(
-            f"/notebooks/{notebook_id}/notes", json={"text": "seed"}
+            f"/orbits/{orbit_id}/notes", json={"text": "seed"}
         )
         assert created.status_code == 200, created.text
         body = created.json()
-        assert body["id"] == notebook_id  # the handle a person typed is unchanged
-        assert body["slug"] == slug(notebook_id)
+        assert body["id"] == orbit_id  # the handle a person typed is unchanged
+        assert body["slug"] == slug(orbit_id)
         # This is the exact prefix `_derive_run_id` builds, so a client id can match a server one.
-        assert not slug(notebook_id).startswith("-")
+        assert not slug(orbit_id).startswith("-")
 
 
 def test_audio_carries_offsets_through_response_persistence_and_reopen(client, monkeypatch):
     """The subtitle transcript is only as good as the offsets reaching the client, and there are
     THREE places they can be dropped: the POST response, the persisted `Podcast`, and the
-    `GET /notebooks/{id}` reopen path. An independent review deleted each in turn and the whole
+    `GET /orbits/{id}` reopen path. An independent review deleted each in turn and the whole
     suite stayed green, so all three are pinned here rather than trusting one to imply the others.
     """
     _live_env(monkeypatch)
@@ -933,11 +933,11 @@ def test_audio_carries_offsets_through_response_persistence_and_reopen(client, m
     )
     _fake_tts_provider(monkeypatch, _FakeTTSProvider(offsets=[0.0, 5.25, 7.5]))
 
-    posted = client.post("/notebooks/mynb/audio")
+    posted = client.post("/orbits/mynb/audio")
     assert posted.status_code == 200, posted.text
     assert posted.json()["offsets"] == [0.0, 5.25, 7.5]
 
-    reopened = client.get("/notebooks/mynb")
+    reopened = client.get("/orbits/mynb")
     assert reopened.status_code == 200
     podcast = reopened.json()["podcast"]
     assert podcast["offsets"] == [0.0, 5.25, 7.5]
@@ -951,7 +951,7 @@ def test_audio_passes_the_resolved_language_to_synthesize(client, monkeypatch):
     mutation-proved this had zero coverage: passing `None` from BOTH call sites left the whole suite
     green, and the consequence is a Chinese script synthesized with `language_id="en"`, i.e. the
     confident nonsense `_language_id`'s raise exists to prevent."""
-    _live_env(monkeypatch)  # pins RN_OUTPUT_LANGUAGE=English
+    _live_env(monkeypatch)  # pins PN_OUTPUT_LANGUAGE=English
     _add_a_source(client)
     _mock_runner(
         monkeypatch,
@@ -960,7 +960,7 @@ def test_audio_passes_the_resolved_language_to_synthesize(client, monkeypatch):
     provider = _FakeTTSProvider()
     _fake_tts_provider(monkeypatch, provider)
 
-    assert client.post("/notebooks/mynb/audio").status_code == 200
+    assert client.post("/orbits/mynb/audio").status_code == 200
     assert provider.calls[0][3] == "English"
     # ...and the same language reached the pre-flight, which is what makes invariant 19's ordering
     # meaningful rather than decorative.
@@ -977,7 +977,7 @@ def test_audio_returns_null_audio_when_script_has_no_utterances(client, monkeypa
     provider = _FakeTTSProvider()
     _fake_tts_provider(monkeypatch, provider)
 
-    resp = client.post("/notebooks/mynb/audio")
+    resp = client.post("/orbits/mynb/audio")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -988,32 +988,32 @@ def test_audio_returns_null_audio_when_script_has_no_utterances(client, monkeypa
 def test_audio_with_an_empty_script_clears_the_previously_persisted_episode(client, monkeypatch):
     """Invariant 42's "replaced on regenerate" has to cover the empty case: an independent audit
     found this arm returning early with the previous episode untouched, so `GET .../audio/file`
-    kept serving audio for a script the notebook no longer had while the UI said there was none."""
+    kept serving audio for a script the orbit no longer had while the UI said there was none."""
     _live_env(monkeypatch)
     _add_a_source(client)
     _mock_runner(monkeypatch, _podcast_script_result([{"speaker": "host_a", "text": "hi",
                                                       "citations": []}]))
     _fake_tts_provider(monkeypatch, _FakeTTSProvider(payload=b"first-episode"))
-    assert client.post("/notebooks/mynb/audio").status_code == 200
-    assert client.get("/notebooks/mynb/audio/file").status_code == 200
+    assert client.post("/orbits/mynb/audio").status_code == 200
+    assert client.get("/orbits/mynb/audio/file").status_code == 200
 
     _mock_runner(monkeypatch, _podcast_script_result([]))
     _fake_tts_provider(monkeypatch, _FakeTTSProvider())
-    resp = client.post("/notebooks/mynb/audio")
+    resp = client.post("/orbits/mynb/audio")
 
     assert resp.status_code == 200
     assert resp.json()["utterances"] == []
-    assert client.get("/notebooks/mynb/audio/file").status_code == 404
-    assert client.get("/notebooks/mynb").json()["podcast"] is None
+    assert client.get("/orbits/mynb/audio/file").status_code == 404
+    assert client.get("/orbits/mynb").json()["podcast"] is None
 
 
 def test_upload_reports_a_clean_500_when_the_size_cap_env_var_is_malformed(client, monkeypatch):
     """Invariant 24 claimed every `SystemExit` in `config.py` was reachable only through
     `from_env()`, so `_config()` covered them all. `max_upload_bytes` has one of its own and is the
     FIRST statement of this handler — an independent audit reproduced a raw 500 with a traceback."""
-    monkeypatch.setenv("RN_MAX_UPLOAD_BYTES", "not-an-int")
+    monkeypatch.setenv("PN_MAX_UPLOAD_BYTES", "not-an-int")
     resp = client.post(
-        "/notebooks/mynb/sources/upload",
+        "/orbits/mynb/sources/upload",
         files={"file": ("a.txt", b"hello", "text/plain")},
     )
     assert resp.status_code == 500
@@ -1024,9 +1024,9 @@ def _real_web_ingestion(monkeypatch):
     """Undo `_fake_web_ingestion` for a test that must exercise the REAL `parse_web`. Safe and still
     offline: `config.fetch_allow_cidrs` raises inside `_check_safe`, which `_default_fetcher` calls
     before it opens anything, so no network call is reachable from these tests."""
-    import rlm_notebook.parsers.web as real_web
+    import penumbra.parsers.web as real_web
 
-    monkeypatch.setattr("rlm_notebook.ingest.parse_web", real_web.parse_web)
+    monkeypatch.setattr("penumbra.ingest.parse_web", real_web.parse_web)
 
 
 def test_add_sources_reports_a_clean_500_when_the_fetch_allow_cidrs_are_malformed(
@@ -1040,18 +1040,18 @@ def test_add_sources_reports_a_clean_500_when_the_fetch_allow_cidrs_are_malforme
     unhandled 500 rather than a clean one. Unpinned when the arm was added; pinned now, because a
     refactor that drops it reinstates exactly the bug it fixed."""
     _real_web_ingestion(monkeypatch)
-    monkeypatch.setenv("RN_FETCH_ALLOW_CIDRS", "198.18.0.0/16,not-a-cidr")
-    resp = client.post("/notebooks/mynb/sources", json={"sources": ["https://example.com/a"]})
+    monkeypatch.setenv("PN_FETCH_ALLOW_CIDRS", "198.18.0.0/16,not-a-cidr")
+    resp = client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
     assert resp.status_code == 500
     assert "server misconfigured" in resp.json()["detail"]
-    assert "RN_FETCH_ALLOW_CIDRS" in resp.json()["detail"]
+    assert "PN_FETCH_ALLOW_CIDRS" in resp.json()["detail"]
 
 
 def test_a_guard_disabling_allow_cidr_is_refused_at_the_api_boundary_too(client, monkeypatch):
     """The same arm, for the value that is dangerous rather than merely malformed."""
     _real_web_ingestion(monkeypatch)
-    monkeypatch.setenv("RN_FETCH_ALLOW_CIDRS", "0.0.0.0/0")
-    resp = client.post("/notebooks/mynb/sources", json={"sources": ["https://example.com/a"]})
+    monkeypatch.setenv("PN_FETCH_ALLOW_CIDRS", "0.0.0.0/0")
+    resp = client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
     assert resp.status_code == 500
     assert "disable the SSRF guard" in resp.json()["detail"]
 
@@ -1061,14 +1061,14 @@ def test_audio_reports_a_clean_500_when_tts_provider_misconfigured_before_runnin
 ):
     """The TTS provider must be resolved BEFORE the expensive model call, not after — AGENTS.md
     invariant 19's ordering, extended to the API. Asserts BOTH the status code and that the
-    subprocess was never started, so a bad RN_TTS_PROVIDER never wastes a real model call."""
+    subprocess was never started, so a bad PN_TTS_PROVIDER never wastes a real model call."""
     _live_env(monkeypatch)
     _add_a_source(client)
-    monkeypatch.setenv("RN_TTS_PROVIDER", "not-a-real-provider")
+    monkeypatch.setenv("PN_TTS_PROVIDER", "not-a-real-provider")
     dotted_tasks: list[str] = []
     _mock_runner(monkeypatch, _podcast_script_result([]), dotted_tasks=dotted_tasks)
 
-    resp = client.post("/notebooks/mynb/audio")
+    resp = client.post("/orbits/mynb/audio")
 
     assert resp.status_code == 500
     assert "not-a-real-provider" in resp.json()["detail"]
@@ -1085,7 +1085,7 @@ def test_audio_translates_a_synthesis_failure_into_502_and_cleans_up_the_temp_fi
     provider = _FakeTTSProvider(boom="simulated network failure")
     _fake_tts_provider(monkeypatch, provider)
 
-    resp = client.post("/notebooks/mynb/audio")
+    resp = client.post("/orbits/mynb/audio")
 
     assert resp.status_code == 502
     assert "audio synthesis failed" in resp.json()["detail"]
@@ -1096,7 +1096,7 @@ def test_audio_translates_a_synthesis_failure_into_502_and_cleans_up_the_temp_fi
     assert not tmp_path.exists()
 
 
-# --- /notebooks/{id}/sources/upload ----------------------------------------------------------------
+# --- /orbits/{id}/sources/upload ----------------------------------------------------------------
 
 
 class _FakeRequestDeclaredOversized:
@@ -1131,9 +1131,9 @@ def test_upload_source_rejects_a_missing_content_length_with_411():
     assert exc_info.value.status_code == 411
 
 
-def test_upload_source_creates_and_persists_a_notebook(client):
+def test_upload_source_creates_and_persists_a_orbit(client):
     resp = client.post(
-        "/notebooks/mynb/sources/upload",
+        "/orbits/mynb/sources/upload",
         files={"file": ("notes.txt", b"hello from an uploaded file", "text/plain")},
     )
 
@@ -1142,7 +1142,7 @@ def test_upload_source_creates_and_persists_a_notebook(client):
     assert body["id"] == "mynb"
     assert body["sources"][0]["kind"] == "text"
     assert body["sources"][0]["origin"] == "notes.txt"
-    assert load_notebook("mynb") is not None
+    assert load_orbit("mynb") is not None
 
 
 def test_upload_source_pdf():
@@ -1150,7 +1150,7 @@ def test_upload_source_pdf():
     client = _authed_client()
 
     resp = client.post(
-        "/notebooks/mynb/sources/upload",
+        "/orbits/mynb/sources/upload",
         files={"file": ("report.pdf", data, "application/pdf")},
     )
 
@@ -1162,11 +1162,11 @@ def test_upload_source_pdf():
 
 def test_upload_source_dedupes_by_filename(client):
     client.post(
-        "/notebooks/mynb/sources/upload",
+        "/orbits/mynb/sources/upload",
         files={"file": ("notes.txt", b"first version", "text/plain")},
     )
     resp = client.post(
-        "/notebooks/mynb/sources/upload",
+        "/orbits/mynb/sources/upload",
         files={"file": ("notes.txt", b"a different version, same filename", "text/plain")},
     )
 
@@ -1176,40 +1176,40 @@ def test_upload_source_dedupes_by_filename(client):
 
 def test_upload_source_rejects_an_unsupported_file_type(client):
     resp = client.post(
-        "/notebooks/mynb/sources/upload",
+        "/orbits/mynb/sources/upload",
         files={"file": ("image.png", b"not really an image", "image/png")},
     )
 
     assert resp.status_code == 422
-    assert load_notebook("mynb") is None  # rejected before anything was persisted
+    assert load_orbit("mynb") is None  # rejected before anything was persisted
 
 
 def test_upload_source_rejects_a_body_that_exceeds_the_declared_cap(client, monkeypatch):
-    monkeypatch.setenv("RN_MAX_UPLOAD_BYTES", "10")
+    monkeypatch.setenv("PN_MAX_UPLOAD_BYTES", "10")
 
     resp = client.post(
-        "/notebooks/mynb/sources/upload",
+        "/orbits/mynb/sources/upload",
         files={"file": ("notes.txt", b"this is much longer than ten bytes", "text/plain")},
     )
 
     assert resp.status_code == 413
 
 
-def test_upload_source_reports_400_not_500_on_an_empty_notebook_id(client):
-    """`"!!!"` is a valid notebook id since the non-Latin fix, so the payload that exercises this
+def test_upload_source_reports_400_not_500_on_an_empty_orbit_id(client):
+    """`"!!!"` is a valid orbit id since the non-Latin fix, so the payload that exercises this
     handler's `ValueError` -> 400 arm is now a genuinely empty one."""
     resp = client.post(
-        "/notebooks/%20%20/sources/upload",
+        "/orbits/%20%20/sources/upload",
         files={"file": ("notes.txt", b"hello", "text/plain")},
     )
     assert resp.status_code == 400
 
 
-# --- /notebooks/{id}/cancel -----------------------------------------------------------------------
+# --- /orbits/{id}/cancel -----------------------------------------------------------------------
 
 
 def test_cancel_404_when_no_active_run(client):
-    resp = client.post("/notebooks/mynb/cancel")
+    resp = client.post("/orbits/mynb/cancel")
     assert resp.status_code == 404
 
 
@@ -1217,7 +1217,7 @@ def test_cancel_calls_cancel_on_the_active_run(client):
     fake_run = _FakeRun("mynb-abcd1234")
     api._ACTIVE_RUNS["mynb"] = fake_run
 
-    resp = client.post("/notebooks/mynb/cancel")
+    resp = client.post("/orbits/mynb/cancel")
 
     assert resp.status_code == 200
     assert resp.json()["cancelled"] == "mynb-abcd1234"
@@ -1232,9 +1232,9 @@ def test_derive_run_id_uses_the_client_token_when_given():
 
 
 def test_derive_run_id_sanitizes_the_client_token():
-    """Reuses notebook.slug()'s whitelist — a client-supplied token becomes a filename component
+    """Reuses orbit.slug()'s whitelist — a client-supplied token becomes a filename component
     too, and an unsanitized value would be the same class of path-traversal vector invariant 10
-    already closed for notebook ids."""
+    already closed for orbit ids."""
     assert api._derive_run_id("mynb", "../../etc/passwd") == "mynb-etc-passwd"
 
 
@@ -1249,11 +1249,11 @@ def test_ask_persists_the_client_supplied_run_id_on_the_chat_turn(client, monkey
     _add_a_source(client)
     _mock_runner(monkeypatch, {"text": "the answer", "citations": []})
 
-    resp = client.post("/notebooks/mynb/ask", json={"question": "what?", "run_id": "myrun"})
+    resp = client.post("/orbits/mynb/ask", json={"question": "what?", "run_id": "myrun"})
 
     assert resp.status_code == 200, resp.text
-    notebook = load_notebook("mynb")
-    assert notebook.turns[0].run_id == "mynb-myrun"
+    orbit = load_orbit("mynb")
+    assert orbit.turns[0].run_id == "mynb-myrun"
     assert (api._TRACE_DIR / "mynb-myrun.jsonl").exists()
 
 
@@ -1262,19 +1262,19 @@ def test_ask_persists_a_server_generated_run_id_when_none_supplied(client, monke
     _add_a_source(client)
     _mock_runner(monkeypatch, {"text": "the answer", "citations": []})
 
-    client.post("/notebooks/mynb/ask", json={"question": "what?"})
+    client.post("/orbits/mynb/ask", json={"question": "what?"})
 
-    notebook = load_notebook("mynb")
-    assert notebook.turns[0].run_id.startswith("mynb-")
+    orbit = load_orbit("mynb")
+    assert orbit.turns[0].run_id.startswith("mynb-")
 
 
-def test_get_notebook_echoes_the_persisted_run_id_per_turn(client, monkeypatch):
+def test_get_orbit_echoes_the_persisted_run_id_per_turn(client, monkeypatch):
     _live_env(monkeypatch)
     _add_a_source(client)
     _mock_runner(monkeypatch, {"text": "the answer", "citations": []})
-    client.post("/notebooks/mynb/ask", json={"question": "what?", "run_id": "myrun"})
+    client.post("/orbits/mynb/ask", json={"question": "what?", "run_id": "myrun"})
 
-    resp = client.get("/notebooks/mynb")
+    resp = client.get("/orbits/mynb")
 
     assert resp.json()["turns"][0]["run_id"] == "mynb-myrun"
 
@@ -1289,7 +1289,7 @@ def test_ask_reports_409_when_the_run_id_collides_with_one_already_in_use(client
     api._TRACE_DIR.mkdir(parents=True, exist_ok=True)
     (api._TRACE_DIR / "mynb-dupe.jsonl").touch()  # simulates an already-in-flight (or used) run_id
 
-    resp = client.post("/notebooks/mynb/ask", json={"question": "what?", "run_id": "dupe"})
+    resp = client.post("/orbits/mynb/ask", json={"question": "what?", "run_id": "dupe"})
 
     assert resp.status_code == 409
     assert "dupe" in resp.json()["detail"]
@@ -1297,7 +1297,7 @@ def test_ask_reports_409_when_the_run_id_collides_with_one_already_in_use(client
 
 def test_run_isolated_cleans_up_the_reserved_trace_file_when_start_run_fails(monkeypatch, tmp_path):
     """A failed subprocess spawn must not permanently occupy the run id — otherwise a later retry
-    of the exact same notebook+token pair gets a false 409 forever instead of the real error."""
+    of the exact same orbit+token pair gets a false 409 forever instead of the real error."""
     monkeypatch.chdir(tmp_path)
 
     async def _boom(run_id, trace_dir, dotted_task, kwargs, *, fresh=False):
@@ -1307,21 +1307,21 @@ def test_run_isolated_cleans_up_the_reserved_trace_file_when_start_run_fails(mon
 
     with pytest.raises(OSError, match="simulated spawn failure"):
         asyncio.run(
-            api._run_isolated("mynb", "some:Task", {}, api.NotebookConfig(), "mynb-willfail")
+            api._run_isolated("mynb", "some:Task", {}, api.PenumbraConfig(), "mynb-willfail")
         )
 
     assert not (api._TRACE_DIR / "mynb-willfail.jsonl").exists()
 
 
 def test_run_isolated_tracks_and_clears_run_processes(monkeypatch, tmp_path):
-    """`_RUN_PROCESSES` (keyed by run_id, NOT notebook_id) must be populated while the run is in
+    """`_RUN_PROCESSES` (keyed by run_id, NOT orbit_id) must be populated while the run is in
     flight and cleared afterward — the whole point of adding it separately from `_ACTIVE_RUNS` was
     a precise per-run liveness signal for the trace-stream endpoint."""
     monkeypatch.chdir(tmp_path)
     _mock_runner(monkeypatch, {"ok": True})
 
     async def _run():
-        return await api._run_isolated("mynb", "some:Task", {}, api.NotebookConfig(), "mynb-tracked")
+        return await api._run_isolated("mynb", "some:Task", {}, api.PenumbraConfig(), "mynb-tracked")
 
     asyncio.run(_run())
     assert "mynb-tracked" not in api._RUN_PROCESSES  # cleared once the (fake) run finished
@@ -1396,7 +1396,7 @@ def test_stream_run_replays_a_finished_trace_without_waiting(client, monkeypatch
         ],
     )
 
-    resp = client.get("/notebooks/mynb/runs/mynb-done/stream")
+    resp = client.get("/orbits/mynb/runs/mynb-done/stream")
 
     assert resp.status_code == 200
     body = resp.text
@@ -1406,13 +1406,13 @@ def test_stream_run_replays_a_finished_trace_without_waiting(client, monkeypatch
     assert '"failed"' in body or '"done"' in body
 
 
-def test_stream_run_reports_not_found_when_run_id_does_not_belong_to_the_notebook(client):
-    """Mirrors citation_turn's same ownership check — a mismatched notebook_id must not stream a
-    trace that belongs to a different notebook, found as a non-blocking gap during this phase's
+def test_stream_run_reports_not_found_when_run_id_does_not_belong_to_the_orbit(client):
+    """Mirrors citation_turn's same ownership check — a mismatched orbit_id must not stream a
+    trace that belongs to a different orbit, found as a non-blocking gap during this phase's
     own completion check (citation_turn already had this check, stream_run didn't yet)."""
     _write_trace("othernb-run", [{"type": "run_start", "payload": {}}])
 
-    resp = client.get("/notebooks/mynb/runs/othernb-run/stream")
+    resp = client.get("/orbits/mynb/runs/othernb-run/stream")
 
     assert resp.status_code == 200  # SSE has already committed headers
     assert "not_found" in resp.text
@@ -1424,7 +1424,7 @@ def test_stream_run_reports_not_found_after_the_grace_period_when_no_trace_ever_
     monkeypatch.setattr(api, "_TRACE_FILE_WAIT_GRACE", 0.05)
     monkeypatch.setattr(api, "_TRACE_POLL_INTERVAL", 0.01)
 
-    resp = client.get("/notebooks/mynb/runs/mynb-nonexistent/stream")
+    resp = client.get("/orbits/mynb/runs/mynb-nonexistent/stream")
 
     assert resp.status_code == 200  # SSE has already committed headers — the error is IN the stream
     assert "not_found" in resp.text
@@ -1436,7 +1436,7 @@ def test_stream_run_keeps_waiting_for_an_announced_run_whose_trace_does_not_exis
     """A user reported `no run '…-summary' found` on their first-ever overview, and it reproduced
     first try. The window is NOT the one invariant 29 closed (between the exclusive-create and the
     `_RUN_PROCESSES` registration) — it is much larger and sits BEFORE the exclusive-create happens
-    at all: every run-taking handler calls `_resolve_language` first, and on a new notebook that is
+    at all: every run-taking handler calls `_resolve_language` first, and on a new orbit that is
     always a real model round trip, always longer than the grace period.
 
     `_announced` marks the id as coming; this pins that the stream then waits INDEFINITELY rather
@@ -1473,12 +1473,12 @@ def test_stream_run_keeps_waiting_for_an_announced_run_whose_trace_does_not_exis
 
 
 @pytest.mark.parametrize("slow", ["summary", "faq"])
-def test_a_notebook_cannot_be_deleted_while_either_overview_run_is_in_flight(client, monkeypatch, slow):
-    """**`/overview` runs two tasks at once and `_ACTIVE_RUNS` has one slot per notebook.**
+def test_a_orbit_cannot_be_deleted_while_either_overview_run_is_in_flight(client, monkeypatch, slow):
+    """**`/overview` runs two tasks at once and `_ACTIVE_RUNS` has one slot per orbit.**
 
     Whichever run registered last owned the slot and cleared it when it finished, while the other
-    was still going — so `DELETE /notebooks/{id}` answered `{"deleted": true}` with a paid run in
-    flight, and the page, now on the Inbox, had no Stop for it anywhere. Found by an independent
+    was still going — so `DELETE /orbits/{id}` answered `{"deleted": true}` with a paid run in
+    flight, and the page, now on the Horizon, had no Stop for it anywhere. Found by an independent
     review with a 12s Summary and a 1s FAQ. Both orderings are driven, because which of the two owns
     the slot depends on registration order; one of them is the bug.
     """
@@ -1514,12 +1514,12 @@ def test_a_notebook_cannot_be_deleted_while_either_overview_run_is_in_flight(cli
                 for _ in range(20):  # let the fast run's `finally` clear what it owns
                     await asyncio.sleep(0)
                 try:
-                    return await ac.delete("/notebooks/mynb")
+                    return await ac.delete("/orbits/mynb")
                 finally:
                     delete_sent.set()
 
             return await asyncio.gather(
-                ac.post("/notebooks/mynb/overview", json={}), _delete_mid_run()
+                ac.post("/orbits/mynb/overview", json={}), _delete_mid_run()
             )
 
     posted, deleted = asyncio.run(_go())
@@ -1542,8 +1542,8 @@ def test_overview_announces_its_runs_before_the_language_call(client, monkeypatc
     monkeypatch.setattr(api, "_TRACE_FILE_WAIT_GRACE", 0.05)
     monkeypatch.setattr(api, "_TRACE_POLL_INTERVAL", 0.01)
 
-    async def _slow_language(notebook, request, config, run_id):
-        # Stands in for the real model round trip, which on a NEW notebook always happens and
+    async def _slow_language(orbit, request, config, run_id):
+        # Stands in for the real model round trip, which on a NEW orbit always happens and
         # always outlasts the grace period.
         await asyncio.sleep(0.4)
         return "English"
@@ -1563,13 +1563,13 @@ def test_overview_announces_its_runs_before_the_language_call(client, monkeypatc
         ) as ac:
             async def _stream():
                 async with ac.stream(
-                    "GET", f"/notebooks/mynb/runs/{summary_run}/stream"
+                    "GET", f"/orbits/mynb/runs/{summary_run}/stream"
                 ) as resp:
                     return "".join([chunk async for chunk in resp.aiter_text()])
 
             streamed, posted = await asyncio.gather(
                 _stream(),
-                ac.post("/notebooks/mynb/overview", json={"run_id": token}),
+                ac.post("/orbits/mynb/overview", json={"run_id": token}),
             )
             return streamed, posted
 
@@ -1579,9 +1579,9 @@ def test_overview_announces_its_runs_before_the_language_call(client, monkeypatc
     assert "not_found" not in streamed, streamed[:300]
 
 
-def test_cancel_run_targets_one_run_id_not_the_whole_notebook(client, monkeypatch):
-    """`/overview` fires TWO runs and invariant 23's `_ACTIVE_RUNS` holds one slot per NOTEBOOK, so
-    the notebook-scoped cancel reaches only whichever registered last — the user asks to stop and
+def test_cancel_run_targets_one_run_id_not_the_whole_orbit(client, monkeypatch):
+    """`/overview` fires TWO runs and invariant 23's `_ACTIVE_RUNS` holds one slot per ORBIT, so
+    the orbit-scoped cancel reaches only whichever registered last — the user asks to stop and
     the other run keeps burning a model call. This one kills exactly the id asked for."""
     killed: list = []
     monkeypatch.setattr(api.os, "killpg", lambda pid, sig: killed.append(pid))
@@ -1589,7 +1589,7 @@ def test_cancel_run_targets_one_run_id_not_the_whole_notebook(client, monkeypatc
     api._RUN_PROCESSES["mynb-a"] = types.SimpleNamespace(pid=4242)
     api._RUN_PROCESSES["mynb-b"] = None  # announced, not spawned yet
     try:
-        assert client.post("/notebooks/mynb/runs/mynb-a/cancel").json()["cancelled"] == "mynb-a"
+        assert client.post("/orbits/mynb/runs/mynb-a/cancel").json()["cancelled"] == "mynb-a"
         assert killed == [4242]
 
         # **Reserved-but-not-spawned is STOPPED, not merely reported.** This used to assert
@@ -1598,7 +1598,7 @@ def test_cancel_run_targets_one_run_id_not_the_whole_notebook(client, monkeypatc
         # the run over — and watched the main worker spawn twenty-four seconds later and burn a full
         # model call with no indicator and no control. Invariant 47 broken inside invariant 46's own
         # window, on the paid path. Recording the id is what makes the stop real.
-        body = client.post("/notebooks/mynb/runs/mynb-b/cancel").json()
+        body = client.post("/orbits/mynb/runs/mynb-b/cancel").json()
         assert body["cancelled"] == "mynb-b", "a stop that signals nothing is not a stop"
         assert "before it started" in body["detail"]
         assert "mynb-b" in api._CANCELLED_BEFORE_SPAWN
@@ -1609,15 +1609,15 @@ def test_cancel_run_targets_one_run_id_not_the_whole_notebook(client, monkeypatc
         # very model call that makes this window long enough to press Stop in still running.
         api._RUN_PROCESSES["mynb-c"] = None
         api._RUN_PROCESSES["mynb-c-lang"] = types.SimpleNamespace(pid=777)
-        body = client.post("/notebooks/mynb/runs/mynb-c/cancel").json()
+        body = client.post("/orbits/mynb/runs/mynb-c/cancel").json()
         assert body["also_cancelled"] == ["mynb-c-lang"]
         assert killed == [4242, 777]
         api._RUN_PROCESSES.pop("mynb-c", None)
         api._RUN_PROCESSES.pop("mynb-c-lang", None)
 
-        # A run belonging to another notebook is refused, same guard `stream_run` applies.
-        assert client.post("/notebooks/other/runs/mynb-a/cancel").status_code == 404
-        assert client.post("/notebooks/mynb/runs/mynb-nope/cancel").status_code == 404
+        # A run belonging to another orbit is refused, same guard `stream_run` applies.
+        assert client.post("/orbits/other/runs/mynb-a/cancel").status_code == 404
+        assert client.post("/orbits/mynb/runs/mynb-nope/cancel").status_code == 404
     finally:
         api._RUN_PROCESSES.pop("mynb-a", None)
         api._RUN_PROCESSES.pop("mynb-b", None)
@@ -1634,7 +1634,7 @@ def test_a_stop_also_records_the_derived_pre_work_run(client, monkeypatch):
     api._RUN_PROCESSES["mynb-x"] = None
     api._RUN_PROCESSES["mynb-x-lang"] = types.SimpleNamespace(pid=999)
     try:
-        body = client.post("/notebooks/mynb/runs/mynb-x/cancel").json()
+        body = client.post("/orbits/mynb/runs/mynb-x/cancel").json()
         assert body["also_cancelled"] == ["mynb-x-lang"]
         assert "mynb-x-lang" in api._CANCELLED_BEFORE_SPAWN, (
             "the derived pre-work run was signalled but not RECORDED, so a respawn is not refused"
@@ -1664,7 +1664,7 @@ def test_a_run_stopped_before_it_spawned_never_spawns(client, monkeypatch):
         with pytest.raises(api.HTTPException) as caught:
             _asyncio.run(
                 api._run_isolated(
-                    "mynb", "x.Y", {}, api.NotebookConfig(main_model="m"), "mynb-stopped"
+                    "mynb", "x.Y", {}, api.PenumbraConfig(main_model="m"), "mynb-stopped"
                 )
             )
         assert caught.value.status_code == 499
@@ -1703,7 +1703,7 @@ def test_a_stop_during_the_pre_work_window_survives_the_announcement(client, mon
         with api._announced(run_id):
             # The reader presses Stop while the language call is still going.
             assert run_id in api._RUN_PROCESSES, "the id has to be announced (invariant 46)"
-            client.post(f"/notebooks/mynb/runs/{run_id}/cancel")
+            client.post(f"/orbits/mynb/runs/{run_id}/cancel")
             assert run_id in api._CANCELLED_BEFORE_SPAWN
             await _asyncio.sleep(0)
         # The `with` has exited. THIS is where the flag used to vanish.
@@ -1712,7 +1712,7 @@ def test_a_stop_during_the_pre_work_window_survives_the_announcement(client, mon
         )
         with pytest.raises(api.HTTPException) as caught:
             await api._run_isolated(
-                "mynb", "x.Y", {}, api.NotebookConfig(main_model="m"), run_id
+                "mynb", "x.Y", {}, api.PenumbraConfig(main_model="m"), run_id
             )
         assert caught.value.status_code == 499
         assert started == [], "the run the reader stopped was spawned anyway"
@@ -1743,7 +1743,7 @@ def test_every_run_taking_handler_announces_before_resolving_the_language():
     from pathlib import Path as _Path
 
     lines = (
-        _Path(__file__).resolve().parent.parent / "rlm_notebook" / "api.py"
+        _Path(__file__).resolve().parent.parent / "penumbra" / "api.py"
     ).read_text().splitlines()
     calls = [i for i, line in enumerate(lines) if "await _resolve_language(" in line]
     assert len(calls) == 5, calls  # ask, title, overview, guide, audio
@@ -1790,7 +1790,7 @@ def test_stream_run_synthesizes_a_terminal_event_for_a_dead_process_with_no_run_
     # No entry in _RUN_PROCESSES at all == "no longer tracked as alive", the same state a
     # finished-and-cleaned-up (or never-tracked) run would be in.
 
-    resp = client.get("/notebooks/mynb/runs/mynb-killed/stream")
+    resp = client.get("/orbits/mynb/runs/mynb-killed/stream")
 
     assert resp.status_code == 200
     # A crash with no `run_end` is a FAILURE. It used to be reported as "done", which told a reader
@@ -1808,7 +1808,7 @@ def test_citation_turn_finds_the_first_event_containing_the_marker(client):
         ],
     )
 
-    resp = client.get("/notebooks/mynb/runs/mynb-cit/citation-turn?source_id=s1&locator=whole")
+    resp = client.get("/orbits/mynb/runs/mynb-cit/citation-turn?source_id=s1&locator=whole")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -1832,7 +1832,7 @@ def test_citation_turn_finds_the_marker_in_a_sub_call_event_not_just_main_step(c
         ],
     )
 
-    resp = client.get("/notebooks/mynb/runs/mynb-sub/citation-turn?source_id=s1&locator=page:2")
+    resp = client.get("/orbits/mynb/runs/mynb-sub/citation-turn?source_id=s1&locator=page:2")
 
     assert resp.status_code == 200
     assert resp.json()["type"] == "sub_call"
@@ -1840,22 +1840,22 @@ def test_citation_turn_finds_the_marker_in_a_sub_call_event_not_just_main_step(c
 
 def test_citation_turn_404s_when_the_trace_file_does_not_exist():
     client = _authed_client()
-    resp = client.get("/notebooks/mynb/runs/mynb-never-ran/citation-turn?source_id=s1&locator=whole")
+    resp = client.get("/orbits/mynb/runs/mynb-never-ran/citation-turn?source_id=s1&locator=whole")
     assert resp.status_code == 404
 
 
 def test_citation_turn_404s_when_no_event_contains_the_marker(client):
     _write_trace("mynb-nomatch", [{"type": "main_step", "payload": {"output": "nothing relevant"}}])
 
-    resp = client.get("/notebooks/mynb/runs/mynb-nomatch/citation-turn?source_id=s1&locator=whole")
+    resp = client.get("/orbits/mynb/runs/mynb-nomatch/citation-turn?source_id=s1&locator=whole")
 
     assert resp.status_code == 404
 
 
-def test_citation_turn_404s_when_run_id_does_not_belong_to_the_notebook(client):
+def test_citation_turn_404s_when_run_id_does_not_belong_to_the_orbit(client):
     _write_trace("othernb-run", [{"type": "main_step", "payload": {"output": "[[SRC:s1|whole]]"}}])
 
-    resp = client.get("/notebooks/mynb/runs/othernb-run/citation-turn?source_id=s1&locator=whole")
+    resp = client.get("/orbits/mynb/runs/othernb-run/citation-turn?source_id=s1&locator=whole")
 
     assert resp.status_code == 404
 
@@ -1867,7 +1867,7 @@ def test_a_source_and_a_note_added_during_an_ask_both_survive_it(monkeypatch, cl
     """THE regression test for this slice's defect, reproduced live over real HTTP against a real
     uvicorn server before the fix: a user keeps working while the model runs — adds a source, saves
     a note — and `ask` then persists its turn on top. Both writes used to return 200 and both were
-    silently destroyed, because `ask` wrote back a whole notebook it had read minutes earlier."""
+    silently destroyed, because `ask` wrote back a whole orbit it had read minutes earlier."""
     _live_env(monkeypatch)
     _add_a_source(client)
 
@@ -1887,7 +1887,7 @@ def test_a_source_and_a_note_added_during_an_ask_both_survive_it(monkeypatch, cl
         asking = asyncio.create_task(
             api.ask("mynb", api.AskRequest(question="what?"), _FakeRequest())
         )
-        await asyncio.sleep(0.05)  # let `ask` load the notebook and park on the run
+        await asyncio.sleep(0.05)  # let `ask` load the orbit and park on the run
 
         await api.add_sources("mynb", api.SourcesRequest(texts=["added while asking"]))
         await api.add_note_endpoint("mynb", api.NoteRequest(text="a note taken while asking"))
@@ -1897,7 +1897,7 @@ def test_a_source_and_a_note_added_during_an_ask_both_survive_it(monkeypatch, cl
 
     asyncio.run(_scenario())
 
-    saved = load_notebook("mynb")
+    saved = load_orbit("mynb")
     assert len(saved.sources) == 2, "the source added mid-run was destroyed"
     assert saved.sources[1].origin.startswith("pasted:added while asking")
     assert [n.id for n in saved.notes] == ["n1"], "the note added mid-run was destroyed"
@@ -1905,7 +1905,7 @@ def test_a_source_and_a_note_added_during_an_ask_both_survive_it(monkeypatch, cl
 
 
 def test_two_concurrent_source_adds_both_land(client):
-    """Invariant 31's originally-documented case (two writers on one notebook). Weaker than the
+    """Invariant 31's originally-documented case (two writers on one orbit). Weaker than the
     test above — before this slice both handlers were fully synchronous, so `gather` would have
     run them one after the other anyway — but now that each dispatches its merge to a thread they
     genuinely overlap, and it pins that the lock plus the re-read keeps both."""
@@ -1918,19 +1918,19 @@ def test_two_concurrent_source_adds_both_land(client):
 
     asyncio.run(_scenario())
 
-    saved = load_notebook("nb2")
+    saved = load_orbit("nb2")
     assert len(saved.sources) == 2
     assert sorted(s.id for s in saved.sources) == ["s1", "s2"]
 
 
 def test_delete_note_404s_on_a_note_a_concurrent_request_already_removed(client):
     """`delete_note`'s `ValueError` must still reach the client as a 404 now that it is raised
-    inside `mutate_notebook`'s worker thread — and must NOT be mistaken for `notebook_path`'s
+    inside `mutate_orbit`'s worker thread — and must NOT be mistaken for `orbit_path`'s
     same-typed invalid-id `ValueError`, which would report a 400 naming the wrong thing."""
-    client.post("/notebooks/mynb/notes", json={"text": "a note"})
+    client.post("/orbits/mynb/notes", json={"text": "a note"})
 
-    assert client.delete("/notebooks/mynb/notes/n1").status_code == 200
-    resp = client.delete("/notebooks/mynb/notes/n1")
+    assert client.delete("/orbits/mynb/notes/n1").status_code == 200
+    resp = client.delete("/orbits/mynb/notes/n1")
 
     assert resp.status_code == 404
     assert "n1" in resp.json()["detail"]
@@ -1954,7 +1954,7 @@ def test_a_finished_run_prunes_old_trace_files(monkeypatch, client):
     _mock_runner(monkeypatch, {"text": "an answer", "citations": []})
     stale = _stale_trace("mynb-ancient", age_days=30)
 
-    assert client.post("/notebooks/mynb/ask", json={"question": "what?"}).status_code == 200
+    assert client.post("/orbits/mynb/ask", json={"question": "what?"}).status_code == 200
 
     assert not stale.exists()
 
@@ -1966,10 +1966,10 @@ def test_a_finished_run_leaves_its_own_fresh_trace_alone(monkeypatch, client):
     _live_env(monkeypatch)
     _add_a_source(client)
     _mock_runner(monkeypatch, {"text": "an answer", "citations": []})
-    monkeypatch.setenv("RN_TRACE_RETENTION_DAYS", "1")
-    monkeypatch.setenv("RN_MAX_TRACE_FILES", "1")
+    monkeypatch.setenv("PN_TRACE_RETENTION_DAYS", "1")
+    monkeypatch.setenv("PN_MAX_TRACE_FILES", "1")
 
-    resp = client.post("/notebooks/mynb/ask", json={"question": "what?", "run_id": "keepme"})
+    resp = client.post("/orbits/mynb/ask", json={"question": "what?", "run_id": "keepme"})
 
     assert resp.status_code == 200
     assert (api._TRACE_DIR / "mynb-keepme.jsonl").exists()
@@ -1994,26 +1994,26 @@ def test_a_malformed_retention_setting_refuses_startup(monkeypatch):
     TestClient's wrapping rather than this project's behavior. The end-to-end effect was verified
     against a REAL uvicorn server instead — it logs "Application startup failed. Exiting." and the
     process exits nonzero."""
-    monkeypatch.setenv("RN_MAX_TRACE_FILES", "not-a-number")
+    monkeypatch.setenv("PN_MAX_TRACE_FILES", "not-a-number")
 
     async def _enter_lifespan():
         async with api._lifespan(api.app):
             pass
 
-    with pytest.raises(SystemExit, match="RN_MAX_TRACE_FILES"):
+    with pytest.raises(SystemExit, match="PN_MAX_TRACE_FILES"):
         asyncio.run(_enter_lifespan())
 
 
 def test_a_broken_retention_setting_does_not_take_down_a_run(monkeypatch, client):
-    """`config.py` raises `SystemExit` on a malformed `RN_*` value. That is right for a CLI and for
+    """`config.py` raises `SystemExit` on a malformed `PN_*` value. That is right for a CLI and for
     `_config()`, and wrong for housekeeping in a `finally` — a completed, paid-for `ask` must not
     become a 500 because a retention knob was typo'd."""
     _live_env(monkeypatch)
     _add_a_source(client)
     _mock_runner(monkeypatch, {"text": "an answer", "citations": []})
-    monkeypatch.setenv("RN_MAX_TRACE_FILES", "not-a-number")
+    monkeypatch.setenv("PN_MAX_TRACE_FILES", "not-a-number")
 
-    assert client.post("/notebooks/mynb/ask", json={"question": "what?"}).status_code == 200
+    assert client.post("/orbits/mynb/ask", json={"question": "what?"}).status_code == 200
 
 
 def test_prune_never_deletes_the_trace_of_a_run_still_in_flight(monkeypatch):
@@ -2041,7 +2041,7 @@ def test_the_stream_does_not_declare_a_reserved_run_dead(monkeypatch):
     emitted `run ended without a final event`, for a run that was about to start perfectly well.
 
     Reported by a user clicking "Generate overview" and reproduced 3/3 against a live server the
-    moment two guide runs were fired concurrently on one notebook (which interleaves the event loop
+    moment two guide runs were fired concurrently on one orbit (which interleaves the event loop
     and widens the window). The reservation placeholder (`_RUN_PROCESSES[run_id] = None`) is what
     distinguishes "starting" from "gone"; this pins that an ABSENT key still means gone."""
     monkeypatch.setattr(api, "_TRACE_POLL_INTERVAL", 0.01)
@@ -2079,22 +2079,22 @@ def test_the_stream_does_not_declare_a_reserved_run_dead(monkeypatch):
 # --- persistent overview --------------------------------------------------------------------
 
 
-def _overview_notebook(client, monkeypatch, result=None):
+def _overview_orbit(client, monkeypatch, result=None):
     _live_env(monkeypatch)
     _add_a_source(client)
     _mock_runner(monkeypatch, result if result is not None else {"text": "an overview", "citations": []})
 
 
 def test_the_overview_persists_and_is_returned_on_read(client, monkeypatch):
-    """The defect this fixed: the overview lived only as a front-end flag, so EVERY notebook opened
+    """The defect this fixed: the overview lived only as a front-end flag, so EVERY orbit opened
     showing the first-run button — even one mid-conversation (reported with a screenshot)."""
-    _overview_notebook(client, monkeypatch)
+    _overview_orbit(client, monkeypatch)
 
-    resp = client.post("/notebooks/mynb/overview", json={"run_id": "tok"})
+    resp = client.post("/orbits/mynb/overview", json={"run_id": "tok"})
     assert resp.status_code == 200, resp.text
     assert resp.json()["overview"]["text"] == "an overview"
 
-    reopened = client.get("/notebooks/mynb").json()["overview"]
+    reopened = client.get("/orbits/mynb").json()["overview"]
     assert reopened is not None
     assert reopened["stale"] is False
 
@@ -2103,12 +2103,12 @@ def test_adding_a_source_marks_the_overview_stale_rather_than_deleting_it(client
     """Confiscating an overview the user just paid an RLM run for, because they added a source, is
     worse than showing it with a marker — it is still true about the sources it was computed from.
     Before this, "never generated" and "generated but the sources changed" rendered identically."""
-    _overview_notebook(client, monkeypatch)
-    client.post("/notebooks/mynb/overview", json={"run_id": "tok"})
+    _overview_orbit(client, monkeypatch)
+    client.post("/orbits/mynb/overview", json={"run_id": "tok"})
 
-    client.post("/notebooks/mynb/sources", json={"texts": ["a second source"]})
+    client.post("/orbits/mynb/sources", json={"texts": ["a second source"]})
 
-    overview = client.get("/notebooks/mynb").json()["overview"]
+    overview = client.get("/orbits/mynb").json()["overview"]
     assert overview is not None, "the overview was deleted instead of marked stale"
     assert overview["stale"] is True
 
@@ -2119,37 +2119,37 @@ def test_the_overview_run_id_is_suffixed_after_derivation(client, monkeypatch):
     (so the first anonymous request wins the exclusive-create gate and every later one 409s until
     retention collects the trace), and `slug`'s 120-char cap merges the two suffixes for a long
     client-chosen token, 409ing one run as a confusing half-failure."""
-    _overview_notebook(client, monkeypatch)
+    _overview_orbit(client, monkeypatch)
 
-    first = client.post("/notebooks/mynb/overview", json={})
-    second = client.post("/notebooks/mynb/overview", json={})
+    first = client.post("/orbits/mynb/overview", json={})
+    second = client.post("/orbits/mynb/overview", json={})
     assert first.status_code == 200 and second.status_code == 200, "an anonymous retry 409'd"
     assert "None" not in (first.json()["overview"]["run_id"] or "")
 
     long_token = "a" * 200
-    resp = client.post("/notebooks/mynb/overview", json={"run_id": long_token})
+    resp = client.post("/orbits/mynb/overview", json={"run_id": long_token})
     assert resp.status_code == 200, resp.text
     assert resp.json()["overview"]["run_id"].endswith("-summary")
 
 
-def test_an_overview_is_refused_for_a_notebook_with_no_sources(client, monkeypatch):
+def test_an_overview_is_refused_for_a_orbit_with_no_sources(client, monkeypatch):
     _live_env(monkeypatch)
-    client.post("/notebooks/empty/notes", json={"text": "just a note"})
-    assert client.post("/notebooks/empty/overview", json={}).status_code == 422
+    client.post("/orbits/empty/notes", json={"text": "just a note"})
+    assert client.post("/orbits/empty/overview", json={}).status_code == 422
 
 
 def test_the_persisted_overviews_citations_are_reverified_on_read(client, monkeypatch):
     """Same discipline every ChatTurn already gets: a stored citation is a claim about a corpus that
     may have changed since, so it is re-verified against the CURRENT one rather than trusted."""
-    _overview_notebook(
+    _overview_orbit(
         client,
         monkeypatch,
         {"text": "x", "citations": [{"source_id": "s99", "locator": "whole", "quote": "q"}]},
     )
 
-    client.post("/notebooks/mynb/overview", json={"run_id": "tok"})
+    client.post("/orbits/mynb/overview", json={"run_id": "tok"})
 
-    citation = client.get("/notebooks/mynb").json()["overview"]["citations"][0]
+    citation = client.get("/orbits/mynb").json()["overview"]["citations"][0]
     assert citation["verified"] is False
     assert "s99" in citation["reason"]
 
@@ -2185,8 +2185,8 @@ def test_every_grounded_task_declares_output_language():
     now that `tts.default_voices_for` closes that. The exclusion being pinned is what made changing
     it a deliberate act: this assertion failed the moment the field was added, rather than the
     scope cut silently eroding."""
-    from rlm_notebook.audio import GeneratePodcastScript
-    from rlm_notebook.task import AnswerQuestion
+    from penumbra.audio import GeneratePodcastScript
+    from penumbra.task import AnswerQuestion
 
     grounded = (AnswerQuestion, GeneratePodcastScript, *(t for t, _ in api._GUIDE_TASKS.values()))
     for task_cls in grounded:
@@ -2194,35 +2194,35 @@ def test_every_grounded_task_declares_output_language():
 
 
 def test_a_forced_language_skips_the_resolution_run_entirely(client, monkeypatch):
-    """`RN_OUTPUT_LANGUAGE` is a hard override, so there is nothing to resolve — and it applies to
+    """`PN_OUTPUT_LANGUAGE` is a hard override, so there is nothing to resolve — and it applies to
     CHAT as well as artifacts (NotebookLM's equivalent setting does; scoping it to artifacts would
     leave an operator who set it wondering why answers stayed in the sources' language)."""
     _live_env(monkeypatch)
-    monkeypatch.setenv("RN_OUTPUT_LANGUAGE", "Traditional Chinese")
+    monkeypatch.setenv("PN_OUTPUT_LANGUAGE", "Traditional Chinese")
     _add_a_source(client)
     dotted: list[str] = []
     _mock_runner(monkeypatch, {"text": "an answer", "citations": []}, dotted_tasks=dotted)
 
-    assert client.post("/notebooks/mynb/ask", json={"question": "q"}).status_code == 200
+    assert client.post("/orbits/mynb/ask", json={"question": "q"}).status_code == 200
 
-    assert dotted == ["rlm_notebook.task:AnswerQuestion"], "a resolution run fired despite the override"
-    assert load_notebook("mynb").output_language is None, "the override must not be persisted"
+    assert dotted == ["penumbra.task:AnswerQuestion"], "a resolution run fired despite the override"
+    assert load_orbit("mynb").output_language is None, "the override must not be persisted"
 
 
 def test_the_language_is_resolved_once_and_persisted(client, monkeypatch):
     _live_env(monkeypatch)
-    monkeypatch.delenv("RN_OUTPUT_LANGUAGE", raising=False)
+    monkeypatch.delenv("PN_OUTPUT_LANGUAGE", raising=False)
     _add_a_source(client)
     dotted: list[str] = []
     _mock_runner_by_run(monkeypatch, dotted, lang="Japanese", other={"text": "x", "citations": []})
 
-    client.post("/notebooks/mynb/guide/summary")
-    assert dotted[0] == "rlm_notebook.naming:SuggestLanguage", dotted
-    assert load_notebook("mynb").output_language == "Japanese"
+    client.post("/orbits/mynb/guide/summary")
+    assert dotted[0] == "penumbra.naming:SuggestLanguage", dotted
+    assert load_orbit("mynb").output_language == "Japanese"
 
     dotted.clear()
-    client.post("/notebooks/mynb/guide/faq")
-    assert "rlm_notebook.naming:SuggestLanguage" not in dotted, "resolved a second time"
+    client.post("/orbits/mynb/guide/faq")
+    assert "penumbra.naming:SuggestLanguage" not in dotted, "resolved a second time"
 
 
 def test_the_overview_resolves_the_language_once_not_once_per_run(client, monkeypatch):
@@ -2230,24 +2230,24 @@ def test_the_overview_resolves_the_language_once_not_once_per_run(client, monkey
     concurrent resolutions deriving the SAME `-lang` run id — one 409s on the exclusive-create gate
     and both race to persist. Caught by the pre-implementation audit; pinned here."""
     _live_env(monkeypatch)
-    monkeypatch.delenv("RN_OUTPUT_LANGUAGE", raising=False)
+    monkeypatch.delenv("PN_OUTPUT_LANGUAGE", raising=False)
     _add_a_source(client)
     dotted: list[str] = []
     _mock_runner_by_run(
         monkeypatch, dotted, lang="Japanese", other={"text": "x", "citations": [], "items": []}
     )
 
-    resp = client.post("/notebooks/mynb/overview", json={"run_id": "tok"})
+    resp = client.post("/orbits/mynb/overview", json={"run_id": "tok"})
 
     assert resp.status_code == 200, resp.text
-    assert dotted.count("rlm_notebook.naming:SuggestLanguage") == 1, dotted
+    assert dotted.count("penumbra.naming:SuggestLanguage") == 1, dotted
 
 
 def test_a_failed_resolution_never_costs_the_caller_their_artifact(client, monkeypatch):
     """A language guess is a convenience. `_resolve_language` returns None on failure and the caller
     substitutes its literal default."""
     _live_env(monkeypatch)
-    monkeypatch.delenv("RN_OUTPUT_LANGUAGE", raising=False)
+    monkeypatch.delenv("PN_OUTPUT_LANGUAGE", raising=False)
     _add_a_source(client)
 
     async def _fail_language(run, *, timeout=None):
@@ -2266,7 +2266,7 @@ def test_a_failed_resolution_never_costs_the_caller_their_artifact(client, monke
     monkeypatch.setattr(api.runner, "start_run", _start)
     monkeypatch.setattr(api.runner, "wait_result", _dispatch)
     try:
-        resp = client.post("/notebooks/mynb/ask", json={"question": "q"})
+        resp = client.post("/orbits/mynb/ask", json={"question": "q"})
     finally:
         monkeypatch.setattr(api.runner, "wait_result", real_wait)
 
@@ -2278,11 +2278,11 @@ def test_a_failed_resolution_never_costs_the_caller_their_artifact(client, monke
 
 
 def test_settings_never_calls_config_and_works_without_a_model(client, monkeypatch):
-    """`NotebookConfig.from_env()` raises SystemExit (a 500) whenever RN_MAIN_MODEL is unset — and a
+    """`PenumbraConfig.from_env()` raises SystemExit (a 500) whenever PN_MAIN_MODEL is unset — and a
     settings page is exactly what an operator opens when the server is misconfigured. The same
     reasoning invariant 30 already applies to `max_upload_bytes`."""
-    monkeypatch.delenv("RN_MAIN_MODEL", raising=False)
-    monkeypatch.delenv("RN_OUTPUT_LANGUAGE", raising=False)
+    monkeypatch.delenv("PN_MAIN_MODEL", raising=False)
+    monkeypatch.delenv("PN_OUTPUT_LANGUAGE", raising=False)
 
     resp = client.get("/settings")
 
@@ -2291,14 +2291,14 @@ def test_settings_never_calls_config_and_works_without_a_model(client, monkeypat
 
 
 def test_settings_refuses_an_unknown_key_and_a_crafted_voice(client, monkeypatch):
-    monkeypatch.delenv("RN_MAIN_MODEL", raising=False)
+    monkeypatch.delenv("PN_MAIN_MODEL", raising=False)
 
     assert client.put("/settings", json={"output_language": "Traditional Chinese"}).status_code == 200
     # An unknown key is REFUSED, not dropped. Pydantic's default drops it before the handler's
     # validator sees it — and combined with full-replacement semantics that made a request carrying
     # only a typo'd key silently WIPE every setting, which a live check caught after this very test
     # (asserting only that nothing extra is persisted) had passed while missing it.
-    resp = client.put("/settings", json={"RN_API_KEY": "sk-x", "output_language": "Japanese"})
+    resp = client.put("/settings", json={"PN_API_KEY": "sk-x", "output_language": "Japanese"})
     assert resp.status_code == 422, resp.text
     assert client.get("/settings").json()["output_language"]["value"] == "Traditional Chinese", (
         "a rejected write must leave the previous settings intact"
@@ -2320,8 +2320,8 @@ def test_settings_refuses_an_unknown_key_and_a_crafted_voice(client, monkeypatch
 def test_no_safety_bound_or_credential_is_readable_or_writable(client, monkeypatch):
     """"Non-secret" was the wrong filter. Trace retention DELETES files that can hold ingested
     source text, the upload cap bounds what a token holder can push, and a writable
-    RN_BASE_URL would exfiltrate RN_API_KEY on the next run without anyone reading it."""
-    monkeypatch.delenv("RN_MAIN_MODEL", raising=False)
+    PN_BASE_URL would exfiltrate PN_API_KEY on the next run without anyone reading it."""
+    monkeypatch.delenv("PN_MAIN_MODEL", raising=False)
 
     exposed = set(client.get("/settings").json())
     assert exposed == {
@@ -2329,7 +2329,7 @@ def test_no_safety_bound_or_credential_is_readable_or_writable(client, monkeypat
         "output_language",
         "tts_voice_host_a",
         "tts_voice_host_b",
-        # A BEHAVIOUR preference, not a bound: `POST /inbox/distil` is already a spend endpoint any
+        # A BEHAVIOUR preference, not a bound: `POST /horizon/distil` is already a spend endpoint any
         # token holder can call, so this changes WHEN summaries happen, not whether someone can
         # cause them. Its bound is the next line down, and stays off the page.
         "auto_distil",
@@ -2352,23 +2352,23 @@ def test_no_safety_bound_or_credential_is_readable_or_writable(client, monkeypat
     assert client.get("/settings").json()["output_language"]["value"] == "Japanese"
 
 
-def test_the_settings_language_beats_a_notebooks_cached_resolution(client, monkeypatch):
-    """The ladder is env -> settings file -> Notebook.output_language -> default. The first two are
+def test_the_settings_language_beats_a_orbits_cached_resolution(client, monkeypatch):
+    """The ladder is env -> settings file -> Orbit.output_language -> default. The first two are
     STATED preferences; the third is a CACHED GUESS that exists only so a resolution isn't paid for
     per artifact. Below the cache, a language chosen in the settings page would be inert for every
-    notebook that has ever generated anything — the notebooks a user is looking at when they open
+    orbit that has ever generated anything — the orbits a user is looking at when they open
     settings."""
     _live_env(monkeypatch)
-    monkeypatch.delenv("RN_OUTPUT_LANGUAGE", raising=False)
+    monkeypatch.delenv("PN_OUTPUT_LANGUAGE", raising=False)
     _add_a_source(client)
     dotted: list[str] = []
     _mock_runner_by_run(monkeypatch, dotted, lang="Japanese", other={"text": "x", "citations": []})
-    client.post("/notebooks/mynb/guide/summary")
-    assert load_notebook("mynb").output_language == "Japanese"
+    client.post("/orbits/mynb/guide/summary")
+    assert load_orbit("mynb").output_language == "Japanese"
 
     client.put("/settings", json={"output_language": "Traditional Chinese"})
 
-    from rlm_notebook.config import output_language
+    from penumbra.config import output_language
 
     assert output_language() == "Traditional Chinese"
 
@@ -2376,7 +2376,7 @@ def test_the_settings_language_beats_a_notebooks_cached_resolution(client, monke
 def test_the_podcast_persists_and_is_served_as_a_file(client, monkeypatch, tmp_path):
     """Phase 2 deliberately kept no audio past one request. That cost the user their episode on
     every reload — reported after they asked where the mp3 was — so it is persisted now: one file
-    per notebook, replaced on regenerate, served as a real file the browser can range-request."""
+    per orbit, replaced on regenerate, served as a real file the browser can range-request."""
     _live_env(monkeypatch)
     _add_a_source(client)
     _mock_runner(monkeypatch, {"utterances": [{"speaker": "host_a", "text": "hi", "citations": []}]})
@@ -2399,18 +2399,18 @@ def test_the_podcast_persists_and_is_served_as_a_file(client, monkeypatch, tmp_p
 
     monkeypatch.setattr(api, "get_tts_provider", lambda name: _FakeProvider())
 
-    resp = client.post("/notebooks/mynb/audio", json={"run_id": "pod"})
+    resp = client.post("/orbits/mynb/audio", json={"run_id": "pod"})
     assert resp.status_code == 200, resp.text
 
-    # the transcript comes back on a plain notebook read...
-    podcast = client.get("/notebooks/mynb").json()["podcast"]
+    # the transcript comes back on a plain orbit read...
+    podcast = client.get("/orbits/mynb").json()["podcast"]
     assert podcast is not None
     assert podcast["utterances"][0]["text"] == "hi"
     assert podcast["stale"] is False
 
     # ...and the audio is a separate file endpoint, so a multi-MB blob never rides along on it
     assert "audio_base64" not in str(podcast)
-    audio = client.get("/notebooks/mynb/audio/file")
+    audio = client.get("/orbits/mynb/audio/file")
     assert audio.status_code == 200
     assert audio.headers["content-type"] == "audio/mpeg"
     assert audio.content == b"ID3fake-mp3-bytes"
@@ -2438,16 +2438,16 @@ def test_adding_a_source_marks_the_podcast_stale(client, monkeypatch):
             out_path.write_bytes(b"x")
 
     monkeypatch.setattr(api, "get_tts_provider", lambda name: _FakeProvider())
-    client.post("/notebooks/mynb/audio", json={"run_id": "pod"})
+    client.post("/orbits/mynb/audio", json={"run_id": "pod"})
 
-    client.post("/notebooks/mynb/sources", json={"texts": ["a second source"]})
+    client.post("/orbits/mynb/sources", json={"texts": ["a second source"]})
 
-    assert client.get("/notebooks/mynb").json()["podcast"]["stale"] is True
+    assert client.get("/orbits/mynb").json()["podcast"]["stale"] is True
 
 
 def test_the_audio_file_endpoint_404s_and_400s_cleanly(client):
-    assert client.get("/notebooks/never-generated/audio/file").status_code == 404
-    assert client.get("/notebooks/%20%20/audio/file").status_code == 400
+    assert client.get("/orbits/never-generated/audio/file").status_code == 404
+    assert client.get("/orbits/%20%20/audio/file").status_code == 400
 
 
 # --- the two in-memory run registries -----------------------------------------------------------
@@ -2476,7 +2476,7 @@ def test_run_id_is_reserved_in_run_processes_before_the_subprocess_is_spawned(cl
     monkeypatch.setattr(api.runner, "start_run", _start)
     monkeypatch.setattr(api.runner, "wait_result", _wait)
 
-    assert client.post("/notebooks/mynb/ask", json={"question": "q"}).status_code == 200
+    assert client.post("/orbits/mynb/ask", json={"question": "q"}).status_code == 200
     assert seen == [(True, None)]
 
 
@@ -2485,7 +2485,7 @@ def test_a_finishing_run_never_clears_a_LATER_runs_active_entry(client, monkeypa
     audit found no such test, and the first attempt at one here did not catch the bug either —
     asserting both entries are gone afterwards is satisfied by a plain `pop` too.
 
-    The property that actually distinguishes them: two runs share one notebook slot (the documented
+    The property that actually distinguishes them: two runs share one orbit slot (the documented
     capacity limit), so the SECOND overwrites the FIRST. When the FIRST then finishes while the
     second is still in flight, its `finally` must leave the slot alone — `_ACTIVE_RUNS.get(id) is
     run` is false for it. A plain `pop` deletes the second run's entry instead, and `/cancel` for a
@@ -2525,8 +2525,8 @@ def test_a_finishing_run_never_clears_a_LATER_runs_active_entry(client, monkeypa
             headers={"Authorization": f"Bearer {auth.api_token()}"},
         ) as ac:
             return await asyncio.gather(
-                ac.post("/notebooks/mynb/ask", json={"question": "q", "run_id": "first"}),
-                ac.post("/notebooks/mynb/ask", json={"question": "q", "run_id": "second"}),
+                ac.post("/orbits/mynb/ask", json={"question": "q", "run_id": "first"}),
+                ac.post("/orbits/mynb/ask", json={"question": "q", "run_id": "second"}),
             )
 
     responses = asyncio.run(_go())
@@ -2539,7 +2539,7 @@ def test_a_finishing_run_never_clears_a_LATER_runs_active_entry(client, monkeypa
     assert not [k for k in api._RUN_PROCESSES if k.startswith("mynb-")]
 
 
-# --- Removing a source, renaming a notebook, and what the picker shows ---------------------------
+# --- Removing a source, renaming an orbit, and what the picker shows ---------------------------
 
 
 def test_deleting_a_source_never_renumbers_the_survivors(client):
@@ -2547,16 +2547,16 @@ def test_deleting_a_source_never_renumbers_the_survivors(client):
     that makes removal safe to offer at all — a citation in a saved turn either still resolves to
     the text it was written against, or fails verification loudly."""
     for url in ("https://example.com/a", "https://example.com/b", "https://example.com/c"):
-        client.post("/notebooks/mynb/sources", json={"sources": [url]})
-    assert [s["id"] for s in client.get("/notebooks/mynb").json()["sources"]] == ["s1", "s2", "s3"]
+        client.post("/orbits/mynb/sources", json={"sources": [url]})
+    assert [s["id"] for s in client.get("/orbits/mynb").json()["sources"]] == ["s1", "s2", "s3"]
 
-    resp = client.delete("/notebooks/mynb/sources/s2")
+    resp = client.delete("/orbits/mynb/sources/s2")
     assert resp.status_code == 200
     assert [s["id"] for s in resp.json()["sources"]] == ["s1", "s3"]
 
     # And the NEXT source must not land on `s3` — the collision `next_source_id` exists to prevent.
-    client.post("/notebooks/mynb/sources", json={"sources": ["https://example.com/d"]})
-    ids = [s["id"] for s in client.get("/notebooks/mynb").json()["sources"]]
+    client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/d"]})
+    ids = [s["id"] for s in client.get("/orbits/mynb").json()["sources"]]
     assert ids == ["s1", "s3", "s4"]
     assert len(ids) == len(set(ids))
 
@@ -2565,11 +2565,11 @@ def test_deleting_a_source_leaves_its_citations_unverified_rather_than_repointed
     """The honest outcome, and the reason nothing needs renumbering: `citations.py` re-verifies
     every stored citation against the CURRENT corpus on every read (invariants 5 and 11)."""
     for url in ("https://example.com/a", "https://example.com/b"):
-        client.post("/notebooks/mynb/sources", json={"sources": [url]})
-    from rlm_notebook.notebook import mutate_notebook
-    from rlm_notebook.schema import Answer, ChatTurn, Citation
+        client.post("/orbits/mynb/sources", json={"sources": [url]})
+    from penumbra.orbit import mutate_orbit
+    from penumbra.schema import Answer, ChatTurn, Citation
 
-    mutate_notebook(
+    mutate_orbit(
         "mynb",
         lambda nb: nb.turns.append(
             ChatTurn(
@@ -2588,9 +2588,9 @@ def test_deleting_a_source_leaves_its_citations_unverified_rather_than_repointed
         ),
     )
 
-    assert client.get("/notebooks/mynb").json()["turns"][0]["citations"][0]["verified"] is True
-    client.delete("/notebooks/mynb/sources/s2")
-    citation = client.get("/notebooks/mynb").json()["turns"][0]["citations"][0]
+    assert client.get("/orbits/mynb").json()["turns"][0]["citations"][0]["verified"] is True
+    client.delete("/orbits/mynb/sources/s2")
+    citation = client.get("/orbits/mynb").json()["turns"][0]["citations"][0]
     assert citation["verified"] is False
     assert citation["source_id"] == "s2"  # still says where it pointed, not repointed at s1
     assert citation["reason"]
@@ -2607,11 +2607,11 @@ def test_a_removed_sources_citation_cannot_be_revived_by_the_next_source(client)
     with a ✓ next to it. `next_source_id` allocates from a persisted high-water mark for this.
     """
     for url in ("https://example.com/a", "https://example.com/b"):
-        client.post("/notebooks/mynb/sources", json={"sources": [url]})
-    from rlm_notebook.notebook import mutate_notebook
-    from rlm_notebook.schema import Answer, ChatTurn, Citation
+        client.post("/orbits/mynb/sources", json={"sources": [url]})
+    from penumbra.orbit import mutate_orbit
+    from penumbra.schema import Answer, ChatTurn, Citation
 
-    mutate_notebook(
+    mutate_orbit(
         "mynb",
         lambda nb: nb.turns.append(
             ChatTurn(
@@ -2627,79 +2627,79 @@ def test_a_removed_sources_citation_cannot_be_revived_by_the_next_source(client)
             )
         ),
     )
-    assert client.get("/notebooks/mynb").json()["turns"][0]["citations"][0]["verified"] is True
+    assert client.get("/orbits/mynb").json()["turns"][0]["citations"][0]["verified"] is True
 
-    client.delete("/notebooks/mynb/sources/s2")
-    resp = client.post("/notebooks/mynb/sources", json={"sources": ["https://example.com/c"]})
+    client.delete("/orbits/mynb/sources/s2")
+    resp = client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/c"]})
     assert resp.status_code == 200
     ids = [s["id"] for s in resp.json()["sources"]]
     assert ids == ["s1", "s3"], "the freed id must never be handed out again"
 
-    citation = client.get("/notebooks/mynb").json()["turns"][0]["citations"][0]
+    citation = client.get("/orbits/mynb").json()["turns"][0]["citations"][0]
     assert citation["verified"] is False, "a removed source's citation must not be revived"
     assert citation["source_id"] == "s2"
     # And the mark SURVIVES the round trip through the file, which is what makes it a guarantee
     # rather than a property of one in-memory object.
-    assert load_notebook("mynb").source_seq == 3
+    assert load_orbit("mynb").source_seq == 3
 
 
 def test_deleting_a_source_404s_for_an_unknown_id(client):
-    client.post("/notebooks/mynb/sources", json={"sources": ["https://example.com/a"]})
-    assert client.delete("/notebooks/mynb/sources/s99").status_code == 404
-    assert client.delete("/notebooks/nope/sources/s1").status_code == 404
+    client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
+    assert client.delete("/orbits/mynb/sources/s99").status_code == 404
+    assert client.delete("/orbits/nope/sources/s1").status_code == 404
 
 
 def test_renaming_normalises_the_same_way_a_generated_title_does(client):
-    client.post("/notebooks/mynb/sources", json={"sources": ["https://example.com/a"]})
-    resp = client.put("/notebooks/mynb/title", json={"title": '  "Voyager   notes."  '})
+    client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
+    resp = client.put("/orbits/mynb/title", json={"title": '  "Voyager   notes."  '})
     assert resp.status_code == 200
     assert resp.json()["title"] == "Voyager notes"
-    assert load_notebook("mynb").title == "Voyager notes"
+    assert load_orbit("mynb").title == "Voyager notes"
 
 
 def test_renaming_refuses_an_empty_title_instead_of_deriving_one(client):
     """The one way rename differs from generation: substituting a derived label for what someone
     typed would be the UI lying about what it did."""
-    client.post("/notebooks/mynb/sources", json={"sources": ["https://example.com/a"]})
-    assert client.put("/notebooks/mynb/title", json={"title": "   "}).status_code == 422
-    assert client.put("/notebooks/mynb/title", json={"title": "x" * 500}).status_code == 422
-    assert load_notebook("mynb").title is None
+    client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
+    assert client.put("/orbits/mynb/title", json={"title": "   "}).status_code == 422
+    assert client.put("/orbits/mynb/title", json={"title": "x" * 500}).status_code == 422
+    assert load_orbit("mynb").title is None
 
 
 def test_renaming_rejects_an_unknown_field_rather_than_dropping_it(client):
     """`extra="forbid"`, for the reason invariant 41 records: pydantic's default DROPS unknown keys,
     so a typo'd field would arrive as a rename to nothing."""
-    client.post("/notebooks/mynb/sources", json={"sources": ["https://example.com/a"]})
-    assert client.put("/notebooks/mynb/title", json={"titel": "oops"}).status_code == 422
-    assert client.put("/notebooks/nope/title", json={"title": "x"}).status_code == 404
+    client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
+    assert client.put("/orbits/mynb/title", json={"titel": "oops"}).status_code == 422
+    assert client.put("/orbits/nope/title", json={"title": "x"}).status_code == 404
 
 
 def test_the_picker_falls_back_to_the_same_derived_label_in_both_places(client):
-    """The header reads `NotebookResponse.derived_title` and the picker row reads
-    `NotebookSummary.derived_title`. They used to disagree — one said "Untitled notebook" while the
-    other showed a derived label for the same notebook, which reads as two different notebooks."""
-    client.post("/notebooks/mynb/sources", json={"sources": ["https://example.com/voyager"]})
-    from_get = client.get("/notebooks/mynb").json()
-    from_list = next(n for n in client.get("/notebooks").json()["notebooks"] if n["id"] == "mynb")
+    """The header reads `OrbitResponse.derived_title` and the picker row reads
+    `OrbitSummary.derived_title`. They used to disagree — one said "Untitled orbit" while the
+    other showed a derived label for the same orbit, which reads as two different orbits."""
+    client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/voyager"]})
+    from_get = client.get("/orbits/mynb").json()
+    from_list = next(n for n in client.get("/orbits").json()["orbits"] if n["id"] == "mynb")
 
     assert from_get["title"] is None and from_list["title"] is None
     assert from_get["derived_title"] == from_list["derived_title"] != ""
 
 
-def test_the_picker_lists_the_most_recently_touched_notebook_first(client):
-    """Model-authored titles are NOT unique — a user hit three notebooks with near-identical
+def test_the_picker_lists_the_most_recently_touched_orbit_first(client):
+    """Model-authored titles are NOT unique — a user hit three orbits with near-identical
     generated names — so "which did I touch last" has to be answerable."""
     for name in ("first", "second", "third"):
-        client.post(f"/notebooks/{name}/sources", json={"sources": [f"https://example.com/{name}"]})
+        client.post(f"/orbits/{name}/sources", json={"sources": [f"https://example.com/{name}"]})
         time.sleep(0.01)  # mtime resolution
-    assert [n["id"] for n in client.get("/notebooks").json()["notebooks"]] == [
+    assert [n["id"] for n in client.get("/orbits").json()["orbits"]] == [
         "third",
         "second",
         "first",
     ]
 
-    client.post("/notebooks/first/notes", json={"text": "touched"})
-    listed = client.get("/notebooks").json()["notebooks"]
+    client.post("/orbits/first/notes", json={"text": "touched"})
+    listed = client.get("/orbits").json()["orbits"]
     assert listed[0]["id"] == "first"
     assert listed[0]["updated_at"] > listed[-1]["updated_at"]
 
@@ -2707,8 +2707,8 @@ def test_the_picker_lists_the_most_recently_touched_notebook_first(client):
 def test_settings_choices_works_on_a_server_with_no_model_configured(client, monkeypatch):
     """Invariant 41's reason, one endpoint further: a settings page is what an operator opens WHEN
     the server is misconfigured, so nothing on it may go through `_config()`."""
-    monkeypatch.delenv("RN_MAIN_MODEL", raising=False)
-    monkeypatch.delenv("RN_TTS_PROVIDER", raising=False)
+    monkeypatch.delenv("PN_MAIN_MODEL", raising=False)
+    monkeypatch.delenv("PN_TTS_PROVIDER", raising=False)
 
     resp = client.get("/settings/choices")
     assert resp.status_code == 200
@@ -2724,7 +2724,7 @@ def test_settings_choices_works_on_a_server_with_no_model_configured(client, mon
 def test_settings_choices_offers_the_configured_providers_own_voice_names(client, monkeypatch):
     """A voice NAME is provider-specific (invariant 43), so offering edge-tts ids to a chatterbox
     deployment would name voices that fail at synthesis — after a real model call was spent."""
-    monkeypatch.setenv("RN_TTS_PROVIDER", "chatterbox")
+    monkeypatch.setenv("PN_TTS_PROVIDER", "chatterbox")
     body = client.get("/settings/choices").json()
     assert body["provider"] == "chatterbox"
     assert not any(voice.endswith("Neural") for voice in body["voices"])
@@ -2733,13 +2733,13 @@ def test_settings_choices_offers_the_configured_providers_own_voice_names(client
     # speak eleven the voice map has no entry for. Reading the menu off the voice map offered the
     # first group and hid the second — and picking one persists a GLOBAL `output_language` that then
     # makes every /audio request fail at `validate`.
-    monkeypatch.setenv("RN_TTS_PROVIDER", "edge-tts")
+    monkeypatch.setenv("PN_TTS_PROVIDER", "edge-tts")
     edge_languages = set(client.get("/settings/choices").json()["output_languages"])
     assert "Thai" in edge_languages and "Danish" not in edge_languages
     assert "Thai" not in set(body["output_languages"])
     assert "Danish" in set(body["output_languages"])
 
-    monkeypatch.setenv("RN_TTS_PROVIDER", "not-a-real-provider")
+    monkeypatch.setenv("PN_TTS_PROVIDER", "not-a-real-provider")
     unknown = client.get("/settings/choices").json()
     assert unknown["voices"] == []  # renders, rather than raising
     # The language row still works: `output_language` drives chat and every guide artifact, so a
@@ -2778,13 +2778,13 @@ def test_an_answer_span_survives_the_ask_endpoint_and_a_bogus_one_does_not(clien
         },
     )
 
-    citations = client.post("/notebooks/mynb/ask", json={"question": "q"}).json()["citations"]
+    citations = client.post("/orbits/mynb/ask", json={"question": "q"}).json()["citations"]
     assert citations[0]["answer_span"] == "Voyager left the heliosphere in 2012."
     assert citations[1]["answer_span"] is None  # dropped, but the citation itself survives
     assert citations[1]["verified"] is True
 
     # And it survives the round trip, checked against the SAME text on read.
-    reread = client.get("/notebooks/mynb").json()["turns"][0]["citations"]
+    reread = client.get("/orbits/mynb").json()["turns"][0]["citations"]
     assert reread[0]["answer_span"] == "Voyager left the heliosphere in 2012."
     assert reread[1]["answer_span"] is None
 
@@ -2829,27 +2829,27 @@ def test_follow_up_questions_come_back_with_the_answer_and_survive_a_reload(clie
         },
     )
 
-    asked = client.post("/notebooks/mynb/ask", json={"question": "q"}).json()
+    asked = client.post("/orbits/mynb/ask", json={"question": "q"}).json()
     assert asked["follow_ups"] == ["What powers it?", "Where is Voyager 2?"]
 
-    turn = client.get("/notebooks/mynb").json()["turns"][0]
+    turn = client.get("/orbits/mynb").json()["turns"][0]
     assert turn["follow_ups"] == ["What powers it?", "Where is Voyager 2?"]
 
 
 def test_a_turn_saved_before_follow_ups_existed_still_loads(client, monkeypatch):
-    """Same backward-compatible precedent `ChatTurn.run_id`, `Notebook.notes` and
-    `Citation.answer_span` set: an older notebook file has no such key at all."""
+    """Same backward-compatible precedent `ChatTurn.run_id`, `Orbit.notes` and
+    `Citation.answer_span` set: an older orbit file has no such key at all."""
     _live_env(monkeypatch)
     _add_a_source(client)
     _mock_runner(monkeypatch, {"text": "an answer", "citations": []})
-    client.post("/notebooks/mynb/ask", json={"question": "q"})
+    client.post("/orbits/mynb/ask", json={"question": "q"})
 
-    path = notebook_path("mynb")
+    path = orbit_path("mynb")
     raw = json.loads(path.read_text(encoding="utf-8"))
     del raw["turns"][0]["answer"]["follow_ups"]
     path.write_text(json.dumps(raw), encoding="utf-8")
 
-    turn = client.get("/notebooks/mynb").json()["turns"][0]
+    turn = client.get("/orbits/mynb").json()["turns"][0]
     assert turn["follow_ups"] == []
 
 
@@ -2857,7 +2857,7 @@ def test_follow_ups_are_not_citation_verified():
     """A question is a prompt, not a claim, so invariant 5 has nothing to check — and nothing in the
     schema should suggest otherwise. Pinned because "citations everywhere" is the house style here,
     and adding them to this field would imply a guarantee that cannot exist."""
-    from rlm_notebook.schema import Answer
+    from penumbra.schema import Answer
 
     assert Answer.model_fields["follow_ups"].annotation == list[str]
     assert Answer(text="x").follow_ups == []
@@ -2872,14 +2872,14 @@ def test_the_podcast_task_really_does_carry_the_longest_instructions():
     survived on the same model, and the explanation rests on a measurement. Pinned so the claim
     cannot quietly stop being true — and because the numbers in an early draft of it were taken from
     a report rather than from the code."""
-    from rlm_notebook.audio import GeneratePodcastScript
-    from rlm_notebook.guide import (
+    from penumbra.audio import GeneratePodcastScript
+    from penumbra.guide import (
         GenerateFAQ,
         GenerateKeyInsight,
         GenerateSummary,
         GenerateTimeline,
     )
-    from rlm_notebook.task import AnswerQuestion
+    from penumbra.task import AnswerQuestion
 
     others = [
         len(cls.instructions)
@@ -2918,12 +2918,12 @@ def test_no_response_ships_a_corpus_marker_in_its_prose(client, monkeypatch):
         },
     )
 
-    asked = client.post("/notebooks/mynb/ask", json={"question": "q"}).json()
+    asked = client.post("/orbits/mynb/ask", json={"question": "q"}).json()
     assert "[[SRC:" not in asked["text"]
     # ...and the span still locates against the stripped prose, so the stroke survives.
     assert asked["citations"][0]["answer_span"] == "Voyager left in 2012."
 
-    turn = client.get("/notebooks/mynb").json()["turns"][0]
+    turn = client.get("/orbits/mynb").json()["turns"][0]
     assert "[[SRC:" not in turn["answer"]
     assert turn["citations"][0]["answer_span"] == "Voyager left in 2012."
 
@@ -2953,7 +2953,7 @@ def test_every_artifact_text_in_a_response_goes_through_the_same_stripper():
 
 
 def test_the_podcast_length_reaches_the_task(client, monkeypatch):
-    """A tier the request carries but the task never receives is the `RN_OCR_PROVIDER` shape
+    """A tier the request carries but the task never receives is the `PN_OCR_PROVIDER` shape
     (invariant 7): validated on the way in, then ignored. And invariant 39 records the asymmetry
     that makes it invisible — a MISSING required input surfaces only as an opaque
     `RLMTaskError`, while an UNDECLARED extra kwarg is silently accepted."""
@@ -2971,11 +2971,11 @@ def test_the_podcast_length_reaches_the_task(client, monkeypatch):
     monkeypatch.setattr(api.runner, "start_run", _fake_start_run)
     monkeypatch.setattr(api.runner, "wait_result", _fake_wait_result)
 
-    client.post("/notebooks/mynb/audio", json={"length": "long"})
+    client.post("/orbits/mynb/audio", json={"length": "long"})
     assert seen and seen[-1]["target_length"] == "long"
 
     seen.clear()
-    client.post("/notebooks/mynb/audio", json={})
+    client.post("/orbits/mynb/audio", json={})
     assert seen[-1]["target_length"] == "default", "an absent length must not become empty"
 
 
@@ -2985,15 +2985,15 @@ def test_the_podcast_length_refuses_an_unknown_tier_and_a_typo(client, monkeypat
     model run."""
     _live_env(monkeypatch)
     _add_a_source(client)
-    assert client.post("/notebooks/mynb/audio", json={"length": "epic"}).status_code == 422
-    assert client.post("/notebooks/mynb/audio", json={"len": "long"}).status_code == 422
+    assert client.post("/orbits/mynb/audio", json={"length": "epic"}).status_code == 422
+    assert client.post("/orbits/mynb/audio", json={"len": "long"}).status_code == 422
 
 
 def test_the_podcast_task_declares_the_length_it_is_given():
     """The signature is a class-level string composed at import time, so a per-request value can
     only reach the model as a FIELD. Declared but never passed, or passed but never declared, both
     fail silently in the directions invariant 39 documents."""
-    from rlm_notebook.audio import GeneratePodcastScript
+    from penumbra.audio import GeneratePodcastScript
 
     assert "target_length: str" in GeneratePodcastScript.signature
     for tier in ("short", "default", "long"):
@@ -3012,14 +3012,14 @@ def test_every_rlm_task_gets_the_skills_by_injection():
     from rlm_harness import RLMConfig
     from rlm_harness import runtime as rt
 
-    from rlm_notebook.audio import GeneratePodcastScript
-    from rlm_notebook.guide import (
+    from penumbra.audio import GeneratePodcastScript
+    from penumbra.guide import (
         GenerateFAQ,
         GenerateKeyInsight,
         GenerateSummary,
         GenerateTimeline,
     )
-    from rlm_notebook.task import AnswerQuestion
+    from penumbra.task import AnswerQuestion
 
     # Instantiating an RLMTask needs the harness configured; nothing here runs a model. Snapshot and
     # RESTORE, because `configure` is global: leaving a dummy config behind makes every test that
@@ -3058,7 +3058,7 @@ def test_the_skills_wiring_exists_once():
     a header, and the headers would drift."""
     import inspect
 
-    from rlm_notebook import audio, guide, instructions, task
+    from penumbra import audio, guide, instructions, task
 
     for module in (audio, guide, task):
         source = inspect.getsource(module)
@@ -3075,14 +3075,14 @@ def test_every_task_validator_rejects_a_marker_in_its_own_prose():
     an overview a user reported as a broken render. A guard on the one task that made a noise is a
     guard on the symptom.
 
-    Not a schema validator, deliberately: notebooks already on disk hold artifacts with markers in
+    Not a schema validator, deliberately: orbits already on disk hold artifacts with markers in
     them, and a field-level reject would make those files fail to LOAD — untidy data turned into a
-    corrupt-notebook 409.
+    corrupt-orbit 409.
     """
     import json
 
-    from rlm_notebook.instructions import make_grounded_validator
-    from rlm_notebook.schema import FAQ, Answer, KeyInsight, PodcastScript, Summary, Timeline
+    from penumbra.instructions import make_grounded_validator
+    from penumbra.schema import FAQ, Answer, KeyInsight, PodcastScript, Summary, Timeline
 
     cases = {
         Answer: {"text": "A claim.[[SRC:s1|whole]]", "citations": []},
@@ -3110,7 +3110,7 @@ def test_the_validator_factory_exists_once():
     podcast had one and the other five did not."""
     import inspect
 
-    from rlm_notebook import audio, guide, instructions, task
+    from penumbra import audio, guide, instructions, task
 
     for module in (audio, guide, task):
         assert "make_schema_validator" not in inspect.getsource(module), (
@@ -3126,7 +3126,7 @@ def test_the_skills_catalog_keeps_its_header():
     from rlm_harness import RLMConfig
     from rlm_harness import runtime as rt
 
-    from rlm_notebook.task import AnswerQuestion
+    from penumbra.task import AnswerQuestion
 
     previous = getattr(rt, "_CONFIG", None)
     rt.configure(RLMConfig(main_model="x", sub_model="x", interpreter="pyodide", observe=False))
@@ -3151,7 +3151,7 @@ def test_an_empty_skills_directory_wires_nothing_at_all(tmp_path):
     from rlm_harness import RLMConfig
     from rlm_harness import runtime as rt
 
-    from rlm_notebook.task import AnswerQuestion
+    from penumbra.task import AnswerQuestion
 
     previous = getattr(rt, "_CONFIG", None)
     rt.configure(RLMConfig(main_model="x", sub_model="x", interpreter="pyodide", observe=False))
@@ -3178,11 +3178,11 @@ def test_an_empty_skills_directory_wires_nothing_at_all(tmp_path):
 def test_every_podcast_tier_has_a_wall_clock_allowance():
     """A tier added without deciding its budget is a tier that ships unable to finish under the
     default backstop — which is exactly what `long` did: it timed out at 300s with a trace holding
-    three events, on a notebook whose ordinary chat answer took 77s. Keeping the factors NEXT TO
+    three events, on an orbit whose ordinary chat answer took 77s. Keeping the factors NEXT TO
     the literal only helps if something fails when they drift apart."""
     from typing import get_args
 
-    from rlm_notebook.schema import PODCAST_TIMEOUT_FACTOR, PodcastLength
+    from penumbra.schema import PODCAST_TIMEOUT_FACTOR, PodcastLength
 
     assert set(get_args(PodcastLength)) == set(PODCAST_TIMEOUT_FACTOR)
     factors = [PODCAST_TIMEOUT_FACTOR[t] for t in get_args(PodcastLength)]
@@ -3202,7 +3202,7 @@ def test_the_podcast_run_gets_the_tier_scaled_backstop_not_the_default():
     reaching `wait_result`."""
     import inspect
 
-    from rlm_notebook import api
+    from penumbra import api
 
     src = inspect.getsource(api.audio)
     assert "PODCAST_TIMEOUT_FACTOR[body.length]" in src, (
@@ -3214,12 +3214,12 @@ def test_the_podcast_run_gets_the_tier_scaled_backstop_not_the_default():
 
 
 def test_the_interface_language_reaches_language_resolution_as_a_signal():
-    """A user set the interface to Traditional Chinese and their notebook still came back titled
+    """A user set the interface to Traditional Chinese and their orbit still came back titled
     "LLM Harnesses for Bug Hunting". The chosen interface language is a real signal about what a
     person reads and it was not being sent at all — only `Accept-Language`, which the OS chose."""
     import inspect
 
-    from rlm_notebook import api, naming
+    from penumbra import api, naming
 
     src = inspect.getsource(api._resolve_language)
     assert '"interface_language": request.headers.get("x-rlm-interface-language", "")' in src, src
@@ -3237,7 +3237,7 @@ def test_every_grounded_task_tells_the_model_to_keep_proper_nouns():
     """"Trinity" must not become a translation of the word "trinity" — a translated name is the one
     term a reader then cannot search for. Shared from ONE constant like every other language rule
     (invariant 13), so it cannot land on some tasks and not others."""
-    from rlm_notebook.instructions import PROPER_NOUNS, artifact_language_rule, chat_language_rule
+    from penumbra.instructions import PROPER_NOUNS, artifact_language_rule, chat_language_rule
 
     assert "Trinity" in PROPER_NOUNS
     for rule in (chat_language_rule("Traditional Chinese"), artifact_language_rule("Japanese")):
@@ -3278,7 +3278,7 @@ def _trace_events():
 
 
 def test_the_trajectory_separates_the_two_clocks_a_run_actually_has():
-    from rlm_notebook.trajectory import build_trajectory
+    from penumbra.trajectory import build_trajectory
 
     traj = build_trajectory(_trace_events())
     assert traj["total_s"] == 14.0
@@ -3307,7 +3307,7 @@ def test_the_trajectory_separates_the_two_clocks_a_run_actually_has():
 def test_a_failed_validate_surfaces_its_verdict_because_that_is_the_useful_part():
     """A failed run's single most useful fact is what the validator told the model to fix — an
     invented coordinate, a marker in prose, a shape error — and how many rounds it took."""
-    from rlm_notebook.trajectory import build_trajectory
+    from penumbra.trajectory import build_trajectory
 
     entry = next(
         e for e in build_trajectory(_trace_events())["timeline"] if e["label"] == "validate"
@@ -3321,7 +3321,7 @@ def test_a_trace_with_no_run_end_still_decomposes():
     """A run that was cancelled or timed out has no `run_end` — and is exactly the run someone most
     wants to look at. The reported 502 produced precisely this shape: run_start, two tool calls,
     then nothing."""
-    from rlm_notebook.trajectory import build_trajectory
+    from penumbra.trajectory import build_trajectory
 
     traj = build_trajectory(_trace_events()[:4])
     assert traj["ok"] is None and traj["total_s"] is None
@@ -3332,7 +3332,7 @@ def test_a_trace_with_no_run_end_still_decomposes():
 def test_finalize_flushed_timestamps_are_not_reported_as_per_turn_timing():
     """An older trace wrote every `main_step` at finalize, so their timestamps cluster at one
     instant. Reporting those as durations would invent numbers; the tool timeline is still real."""
-    from rlm_notebook.trajectory import build_trajectory
+    from penumbra.trajectory import build_trajectory
 
     events = _trace_events()
     for event in events:
@@ -3345,15 +3345,15 @@ def test_finalize_flushed_timestamps_are_not_reported_as_per_turn_timing():
     assert [e["duration_s"] for e in traj["timeline"]] == [3.0, 2.0], "tool timing is still real"
 
 
-def test_the_trajectory_endpoint_refuses_a_run_id_from_another_notebook(tmp_path, monkeypatch):
+def test_the_trajectory_endpoint_refuses_a_run_id_from_another_orbit(tmp_path, monkeypatch):
     """Same ownership check `stream_run`/`citation_turn` apply, and applied on the SLUG — invariant
-    38 records that comparing the raw id made every trace link dead for a non-Latin notebook."""
+    38 records that comparing the raw id made every trace link dead for a non-Latin orbit."""
 
-    from rlm_notebook import api
+    from penumbra import api
 
     monkeypatch.setattr(api, "_TRACE_DIR", tmp_path)
     with _authed_client() as client:
-        resp = client.get("/notebooks/mine/runs/theirs-abc/trajectory")
+        resp = client.get("/orbits/mine/runs/theirs-abc/trajectory")
         assert resp.status_code == 404
         assert "does not belong" in resp.json()["detail"]
 
@@ -3363,8 +3363,8 @@ def test_the_trajectory_endpoint_reads_a_trace_that_is_still_being_written(tmp_p
     `long` podcast is minutes of wall clock. The writer is appending while this reads, so a
     half-written final line is the normal case, not an error."""
 
-    from rlm_notebook import api
-    from rlm_notebook.notebook import slug
+    from penumbra import api
+    from penumbra.orbit import slug
 
     monkeypatch.setattr(api, "_TRACE_DIR", tmp_path)
     run_id = f"{slug('nb1')}-abc"
@@ -3373,7 +3373,7 @@ def test_the_trajectory_endpoint_reads_a_trace_that_is_still_being_written(tmp_p
     (tmp_path / f"{run_id}.jsonl").write_text("\n".join(lines) + '\n{"type": "main_ste', "utf-8")
 
     with _authed_client() as client:
-        body = client.get(f"/notebooks/nb1/runs/{run_id}/trajectory").json()
+        body = client.get(f"/orbits/nb1/runs/{run_id}/trajectory").json()
     assert body["run_id"] == run_id
     assert body["ok"] is None, "an unfinished run must not report an outcome"
     assert len(body["iterations"]) == 1 and len(body["timeline"]) == 1
@@ -3390,10 +3390,10 @@ def test_every_grounded_task_carries_the_build_across_turns_rule():
     from rlm_harness import RLMConfig
     from rlm_harness import runtime as rt
 
-    from rlm_notebook.audio import GeneratePodcastScript
-    from rlm_notebook.guide import GenerateFAQ, GenerateKeyInsight, GenerateSummary, GenerateTimeline
-    from rlm_notebook.instructions import ACCUMULATE_LARGE_OUTPUTS
-    from rlm_notebook.task import AnswerQuestion
+    from penumbra.audio import GeneratePodcastScript
+    from penumbra.guide import GenerateFAQ, GenerateKeyInsight, GenerateSummary, GenerateTimeline
+    from penumbra.instructions import ACCUMULATE_LARGE_OUTPUTS
+    from penumbra.task import AnswerQuestion
 
     previous = getattr(rt, "_CONFIG", None)
     rt.configure(RLMConfig(main_model="x", sub_model="x", interpreter="pyodide", observe=False))
@@ -3464,7 +3464,7 @@ def test_the_run_records_what_it_was_configured_with_and_no_secrets():
     be pointed at."""
     from types import SimpleNamespace
 
-    from rlm_notebook.traces import run_meta
+    from penumbra.traces import run_meta
 
     config = SimpleNamespace(
         main_model="m", sub_model="s", max_iterations=25, max_tokens=16384, max_retries=1,
@@ -3482,14 +3482,14 @@ def test_a_runs_inputs_reach_its_trace_but_the_corpus_never_does():
     """The Trajectory drawer's "Initial state" held the task name and the budgets and nothing about
     what THIS run was asked to do. The question, the language, the requested podcast length — each
     is one short string, each answers "why did it produce that", and none is derivable afterwards
-    from a notebook that has since moved on.
+    from an orbit that has since moved on.
 
     The corpus itself is megabytes and a trace is the most exposed artifact this project writes
     (invariant 29), so its SIZE goes in and its TEXT never does — the same reasoning invariant 52
     gives for streaming a step's output size rather than its text."""
     from types import SimpleNamespace
 
-    from rlm_notebook.traces import run_meta
+    from penumbra.traces import run_meta
 
     def _input_meta(kwargs):
         return run_meta("mod:Task", SimpleNamespace(), kwargs)
@@ -3530,9 +3530,9 @@ def test_every_grounded_task_forbids_the_model_numbering_its_own_citations():
     from rlm_harness import RLMConfig
     from rlm_harness import runtime as rt
 
-    from rlm_notebook.audio import GeneratePodcastScript
-    from rlm_notebook.guide import GenerateFAQ, GenerateKeyInsight, GenerateSummary, GenerateTimeline
-    from rlm_notebook.task import AnswerQuestion
+    from penumbra.audio import GeneratePodcastScript
+    from penumbra.guide import GenerateFAQ, GenerateKeyInsight, GenerateSummary, GenerateTimeline
+    from penumbra.task import AnswerQuestion
 
     previous = getattr(rt, "_CONFIG", None)
     rt.configure(RLMConfig(main_model="x", sub_model="x", interpreter="pyodide", observe=False))
@@ -3562,13 +3562,13 @@ def test_clearing_a_conversation_keeps_everything_that_is_not_the_conversation(t
     Sources, notes, the overview and the podcast are NOT part of the conversation — a reader
     starting a chat over is not asking to lose their corpus."""
 
-    from rlm_notebook import notebook as nbmod
-    from rlm_notebook.schema import Answer, ChatTurn, Note, Notebook, Overview, Source, SourceBlock
+    from penumbra import orbit as nbmod
+    from penumbra.schema import Answer, ChatTurn, Note, Orbit, Overview, Source, SourceBlock
 
-    # The notebooks dir resolves against the process cwd (`DEFAULT_NOTEBOOKS_DIR`), which is
-    # how every other notebook-writing test in this file isolates itself.
+    # The orbits dir resolves against the process cwd (`DEFAULT_ORBITS_DIR`), which is
+    # how every other orbit-writing test in this file isolates itself.
     monkeypatch.chdir(tmp_path)
-    nb = Notebook(
+    nb = Orbit(
         id="nb1",
         sources=[Source(id="s1", origin="x", kind="text", blocks=[SourceBlock(locator="whole", text="t")])],
         notes=[Note(id="n1", text="kept")],
@@ -3578,10 +3578,10 @@ def test_clearing_a_conversation_keeps_everything_that_is_not_the_conversation(t
             ChatTurn(question="q2", answer=Answer(text="a2", citations=[])),
         ],
     )
-    nbmod.save_notebook(nb)
+    nbmod.save_orbit(nb)
 
     with _authed_client() as client:
-        body = client.delete("/notebooks/nb1/turns").json()
+        body = client.delete("/orbits/nb1/turns").json()
     assert body["turns"] == []
     assert [s["id"] for s in body["sources"]] == ["s1"], "clearing a chat took the sources with it"
     assert [n["id"] for n in body["notes"]] == ["n1"], "clearing a chat took the notes with it"
@@ -3590,18 +3590,18 @@ def test_clearing_a_conversation_keeps_everything_that_is_not_the_conversation(t
     assert body["overview"]["stale"] is False
 
     # Persisted, not just echoed.
-    assert nbmod.load_notebook("nb1").turns == []
+    assert nbmod.load_orbit("nb1").turns == []
 
 
-def test_clearing_a_conversation_on_a_missing_notebook_is_a_404(tmp_path, monkeypatch):
-    """`create=False`, matching every other existing-notebook-only mutator — clearing the chat of a
-    notebook that does not exist must not conjure one."""
+def test_clearing_a_conversation_on_a_missing_orbit_is_a_404(tmp_path, monkeypatch):
+    """`create=False`, matching every other existing-orbit-only mutator — clearing the chat of a
+    orbit that does not exist must not conjure one."""
 
 
     monkeypatch.chdir(tmp_path)
     with _authed_client() as client:
-        assert client.delete("/notebooks/ghost/turns").status_code == 404
-    assert not list((tmp_path / "notebooks").glob("*.json")), "a 404 left a notebook file behind"
+        assert client.delete("/orbits/ghost/turns").status_code == 404
+    assert not list((tmp_path / "orbits").glob("*.json")), "a 404 left an orbit file behind"
 
 
 # --- run_end budgets/usage (rlm-harness 1.10.0) -----------------------------------------------
@@ -3638,14 +3638,14 @@ def test_budget_summary_is_none_for_a_trace_written_before_the_fields_existed():
     """The cross-boundary rule, as code: `run_end.budgets`/`usage` arrived with rlm-harness 1.10.0,
     so an older trace must read UNMEASURED. Returning a zeroed summary would let a reader average a
     truncation rate across the upgrade and see corpus composition as a property of the code."""
-    from rlm_notebook.trajectory import budget_summary
+    from penumbra.trajectory import budget_summary
 
     assert budget_summary(_budget_events(None)) is None
     assert budget_summary([]) is None
 
 
 def test_budget_summary_flags_a_turn_truncated_at_the_cap():
-    from rlm_notebook.trajectory import budget_summary
+    from penumbra.trajectory import budget_summary
 
     usage = [{"attempt": 0, "calls": {"anthropic/x": [{"completion_tokens": 16384}]}}]
     summary = budget_summary(_budget_events(usage, budgets=_CAPS))
@@ -3657,7 +3657,7 @@ def test_budget_summary_flags_a_turn_truncated_at_the_cap():
 def test_budget_summary_reports_a_ratio_for_a_run_that_stayed_under():
     """The proximity reading. Kept as a NUMBER rather than ruled out: the measured "the ratio is
     never an early warning" came from a corpus running at twice the cap its model needed."""
-    from rlm_notebook.trajectory import budget_summary
+    from penumbra.trajectory import budget_summary
 
     usage = [{"attempt": 0, "calls": {"m": [{"completion_tokens": 3200}, {"completion_tokens": 90}]}}]
     summary = budget_summary(_budget_events(usage, budgets=_CAPS))
@@ -3669,7 +3669,7 @@ def test_budget_summary_reports_a_ratio_for_a_run_that_stayed_under():
 
 def test_budget_summary_takes_the_peak_across_retry_attempts():
     """`usage` is per ATTEMPT, and a retry is exactly the run whose fatal call matters most."""
-    from rlm_notebook.trajectory import budget_summary
+    from penumbra.trajectory import budget_summary
 
     usage = [
         {"attempt": 0, "calls": {"m": [{"completion_tokens": 900}]}},
@@ -3684,7 +3684,7 @@ def test_budget_summary_takes_the_peak_across_retry_attempts():
 
 def test_budget_summary_does_not_guess_truncation_without_a_cap():
     """With no cap reported there is nothing to be at, so a large number is just a large number."""
-    from rlm_notebook.trajectory import budget_summary
+    from penumbra.trajectory import budget_summary
 
     usage = [{"attempt": 0, "calls": {"m": [{"completion_tokens": 99999}]}}]
     summary = budget_summary(_budget_events(usage, budgets={"iterations": _CAPS["iterations"]}))
@@ -3697,7 +3697,7 @@ def test_budget_summary_does_not_guess_truncation_without_a_cap():
 def test_budget_summary_surfaces_the_dropped_iteration_caps():
     """`dropped` means dspy rejected the budget kwargs and every cap reverted to its own default —
     without it the three numbers beside it read as applied when they were not."""
-    from rlm_notebook.trajectory import budget_summary
+    from penumbra.trajectory import budget_summary
 
     caps = {**_CAPS, "iterations": {**_CAPS["iterations"], "dropped": True}}
     summary = budget_summary(_budget_events([], budgets=caps))
@@ -3708,7 +3708,7 @@ def test_budget_summary_surfaces_the_dropped_iteration_caps():
 def test_budget_summary_never_raises_on_a_malformed_usage_payload():
     """Same promise the rest of this module makes: a partial or malformed trace is exactly the run
     someone most wants to look at."""
-    from rlm_notebook.trajectory import budget_summary
+    from penumbra.trajectory import budget_summary
 
     usage = [{"attempt": 0, "calls": {"m": ["not-a-dict", {"completion_tokens": "many"}]}}, "junk"]
     summary = budget_summary(_budget_events(usage, budgets=_CAPS))
@@ -3725,7 +3725,7 @@ def test_a_tool_that_measured_itself_is_not_charged_the_gap():
     Measured on a real trace: the validator reported 1.9ms and the strip drew 3.3s, which is the
     whole run-start-to-first-call window.
     """
-    from rlm_notebook.trajectory import _tool_entry
+    from penumbra.trajectory import _tool_entry
 
     measured = _tool_entry(
         {"tool": "validate_answer", "ok": True, "duration_s": 0.0019, "result": "ok"}, 3.3
@@ -3747,7 +3747,7 @@ def test_a_regenerate_reaches_the_worker_as_a_cache_bypass(monkeypatch, tmp_path
     """
     import json as _json
 
-    from rlm_notebook import runner
+    from penumbra import runner
 
     seen: dict = {}
 
@@ -3784,7 +3784,7 @@ def test_the_worker_turns_off_dspys_cache_only_when_asked():
     `runtime.configure`'s `lm_kwargs`, which would drift from upstream's."""
     import inspect
 
-    from rlm_notebook import worker
+    from penumbra import worker
 
     src = inspect.getsource(worker.main)
     at = src.index("if fresh:")
@@ -3806,7 +3806,7 @@ def test_a_turns_first_call_keeps_no_gap_derived_duration():
     """
     import json
 
-    from rlm_notebook.trajectory import build_trajectory
+    from penumbra.trajectory import build_trajectory
 
     def ev(kind, step, ts, payload):
         return json.dumps({"type": kind, "step_id": step, "ts": ts, "payload": payload})
@@ -3843,7 +3843,7 @@ def test_every_run_taking_endpoint_decides_its_own_cache_bypass():
     """
     import inspect
 
-    from rlm_notebook import api
+    from penumbra import api
 
     ask = inspect.getsource(api.ask)
     assert "fresh=body.regenerate or body.fresh" in ask, (
@@ -3872,7 +3872,7 @@ def test_the_live_ticker_says_what_a_tool_did_not_just_that_one_ran():
 
     `meta` also read `status`, a key `record_tool_call` never writes, so it was always None.
     """
-    from rlm_notebook.api import _translate_trace_event
+    from penumbra.api import _translate_trace_event
 
     def translate(payload):
         return _translate_trace_event({"type": "tool_call", "step_id": 1, "payload": payload})
@@ -3939,7 +3939,7 @@ def _unauthed_client() -> TestClient:
 
 
 def test_an_api_request_without_a_token_is_refused():
-    resp = _unauthed_client().get("/notebooks")
+    resp = _unauthed_client().get("/orbits")
     assert resp.status_code == 401
     # A client that cannot tell "no token" from "wrong URL" retries forever; `WWW-Authenticate` is
     # the header that says which of the two this was.
@@ -3950,14 +3950,14 @@ def test_a_wrong_token_is_refused():
     client = TestClient(
         api.app, base_url="http://127.0.0.1", headers={"Authorization": "Bearer not-the-token"}
     )
-    assert client.get("/notebooks").status_code == 401
+    assert client.get("/orbits").status_code == 401
 
 
 def test_the_token_may_arrive_in_the_query_string():
     """`EventSource` and `<audio src>` cannot set headers at all (invariant 77 / `auth.py`), so the
     live trace stream (invariant 29) and the persisted episode (invariant 42) would be unreachable
     without this. Asserted on an ordinary endpoint so the test does not depend on a live run."""
-    resp = _unauthed_client().get(f"/notebooks?{auth.QUERY_PARAM}={auth.api_token()}")
+    resp = _unauthed_client().get(f"/orbits?{auth.QUERY_PARAM}={auth.api_token()}")
     assert resp.status_code == 200
 
 
@@ -3990,7 +3990,7 @@ def test_a_dns_name_in_the_host_header_is_refused():
         base_url="http://evil.example",
         headers={"Authorization": f"Bearer {auth.api_token()}"},
     )
-    resp = client.get("/notebooks")
+    resp = client.get("/orbits")
     assert resp.status_code == 403
     assert "rebinding" in resp.json()["detail"].lower()
 
@@ -4012,19 +4012,19 @@ def test_serve_puts_a_minted_token_into_the_environment_for_the_uvicorn_child(mo
     """`uvicorn.run` is given an IMPORT STRING, so under `--reload` the app is built in a CHILD
     process. The environment is the only thing both processes share — if `serve` kept the token to
     itself, the server would demand one nobody had."""
-    monkeypatch.delenv("RN_API_TOKEN", raising=False)
+    monkeypatch.delenv("PN_API_TOKEN", raising=False)
     started: dict[str, object] = {}
 
     def _fake_run(target, **kwargs):
         started["target"] = target
-        started["token"] = os.environ.get("RN_API_TOKEN")
+        started["token"] = os.environ.get("PN_API_TOKEN")
 
     uvicorn = types.ModuleType("uvicorn")
     uvicorn.run = _fake_run
     monkeypatch.setitem(__import__("sys").modules, "uvicorn", uvicorn)
 
     assert cli.main(["serve"]) == 0
-    assert started["target"] == "rlm_notebook.api:app"
+    assert started["target"] == "penumbra.api:app"
     assert started["token"] and started["token"] == auth.api_token()
     # Printed, or the operator has a server they cannot talk to. stderr for the reason `_cmd_serve`
     # already records: stdout is block-buffered off a TTY and never reaches `docker logs`.
@@ -4046,8 +4046,8 @@ def test_two_concurrent_uploads_never_parse_two_pdfs_at_once(monkeypatch, tmp_pa
     that is green on the path you did not change is not evidence about the path you did."
     """
     monkeypatch.chdir(tmp_path)
-    from rlm_notebook.parsers import pdf as pdf_module
-    from rlm_notebook.schema import Source, SourceBlock
+    from penumbra.parsers import pdf as pdf_module
+    from penumbra.schema import Source, SourceBlock
 
     windows: list[tuple[float, float]] = []
     recorder = threading.Lock()
@@ -4070,9 +4070,9 @@ def test_two_concurrent_uploads_never_parse_two_pdfs_at_once(monkeypatch, tmp_pa
             base_url="http://127.0.0.1",
             headers={"Authorization": f"Bearer {auth.api_token()}"},
         ) as ac:
-            def upload(notebook: str, name: str):
+            def upload(orbit: str, name: str):
                 return ac.post(
-                    f"/notebooks/{notebook}/sources/upload",
+                    f"/orbits/{orbit}/sources/upload",
                     files={"file": (name, b"%PDF-1.4", "application/pdf")},
                 )
 
@@ -4096,7 +4096,7 @@ def test_the_language_dropdown_offers_each_language_once():
     the setting that decides what every answer in the product is written in, which is the exact
     failure invariant 39 exists to name — so the qualified names win and the ambiguous one goes.
     """
-    from rlm_notebook.api import _one_name_per_language
+    from penumbra.api import _one_name_per_language
 
     offered = _one_name_per_language(
         ["Chinese", "Mandarin", "Simplified Chinese", "Traditional Chinese", "English", "Japanese"]
@@ -4121,7 +4121,7 @@ def test_evicting_cancelled_ids_takes_their_placeholders_with_them(client):
     The bound clears the flags; this pins that it clears the placeholders too. Clearing only half
     would leave the worse half behind.
     """
-    from rlm_notebook import api
+    from penumbra import api
 
     api._CANCELLED_BEFORE_SPAWN.clear()
     api._RUN_PROCESSES.clear()
@@ -4135,7 +4135,7 @@ def test_evicting_cancelled_ids_takes_their_placeholders_with_them(client):
 
         api._RUN_PROCESSES["nb-x-tok"] = None
         api._ACTIVE_RUNS["nb-x"] = ["nb-x-tok"]
-        resp = client.post("/notebooks/nb-x/runs/nb-x-tok/cancel")
+        resp = client.post("/orbits/nb-x/runs/nb-x-tok/cancel")
         assert resp.status_code == 200, resp.text
 
         leftovers = [k for k in api._RUN_PROCESSES if k.startswith("leaked-")]
@@ -4158,10 +4158,10 @@ def test_the_trajectory_reports_the_cause_not_just_the_wrapper():
     something went wrong and nothing about what. `error_chain` holds the exceptions underneath, and
     rlm-harness had been writing it into every trace while nothing here read it (`grep error_chain`
     across the package: no hits). So on the commonest first-run failure the bubble said the provider
-    had rejected the key and named `RN_API_KEY`, and the Trajectory drawer — which invariant 70
+    had rejected the key and named `PN_API_KEY`, and the Trajectory drawer — which invariant 70
     calls "where a run's reasoning lives" — said an attempt had failed.
     """
-    from rlm_notebook.trajectory import build_trajectory
+    from penumbra.trajectory import build_trajectory
 
     cause = (
         "LMServerError: [openai/gpt-4o-mini] litellm.InternalServerError: OpenAIException - "
@@ -4215,13 +4215,13 @@ def test_a_client_disconnect_during_the_spawn_does_not_reserve_the_run_id_foreve
     client goes away, so closing the tab while a run was being spawned skipped the cleanup
     entirely. What it left behind: `_RUN_PROCESSES[run_id] = None` for the life of the process,
     which keeps the empty trace file in `_prune_traces`' protected set forever, and — because
-    `_derive_run_id` is deterministic for a caller-supplied token — makes that (notebook, token)
+    `_derive_run_id` is deterministic for a caller-supplied token — makes that (orbit, token)
     pair answer `409 run id is already in use` from then on.
     """
     import asyncio
     from pathlib import Path
 
-    from rlm_notebook import api, runner
+    from penumbra import api, runner
 
     started = asyncio.Event()
 
@@ -4238,7 +4238,7 @@ def test_a_client_disconnect_during_the_spawn_does_not_reserve_the_run_id_foreve
                 "disconnect-nb",
                 "some:Task",
                 {},
-                api.NotebookConfig(main_model="m"),
+                api.PenumbraConfig(main_model="m"),
                 "disconnect-nb-tok",
             )
         )
@@ -4261,43 +4261,43 @@ def test_a_client_disconnect_during_the_spawn_does_not_reserve_the_run_id_foreve
     )
 
 
-def test_a_question_about_a_notebook_with_no_sources_is_refused(client):
+def test_a_question_about_a_orbit_with_no_sources_is_refused(client):
     """**The one press in the product that spent money for nothing.**
 
-    `PUT /title` refuses a source-less notebook (422) and so does `POST /overview`; `ask` did not,
-    and neither did the UI — so on an empty notebook the Studio said "Add a source first, then
+    `PUT /title` refuses a source-less orbit (422) and so does `POST /overview`; `ask` did not,
+    and neither did the UI — so on an empty orbit the Studio said "Add a source first, then
     generate this" while the composer 20px away accepted a question and ran a full
     `AnswerQuestion` loop against an empty corpus, which can only produce an ungrounded answer. In a
     BYOK product whose Tier 0 rests on invariant 80 ("capture never pays for a summary"), the cheap
     tier was careful with the reader's money and the expensive one was not.
     """
-    from rlm_notebook.notebook import mutate_notebook
+    from penumbra.orbit import mutate_orbit
 
-    mutate_notebook("bare", lambda nb: None, create=True)
-    resp = client.post("/notebooks/bare/ask", json={"question": "what does it say?"})
+    mutate_orbit("bare", lambda nb: None, create=True)
+    resp = client.post("/orbits/bare/ask", json={"question": "what does it say?"})
     assert resp.status_code == 422, resp.text
     assert "no sources" in resp.json()["detail"]
 
-    # ...and the same notebook answers once it has one, so this is a guard and not a wall.
-    client.post("/notebooks/bare/sources", json={"sources": ["https://example.com/a"]})
-    assert client.post("/notebooks/bare/ask", json={"question": "what?"}).status_code != 422
+    # ...and the same orbit answers once it has one, so this is a guard and not a wall.
+    client.post("/orbits/bare/sources", json={"sources": ["https://example.com/a"]})
+    assert client.post("/orbits/bare/ask", json={"question": "what?"}).status_code != 422
 
 
 def test_a_misspelt_sources_field_is_refused_rather_than_silently_doing_nothing(client):
     """`SourcesRequest` was the one request model here without `extra="forbid"`, so the singular
-    typo `{"source": [...]}` answered 200, CREATED the notebook and added nothing — a success for a
+    typo `{"source": [...]}` answered 200, CREATED the orbit and added nothing — a success for a
     request that did nothing, which this project treats as worse than an error."""
-    resp = client.post("/notebooks/typo/sources", json={"source": ["https://example.com/a"]})
+    resp = client.post("/orbits/typo/sources", json={"source": ["https://example.com/a"]})
     assert resp.status_code == 422, resp.text
-    assert load_notebook("typo") is None, "a typo created an empty notebook"
+    assert load_orbit("typo") is None, "a typo created an empty orbit"
 
     # The correct spelling still works, so this is a guard and not a wall.
     assert client.post(
-        "/notebooks/typo/sources", json={"sources": ["https://example.com/a"]}
+        "/orbits/typo/sources", json={"sources": ["https://example.com/a"]}
     ).status_code == 200
 
 
-def test_every_paid_endpoint_refuses_a_notebook_with_no_sources(client):
+def test_every_paid_endpoint_refuses_a_orbit_with_no_sources(client):
     """**Fixing the INSTANCE rather than the CLASS is what left five more.**
 
     `ask` grew this guard, and `guide` (four kinds) and `audio` did not — so the Studio guides and
@@ -4308,18 +4308,18 @@ def test_every_paid_endpoint_refuses_a_notebook_with_no_sources(client):
     The second half is the tripwire: every handler that reaches `_run_isolated` must go through
     `_require_sources`, so a sixth one cannot be added without this failing.
     """
-    from rlm_notebook.notebook import mutate_notebook
+    from penumbra.orbit import mutate_orbit
 
-    mutate_notebook("nothing", lambda nb: None, create=True)
+    mutate_orbit("nothing", lambda nb: None, create=True)
     paid = [
-        ("post", "/notebooks/nothing/ask", {"question": "what?"}),
-        ("post", "/notebooks/nothing/overview", {}),
-        ("post", "/notebooks/nothing/title", {}),
-        ("post", "/notebooks/nothing/guide/summary", {}),
-        ("post", "/notebooks/nothing/guide/faq", {}),
-        ("post", "/notebooks/nothing/guide/timeline", {}),
-        ("post", "/notebooks/nothing/guide/insight", {}),
-        ("post", "/notebooks/nothing/audio", {}),
+        ("post", "/orbits/nothing/ask", {"question": "what?"}),
+        ("post", "/orbits/nothing/overview", {}),
+        ("post", "/orbits/nothing/title", {}),
+        ("post", "/orbits/nothing/guide/summary", {}),
+        ("post", "/orbits/nothing/guide/faq", {}),
+        ("post", "/orbits/nothing/guide/timeline", {}),
+        ("post", "/orbits/nothing/guide/insight", {}),
+        ("post", "/orbits/nothing/audio", {}),
     ]
     for method, path, body in paid:
         resp = getattr(client, method)(path, json=body)
@@ -4375,24 +4375,24 @@ def test_no_handler_reaches_a_model_run_without_the_source_guard():
 
 
 def test_a_delete_is_not_undone_by_a_slow_write_that_started_before_it(client, monkeypatch):
-    """**`DELETE` answered `{"deleted": true}` and the notebook came back.**
+    """**`DELETE` answered `{"deleted": true}` and the orbit came back.**
 
     The endpoint's own docstring names this outcome as the thing its 409 exists to prevent — but the
     409 reads `_ACTIVE_RUNS`, which is populated only AFTER `runner.start_run` returns. It therefore
     covers spawned model runs and nothing else: not ingestion, which this file elsewhere says "can
     take minutes", and not `ask`'s pre-spawn language resolution. A source added after the delete
     re-created the file through `create=True`, holding only that source — every earlier source,
-    note, turn, overview and podcast gone, and its Inbox membership rows already dropped.
+    note, turn, overview and podcast gone, and its Horizon membership rows already dropped.
 
     UI-reachable: drop a scanned PDF (OCR is the multi-minute case), think better of it, and press
     the ✕ the picker puts on every row.
     """
     import threading
 
-    from rlm_notebook.notebook import notebook_path
+    from penumbra.orbit import orbit_path
 
-    client.post("/notebooks/doomed/sources", json={"texts": ["the original source"]})
-    assert notebook_path("doomed").exists()
+    client.post("/orbits/doomed/sources", json={"texts": ["the original source"]})
+    assert orbit_path("doomed").exists()
 
     ingesting = threading.Event()
     release = threading.Event()
@@ -4408,24 +4408,24 @@ def test_a_delete_is_not_undone_by_a_slow_write_that_started_before_it(client, m
 
     def add():
         result["add"] = client.post(
-            "/notebooks/doomed/sources", json={"sources": ["https://example.com/late"]}
+            "/orbits/doomed/sources", json={"sources": ["https://example.com/late"]}
         )
 
     worker = threading.Thread(target=add, daemon=True)
     worker.start()
     assert ingesting.wait(10), "the slow ingest never started"
 
-    assert client.delete("/notebooks/doomed").status_code == 200
+    assert client.delete("/orbits/doomed").status_code == 200
     release.set()
     worker.join(10)
 
-    assert not notebook_path("doomed").exists(), (
-        "the notebook was RESURRECTED by a write that started before the delete"
+    assert not orbit_path("doomed").exists(), (
+        "the orbit was RESURRECTED by a write that started before the delete"
     )
     assert result["add"].status_code in (404, 409), (
         f"the racing write reported success: {result['add'].status_code} {result['add'].text}"
     )
-    assert "doomed" not in [n["id"] for n in client.get("/notebooks").json()["notebooks"]]
+    assert "doomed" not in [n["id"] for n in client.get("/orbits").json()["orbits"]]
 
 
 def test_the_in_flight_guard_cannot_be_walked_past_with_another_spelling(client):
@@ -4434,11 +4434,11 @@ def test_the_in_flight_guard_cannot_be_walked_past_with_another_spelling(client)
     `{"deleted": true}` while a run was in flight under the other."""
     import types
 
-    client.post("/notebooks/Reading List/sources", json={"texts": ["something"]})
+    client.post("/orbits/Reading List/sources", json={"texts": ["something"]})
     api._ACTIVE_RUNS["Reading List"] = types.SimpleNamespace(process=None)
     try:
-        assert client.delete("/notebooks/Reading List").status_code == 409
-        assert client.delete("/notebooks/Reading-List").status_code == 409, (
+        assert client.delete("/orbits/Reading List").status_code == 409
+        assert client.delete("/orbits/Reading-List").status_code == 409, (
             "an alias spelling of the same file walked past the in-flight guard"
         )
     finally:
@@ -4455,7 +4455,7 @@ def test_the_design_record_is_not_served_without_a_token(client):
     became an unauthenticated GET by default, which is the opposite of the deny-by-default shape the
     same docstring argues for.
     """
-    from rlm_notebook import auth
+    from penumbra import auth
 
     assert "/DESIGN.md" not in auth.PUBLIC_PATHS
     # The page and the things it needs to render are still public — or nothing could load the token.
@@ -4480,7 +4480,7 @@ def test_quitting_the_server_kills_every_run_it_left_running(monkeypatch):
 
     **This covers the lifespan and NOT the shipped path, which the first version of this docstring
     claimed.** It writes runs into the map by hand, so it cannot see the two things that made the
-    fix unreachable under `rlm-notebook serve`: uvicorn guards `lifespan.shutdown()` with
+    fix unreachable under `penumbra serve`: uvicorn guards `lifespan.shutdown()` with
     `if not force_exit`, and every entry in `_ACTIVE_RUNS` belongs to an in-flight request whose
     `finally` clears it — so on that path the map is empty by construction by the time this loop
     runs. An independent review found both. The shipped path is covered by
@@ -4524,7 +4524,7 @@ def test_a_cancelled_await_kills_the_worker_rather_than_orphaning_it(monkeypatch
     saw it."""
     import asyncio
 
-    from rlm_notebook import runner
+    from penumbra import runner
 
     cancelled: list[bool] = []
 
@@ -4550,7 +4550,7 @@ def test_a_cancelled_await_kills_the_worker_rather_than_orphaning_it(monkeypatch
     async def drive() -> None:
         task = asyncio.create_task(
             api._run_isolated(
-                "orphan-nb", "some:Task", {}, api.NotebookConfig(main_model="m"), "orphan-nb-tok"
+                "orphan-nb", "some:Task", {}, api.PenumbraConfig(main_model="m"), "orphan-nb-tok"
             )
         )
         await started.wait()

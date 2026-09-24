@@ -11,7 +11,7 @@ import json
 import os
 import time
 
-from rlm_notebook.traces import _MIN_AGE_SECONDS, prune_traces
+from penumbra.traces import _MIN_AGE_SECONDS, prune_traces
 
 #: What `rlm_harness.trace.TraceRecorder.record()` actually writes — every line carries the schema
 #: marker. The fixtures below used to write a bare `{"type": "run_end"}`, which the ownership gate
@@ -232,6 +232,6 @@ def test_an_unremovable_file_is_skipped_not_raised(tmp_path, monkeypatch):
 
 
 def test_the_default_floor_is_an_hour():
-    """Pinned deliberately: it must comfortably exceed `RN_RUN_TIMEOUT_SECONDS`'s 300s default, so
+    """Pinned deliberately: it must comfortably exceed `PN_RUN_TIMEOUT_SECONDS`'s 300s default, so
     an ordinary in-flight run can never age past it."""
     assert _MIN_AGE_SECONDS == 3600.0

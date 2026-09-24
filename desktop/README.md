@@ -1,6 +1,6 @@
 # The desktop app
 
-`desktop/` wraps the web UI in a native window with [Tauri 2](https://tauri.app) and ships everything it needs inside the app: a Python with rlm-notebook installed and the deno binary every live run uses. Nobody has to install Python, uv or deno to use it. One codebase produces all three platforms:
+`desktop/` wraps the web UI in a native window with [Tauri 2](https://tauri.app) and ships everything it needs inside the app: a Python with Penumbra installed and the deno binary every live run uses. Nobody has to install Python, uv or deno to use it. One codebase produces all three platforms:
 
 | Platform | Webview | Installer |
 |---|---|---|
@@ -13,20 +13,22 @@ macOS 13 is the floor because the stylesheet uses `color-mix()`, which WKWebView
 ## What the shell does
 
 - **Accepts dropped files.** Tauri's own drop handler is turned off so the web UI's drop-anywhere capture receives them.
-- **Starts and stops the server.** On launch it runs the bundled `python -m rlm_notebook.cli serve` on a loopback port, with an API token it mints for that launch, and moves the window onto the web UI once the server answers. Quitting stops the server, which ends every run in flight. If the app is killed instead of quit, the server notices its stdin pipe close and shuts itself down (invariant 81).
+- **Starts and stops the server.** On launch it runs the bundled `python -m penumbra.cli serve` on a loopback port, with an API token it mints for that launch, and moves the window onto the web UI once the server answers. Quitting stops the server, which ends every run in flight. If the app is killed instead of quit, the server notices its stdin pipe close and shuts itself down (invariant 81).
 - **Keeps the port.** The port is remembered between launches, because the web UI stores its interface language, theme and panel widths per origin, and the origin includes the port.
 - **Provides what a browser tab gave for free.** Downloads (Export, the podcast) go to the Downloads folder and are shown in the file manager. File > Print (Cmd/Ctrl+P) prints the page with the web UI's print stylesheet. Links to other sites open in the system browser.
 - **Gives the web UI no IPC.** The page talks to its own server over HTTP exactly as it does in a browser, so the token, the local-path ban and every other API rule hold unchanged.
 
 ## Configuration and data
 
-Model settings live in `rlm-notebook.env` in the app's data folder, one `KEY=VALUE` per line, the same names as `.env.example`. **File > Open Configuration File…** creates it from a template and opens it; **File > Restart Server** applies a change. Keys never go on the settings page (invariant 41).
+Model settings live in `penumbra.env` in the app's data folder, one `KEY=VALUE` per line, the same names as `.env.example`. **File > Open Configuration File…** creates it from a template and opens it; **File > Restart Server** applies a change. Keys never go on the settings page (invariant 41).
 
-The data folder holds notebooks, the Inbox, traces and the server log (**File > Show Data Folder**, **File > Show Server Log**):
+An install from before the rename (rlm-notebook, `tw.boik.rlm-notebook`) is moved here on first launch, and its `rlm-notebook.env` becomes `penumbra.env` with every `RN_` setting spelled `PN_`.
 
-- macOS: `~/Library/Application Support/tw.boik.rlm-notebook/`
-- Windows: `%APPDATA%\tw.boik.rlm-notebook\`
-- Linux: `~/.local/share/tw.boik.rlm-notebook/`
+The data folder holds orbits, the Horizon, traces and the server log (**File > Show Data Folder**, **File > Show Server Log**):
+
+- macOS: `~/Library/Application Support/tw.boik.penumbra/`
+- Windows: `%APPDATA%\tw.boik.penumbra\`
+- Linux: `~/.local/share/tw.boik.penumbra/`
 
 Tesseract is not bundled. RapidOCR is the primary OCR engine and is included; tesseract is only its fallback (invariant 7).
 
@@ -42,7 +44,7 @@ cd desktop/src-tauri && cargo tauri build        # installers in target/release/
 For development against a source checkout, skip the runtime and point the shell at the checkout's own interpreter:
 
 ```bash
-cd desktop/src-tauri && RLMNB_PYTHON=../../.venv/bin/python cargo tauri dev
+cd desktop/src-tauri && PENUMBRA_PYTHON=../../.venv/bin/python cargo tauri dev
 ```
 
 The **Desktop** workflow checks the shell and builds every installer on all three platforms. It runs only by hand (Actions > Desktop > Run workflow) until the macOS app is stable; the installers are uploaded as workflow artifacts and nothing is published automatically.

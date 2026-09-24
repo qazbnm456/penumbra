@@ -1,26 +1,26 @@
-# rlm-notebook in a container, which exists for ONE reason: two of its dependencies are system
-# binaries that no Python manifest can express, so `pip install rlm-notebook` is never sufficient
+# penumbra in a container, which exists for ONE reason: two of its dependencies are system
+# binaries that no Python manifest can express, so `pip install penumbra` is never sufficient
 # on its own.
 #
 #   deno       every live run executes in a Deno-hosted pyodide sandbox (AGENTS.md invariant 9),
-#              and `RN_INTERPRETER` refuses any other value rather than silently falling back
+#              and `PN_INTERPRETER` refuses any other value rather than silently falling back
 #   tesseract  the OCR fallback. `pytesseract` is a WRAPPER: invariant 7 records that without the
 #              binary the fallback is silently not there, which is the failure mode this image
 #              removes rather than documents
 #
-# Build:  docker build -t rlm-notebook .
+# Build:  docker build -t penumbra .
 # Run:    docker run --rm -p 127.0.0.1:8000:8000 \
-#           -v "$PWD/data:/data" --env-file .env rlm-notebook
+#           -v "$PWD/data:/data" --env-file .env penumbra
 #
 # PUBLISH THE PORT TO LOOPBACK, as above. Every request needs the API token (invariant 77), which
 # the container prints to its own logs on startup — read it with `docker logs`, or pin it yourself
-# with `RN_API_TOKEN` in the --env-file, which is what you want if the container restarts. Behind
-# that token there is NO AUTHORIZATION (invariant 25): any holder can read every notebook's full
-# source text and reasoning traces, delete sources, and change settings for notebooks they never
+# with `PN_API_TOKEN` in the --env-file, which is what you want if the container restarts. Behind
+# that token there is NO AUTHORIZATION (invariant 25): any holder can read every orbit's full
+# source text and reasoning traces, delete sources, and change settings for orbits they never
 # named. A bare `-p 8000:8000` publishes it on every interface of the host.
 #
 # The container binds 0.0.0.0, so requests arrive with whatever Host the client sent. Reaching it
-# at `localhost:8000` or by IP works; reaching it by a DNS NAME needs RN_ALLOWED_HOSTS.
+# at `localhost:8000` or by IP works; reaching it by a DNS NAME needs PN_ALLOWED_HOSTS.
 
 # 3.13. This was pinned to 3.12 while `rapidocr-onnxruntime` capped itself at `<3.13`; the switch to
 # `rapidocr` (which declares `>=3.8,<4` and was verified running on 3.13 and 3.14) lifted that.
@@ -52,17 +52,17 @@ RUN set -eux; \
 
 WORKDIR /src
 COPY pyproject.toml README.md LICENSE ./
-COPY rlm_notebook ./rlm_notebook
+COPY penumbra ./penumbra
 
 # The `api` extra only. `chatterbox` is deliberately absent: it is marked `python_full_version >=
 # '3.13'` and drags torch in for a provider that is 33x the wall clock of the default
 # (invariant 43), which is not what an image anybody pulls should carry.
 RUN pip install --no-cache-dir '.[api]'
 
-# `notebooks/`, `traces/` and `inbox/` are relative paths resolved against the working directory
-# (a generated episode lives at `notebooks/audio/`, inside the first of them, not beside it)
+# `orbits/`, `traces/` and `horizon/` are relative paths resolved against the working directory
+# (a generated episode lives at `orbits/audio/`, inside the first of them, not beside it)
 # (invariant 34), so the workdir IS where a reader's data lives. Mount it, or the container losing
-# its filesystem loses their notebooks.
+# its filesystem loses their orbits.
 WORKDIR /data
 VOLUME /data
 
@@ -84,4 +84,4 @@ EXPOSE 8000
 # 0.0.0.0 inside the container, because the container boundary is what makes that safe. Which
 # INTERFACE OF THE HOST it reaches is decided by `-p`, which is why the run command above binds it
 # to loopback. `serve` prints its non-loopback warning either way, and it is not wrong to.
-CMD ["rlm-notebook", "serve", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["penumbra", "serve", "--host", "0.0.0.0", "--port", "8000"]

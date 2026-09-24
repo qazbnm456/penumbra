@@ -1,4 +1,4 @@
-/* rlm-notebook PLAYGROUND — the extra furniture.
+/* penumbra PLAYGROUND — the extra furniture.
  *
  * Loaded AFTER `app.js`, so the header it augments is already built and the app's own listeners are
  * already attached. Adds what a product page needs and the application itself has no reason to
@@ -7,7 +7,7 @@
  *
  * Every node is built with `createElement`/`textContent`, never `innerHTML` with an interpolated
  * string — the same rule the application follows (invariant 29), kept here because this file
- * renders scenario titles and notebook names that came from a model.
+ * renders scenario titles and orbit names that came from a model.
  *
  * Styling uses the app's OWN custom properties (`--surface-2`, `--accent`, `--border`, …), so the
  * chrome inherits both themes for free and cannot drift from the product's palette.
@@ -68,17 +68,17 @@
   // The modal HELPER went with them. It had exactly two callers, the scenario picker and the
   // install sheet, and both were surfaces this page did not need: one the product already had, one
   // the README already had. Nothing here opens a modal any more.
-  // The scenario picker was DELETED. The product already has a notebook picker: the title
-  // dropdown, which lists every notebook with its source and turn counts and switches on click. A
+  // The scenario picker was DELETED. The product already has an orbit picker: the title
+  // dropdown, which lists every orbit with its source and turn counts and switches on click. A
   // second one in the header meant a second modal, a second stylesheet and a second set of bugs, all
-  // to show the same six notebooks less well. The shim answers `GET /notebooks` with all of them, so
+  // to show the same six orbits less well. The shim answers `GET /orbits` with all of them, so
   // the product's own control does the job with nothing added.
   // The install modal was DELETED, for the same reason the scenario picker was: the README already
   // has an "Install and run" section, kept current by the people who change the commands. A copy of
   // it on this page is a second thing to maintain and a third surface to design, and it drifts the
   // first time a command changes. The button is a link to that section now.
   // The guided tour lives in `director.js` now: a passive checklist asked the reader to find things
-  // for themselves, which is the same failure as loading the whole notebook up front.
+  // for themselves, which is the same failure as loading the whole orbit up front.
 
   // --- header ------------------------------------------------------------------------------------
   function mount() {
@@ -97,7 +97,7 @@
 
     // The wordmark says what this is, the way witr's does. Someone who lands here from a link has
     // to be told in the first glance that they are looking at a demo, not a running install.
-    const wordmark = document.getElementById("new-notebook");
+    const wordmark = document.getElementById("new-orbit");
     if (wordmark && !wordmark.querySelector(".pg-wordmark-tag")) {
       wordmark.appendChild(el("span", "pg-wordmark-tag", "PLAYGROUND"));
       wordmark.title = "This is a simulated playground, not a running install.";
@@ -145,15 +145,15 @@
 
   // --- boot --------------------------------------------------------------------------------------
   //: A landing page that opens on an empty workspace has thrown away its first three seconds, so
-  //: the playground always has a notebook open. `openNotebook` is a top-level function in `app.js`
+  //: the playground always has an orbit open. `openOrbit` is a top-level function in `app.js`
   //: and therefore global — this calls the product's own entry point rather than reproducing what
   //: it does.
   //: `uiLang()` already resolves the interface language from localStorage, then
-  //: `navigator.languages`, then English (invariant 48). The notebook opened should AGREE with it:
-  //: landing on an English notebook inside a Chinese interface is the half-translated state, and it
+  //: `navigator.languages`, then English (invariant 48). The orbit opened should AGREE with it:
+  //: landing on an English orbit inside a Chinese interface is the half-translated state, and it
   //: also hides the thing worth noticing, which is that both language sets come from one corpus.
   //:
-  //: An explicit `#notebook-id` still wins, because a shared link names a specific notebook and
+  //: An explicit `#orbit-id` still wins, because a shared link names a specific orbit and
   //: guessing over it would break the link.
   const LANG_FOR_UI = { "zh-Hant": "Traditional Chinese", en: "English" };
   const preferredLang = () => LANG_FOR_UI[typeof uiLang === "function" ? uiLang() : "en"];
@@ -174,31 +174,31 @@
     if (!pick) return;
     location.hash = `#${pick.id}`;
     // Claim it for the tour BEFORE anything opens it, or the shim hands back a fully-populated
-    // notebook and the sources step has nothing to add.
+    // orbit and the sources step has nothing to add.
     if (typeof PG.beginTour === "function") PG.beginTour(pick.id);
 
-    //: **AND THEN STOP, ON THE INBOX.** This used to open the notebook immediately, which is how
+    //: **AND THEN STOP, ON THE HORIZON.** This used to open the orbit immediately, which is how
     //: the tour came to have fifteen steps and not one of them about the screen the product now
     //: opens on. A visitor was thrown straight into the three-column workspace and never saw
     //: capture, the stream, Find, or a facet - the entire Tier 0 half of the product, and the
-    //: reason the redesign happened. The notebook is now reached the way a reader reaches it, by
+    //: reason the redesign happened. The orbit is now reached the way a reader reaches it, by
     //: pressing a facet, and that press is a step of the script.
     //:
-    //: The hash still names the tour's notebook, because `PG.progress` is keyed by it and the
-    //: director reads it before any notebook is open.
+    //: The hash still names the tour's orbit, because `PG.progress` is keyed by it and the
+    //: director reads it before any orbit is open.
     //:
-    //: `refreshInbox` has already run: `app.js` boots into `showInbox()` on its own when there is
+    //: `refreshHorizon` has already run: `app.js` boots into `showHorizon()` on its own when there is
     //: no `?nb=`, which is now the state this function leaves it in.
     //
-    // Which facet row opens it, by POSITION. `renderFacets` paints `GET /notebooks` in order and
+    // Which facet row opens it, by POSITION. `renderFacets` paints `GET /orbits` in order and
     // writes no id onto the button, so the index is the only handle - and it is a stable one,
     // because the shim answers that route from the same fixture the scenario list comes from.
     try {
-      const list = await (await fetch("/notebooks")).json();
-      const at = (list.notebooks || []).findIndex((b) => b.id === pick.id);
+      const list = await (await fetch("/orbits")).json();
+      const at = (list.orbits || []).findIndex((b) => b.id === pick.id);
       if (at >= 0) PG.facetIndex = at + 1;
     } catch {
-      // The step falls back to the header picker, which reaches every notebook too.
+      // The step falls back to the header picker, which reaches every orbit too.
     }
   }
 
@@ -248,7 +248,7 @@
 
       //: Changing the interface language should move the DEMO too. Reading English answers under a
       //: Chinese interface is the half-translated state again, one level up: the interface is only
-      //: half the language the reader chose. A notebook whose language already matches is left
+      //: half the language the reader chose. An orbit whose language already matches is left
       //: alone, so this never interrupts somebody who is simply mid-demo.
       window.addEventListener("ui-lang-changed", async () => {
         const scenarios = await PG.scenarios();
@@ -262,7 +262,7 @@
         location.reload();
       });
     } catch (err) {
-      console.warn("playground: could not open the initial notebook", err);
+      console.warn("playground: could not open the initial orbit", err);
     }
   }
 

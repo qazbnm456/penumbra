@@ -4,7 +4,7 @@
 
 `parsers/pdf.py` extracts each page's text with `pypdfium2`. A page with no text layer (below `_MIN_TEXT_CHARS`, which is 1) is rendered to an image and sent to the hybrid OCR in `parsers/_ocr.py`: RapidOCR first, Tesseract as the fallback, both Apache-2.0 and CPU-only. The backends are core dependencies, so a plain `uv sync` installs them. `pytesseract` is only a wrapper: the `tesseract` binary is a system dependency no Python manifest can express, and `_ocr.py` swallows `TesseractNotFoundError`, so on a machine without it the fallback is silently absent. A `vision_llm` OCR mode is a deferred follow-up.
 
-`NotebookConfig.ocr_provider` (`RN_OCR_PROVIDER`) has no consumers. `parse_pdf` takes no config and always calls `ocr_image`; the setting is validated on read and then ignored. It is kept as the seam the `vision_llm` mode will use, so do not assume anything dispatches on it today.
+`PenumbraConfig.ocr_provider` (`PN_OCR_PROVIDER`) has no consumers. `parse_pdf` takes no config and always calls `ocr_image`; the setting is validated on read and then ignored. It is kept as the seam the `vision_llm` mode will use, so do not assume anything dispatches on it today.
 
 ## Licensing and packaging
 

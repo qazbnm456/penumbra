@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    rlm_notebook_desktop_lib::run()
+    penumbra_desktop_lib::run()
 }

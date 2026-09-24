@@ -1,4 +1,4 @@
-/* rlm-notebook PLAYGROUND — the director.
+/* penumbra PLAYGROUND — the director.
  *
  * Runs `PG.SCRIPT`: spotlight one real control, say what it does, then WAIT for the reader to press
  * it. Nothing advances on a timer. The point is not to play a video at somebody — it is that they
@@ -55,12 +55,12 @@
     return null;
   };
 
-  //: **The notebook the app actually has open**, then the tour's own pick. `app.js` writes `?nb=`
-  //: on every switch (`syncAddressBar`) and deletes it on the way back to the Inbox, so this is the
+  //: **The orbit the app actually has open**, then the tour's own pick. `app.js` writes `?nb=`
+  //: on every switch (`syncAddressBar`) and deletes it on the way back to the Horizon, so this is the
   //: product's own record rather than a second one kept beside it. The hash is what the playground
-  //: itself set at load: on the Inbox, where the script now begins, there is no `?nb=` yet and the
-  //: progress being polled is still the notebook the tour is about to open.
-  const notebookId = () => {
+  //: itself set at load: on the Horizon, where the script now begins, there is no `?nb=` yet and the
+  //: progress being polled is still the orbit the tour is about to open.
+  const orbitId = () => {
     try {
       const open = new URL(window.location.href).searchParams.get("nb");
       if (open) return open;
@@ -329,7 +329,7 @@
 
     // --- the loop -----------------------------------------------------------------------------
     async current() {
-      const progress = await PG.progress(notebookId());
+      const progress = await PG.progress(orbitId());
       if (!progress) return null;
       while (this.index < PG.SCRIPT.length) {
         const step = PG.SCRIPT[this.index];
@@ -458,7 +458,7 @@
       }
     }
 
-    //: **A step with nothing to press still needs an action.** Three of the Inbox steps describe a
+    //: **A step with nothing to press still needs an action.** Three of the Horizon steps describe a
     //: control the playground cannot let anyone USE - capture, distillation and promotion all write,
     //: and this page has no server, so pressing them would answer 501 and the tour would be teaching
     //: a failure. `touch` completes such a step on the reader ENGAGING with the control instead:
@@ -491,13 +491,13 @@
       }, 700);
     }
 
-    //: Skip means "do it for me": it advances the SHIM's stage and re-opens the notebook through
-    //: `openNotebook`, the product's own entry point, so the workspace ends up in exactly the state
+    //: Skip means "do it for me": it advances the SHIM's stage and re-opens the orbit through
+    //: `openOrbit`, the product's own entry point, so the workspace ends up in exactly the state
     //: pressing the button would have produced.
     async fulfilAndAdvance() {
       const now = await this.current();
       const step = now && now.step;
-      // NEVER refresh while a run is in flight. `openNotebook` is a full repaint, and a repaint
+      // NEVER refresh while a run is in flight. `openOrbit` is a full repaint, and a repaint
       // during a run deletes the run — the product records this twice, as invariant 60 ("a repaint
       // may not delete a RUN") and invariant 71 (`renderChatOverview` clears the element holding the
       // run's own Stop button). Pressing this mid-run wiped the answer and the overview off the
@@ -513,15 +513,15 @@
         await new Promise((r) => setTimeout(r, 120));
       }
       // `enters` WITHOUT `fulfil`, and the pair is not the same thing. `fulfil` names a stage the
-      // shim advances; the step that walks into the notebook advances no stage at all, it opens a
+      // shim advances; the step that walks into the orbit advances no stage at all, it opens a
       // door. Declaring it as `fulfil: "enter"` made it claim a stage `PG.fulfil` does not have,
       // and the smoke suite's "every fulfillable step reports done after being fulfilled" check
       // duly reported it stranded - correctly, because fulfilling it changed nothing.
       if (step && (step.fulfil || step.enters) && !PG.isRunning()) {
         this.setHint(L("doing"));
         try {
-          if (step.fulfil) await PG.fulfil(notebookId(), step.fulfil);
-          if (typeof window.openNotebook === "function") await window.openNotebook(notebookId());
+          if (step.fulfil) await PG.fulfil(orbitId(), step.fulfil);
+          if (typeof window.openOrbit === "function") await window.openOrbit(orbitId());
         } catch (err) {
           console.warn("playground: could not fulfil the step", err);
         }

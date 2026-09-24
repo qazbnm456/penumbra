@@ -17,8 +17,8 @@ import rlm_harness.runtime as rt
 from rlm_harness import RLMConfig
 from rlm_harness.testing import ScriptedInterpreter, assert_repl_safe, call, scripted_lm, submit
 
-from rlm_notebook.audio import GeneratePodcastScript
-from rlm_notebook.schema import PodcastScript
+from penumbra.audio import GeneratePodcastScript
+from penumbra.schema import PodcastScript
 
 _SOURCES = "[[SRC:s1|page:1]]\nApples are red or green. Oranges are orange."
 
@@ -131,7 +131,7 @@ def test_the_script_never_asks_for_disfluencies():
     # The SPLIT itself: craft lives in the skill (read when wanted), must-apply rules in the prompt.
     craft = (
         pathlib.Path(__file__).resolve().parent.parent
-        / "rlm_notebook" / "skills" / "podcast-craft.md"
+        / "penumbra" / "skills" / "podcast-craft.md"
     ).read_text(encoding="utf-8")
     for technique in ("Tension", "Pacing", "The reveal"):
         assert technique in craft, f"the {technique} guidance is gone from the skill"
@@ -151,7 +151,7 @@ def test_a_long_script_is_told_to_build_across_turns():
     invariant 65 recorded it reaching only this one as the unclean line of the prompt/skill split.
     What stays here is the TIER-SPECIFIC pointer, because 60-90 utterances is a fact about this
     task and not about the others."""
-    from rlm_notebook.instructions import ACCUMULATE_LARGE_OUTPUTS
+    from penumbra.instructions import ACCUMULATE_LARGE_OUTPUTS
 
     instructions = GeneratePodcastScript.instructions
     assert "does NOT fit in one reply" in instructions
@@ -202,7 +202,7 @@ def test_a_shipped_skill_carries_the_frontmatter_the_catalog_is_built_from():
     either renders as `(no description)` in the catalog — present, and useless to choose between."""
     import pathlib
 
-    skills = pathlib.Path(__file__).resolve().parent.parent / "rlm_notebook" / "skills"
+    skills = pathlib.Path(__file__).resolve().parent.parent / "penumbra" / "skills"
     files = sorted(skills.glob("*.md"))
     assert files, "the skills directory is empty; the catalog would inject nothing"
     for path in files:
@@ -223,16 +223,16 @@ def test_no_prompt_hardcodes_a_skill_name():
     """
     import pathlib as _p
 
-    from rlm_notebook.audio import GeneratePodcastScript
-    from rlm_notebook.guide import (
+    from penumbra.audio import GeneratePodcastScript
+    from penumbra.guide import (
         GenerateFAQ,
         GenerateKeyInsight,
         GenerateSummary,
         GenerateTimeline,
     )
-    from rlm_notebook.task import AnswerQuestion
+    from penumbra.task import AnswerQuestion
 
-    skills = _p.Path(__file__).resolve().parent.parent / "rlm_notebook" / "skills"
+    skills = _p.Path(__file__).resolve().parent.parent / "penumbra" / "skills"
     names = [f.stem for f in skills.glob("*.md")]
     assert names, "no skills shipped; this would pass vacuously"
     for cls in (

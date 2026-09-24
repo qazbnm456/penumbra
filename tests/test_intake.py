@@ -1,6 +1,6 @@
 """`intake.py` — the serial capture queue.
 
-No `importorskip`: `intake.py` imports `inbox` and `ingest`, both core (see `test_inbox.py`'s
+No `importorskip`: `intake.py` imports `horizon` and `ingest`, both core (see `test_horizon.py`'s
 docstring for the one transitive dependency and why it does not need an extra). Every test injects
 a fake `parse`, so nothing here touches the network or a real parser.
 """
@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from rlm_notebook import inbox
-from rlm_notebook.intake import IntakeQueue
-from rlm_notebook.schema import Source, SourceBlock
+from penumbra import horizon
+from penumbra.intake import IntakeQueue
+from penumbra.schema import Source, SourceBlock
 
 
 def _parsed(origin: str, node_id: str, *, kind: str = "web", text: str = "body") -> Source:
@@ -58,7 +58,7 @@ def test_submit_returns_a_queued_node_before_anything_is_parsed(stopped_queues):
     assert node.state == "queued"
     assert node.kind == "web"          # ingest.kind_for's guess, shown until the parse lands
     assert node.chars == 0
-    assert inbox.get_node(node.id) is not None
+    assert horizon.get_node(node.id) is not None
 
     assert started.wait(5), "the worker never picked the item up"
     release.set()
@@ -77,11 +77,11 @@ def test_the_worker_stores_the_blocks_and_corrects_the_kind(stopped_queues):
     node = q.submit("https://example.com/looks-like-a-page")
     assert q.wait_idle(5)
 
-    done = inbox.get_node(node.id)
+    done = horizon.get_node(node.id)
     assert done.state == "ready_undistilled"
     assert done.kind == "pdf", "the parse must correct kind_for's guess"
     assert done.chars == len("twelve chars")
-    assert inbox.node_source(node.id).blocks[0].text == "twelve chars"
+    assert horizon.node_source(node.id).blocks[0].text == "twelve chars"
 
 
 def test_the_worker_marks_a_node_parsing_while_it_works_on_it(stopped_queues):
@@ -94,7 +94,7 @@ def test_the_worker_marks_a_node_parsing_while_it_works_on_it(stopped_queues):
     observed: list[str] = []
 
     def parse(origin, node_id):
-        observed.append(inbox.get_node(node_id).state)
+        observed.append(horizon.get_node(node_id).state)
         return _parsed(origin, node_id)
 
     q = _queue(stopped_queues, parse)
@@ -102,7 +102,7 @@ def test_the_worker_marks_a_node_parsing_while_it_works_on_it(stopped_queues):
     assert q.wait_idle(5)
 
     assert observed == ["parsing"]
-    assert inbox.get_node(node.id).state == "ready_undistilled"
+    assert horizon.get_node(node.id).state == "ready_undistilled"
 
 
 # --- serial, which is the whole point ----------------------------------------------------------------
@@ -149,10 +149,10 @@ def test_a_parse_failure_keeps_the_message_and_the_worker_survives(stopped_queue
     good = q.submit("https://example.com/good")
     assert q.wait_idle(5)
 
-    failed = inbox.get_node(bad.id)
+    failed = horizon.get_node(bad.id)
     assert failed.state == "failed"
     assert "404 while fetching" in failed.error
-    assert inbox.get_node(good.id).state == "ready_undistilled", "the worker died on the first item"
+    assert horizon.get_node(good.id).state == "ready_undistilled", "the worker died on the first item"
 
 
 def test_resubmitting_a_failed_node_retries_it(stopped_queues):
@@ -169,11 +169,11 @@ def test_resubmitting_a_failed_node_retries_it(stopped_queues):
     q = _queue(stopped_queues, parse)
     node = q.submit("https://example.com/flaky")
     assert q.wait_idle(5)
-    assert inbox.get_node(node.id).state == "failed"
+    assert horizon.get_node(node.id).state == "failed"
 
     q.submit("https://example.com/flaky")
     assert q.wait_idle(5)
-    retried = inbox.get_node(node.id)
+    retried = horizon.get_node(node.id)
     assert retried.state == "ready_undistilled"
     assert retried.error is None, "a successful retry must clear the old message"
     assert len(attempts) == 2
@@ -193,7 +193,7 @@ def test_submitting_the_same_origin_twice_parses_once(stopped_queues):
 
     assert first.id == second.id
     assert parses == ["https://example.com/a"]
-    assert inbox.count_nodes() == 1
+    assert horizon.count_nodes() == 1
 
 
 def test_cancel_pending_lands_the_waiting_items_as_stopped(stopped_queues):
@@ -228,8 +228,8 @@ def test_cancel_pending_lands_the_waiting_items_as_stopped(stopped_queues):
     release.set()
     assert q.wait_idle(5)
 
-    assert inbox.get_node(first.id).state == "ready_undistilled", "the in-flight item still finished"
-    stopped = [inbox.get_node(n.id) for n in waiting]
+    assert horizon.get_node(first.id).state == "ready_undistilled", "the in-flight item still finished"
+    stopped = [horizon.get_node(n.id) for n in waiting]
     assert [n.state for n in stopped] == ["failed"] * 3, "a dropped item may not look like a live one"
     assert all(n.error == "stopped before it was read" for n in stopped), [n.error for n in stopped]
     # And the retry path reaches them: `submit` resets a `failed` node to `queued`.
@@ -241,19 +241,19 @@ def test_resume_picks_up_queued_and_interrupted_work_but_not_failures(stopped_qu
     resumed: retrying a parse that failed on its own terms, on every restart, is how a poisoned
     item becomes a loop."""
     q = _queue(stopped_queues, lambda o, n: _parsed(o, n))
-    stale_queued = inbox.add_pending_node("https://example.com/q", "web")
-    stale_parsing = inbox.add_pending_node("https://example.com/p", "web")
-    inbox.update_node(stale_parsing.id, state="parsing")
-    dead = inbox.add_pending_node("https://example.com/f", "web")
-    inbox.update_node(dead.id, state="failed", error="gone")
+    stale_queued = horizon.add_pending_node("https://example.com/q", "web")
+    stale_parsing = horizon.add_pending_node("https://example.com/p", "web")
+    horizon.update_node(stale_parsing.id, state="parsing")
+    dead = horizon.add_pending_node("https://example.com/f", "web")
+    horizon.update_node(dead.id, state="failed", error="gone")
 
     resumed = q.resume_interrupted()
     assert set(resumed) == {stale_queued.id, stale_parsing.id}
     assert q.wait_idle(5)
 
-    assert inbox.get_node(stale_queued.id).state == "ready_undistilled"
-    assert inbox.get_node(stale_parsing.id).state == "ready_undistilled"
-    assert inbox.get_node(dead.id).state == "failed"
+    assert horizon.get_node(stale_queued.id).state == "ready_undistilled"
+    assert horizon.get_node(stale_parsing.id).state == "ready_undistilled"
+    assert horizon.get_node(dead.id).state == "failed"
 
 
 def test_a_node_removed_while_queued_is_skipped_rather_than_an_error(stopped_queues, caplog):
@@ -273,13 +273,13 @@ def test_a_node_removed_while_queued_is_skipped_rather_than_an_error(stopped_que
     doomed = q.submit("https://example.com/1")
     survivor = q.submit("https://example.com/2")
 
-    inbox.remove_node(doomed.id)
+    horizon.remove_node(doomed.id)
     release.set()
     assert q.wait_idle(5)
 
-    assert inbox.get_node(doomed.id) is None
-    assert inbox.get_node(blocker.id).state == "ready_undistilled"
-    assert inbox.get_node(survivor.id).state == "ready_undistilled"
+    assert horizon.get_node(doomed.id) is None
+    assert horizon.get_node(blocker.id).state == "ready_undistilled"
+    assert horizon.get_node(survivor.id).state == "ready_undistilled"
     # The "rather than an error" half, which was previously unasserted: `_run`'s blanket handler
     # swallows anything `_process` raises, so replacing the guard with a `raise` left the suite
     # green. The log record is the only observable difference.
@@ -341,12 +341,12 @@ def test_a_failure_anywhere_in_processing_never_leaves_a_node_parsing(stopped_qu
     def boom(*args, **kwargs):
         raise OSError("ENOSPC")
 
-    monkeypatch.setattr(inbox, "store_blocks", boom)
+    monkeypatch.setattr(horizon, "store_blocks", boom)
     q = _queue(stopped_queues, lambda o, n: _parsed(o, n))
     node = q.submit("https://example.com/a")
     assert q.wait_idle(5)
 
-    got = inbox.get_node(node.id)
+    got = horizon.get_node(node.id)
     assert got.state == "failed"
     assert "ENOSPC" in got.error
 
@@ -361,7 +361,7 @@ def test_even_a_baseexception_from_the_parser_is_recorded(stopped_queues):
     q = _queue(stopped_queues, boom)
     node = q.submit("https://example.com/a")
     assert q.wait_idle(5)
-    assert inbox.get_node(node.id).state == "failed"
+    assert horizon.get_node(node.id).state == "failed"
 
 
 def test_a_node_removed_during_its_parse_leaves_no_orphan_blocks(stopped_queues):
@@ -380,12 +380,12 @@ def test_a_node_removed_during_its_parse_leaves_no_orphan_blocks(stopped_queues)
     q = _queue(stopped_queues, parse)
     node = q.submit("https://example.com/x")
     assert started.wait(5)
-    inbox.remove_node(node.id)
+    horizon.remove_node(node.id)
     release.set()
     assert q.wait_idle(5)
 
-    assert not inbox.node_blocks_path(node.id).exists(), "an orphan the next capture would adopt"
-    recaptured = inbox.add_node(_parsed("https://example.com/x", "s0", text="NEW-TEN-CH"))
+    assert not horizon.node_blocks_path(node.id).exists(), "an orphan the next capture would adopt"
+    recaptured = horizon.add_node(_parsed("https://example.com/x", "s0", text="NEW-TEN-CH"))
     assert recaptured.chars == len("NEW-TEN-CH"), "a stale orphan was adopted"
 
 
@@ -459,8 +459,8 @@ def test_the_worker_resolves_its_directory_once_and_does_not_follow_a_chdir(stop
     finally:
         os.chdir(here)
 
-    assert (here / "inbox" / "nodes" / f"{node.id}.json").exists()
-    assert not (elsewhere / "inbox").exists(), "the worker followed the chdir"
+    assert (here / "horizon" / "nodes" / f"{node.id}.json").exists()
+    assert not (elsewhere / "horizon").exists(), "the worker followed the chdir"
 
 
 def test_stop_racing_submit_never_starts_a_second_worker(stopped_queues):
@@ -524,7 +524,7 @@ def test_cancel_pending_drains_past_the_stop_sentinel(stopped_queues):
     """The `_STOP` branch had ZERO coverage, and it was wrong: breaking on the sentinel left
     everything BEHIND it queued AND still counted, so `wait_idle` never returned — measured
     `dropped=1, qsize=2, _outstanding=1` on a queue holding `[node, _STOP, node]`."""
-    from rlm_notebook.intake import _STOP
+    from penumbra.intake import _STOP
 
     started = threading.Event()
     release = threading.Event()
@@ -545,19 +545,19 @@ def test_cancel_pending_drains_past_the_stop_sentinel(stopped_queues):
     assert q.cancel_pending() == 2, "the item behind the sentinel was stranded"
     release.set()
     assert q.wait_idle(5), "_outstanding never reached zero for the stranded item"
-    assert [inbox.get_node(n.id).state for n in (first, second)] == ["failed", "failed"]
+    assert [horizon.get_node(n.id).state for n in (first, second)] == ["failed", "failed"]
 
 
 def test_submit_returns_a_node_even_if_the_row_vanishes_mid_reset(stopped_queues, monkeypatch):
-    """`inbox.update_node` returns `None` when the row is gone, and `submit` is annotated `-> Node`.
+    """`horizon.update_node` returns `None` when the row is gone, and `submit` is annotated `-> Node`.
     A caller writing `submit(url).id` must not get an `AttributeError` because the reader removed
     the node in the window between `add_pending_node` and the failed-state reset."""
     q = _queue(stopped_queues, lambda o, n: _parsed(o, n))
     node = q.submit("https://example.com/a")
     assert q.wait_idle(5)
-    inbox.update_node(node.id, state="failed", error="earlier failure")
+    horizon.update_node(node.id, state="failed", error="earlier failure")
 
-    monkeypatch.setattr(inbox, "update_node", lambda *args, **kwargs: None)
+    monkeypatch.setattr(horizon, "update_node", lambda *args, **kwargs: None)
     again = q.submit("https://example.com/a")
     assert again is not None, "submit returned None under a non-optional annotation"
     assert again.id == node.id
@@ -568,7 +568,7 @@ def test_resubmitting_a_failed_origin_is_the_retry_path(stopped_queues):
 
     `intake.submit` resets a node that previously FAILED back to `queued` and re-enqueues it. An
     independent reviewer neutered that single `if node.state == "failed":` branch and ran
-    `test_intake.py` + `test_api_inbox.py`: 52 passed, green. The only button offered on a failed
+    `test_intake.py` + `test_api_horizon.py`: 52 passed, green. The only button offered on a failed
     row would have done nothing at all, and the row would have kept its old error beside a state
     that looked like progress.
 
@@ -587,7 +587,7 @@ def test_resubmitting_a_failed_origin_is_the_retry_path(stopped_queues):
     q = _queue(stopped_queues, flaky)
     node = q.submit("https://example.com/flaky")
     assert q.wait_idle(5)
-    failed = inbox.get_node(node.id)
+    failed = horizon.get_node(node.id)
     assert failed.state == "failed" and failed.error
 
     # The SAME origin again. Same node (identity is content-derived), reset and retried.
@@ -597,7 +597,7 @@ def test_resubmitting_a_failed_origin_is_the_retry_path(stopped_queues):
     assert again.error is None, "the old message must not sit beside a fresh attempt"
 
     assert q.wait_idle(5)
-    healed = inbox.get_node(node.id)
+    healed = horizon.get_node(node.id)
     assert healed.state == "ready_undistilled"
     assert healed.error is None
     assert attempts == ["https://example.com/flaky"] * 2
@@ -696,7 +696,7 @@ def test_a_stop_landing_mid_submit_does_not_leave_a_node_nothing_will_parse(stop
     exactly the state the window produces.
     """
     q = _queue(stopped_queues, lambda origin, node_id: _parsed(origin, node_id))
-    node = inbox.add_pending_node("https://example.com/mid-stop", "web", base_dir=q.base_dir)
+    node = horizon.add_pending_node("https://example.com/mid-stop", "web", base_dir=q.base_dir)
     q.stop(timeout=5)
 
     assert q._enqueue(node.id) is False, (
@@ -714,16 +714,16 @@ def test_submit_itself_refuses_on_a_stopped_queue(stopped_queues):
     `submit`'s left the suite green, because `_enqueue` caught everything the test drove — so the
     early refusal, and the fact that no ROW is created, had nothing pinning them.
     """
-    from rlm_notebook import inbox as inbox_mod
+    from penumbra import horizon as horizon_mod
 
     q = _queue(stopped_queues, lambda origin, node_id: _parsed(origin, node_id))
     q.stop(timeout=5)
-    before = inbox_mod.count_nodes(base_dir=q.base_dir)
+    before = horizon_mod.count_nodes(base_dir=q.base_dir)
 
     with pytest.raises(RuntimeError, match="stopped"):
         q.submit("https://example.com/after-stop")
 
-    assert inbox_mod.count_nodes(base_dir=q.base_dir) == before, (
+    assert horizon_mod.count_nodes(base_dir=q.base_dir) == before, (
         "a stopped queue wrote a node row before refusing - the row is the thing invariant 79 calls "
         "a permanent `queued`, and it is now there with nothing to parse it"
     )
@@ -743,7 +743,7 @@ def test_the_two_locks_are_always_taken_in_the_same_order(tmp_path):
     """
     import threading
 
-    from rlm_notebook.intake import IntakeQueue
+    from penumbra.intake import IntakeQueue
 
     pairs: set[tuple[str, str]] = set()
     held: dict[int, list[str]] = {}
@@ -768,7 +768,7 @@ def test_the_two_locks_are_always_taken_in_the_same_order(tmp_path):
         def __getattr__(self, name):
             return getattr(self._inner, name)
 
-    queue = IntakeQueue(base_dir=tmp_path / "inbox")
+    queue = IntakeQueue(base_dir=tmp_path / "horizon")
     queue._guard = Tracked("guard", queue._guard)
     queue._idle = Tracked("idle", queue._idle)
     try:

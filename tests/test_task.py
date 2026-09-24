@@ -17,8 +17,8 @@ import rlm_harness.runtime as rt
 from rlm_harness import RLMConfig
 from rlm_harness.testing import ScriptedInterpreter, assert_repl_safe, call, scripted_lm, submit
 
-from rlm_notebook.schema import Answer
-from rlm_notebook.task import AnswerQuestion
+from penumbra.schema import Answer
+from penumbra.task import AnswerQuestion
 
 _ANSWER_DICT = {
     "text": "Apples are red or green.",
