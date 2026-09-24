@@ -123,6 +123,7 @@ from .config import (
     PenumbraConfig,
     auto_distil_enabled,
     auto_distil_max_per_batch,
+    landing_orbit,
     max_corpus_chars,
     max_trace_files,
     max_upload_bytes,
@@ -662,6 +663,9 @@ class SettingsRequest(BaseModel):
     #: settable from the page. A setting that one half of the pair knows about is worse than one
     #: neither does.
     auto_distil: str | None = None
+    #: Where an uncategorised capture lands (`config.landing_orbit`): empty for the first orbit,
+    #: `off`, or an orbit id.
+    landing_orbit: str | None = None
 
 
 @app.get("/settings")
@@ -1625,7 +1629,7 @@ async def _resolve_language(
                 # an explicit output-language setting still wins outright); what changes here is
                 # that the chosen interface language is now a SIGNAL to the guess, ranked above
                 # `Accept-Language` because it was chosen rather than inherited.
-                "interface_language": request.headers.get("x-rlm-interface-language", ""),
+                "interface_language": request.headers.get("x-penumbra-interface-language", ""),
                 "sources_excerpt": excerpt,
                 "questions": questions,
             },
@@ -3165,10 +3169,67 @@ def _auto_distil_after_intake() -> None:
             _DISTIL.update({"running": False, "cancel": False})
 
 
+#: The orbit an uncategorised capture falls into when the reader has not chosen one. A fixed handle,
+#: so it is the same orbit every time; its TITLE is what the reader sees (invariant 37).
+FIRST_ORBIT_ID = "first-orbit"
+_FIRST_ORBIT_TITLES = {"zh": "第一個軌道", "en": "First orbit"}
+#: The interface language the last capture arrived with, so the first orbit is titled in the
+#: reader's language even though it is created on the intake worker thread, far from any request.
+_CAPTURE_LANGUAGE = {"name": ""}
+
+
+def _file_into_landing_orbit(node_id: str) -> None:
+    """File a freshly parsed capture into the landing orbit, unless the reader turned that off.
+
+    **Everything lands somewhere you can ask about.** The Horizon stays the index of everything
+    captured (invariant 78), and the node is copied, never moved, so it can still be filed
+    elsewhere. Skipped when the node is already in an orbit (it was filed by hand first), when it
+    is not parsed, and when filing it would push the landing orbit past the corpus cap: invariant 8
+    fails a whole question loudly past that cap, and quietly growing one orbit toward it with
+    every capture would turn "just throw everything in" into an orbit you can no longer ask. Such a
+    node stays in the Horizon, where it always was.
+    """
+    choice = landing_orbit()
+    if choice == "off":
+        return
+    node = horizon.get_node(node_id)
+    if node is None or node.state not in ("ready", "ready_undistilled"):
+        return
+    if horizon.memberships_for(node_id):
+        return
+    target = choice or FIRST_ORBIT_ID
+    existing = load_orbit(target)
+    if existing is None and choice is not None:
+        return  # a chosen orbit that has since been deleted is not re-created behind the reader
+    held = sum(len(b.text) for s in (existing.sources if existing else []) for b in s.blocks)
+    if held + node.chars > max_corpus_chars():
+        _log.info("not filing %s into %s: it would pass the corpus cap", node_id, target)
+        return
+    horizon.promote_node(node_id, target, create=existing is None)
+    if existing is None:
+        lang = "zh" if "chinese" in _CAPTURE_LANGUAGE["name"].lower() else "en"
+
+        def _title(orbit: Orbit) -> None:
+            if not orbit.title:
+                orbit.title = _FIRST_ORBIT_TITLES[lang]
+
+        mutate_orbit(target, _title)
+
+
 def _horizon_queue() -> intake.IntakeQueue:
     queue = intake.shared()
     queue.set_idle_hook(_auto_distil_after_intake)
+    queue.set_ready_hook(_file_into_landing_orbit)
     return queue
+
+
+def _file_quietly(node_id: str) -> None:
+    """`_file_into_landing_orbit` for the captures that skip the queue (pasted text, uploads). A
+    failure to file never fails the capture: it has already landed in the Horizon."""
+    try:
+        _file_into_landing_orbit(node_id)
+    except Exception:  # noqa: BLE001 - filing is a convenience on top of a capture that succeeded
+        _log.exception("could not file %s into the landing orbit", node_id)
 
 
 @app.get("/horizon")
@@ -3276,7 +3337,7 @@ async def distil_horizon(body: DistilRequest, request: Request) -> dict:
     # Invariant 69's signal, from the one place that HAS it. `distil_pending` deliberately does not
     # resolve a language itself — it runs with no request — so the caller that does supplies it
     # (invariant 80's shortened ladder). `output_language()` still outranks this inside the pass.
-    language = request.headers.get("x-rlm-interface-language", "")
+    language = request.headers.get("x-penumbra-interface-language", "")
 
     pending = await asyncio.to_thread(horizon.count_nodes, state="ready_undistilled")
     total = min(body.limit, pending)
@@ -3371,7 +3432,9 @@ async def upload_into_horizon(request: Request) -> dict:
                 source = with_injection_flags(ingest_uploaded_file(data, filename, "s0"))
                 #: An UPLOAD: the origin is the filename the caller sent, which is not an
                 #: identity even when it is spelled like a URL — see `node_id_for`.
-                stored.append(horizon.add_node(source))
+                node = horizon.add_node(source)
+                _file_quietly(node.id)
+                stored.append(node)
             except Exception as exc:  # noqa: BLE001 - a parser may raise anything
                 # **`Exception`, not `(ValueError, OSError)`, and the difference was a 500 that lost
                 # data.** `pypdfium2.PdfiumError` subclasses `RuntimeError`, so a malformed `.pdf`
@@ -3398,7 +3461,7 @@ async def upload_into_horizon(request: Request) -> dict:
 
 
 @app.post("/horizon")
-async def capture_into_horizon(body: CaptureRequest) -> dict:
+async def capture_into_horizon(body: CaptureRequest, request: Request) -> dict:
     """Capture URLs and pasted text. Returns the nodes IMMEDIATELY, parsed or not (invariant 79).
 
     **http(s) only, and this check is written here rather than inherited.** `intake.submit` accepts
@@ -3423,6 +3486,7 @@ async def capture_into_horizon(body: CaptureRequest) -> dict:
                 "(AGENTS.md invariant 26) — upload the file's bytes to /horizon/upload instead.",
             )
 
+    _CAPTURE_LANGUAGE["name"] = request.headers.get("x-penumbra-interface-language", "")
     queue = _horizon_queue()
     # A new capture is the reader asking for the automatic summary pass again — see
     # `_resume_auto_distil`, and `_auto_distil_after_intake` for why a Stop suppresses it until then.
@@ -3439,7 +3503,9 @@ async def capture_into_horizon(body: CaptureRequest) -> dict:
             )
             #: PASTED text: `ingest_pasted_text` already builds a content-derived origin, so the
             #: identity is the content either way. Left False so there is one rule, not two.
-            nodes.append(await asyncio.to_thread(horizon.add_node, source))
+            node = await asyncio.to_thread(horizon.add_node, source)
+            await asyncio.to_thread(_file_quietly, node.id)
+            nodes.append(node)
     except (ValueError, OSError) as exc:
         raise HTTPException(422, f"could not capture that: {type(exc).__name__}: {exc}") from exc
     # Pasted text skipped the queue above, so nothing will ever report the queue idle on its

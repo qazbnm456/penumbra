@@ -599,6 +599,11 @@ _SETTING_PATTERNS = {
     #: `PN_AUTO_DISTIL_MAX_PER_BATCH` is environment-only, the same placement invariant 41 gives
     #: trace retention and the upload cap.
     "auto_distil": _TOGGLE_PATTERN,
+    #: Where an uncategorised capture lands once it is parsed: empty for the automatically created
+    #: first orbit, `off` to leave captures in the Horizon only, or an orbit id. A BEHAVIOUR
+    #: preference (invariant 41): it moves the reader's own captures between their own tiers, and
+    #: bounds nothing.
+    "landing_orbit": re.compile(r"^(?:|off|[A-Za-z0-9._-]{1,120})$"),
 }
 
 
@@ -680,6 +685,17 @@ def auto_distil_enabled(base_dir: str | Path = _DEFAULT_ORBITS_DIR) -> bool:
     return raw.lower() == "on"
 
 
+def landing_orbit(base_dir: str | Path = _DEFAULT_ORBITS_DIR) -> str | None:
+    """Where an uncategorised capture lands: `None` for the automatic first orbit, `"off"` for
+    nowhere (it stays in the Horizon), or an orbit id. Same env-over-file ladder as every setting;
+    an unparseable value reads as the default rather than raising, for `auto_distil_enabled`'s
+    reason: this runs after a capture has already succeeded."""
+    raw = (_env_wins("PN_LANDING_ORBIT") or read_settings(base_dir)[0].get("landing_orbit") or "").strip()
+    if not raw or not _SETTING_PATTERNS["landing_orbit"].match(raw):
+        return None
+    return raw
+
+
 def auto_distil_max_per_batch() -> int:
     """How many nodes the AUTO path may summarise in one sweep. Environment-only, deliberately.
 
@@ -706,6 +722,7 @@ def settings_state(base_dir: str | Path = _DEFAULT_ORBITS_DIR) -> dict[str, obje
         "tts_voice_host_a": "PN_TTS_VOICE_HOST_A",
         "tts_voice_host_b": "PN_TTS_VOICE_HOST_B",
         "auto_distil": "PN_AUTO_DISTIL",
+        "landing_orbit": "PN_LANDING_ORBIT",
     }
     out: dict[str, object] = {"error": error}
     for key, env_name in env_names.items():

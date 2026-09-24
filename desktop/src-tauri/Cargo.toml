@@ -15,7 +15,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["macos-private-api"] }
 getrandom = "0.2"
 open = "5"
 serde = { version = "1", features = ["derive"] }
@@ -25,6 +25,14 @@ url = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSScreen", "NSEvent", "NSWindow", "NSResponder", "NSGraphics"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry", "NSArray"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_UI_Input_KeyboardAndMouse"] }
 
 [profile.release]
 codegen-units = 1
