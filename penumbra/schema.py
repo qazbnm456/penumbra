@@ -220,6 +220,8 @@ class HorizonAsk(BaseModel):
     created_at: float
     scope_kind: Literal["all", "tag", "entity"] = "all"
     scope_value: str | None = None
+    #: The orbit the scope was narrowed to, when it was asked from that orbit's knowledge graph.
+    scope_orbit: str | None = None
     question: str
     answer: Answer
     sources: list[AskSource] = Field(default_factory=list)

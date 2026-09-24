@@ -57,9 +57,13 @@ Chinese, Japanese and Korean text is indexed as overlapping character pairs, com
 
 The searchable states are derived from `schema.NodeState` minus `queued`, `parsing` and `failed`. A hand-written list once said `distilled`, a state that does not exist (a summarised node is `ready`), and every summarised capture would have dropped out of search.
 
+## The star map and the knowledge graph
+
+`topology.py` draws both from rows already in the index: `nodes.entities`, `nodes.tags` and `memberships`. It never reads a node's text and never calls a model, so drawing the Horizon costs one query however large it grows. Two entities are linked when one capture names both; two orbits are bridged when captures filed into each name the same entity. An unsummarised capture names nothing, so it is counted apart and offered for summarising rather than guessed into the picture. Orbits are keyed by `slug`, the token memberships are written with, which `/orbits` also reports, because an orbit's id and its filename can differ (invariant 10). Each drawing's output is capped (the 60 most-named entities, 300 captures, the 12 strongest bridges) and reports how much it left out; the graph's side panel says so when entities were dropped.
+
 ## Not here
 
-There are no parsers beyond what `ingest_one` handles, no embeddings, no implicit edges and no graph. Traditional and Simplified spellings of the same word do not match each other in the index. The find box on the Horizon still matches the distilled fields by substring; the full-text index serves Horizon asks. WAL needs a real local filesystem and degrades or fails on a network share, as the orbit files already do, more quietly.
+There are no parsers beyond what `ingest_one` handles, no embeddings and no edges inferred from text. Traditional and Simplified spellings of the same word do not match each other in the index. The find box on the Horizon still matches the distilled fields by substring; the full-text index serves Horizon asks. WAL needs a real local filesystem and degrades or fails on a network share, as the orbit files already do, more quietly.
 
 ---
 

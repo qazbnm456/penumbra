@@ -1549,6 +1549,182 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     run.closeTicker("never-opened");
     return { afterFirst, afterSecond, afterStaleClose, afterClose, survivedExtraCloses: true };
   },
+
+  //: The knowledge graph's layout, run on a small orbit twice: it must be deterministic (the same
+  //: orbit draws the same picture), keep every entity on the stage, frame what it drew no tighter
+  //: than the minimum, and put a capture beside the entities it names.
+  graphLayout() {
+    const run = new Function(
+      `${extract("stableHash")}\n${extract("layoutGraph")}\nreturn { layoutGraph };`
+    )();
+    const data = {
+      entities: [
+        { name: "REM", count: 3 }, { name: "memory", count: 2 }, { name: "Walker", count: 1 },
+        { name: "caffeine", count: 1 },
+      ],
+      edges: [{ a: "REM", b: "memory", weight: 2 }, { a: "REM", b: "Walker", weight: 1 }],
+      captures: [
+        { node_id: "nd-1", title: "a", origin: "x", state: "ready", entities: ["REM", "memory"], tags: [] },
+        { node_id: "nd-2", title: "b", origin: "y", state: "ready", entities: [], tags: [] },
+      ],
+      tags: [], undistilled: [],
+    };
+    const one = run.layoutGraph(data);
+    const two = run.layoutGraph(data);
+    const pts = [...one.pos.values()];
+    const rem = one.pos.get("REM");
+    const memory = one.pos.get("memory");
+    const c = one.captures[0];
+    const mid = { x: (rem.x + memory.x) / 2, y: (rem.y + memory.y) / 2 };
+    return {
+      same: JSON.stringify([...one.pos.entries()]) === JSON.stringify([...two.pos.entries()]),
+      inside: pts.every((p) => p.x >= 60 && p.x <= 940 && p.y >= 50 && p.y <= 640),
+      box: one.box,
+      captureNearAnchors: Math.hypot(c.x - mid.x, c.y - mid.y) <= 60,
+      linkedCloser: Math.hypot(rem.x - memory.x, rem.y - memory.y)
+        < Math.hypot(one.pos.get("caffeine").x - rem.x, one.pos.get("caffeine").y - rem.y),
+    };
+  },
+
+  //: The view-mode preference: a stored value outside the allowed pair falls back to the default,
+  //: and blocked storage is not an error.
+  viewModes() {
+    const store = {};
+    const localStorage = {
+      getItem: (k) => (k in store ? store[k] : null),
+      setItem: (k, v) => { store[k] = String(v); },
+    };
+    const t = (_k, fallback) => fallback;
+    const run = new Function(
+      "localStorage", "t",
+      `${constant("MODE_KEYS")}\n${constant("MODE_DEFAULTS")}\n${constant("MODE_CHOICES")}\n` +
+        `${extract("viewMode")}\nreturn { viewMode };`
+    )(localStorage, t);
+    const fresh = [run.viewMode("horizon"), run.viewMode("orbit")];
+    store["penumbra-orbit-mode"] = "cols";
+    store["penumbra-horizon-mode"] = "nonsense";
+    const stored = [run.viewMode("horizon"), run.viewMode("orbit")];
+    const blocked = new Function(
+      "localStorage", "t",
+      `${constant("MODE_KEYS")}\n${constant("MODE_DEFAULTS")}\n${constant("MODE_CHOICES")}\n` +
+        `${extract("viewMode")}\nreturn viewMode("orbit");`
+    )({ getItem: () => { throw new Error("blocked"); } }, t);
+    return { fresh, stored, blocked };
+  },
+
+  //: What a scope chip says. On a graph the orbit is the one on screen, so an entity chip does not
+  //: repeat it; in the history, where there is no screen to lean on, the orbit is named.
+  scopeLabels() {
+    const t = (_k, fallback) => fallback;
+    const run = new Function(
+      "t",
+      "const orbitTitles = new Map([['sleep', 'Sleep']]);\n" +
+        `${extract("orbitLabelForSlug")}\n${extract("askHScopeLabel")}\n${extract("askHChipLabel")}\n` +
+        "return { askHScopeLabel, askHChipLabel };"
+    )(t);
+    return {
+      all: run.askHScopeLabel({ kind: "all" }),
+      tagHistory: run.askHScopeLabel({ kind: "tag", value: "sleep", orbit: "sleep" }),
+      entityChip: run.askHChipLabel({ id: "e", scope: { kind: "entity", value: "REM", orbit: "sleep" } }),
+      tagChip: run.askHChipLabel({ id: "t", scope: { kind: "tag", value: "sleep", orbit: "sleep" } }),
+      orbitChip: run.askHChipLabel({ id: "o", orbit: { id: "nb-1", slug: "sleep", title: "Sleep" } }),
+    };
+  },
+
+  //: A running summary pass keeps its Stop through a redraw. The map and the graph rebuild their
+  //: summarise control on every redraw; before its state moved out of the DOM, a redraw mid-pass
+  //: put the spend button back with no Stop while the pass kept billing.
+  distilControlSurvivesRedraw() {
+    class Node {
+      constructor(tag) { this.tag = tag; this.kids = []; this.className = ""; this.type = ""; this.disabled = false; this._text = ""; }
+      set textContent(v) { this._text = v; this.kids = []; }
+      get textContent() { return this._text + this.kids.map((k) => k.textContent).join(""); }
+      appendChild(k) { this.kids.push(k); return k; }
+      addEventListener() {}
+    }
+    const elt = (tag, cls, text) => { const n = new Node(tag); n.className = cls || ""; if (text) n._text = text; return n; };
+    const t = (_k, fallback) => fallback;
+    const run = new Function(
+      "elt", "t", "api", "notify", "readableError", "document",
+      "const DISTIL_BATCH_CAP = 50;\n" +
+        "const distilWatch = { status: null, polling: false, failures: 0, stopping: false };\n" +
+        "function paintDistilControls() {} function watchDistil() {} function refreshTopologyViews() {}\n" +
+        `${extract("distilOrbitControl")}\nreturn { distilOrbitControl, distilWatch };`
+    )(elt, t, async () => ({}), () => {}, (m) => m, { querySelectorAll: () => [] });
+    const idle = run.distilOrbitControl("sleep", 3);
+    const idleHasStop = idle.kids.some((k) => (k.className || "").includes("run-stop"));
+    run.distilWatch.status = { running: true, done: 1, total: 3 };
+    run.distilWatch.slug = "sleep"; // this orbit started it
+    const redrawn = run.distilOrbitControl("sleep", 3); // what a redraw builds mid-pass
+    return {
+      idleHasStop,
+      idleOffersSpend: idle.textContent.includes("Summarise 3"),
+      redrawnHasStop: redrawn.kids.some((k) => (k.className || "").includes("run-stop")),
+      redrawnShowsProgress: redrawn.textContent.includes("Summarising 1 of 3"),
+      redrawnOffersSpend: redrawn.textContent.includes("Summarise 3"),
+    };
+  },
+
+  //: An orbit entered with a run in flight opens where that run's status and Stop are.
+  orbitVisitWithRun() {
+    const run = new Function(
+      "state", "activeRuns", "recoveredRuns",
+      "const orbitVisit = { override: null, userChose: false };\n" +
+        `${extract("orbitHasRun")}\n${extract("beginOrbitVisit")}\n` +
+        "return { begin: () => { beginOrbitVisit(); return orbitVisit.override; } };"
+    );
+    const busy = run({ orbitId: "nb-1", sources: [1] }, new Map([["nb-1", 1]]), new Map()).begin();
+    const recovered = run({ orbitId: "nb-1", sources: [1] }, new Map(), new Map([["nb-1", {}]])).begin();
+    const quiet = run({ orbitId: "nb-1", sources: [1] }, new Map([["nb-2", 1]]), new Map()).begin();
+    const empty = run({ orbitId: "nb-1", sources: [] }, new Map(), new Map()).begin();
+    return { busy, recovered, quiet, empty };
+  },
+
+  //: A refresh keeps the reader's chosen scope and the plan on screen; a new selection by the
+  //: reader moves to its most specific scope. Before, every map refresh (window focus, a capture)
+  //: snapped the dock back and hid the plan, turning the free check into a paid ask.
+  askContextOnRefresh() {
+    const dismissed = [];
+    const run = new Function(
+      "dismissAskHPlan", "renderAskHChips",
+      "const askH = { chips: [{ id: 'all', scope: { kind: 'all' } }], chosen: 'all', custom: null };\n" +
+        `${extract("askHChosen")}\n${extract("setAskContext")}\nreturn { setAskContext, askH };`
+    )(() => dismissed.push(1), () => {});
+    const orbitChip = { id: "orbit:sleep", orbit: { id: "nb-1", slug: "sleep", title: "Sleep" } };
+    run.setAskContext([orbitChip]); // the reader picked a planet
+    const afterPick = run.askH.chosen;
+    run.askH.chosen = "all"; // the reader pressed the Everything chip, then checked a plan
+    const before = dismissed.length;
+    run.setAskContext([orbitChip], { follow: false }); // a background refresh
+    const afterRefresh = { chosen: run.askH.chosen, dismissed: dismissed.length - before };
+    const tagChip = { id: "tag:x", scope: { kind: "tag", value: "x" } };
+    run.setAskContext([orbitChip, tagChip]); // the reader turned on a lens
+    return { afterPick, afterRefresh, afterLens: run.askH.chosen };
+  },
+
+  //: The summarise control claims progress only for a pass its own orbit started.
+  distilControlClaimsOnlyItsOwnPass() {
+    class Node {
+      constructor(tag) { this.tag = tag; this.kids = []; this.className = ""; this.type = ""; this.disabled = false; this._text = ""; }
+      set textContent(v) { this._text = v; this.kids = []; }
+      get textContent() { return this._text + this.kids.map((k) => k.textContent).join(""); }
+      appendChild(k) { this.kids.push(k); return k; }
+      addEventListener() {}
+    }
+    const elt = (tag, cls, text) => { const n = new Node(tag); n.className = cls || ""; if (text) n._text = text; return n; };
+    const t = (_k, fallback) => fallback;
+    const run = new Function(
+      "elt", "t", "api", "notify", "readableError",
+      "const DISTIL_BATCH_CAP = 50;\n" +
+        "const distilWatch = { status: { running: true, done: 2, total: 5 }, polling: true, failures: 0, stopping: false, slug: 'coffee' };\n" +
+        "function paintDistilControls() {} function watchDistil() {} function refreshTopologyViews() {}\n" +
+        `${extract("distilOrbitControl")}\nreturn { distilOrbitControl };`
+    )(elt, t, async () => ({}), () => {}, (m) => m);
+    return {
+      mine: run.distilOrbitControl("coffee", 5).textContent,
+      other: run.distilOrbitControl("sleep", 3).textContent,
+    };
+  },
 };
 
 let input = "";

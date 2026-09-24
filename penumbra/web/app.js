@@ -1786,6 +1786,9 @@ async function suggestTitle(orbitId, generation) {
 
 // A FUNCTION, not a module-level const: the labels go through `t()`, and a const would freeze
 // whatever language was active when the script loaded.
+//: The orbits the landing row offers, fetched with the page's other choices.
+let settingsOrbits = [];
+
 function settingRows() {
   // ONE sentence, on the FIRST voice row only. The two were byte-identical and sixty pixels apart,
   // which reads as a template rather than as help - and they named `edge-tts`, `chatterbox` and the
@@ -1845,11 +1848,17 @@ function settingRows() {
         "Off by default. Each summary is a model call on your own key, so a 200-bookmark import costs nothing until you turn this on."
       ),
     },
+    // Every orbit is a choice, by its title. The VALUE is the orbit's slug, the filename token the
+    // server files by, which is always inside the setting's own pattern even for an orbit named in
+    // Chinese (invariant 10); an id outside that pattern would be refused on Save.
     {
       key: "landing_orbit",
       label: t("settings.landing", "Where new captures land"),
-      values: ["off"],
-      labels: { off: t("settings.landingOff", "Keep them in the Horizon only") },
+      values: ["off", ...settingsOrbits.map((o) => o.slug)],
+      labels: Object.fromEntries([
+        ["off", t("settings.landingOff", "Keep them in the Horizon only")],
+        ...settingsOrbits.map((o) => [o.slug, o.label]),
+      ]),
       help: t(
         "settings.landingHelp",
         "By default, everything you capture is also filed into your first orbit, so you can ask about it right away. It stays in the Horizon either way."
@@ -2572,6 +2581,11 @@ async function loadSettings() {
     // Fetched alongside the settings themselves, and tolerated failing: a row with no choices
     // falls back to free text, so a page that cannot reach this still works.
     settingsChoices = await api("/settings/choices").catch(() => ({}));
+    const listed = await api("/orbits").catch(() => ({ orbits: [] }));
+    settingsOrbits = (listed.orbits || []).map((o) => ({
+      slug: o.slug,
+      label: o.title || o.derived_title || t("app.untitled", "Untitled orbit"),
+    }));
     renderSettings(await api("/settings"));
   } catch (err) {
     body.textContent = "";
@@ -7735,8 +7749,10 @@ function installColumnSwitch() {
 }
 
 function showHorizon({ push = true } = {}) {
+  orbitVisit.orbitId = null; // leaving the orbit ends the visit
   horizonEl("view-horizon").hidden = false;
   horizonEl("view-orbit").hidden = true;
+  horizonEl("view-graph").hidden = true;
   horizonEl("horizon-home").classList.add("is-current");
   document.body.dataset.view = "horizon";
   if (push) syncAddressBar("");
@@ -7750,6 +7766,7 @@ function showHorizon({ push = true } = {}) {
   if (capture) capture.focus();
   syncSkipLink();
   syncFacetCurrent();
+  applyViewMode();
 }
 
 function showOrbitView({ push = true } = {}) {
@@ -7766,6 +7783,8 @@ function showOrbitView({ push = true } = {}) {
   if (push) syncAddressBar(state.orbitId || "");
   syncDocumentTitle(state.orbitId || "");
   stopHorizonPolling();
+  beginOrbitVisit();
+  applyViewMode();
 }
 
 //: Back and Forward. `push: false` on both branches, or restoring a state would push a NEW entry
@@ -8237,6 +8256,12 @@ function renderStream({ append = false, newIds = new Set() } = {}) {
 
 async function refreshHorizon({ reset = false, newIds = new Set() } = {}) {
   if (reset) horizonState.offset = 0;
+  // The list's refresh is also the map's: a capture landing, a node finishing its parse or a pass
+  // summarising something all change what the map draws. At most every few seconds, because this
+  // runs on the Horizon's busy poll.
+  if (viewIsHorizon() && viewMode("horizon") === "map" && Date.now() - (starMap.lastRender || 0) > 3000) {
+    void renderStarMap();
+  }
   let data;
   try {
     data = await api(
@@ -9153,6 +9178,11 @@ initHorizon();
 // A question over everything kept, a tag or an entity, rather than inside one orbit. The server
 // runs it under a reserved handle (`api.HORIZON_ASK_KEY`), so the ordinary run routes serve its
 // ticker, Stop and trajectory with no second copy of any of them.
+//
+// It lives in the ask dock, which follows the reader: on the star map, the list and an orbit's
+// knowledge graph, its scope chips are whatever is selected there. An ORBIT chip is different in
+// kind: a question about one orbit is asked in that orbit's conversation, so pressing Ask with it
+// opens the three columns and asks there.
 
 const HORIZON_ASK_KEY = "horizon-ask";
 
@@ -9160,19 +9190,90 @@ const askH = {
   plan: null, // the last preview: what Ask will read
   running: false,
   generation: 0, // bumped by every new preview, so a late reply cannot overwrite a newer one
+  chips: [{ id: "all", scope: { kind: "all" } }],
+  chosen: "all",
+  custom: null, // a tag or entity picked from the "other" list, kept as its own chip
 };
 
+function askHChipLabel(chip) {
+  if (chip.orbit) return t("askH.chipOrbit", `Orbit: ${chip.orbit.title}`, { name: chip.orbit.title });
+  const scope = chip.scope || { kind: "all" };
+  // A tag or entity picked from the "other" list reads across every orbit, which is worth saying
+  // beside an orbit-narrowed chip of the same name.
+  if (chip.id === "custom") {
+    return t("askH.chipEverywhere", `${askHScopeLabel(scope)} (everywhere)`, { name: askHScopeLabel(scope) });
+  }
+  // The orbit a chip is narrowed to is the one on screen, so the chip does not repeat it.
+  if (scope.kind === "entity") return t("askH.chipEntity", `Entity: ${scope.value}`, { name: scope.value });
+  return askHScopeLabel({ ...scope, orbit: null });
+}
+
+//: The scopes on offer, most specific last; the most specific is chosen, because the reader's
+//: selection is the best evidence of what they mean to ask about.
+//: `follow` is true when the READER changed the selection (picked a planet, an entity, a lens):
+//: the dock then takes the most specific scope. A refresh redraws the same selection, so the
+//: reader's own chip and any plan already on screen are kept; resetting them there turned the
+//: free check button into a paid ask in a scope the reader had just deselected.
+function setAskContext(chips, { follow = true } = {}) {
+  const all = { id: "all", scope: { kind: "all" } };
+  const previous = askH.chosen;
+  askH.chips = [all, ...chips];
+  if (askH.custom) askH.chips.push(askH.custom);
+  const keep = !follow && askH.chips.some((chip) => chip.id === previous);
+  askH.chosen = keep ? previous : askH.chips[askH.chips.length - 1].id;
+  renderAskHChips();
+  // Chips from different views can share an id while meaning different scopes (a `tag:` chip on
+  // the map reads the whole Horizon, the same id on a graph reads one orbit), so a plan survives
+  // only while it still describes exactly the scope on screen.
+  const same = (a, b) => JSON.stringify([a.kind, a.value || null, a.orbit || null])
+    === JSON.stringify([b.kind, b.value || null, b.orbit || null]);
+  const chosen = askHChosen();
+  const planStale = askH.plan && (chosen.orbit || !same(askH.plan.scope || {}, chosen.scope || {}));
+  if (askH.chosen !== previous || planStale) dismissAskHPlan();
+}
+
+function askHChosen() {
+  return askH.chips.find((chip) => chip.id === askH.chosen) || askH.chips[0];
+}
+
 function askHScope() {
-  const raw = horizonEl("ask-h-scope").value || "all";
-  if (raw === "all") return { kind: "all" };
-  const cut = raw.indexOf(":");
-  return { kind: raw.slice(0, cut), value: raw.slice(cut + 1) };
+  return askHChosen().scope || { kind: "all" };
+}
+
+function renderAskHChips() {
+  const row = horizonEl("ask-h-chips");
+  row.textContent = "";
+  askH.chips.forEach((chip) => {
+    const button = elt("button", "ask-h-chip", askHChipLabel(chip));
+    button.type = "button";
+    button.setAttribute("aria-pressed", chip.id === askH.chosen ? "true" : "false");
+    button.addEventListener("click", () => {
+      askH.chosen = chip.id;
+      renderAskHChips();
+      dismissAskHPlan();
+    });
+    row.appendChild(button);
+  });
+  const chosen = askHChosen();
+  const check = horizonEl("ask-h-check");
+  // An orbit chip asks straight into that orbit's conversation, where a question is one press as it
+  // always has been; everything else checks first.
+  check.textContent = chosen.orbit ? t("askH.askOrbit", "Ask in this orbit") : t("askH.check", "See what it reads");
 }
 
 function askHScopeLabel(scope) {
   if (!scope || scope.kind === "all") return t("askH.everything", "Everything");
-  if (scope.kind === "tag") return `#${scope.value}`;
-  return scope.value || "";
+  const base = scope.kind === "tag" ? `#${scope.value}` : scope.value || "";
+  const orbit = scope.orbit ? orbitLabelForSlug(scope.orbit) : "";
+  return orbit ? `${base} · ${orbit}` : base;
+}
+
+//: Orbit titles by slug, for labelling a scope that was narrowed to one. Filled by the star map's
+//: fetch of `/orbits`, which is the only place the client learns them in bulk.
+const orbitTitles = new Map();
+
+function orbitLabelForSlug(slug) {
+  return orbitTitles.get(slug) || "";
 }
 
 async function loadAskHScopes() {
@@ -9181,9 +9282,8 @@ async function loadAskHScopes() {
   try {
     data = await api("/horizon/concepts");
   } catch {
-    return; // Everything still works; the narrower scopes simply are not offered
+    return; // the narrower scopes simply are not offered
   }
-  const keep = select.value;
   while (select.options.length > 1) select.remove(1);
   const group = (label, kind, rows) => {
     if (!rows || !rows.length) return;
@@ -9199,13 +9299,27 @@ async function loadAskHScopes() {
   };
   group(t("askH.tags", "Tags"), "tag", data.tags);
   group(t("askH.entities", "Entities"), "entity", data.entities);
-  if ([...select.options].some((option) => option.value === keep)) select.value = keep;
+  select.value = "";
 }
 
+function pickOtherScope() {
+  const select = horizonEl("ask-h-scope");
+  const raw = select.value;
+  select.value = "";
+  if (!raw) return;
+  const cut = raw.indexOf(":");
+  askH.custom = { id: "custom", scope: { kind: raw.slice(0, cut), value: raw.slice(cut + 1) } };
+  askH.chips = askH.chips.filter((chip) => chip.id !== "custom");
+  askH.chips.push(askH.custom);
+  askH.chosen = "custom";
+  renderAskHChips();
+  dismissAskHPlan();
+}
 function askHShowError(message) {
   const el = horizonEl("ask-h-error");
   el.textContent = message || "";
   el.hidden = !message;
+  syncDock();
 }
 
 function askHPlanLine(plan) {
@@ -9248,6 +9362,7 @@ function renderAskHPlan(plan) {
   }
   horizonEl("ask-h-send").disabled = !plan.count || askH.running;
   horizonEl("ask-h-plan").hidden = false;
+  syncDock();
 }
 
 async function previewAskH() {
@@ -9257,6 +9372,11 @@ async function previewAskH() {
     return;
   }
   askHShowError("");
+  const chosen = askHChosen();
+  if (chosen.orbit) {
+    await askInOrbit(chosen.orbit, question);
+    return;
+  }
   const generation = ++askH.generation;
   const scope = askHScope();
   const check = horizonEl("ask-h-check");
@@ -9284,6 +9404,7 @@ function dismissAskHPlan() {
   askH.plan = null;
   askH.generation += 1;
   horizonEl("ask-h-plan").hidden = true;
+  syncDock();
 }
 
 //: Strokes through the sentences a citation backs, numbered by the capture they point at. The
@@ -9362,7 +9483,15 @@ function renderAskHAnswer(ask) {
     });
     article.appendChild(next);
   }
+  const close = elt("button", "btn ask-h-close", t("askH.close", "Close"));
+  close.type = "button";
+  close.addEventListener("click", () => {
+    article.hidden = true;
+    syncDock();
+  });
+  article.appendChild(close);
   article.hidden = false;
+  syncDock();
 }
 
 async function refreshAskHHistory() {
@@ -9411,6 +9540,7 @@ async function refreshAskHHistory() {
 
 function askHSetRunning(running) {
   askH.running = running;
+  syncDock();
   horizonEl("ask-h-check").disabled = running;
   horizonEl("ask-h-send").disabled = running || !(askH.plan && askH.plan.count);
 }
@@ -9524,6 +9654,1001 @@ async function reattachAskH() {
   }, 2500);
 }
 
+
+//: A question about one orbit goes into that orbit's conversation, in the three columns, where
+//: its answer joins the thread and later questions can follow it up.
+async function askInOrbit(orbit, question) {
+  if (state.orbitId !== orbit.id) await openOrbit(orbit.id);
+  if (state.orbitId !== orbit.id) return; // the orbit could not be opened; openOrbit said why
+  orbitVisit.override = "cols";
+  applyViewMode();
+  const composer = document.getElementById("ask-input");
+  // Asked of the SERVER, not only of `composerLocked()`: opening the orbit starts the recovery
+  // check without waiting for it, so a run still in flight from before a reload or another tab is
+  // not known here yet, and asking on top of it would buy a second worker (invariants 23, 47).
+  let inFlight = [];
+  try {
+    inFlight = (await api(`/orbits/${encodeURIComponent(orbit.id)}/runs`)).runs || [];
+  } catch {
+    inFlight = ["unknown"]; // cannot tell, so do not spend
+  }
+  if (state.orbitId !== orbit.id) return;
+  // Refused here, where the reason can be said, rather than dropped by the chat handler: the
+  // question moves to the orbit's own composer so nothing typed is lost.
+  if (!(state.sources || []).length || composerLocked() || inFlight.length) {
+    if (composer) {
+      composer.value = question;
+      composer.focus();
+    }
+    horizonEl("ask-h-input").value = "";
+    notify((state.sources || []).length
+      ? t("askH.orbitBusy", "This orbit is still answering. Your question is in its composer for when it is done.")
+      : t("askH.orbitEmpty", "This orbit has no sources yet. Your question is in its composer."),
+    { tone: "info", timeout: 6000 });
+    return;
+  }
+  horizonEl("ask-h-input").value = "";
+  store.emit("chat:ask", { question });
+}
+
+// --- the ask dock ---------------------------------------------------------------------------------
+
+const dock = { near: false, open: false };
+
+//: Pinned open while it holds something the reader has to see or act on: a plan, a run, an answer,
+//: an error, a half-typed question or focus. Otherwise it rests as a handle and opens when the
+//: pointer comes near the bottom edge.
+function dockPinned() {
+  const root = horizonEl("ask-dock");
+  return Boolean(
+    askH.running
+    || !horizonEl("ask-h-plan").hidden
+    || !horizonEl("ask-h-answer").hidden
+    || !horizonEl("ask-h-error").hidden
+    || horizonEl("ask-h-input").value.trim()
+    || root.contains(document.activeElement)
+  );
+}
+
+function syncDock() {
+  const dockEl = horizonEl("ask-dock");
+  if (!dockEl) return;
+  const view = document.body.dataset.view;
+  // In an orbit the dock belongs to the graph, except while it holds a Horizon ask that is running
+  // or an answer not yet read: that run's status and Stop live only here (invariant 47).
+  const holding = askH.running || !horizonEl("ask-h-answer").hidden;
+  const shown = view === "horizon" || (view === "orbit" && (!horizonEl("view-graph").hidden || holding));
+  dockEl.hidden = !shown;
+  dock.open = shown && (dock.near || dockPinned());
+  dockEl.classList.toggle("is-open", dock.open);
+  horizonEl("ask-dock-handle").setAttribute("aria-expanded", dock.open ? "true" : "false");
+}
+
+function openDock() {
+  horizonEl("ask-h-input").focus();
+  syncDock();
+}
+
+function initDock() {
+  const root = horizonEl("ask-dock");
+  document.addEventListener("mousemove", (event) => {
+    if (root.hidden) return;
+    const box = root.getBoundingClientRect();
+    const near = window.innerHeight - event.clientY < 56
+      || (dock.open && event.clientY >= box.top - 12 && event.clientX >= box.left - 24 && event.clientX <= box.right + 24);
+    if (near !== dock.near) {
+      dock.near = near;
+      syncDock();
+    }
+  });
+  root.addEventListener("focusin", syncDock);
+  root.addEventListener("focusout", () => queueMicrotask(syncDock));
+  horizonEl("ask-dock-handle").addEventListener("click", () => {
+    if (dock.open) {
+      dock.near = false;
+      document.activeElement?.blur?.();
+      syncDock();
+      return;
+    }
+    openDock();
+  });
+  horizonEl("ask-h-input").addEventListener("input", syncDock);
+}
+
+// --- view modes -----------------------------------------------------------------------------------
+//
+// The Horizon is drawn as a star map or a list, an orbit as its knowledge graph or the three
+// columns. The choice is a per-browser preference, like the theme.
+
+const MODE_KEYS = { horizon: "penumbra-horizon-mode", orbit: "penumbra-orbit-mode" };
+const MODE_DEFAULTS = { horizon: "map", orbit: "graph" };
+const MODE_CHOICES = {
+  horizon: [["map", () => t("mode.map", "Star map")], ["list", () => t("mode.list", "List")]],
+  orbit: [["graph", () => t("mode.graph", "Knowledge graph")], ["cols", () => t("mode.cols", "Columns")]],
+};
+
+function viewMode(view) {
+  let stored = null;
+  try {
+    stored = localStorage.getItem(MODE_KEYS[view]);
+  } catch {
+    /* storage blocked: the default is fine */
+  }
+  const allowed = MODE_CHOICES[view].map(([id]) => id);
+  return allowed.includes(stored) ? stored : MODE_DEFAULTS[view];
+}
+
+function setViewMode(view, mode) {
+  try {
+    localStorage.setItem(MODE_KEYS[view], mode);
+  } catch {
+    /* the choice lasts for this page only */
+  }
+  applyViewMode();
+}
+
+//: How THIS visit to an orbit is drawn when it should not follow the stored preference: an orbit
+//: with no sources opens in the columns where sources are added, one with a run in flight opens
+//: where that run's status and Stop live, and asking into an orbit shows its conversation. None of
+//: these changes the preference; pressing the toggle ends the override.
+const orbitVisit = { override: null, userChose: false, orbitId: null };
+
+function orbitHasRun() {
+  return activeRuns.has(state.orbitId) || recoveredRuns.has(state.orbitId);
+}
+
+function beginOrbitVisit() {
+  // Re-opening the orbit already on screen (Load the result, a rename) is the same visit: it keeps
+  // how the reader was looking at it rather than jumping to the stored preference.
+  if (orbitVisit.orbitId === state.orbitId) {
+    if (!(state.sources || []).length || orbitHasRun()) orbitVisit.override = "cols";
+    return;
+  }
+  orbitVisit.orbitId = state.orbitId;
+  orbitVisit.userChose = false;
+  orbitVisit.override = !(state.sources || []).length || orbitHasRun() ? "cols" : null;
+}
+
+function applyViewMode() {
+  const view = document.body.dataset.view;
+  if (view !== "horizon" && view !== "orbit") return;
+  const empty = view === "orbit" && !(state.sources || []).length;
+  const mode = view === "orbit" ? (empty ? "cols" : orbitVisit.override || viewMode("orbit")) : viewMode(view);
+  MODE_CHOICES[view].forEach(([id, label], i) => {
+    const button = horizonEl(i === 0 ? "mode-a" : "mode-b");
+    button.textContent = label();
+    button.dataset.mode = id;
+    button.setAttribute("aria-pressed", id === mode ? "true" : "false");
+    button.disabled = empty && id === "graph";
+  });
+  if (view === "horizon") {
+    const map = mode === "map";
+    horizonEl("view-horizon").classList.toggle("is-map", map);
+    horizonEl("starmap").hidden = !map;
+    if (map) void renderStarMap();
+    else setAskContext([]);
+  } else {
+    const graph = mode === "graph";
+    horizonEl("view-orbit").hidden = graph;
+    horizonEl("view-graph").hidden = !graph;
+    if (graph) void renderGraph();
+  }
+  syncDock();
+}
+
+function initViewModes() {
+  ["mode-a", "mode-b"].forEach((id) => {
+    horizonEl(id).addEventListener("click", (event) => {
+      const view = document.body.dataset.view;
+      if (view === "orbit") {
+        orbitVisit.override = null;
+        orbitVisit.userChose = true;
+      }
+      if (view === "horizon" || view === "orbit") setViewMode(view, event.currentTarget.dataset.mode);
+    });
+  });
+  // A run found in flight AFTER the orbit opened (reload recovery mounts it a moment later) moves
+  // the visit to the columns, where its status and Stop are, unless the reader has since chosen.
+  store.on("runs:changed", () => {
+    if (document.body.dataset.view !== "orbit" || orbitVisit.userChose || !orbitHasRun()) return;
+    if (orbitVisit.override === "cols") return;
+    orbitVisit.override = "cols";
+    applyViewMode();
+  });
+  // The first source makes the graph a real choice; only the toggle is refreshed, the view stays.
+  store.on("sources:changed", () => {
+    if (document.body.dataset.view !== "orbit") return;
+    horizonEl("mode-a").disabled = !(state.sources || []).length;
+  });
+}
+
+// --- SVG helpers ----------------------------------------------------------------------------------
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svgEl(tag, attrs = {}, className = "") {
+  const node = document.createElementNS(SVG_NS, tag);
+  Object.entries(attrs).forEach(([name, value]) => node.setAttribute(name, String(value)));
+  if (className) node.setAttribute("class", className);
+  return node;
+}
+
+function svgText(x, y, text, className) {
+  const node = svgEl("text", { x, y }, className);
+  node.textContent = text;
+  return node;
+}
+
+function clearSvg(svg) {
+  [...svg.childNodes].forEach((child) => {
+    if (child.nodeName.toLowerCase() !== "title") child.remove();
+  });
+}
+
+//: A small stable number from a string, so a layout that needs a little scatter draws the same
+//: picture every time rather than jumping on each repaint.
+function stableHash(text) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) / 4294967295;
+}
+
+function shortLabel(text, max = 18) {
+  const chars = [...(text || "")];
+  return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : chars.join("");
+}
+
+//: Tag lenses: pressing one lights up what carries that tag and dims the rest. One at a time.
+function renderLenses(lensRow, tags, active, onPick) {
+  lensRow.textContent = "";
+  tags.slice(0, 12).forEach((tag) => {
+    const button = elt("button", "lens", `#${tag.name}`);
+    button.type = "button";
+    button.appendChild(elt("span", "lens-count", String(tag.count)));
+    button.setAttribute("aria-pressed", tag.name === active ? "true" : "false");
+    button.addEventListener("click", () => onPick(tag.name === active ? null : tag.name));
+    lensRow.appendChild(button);
+  });
+  lensRow.hidden = !tags.length;
+}
+
+// --- the star map ---------------------------------------------------------------------------------
+
+const starMap = { data: null, orbits: [], selected: null, lens: null, generation: 0 };
+
+const MAP_CENTRE = { x: 500, y: 330 };
+const MAP_RINGS = [[230, 138], [330, 198], [430, 258]];
+const MAP_RING_SIZES = [3, 5, Infinity];
+
+async function renderStarMap() {
+  const generation = ++starMap.generation;
+  starMap.lastRender = Date.now();
+  watchDistil();
+  let topo;
+  let listed;
+  try {
+    [topo, listed] = await Promise.all([api("/horizon/topology"), api("/orbits")]);
+  } catch (err) {
+    horizonEl("starmap-empty").textContent = readableError(err.message);
+    horizonEl("starmap-empty").hidden = false;
+    return;
+  }
+  if (generation !== starMap.generation) return;
+  let concepts = { tags: [] };
+  try {
+    concepts = await api("/horizon/concepts");
+  } catch {
+    /* lenses are optional */
+  }
+  if (generation !== starMap.generation) return;
+  const bySlug = new Map((topo.orbits || []).map((o) => [o.slug, o]));
+  orbitTitles.clear();
+  starMap.orbits = (listed.orbits || []).map((o) => {
+    const title = o.title || o.derived_title || t("app.untitled", "Untitled orbit");
+    orbitTitles.set(o.slug, title);
+    const filed = bySlug.get(o.slug) || { captures: 0, undistilled: 0, last_filed_at: 0, entities: [], tags: [] };
+    return {
+      id: o.id, slug: o.slug, title,
+      sources: o.source_count,
+      captures: filed.captures,
+      undistilled: filed.undistilled,
+      entities: filed.entities,
+      tags: filed.tags,
+      recency: Math.max(o.updated_at || 0, filed.last_filed_at || 0),
+    };
+  }).sort((a, b) => b.recency - a.recency);
+  starMap.data = topo;
+  starMap.tags = concepts.tags || [];
+  paintStarMapLenses();
+  drawStarMap();
+  syncStarMapContext({ follow: false });
+}
+
+//: The lens row is repainted with every pick, so `aria-pressed` and each button's idea of what
+//: is active stay true and a second press turns the lens off.
+function paintStarMapLenses() {
+  renderLenses(horizonEl("starmap-lenses"), starMap.tags || [], starMap.lens, (name) => {
+    starMap.lens = name;
+    paintStarMapLenses();
+    drawStarMap();
+    syncStarMapContext();
+  });
+}
+
+function planetLayout() {
+  const placed = [];
+  let index = 0;
+  MAP_RINGS.forEach(([rx, ry], ring) => {
+    const count = Math.min(MAP_RING_SIZES[ring], starMap.orbits.length - index);
+    for (let i = 0; i < count; i += 1) {
+      const orbit = starMap.orbits[index];
+      index += 1;
+      // Spread evenly on the ring, each ring turned a little so planets do not line up radially.
+      const angle = (-Math.PI / 2) + (i / count) * Math.PI * 2 + ring * 0.7;
+      const size = Math.max(orbit.sources, orbit.captures);
+      placed.push({
+        orbit,
+        x: MAP_CENTRE.x + rx * Math.cos(angle),
+        y: MAP_CENTRE.y + ry * Math.sin(angle),
+        r: Math.min(30, 11 + Math.sqrt(size) * 2.6),
+        angle,
+      });
+    }
+  });
+  return placed;
+}
+
+//: Which drawn element had focus, so a redraw can hand it back. `clearSvg` removes the focused
+//: planet or entity, and without this a keyboard reader was dropped to <body> by their own Enter.
+function focusedKey(svg) {
+  const active = document.activeElement;
+  return active && svg.contains(active) && active.dataset ? active.dataset.key || null : null;
+}
+
+function restoreFocus(svg, key) {
+  if (!key) return;
+  const again = [...svg.querySelectorAll("[data-key]")].find((el) => el.dataset.key === key);
+  if (again) again.focus();
+}
+
+function drawStarMap() {
+  const svg = horizonEl("starmap-svg");
+  const keepFocus = focusedKey(svg);
+  clearSvg(svg);
+  const topo = starMap.data;
+  if (!topo) return;
+  const empty = !starMap.orbits.length && !topo.total.count;
+  horizonEl("starmap-empty").textContent = t("map.empty", "Capture something and the map starts to grow.");
+  horizonEl("starmap-empty").hidden = !empty;
+
+  MAP_RINGS.forEach(([rx, ry]) => {
+    svg.appendChild(svgEl("ellipse", { cx: MAP_CENTRE.x, cy: MAP_CENTRE.y, rx, ry }, "map-ring"));
+  });
+
+  const planets = planetLayout();
+  const at = new Map(planets.map((p) => [p.orbit.slug, p]));
+
+  (topo.bridges || []).forEach((bridge) => {
+    const a = at.get(bridge.a);
+    const b = at.get(bridge.b);
+    if (!a || !b) return;
+    // Bowed away from the centre, so a bridge between two planets never runs through the Horizon.
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    let ox = mx - MAP_CENTRE.x;
+    let oy = my - MAP_CENTRE.y;
+    let len = Math.hypot(ox, oy);
+    if (len < 1) {
+      ox = -(b.y - a.y);
+      oy = b.x - a.x;
+      len = Math.hypot(ox, oy) || 1;
+    }
+    const cx = mx + (ox / len) * 160;
+    const cy = my + (oy / len) * 160;
+    svg.appendChild(svgEl("path", { d: `M ${a.x} ${a.y} Q ${cx} ${cy} ${b.x} ${b.y}` }, "map-bridge"));
+    const label = svgText((a.x + 2 * cx + b.x) / 4, (a.y + 2 * cy + b.y) / 4 - 6,
+      shortLabel(bridge.shared[0], 14), "map-bridge-label");
+    const title = svgEl("title");
+    title.textContent = bridge.shared.join(", ");
+    label.appendChild(title);
+    svg.appendChild(label);
+  });
+
+  // The Horizon itself: a black hole with its accretion ring, and the captures filed nowhere yet
+  // circling it as loose points.
+  const hole = svgEl("g", { transform: `translate(${MAP_CENTRE.x} ${MAP_CENTRE.y})` }, "map-hole");
+  hole.appendChild(svgEl("circle", { r: 58 }, "map-hole-glow"));
+  hole.appendChild(svgEl("circle", { r: 40 }, "map-hole-ring"));
+  hole.appendChild(svgEl("circle", { r: 26 }, "map-hole-core"));
+  svg.appendChild(hole);
+  const loose = topo.loose || { count: 0, undistilled: 0, busy: 0 };
+  const shown = Math.min(loose.count, 28);
+  const done = loose.count - loose.undistilled - loose.busy;
+  for (let i = 0; i < shown; i += 1) {
+    const angle = (i / Math.max(shown, 1)) * Math.PI * 2 + 0.4;
+    const d = 64 + (i % 3) * 8;
+    const cls = i < Math.round((done / Math.max(loose.count, 1)) * shown) ? "map-dot is-done" : "map-dot";
+    svg.appendChild(svgEl("circle", {
+      cx: MAP_CENTRE.x + d * Math.cos(angle), cy: MAP_CENTRE.y + d * 0.62 * Math.sin(angle), r: 2.6,
+    }, cls));
+  }
+  svg.appendChild(svgText(MAP_CENTRE.x, MAP_CENTRE.y + 92, t("horizon.home", "Horizon"), "map-hole-label"));
+  svg.appendChild(svgText(MAP_CENTRE.x, MAP_CENTRE.y + 110,
+    t("map.loose", `${loose.count} not in an orbit`, { n: loose.count }), "map-hole-sub"));
+
+  planets.forEach((p) => {
+    const { orbit } = p;
+    const dimmed = starMap.lens && !(orbit.tags || []).includes(starMap.lens);
+    const group = svgEl("g", { tabindex: 0, role: "button", "aria-label":
+      t("map.planetLabel", `${orbit.title}, ${orbit.sources} sources`, { name: orbit.title, n: orbit.sources }) },
+    `map-planet${starMap.selected === orbit.slug ? " is-selected" : ""}${dimmed ? " is-dim" : ""}`);
+    const moons = Math.min(orbit.captures, 12);
+    const doneMoons = orbit.captures ? Math.round(((orbit.captures - orbit.undistilled) / orbit.captures) * moons) : 0;
+    for (let i = 0; i < moons; i += 1) {
+      const angle = (i / moons) * Math.PI * 2 + p.angle;
+      const d = p.r + 8 + (i % 2) * 5;
+      group.appendChild(svgEl("circle", { cx: p.x + d * Math.cos(angle), cy: p.y + d * Math.sin(angle), r: 2.4 },
+        i < doneMoons ? "map-dot is-done" : "map-dot"));
+    }
+    group.appendChild(svgEl("circle", { cx: p.x, cy: p.y, r: p.r }, "map-planet-body"));
+    group.appendChild(svgText(p.x, p.y + p.r + 30, shortLabel(orbit.title), "map-planet-label"));
+    group.appendChild(svgText(p.x, p.y + p.r + 46,
+      t("map.planetCount", `${orbit.sources} sources`, { n: orbit.sources }), "map-planet-sub"));
+    const title = svgEl("title");
+    title.textContent = orbit.title;
+    group.appendChild(title);
+    group.dataset.key = `orbit:${orbit.slug}`;
+    const pick = () => {
+      if (starMap.selected === orbit.slug) {
+        void enterOrbit(orbit);
+        return;
+      }
+      starMap.selected = orbit.slug;
+      drawStarMap();
+      syncStarMapContext();
+    };
+    group.addEventListener("click", pick);
+    group.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        pick();
+      }
+    });
+    svg.appendChild(group);
+  });
+  restoreFocus(svg, keepFocus);
+  renderStarMapCard();
+}
+
+async function enterOrbit(orbit) {
+  await openOrbit(orbit.id);
+}
+
+function syncStarMapContext({ follow = true } = {}) {
+  // A map fetch that lands after the reader has gone into an orbit must not take the dock's scope
+  // from the graph they are now looking at.
+  if (document.body.dataset.view !== "horizon" || viewMode("horizon") !== "map") return;
+  const chips = [];
+  const orbit = starMap.orbits.find((o) => o.slug === starMap.selected);
+  if (orbit) chips.push({ id: `orbit:${orbit.slug}`, orbit: { id: orbit.id, slug: orbit.slug, title: orbit.title } });
+  if (starMap.lens) chips.push({ id: `tag:${starMap.lens}`, scope: { kind: "tag", value: starMap.lens } });
+  setAskContext(chips, { follow });
+}
+
+function renderStarMapCard() {
+  const mapCard = horizonEl("starmap-card");
+  mapCard.textContent = "";
+  const orbit = starMap.orbits.find((o) => o.slug === starMap.selected);
+  if (!orbit) {
+    mapCard.hidden = true;
+    return;
+  }
+  mapCard.appendChild(elt("p", "card-kicker", relativeTime(orbit.recency)));
+  mapCard.appendChild(elt("h2", "card-title", orbit.title));
+  mapCard.appendChild(elt("p", "card-meta", orbit.captures
+    ? t("map.cardCounts", `${orbit.sources} sources, ${orbit.captures} filed from the Horizon`,
+      { n: orbit.sources, m: orbit.captures })
+    : t("map.planetCount", `${orbit.sources} sources`, { n: orbit.sources })));
+  if (orbit.entities.length) {
+    const chips = elt("div", "card-chips");
+    orbit.entities.forEach((name) => chips.appendChild(elt("span", "card-chip", name)));
+    mapCard.appendChild(chips);
+  } else {
+    mapCard.appendChild(elt("p", "card-note", t("map.noEntities", "No entities yet: nothing filed here has been summarised.")));
+  }
+  const enter = elt("button", "btn btn-primary card-enter", t("map.enter", "Open orbit"));
+  enter.type = "button";
+  enter.addEventListener("click", () => void enterOrbit(orbit));
+  mapCard.appendChild(enter);
+  if (orbit.undistilled) {
+    mapCard.appendChild(distilOrbitControl(orbit.slug, orbit.undistilled));
+  }
+  mapCard.hidden = false;
+}
+
+// --- summarising one orbit's captures -------------------------------------------------------------
+//
+// The same summary pass as the Horizon's button, narrowed to one orbit. It spends money, so it says
+// how many calls before the press, shows its progress and offers Stop while it runs (47, 80).
+
+//: The summary pass's state, kept OUTSIDE the drawn controls. The controls are rebuilt on every
+//: redraw of the map or the graph, and a running pass's progress and Stop used to live inside one:
+//: selecting an entity mid-pass put the spend button back with no Stop while the pass kept billing.
+//: Every control paints from this, and one poll keeps it current.
+const distilWatch = { status: null, polling: false, failures: 0, stopping: false, slug: null };
+
+function watchDistil() {
+  if (distilWatch.polling) return;
+  distilWatch.polling = true;
+  void pollDistilWatch();
+}
+
+async function pollDistilWatch() {
+  let reply;
+  try {
+    reply = await api("/horizon/status");
+    distilWatch.failures = 0;
+  } catch {
+    // One failed poll is not the end of the pass; keep asking, and say so only if it persists.
+    distilWatch.failures += 1;
+    paintDistilControls();
+    setTimeout(pollDistilWatch, 3000);
+    return;
+  }
+  const wasRunning = Boolean(distilWatch.status && distilWatch.status.running);
+  distilWatch.status = reply.distil || { running: false };
+  if (!distilWatch.status.running) distilWatch.stopping = false;
+  paintDistilControls();
+  if (distilWatch.status.running) {
+    setTimeout(pollDistilWatch, 1500);
+    return;
+  }
+  distilWatch.polling = false;
+  distilWatch.slug = null;
+  if (wasRunning) {
+    if (distilWatch.status.error) notify(readableError(distilWatch.status.error));
+    refreshTopologyViews();
+  }
+}
+
+function paintDistilControls() {
+  document.querySelectorAll(".distil-orbit").forEach((control) => {
+    if (control.paintDistil) control.paintDistil();
+  });
+}
+
+function refreshTopologyViews() {
+  if (document.body.dataset.view === "horizon" && viewMode("horizon") === "map") void renderStarMap();
+  if (document.body.dataset.view === "orbit" && !horizonEl("view-graph").hidden) void renderGraph();
+}
+
+function distilOrbitControl(slug, count) {
+  const control = elt("div", "distil-orbit");
+  const n = Math.min(count, DISTIL_BATCH_CAP);
+  control.paintDistil = () => {
+    control.textContent = "";
+    const status = distilWatch.status;
+    if (status && status.running) {
+      // Progress is claimed only for a pass THIS orbit started; any other pass (the Horizon's own
+      // button, the automatic one, another orbit's, or one found after a reload) is named as such,
+      // because a count here would say this orbit's captures are being summarised (invariant 60).
+      const ours = distilWatch.slug === slug;
+      control.appendChild(elt("span", "distil-orbit-cost", distilWatch.failures >= 3
+        ? t("map.distilLost", "Cannot reach the server to check progress. Still trying.")
+        : ours
+          ? t("map.distilling", `Summarising ${status.done || 0} of ${status.total || 0}`,
+            { done: status.done || 0, total: status.total || 0 })
+          : t("map.distilElsewhere", "A summary pass is running.")));
+      const stop = elt("button", "btn run-stop", distilWatch.stopping
+        ? t("run.stopping", "Stopping\u2026") : t("run.stop", "\u23f9 Stop"));
+      stop.type = "button";
+      stop.disabled = distilWatch.stopping;
+      stop.addEventListener("click", async () => {
+        distilWatch.stopping = true;
+        paintDistilControls();
+        try {
+          // The summary pass only: the capture queue is not on this screen and must not be dropped.
+          await api("/horizon/distil/cancel", { method: "POST" });
+        } catch (err) {
+          distilWatch.stopping = false;
+          notify(readableError(err.message));
+          paintDistilControls();
+        }
+      });
+      control.appendChild(stop);
+      return;
+    }
+    const go = elt("button", "btn", t("map.distil", `Summarise ${n}`, { n }));
+    go.type = "button";
+    const cost = elt("span", "distil-orbit-cost", t("map.distilCost", `Runs the model ${n} times.`, { n }));
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      let reply;
+      try {
+        reply = await api("/horizon/distil", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ limit: n, orbit_id: slug }),
+        });
+      } catch (err) {
+        go.disabled = false;
+        cost.textContent = readableError(err.message);
+        return;
+      }
+      if (!reply || reply.started === false) {
+        refreshTopologyViews();
+        return;
+      }
+      distilWatch.slug = slug;
+      distilWatch.status = { running: true, done: 0, total: n };
+      paintDistilControls();
+      watchDistil();
+    });
+    control.appendChild(go);
+    control.appendChild(cost);
+  };
+  control.paintDistil();
+  return control;
+}
+
+// --- the knowledge graph --------------------------------------------------------------------------
+
+const graphState = { data: null, slug: null, selected: null, lens: null, generation: 0, layout: null };
+
+async function renderGraph() {
+  const slug = state.orbitSlug || state.orbitId;
+  if (!slug) return;
+  watchDistil();
+  const generation = ++graphState.generation;
+  let data;
+  try {
+    data = await api(`/horizon/graph?orbit=${encodeURIComponent(slug)}`);
+  } catch (err) {
+    showGraphEmpty(readableError(err.message));
+    return;
+  }
+  if (generation !== graphState.generation) return;
+  if (graphState.slug !== slug) {
+    graphState.selected = null;
+    graphState.lens = null;
+  }
+  const sameOrbit = graphState.slug === slug;
+  graphState.slug = slug;
+  graphState.data = data;
+  graphState.layout = layoutGraph(data);
+  graphState.follow = !sameOrbit;
+  paintGraphLenses();
+  drawGraph();
+  graphState.follow = true;
+}
+
+function paintGraphLenses() {
+  const data = graphState.data || { tags: [] };
+  renderLenses(horizonEl("graph-lenses"), data.tags || [], graphState.lens, (name) => {
+    graphState.lens = name;
+    graphState.selected = null;
+    paintGraphLenses();
+    drawGraph();
+  });
+}
+
+function showGraphEmpty(text) {
+  const emptyNote = horizonEl("graph-empty");
+  emptyNote.textContent = text;
+  emptyNote.hidden = !text;
+}
+
+//: A small force layout, run to rest before anything is drawn, so the graph appears still rather
+//: than settling in front of the reader. Deterministic: the same orbit draws the same picture.
+function layoutGraph(data) {
+  const W = 1000;
+  const H = 700;
+  const names = data.entities.map((e) => e.name);
+  const pos = new Map();
+  names.forEach((name, i) => {
+    const angle = (i / Math.max(names.length, 1)) * Math.PI * 2;
+    const r = 180 + stableHash(name) * 120;
+    pos.set(name, { x: W / 2 + r * Math.cos(angle), y: H / 2 + r * Math.sin(angle) });
+  });
+  const edges = data.edges.filter((e) => pos.has(e.a) && pos.has(e.b));
+  for (let step = 0; step < 280; step += 1) {
+    const cool = 1 - step / 280;
+    const force = new Map(names.map((n) => [n, { x: 0, y: 0 }]));
+    for (let i = 0; i < names.length; i += 1) {
+      for (let j = i + 1; j < names.length; j += 1) {
+        const a = pos.get(names[i]);
+        const b = pos.get(names[j]);
+        let dx = a.x - b.x;
+        let dy = a.y - b.y;
+        const d2 = Math.max(dx * dx + dy * dy, 25);
+        const push = 9000 / d2;
+        const d = Math.sqrt(d2);
+        dx /= d;
+        dy /= d;
+        force.get(names[i]).x += dx * push;
+        force.get(names[i]).y += dy * push;
+        force.get(names[j]).x -= dx * push;
+        force.get(names[j]).y -= dy * push;
+      }
+    }
+    edges.forEach((e) => {
+      const a = pos.get(e.a);
+      const b = pos.get(e.b);
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const d = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
+      const pull = (d - 110) * 0.02 * Math.min(e.weight, 4);
+      force.get(e.a).x += (dx / d) * pull;
+      force.get(e.a).y += (dy / d) * pull;
+      force.get(e.b).x -= (dx / d) * pull;
+      force.get(e.b).y -= (dy / d) * pull;
+    });
+    names.forEach((n) => {
+      const p = pos.get(n);
+      const f = force.get(n);
+      f.x += (W / 2 - p.x) * 0.012;
+      f.y += (H / 2 - p.y) * 0.012;
+      const len = Math.sqrt(f.x * f.x + f.y * f.y);
+      const cap = 24 * cool + 1;
+      const scale = len > cap ? cap / len : 1;
+      p.x = Math.min(W - 60, Math.max(60, p.x + f.x * scale));
+      p.y = Math.min(H - 60, Math.max(50, p.y + f.y * scale));
+    });
+  }
+  // Captures sit beside the entities they name; one naming none waits at the edge.
+  const captures = data.captures.map((c, i) => {
+    const anchors = c.entities.map((n) => pos.get(n)).filter(Boolean);
+    const jitterA = stableHash(c.node_id) * Math.PI * 2;
+    const jitterR = 22 + stableHash(`${c.node_id}r`) * 26;
+    if (!anchors.length) {
+      const angle = (i / Math.max(data.captures.length, 1)) * Math.PI * 2;
+      return { ...c, x: W / 2 + 440 * Math.cos(angle), y: H / 2 + 300 * Math.sin(angle), anchors };
+    }
+    const cx = anchors.reduce((s, a) => s + a.x, 0) / anchors.length;
+    const cy = anchors.reduce((s, a) => s + a.y, 0) / anchors.length;
+    return { ...c, x: cx + jitterR * Math.cos(jitterA), y: cy + jitterR * Math.sin(jitterA), anchors };
+  });
+  // Framed to what was drawn, so a small graph fills the stage instead of sitting in its middle;
+  // never tighter than a minimum, so two entities are not blown up to fill a screen.
+  const points = [...pos.values(), ...captures];
+  let box = { x: 0, y: 0, w: W, h: H };
+  if (points.length) {
+    const xs = points.map((p) => p.x);
+    const ys = points.map((p) => p.y);
+    const pad = 70;
+    let x0 = Math.min(...xs) - pad;
+    let x1 = Math.max(...xs) + pad;
+    let y0 = Math.min(...ys) - pad;
+    let y1 = Math.max(...ys) + pad + 20;
+    const minW = 900;
+    const minH = 640;
+    if (x1 - x0 < minW) {
+      const grow = (minW - (x1 - x0)) / 2;
+      x0 -= grow;
+      x1 += grow;
+    }
+    if (y1 - y0 < minH) {
+      const grow = (minH - (y1 - y0)) / 2;
+      y0 -= grow;
+      y1 += grow;
+    }
+    box = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  }
+  return { pos, edges, captures, box };
+}
+
+function drawGraph() {
+  const svg = horizonEl("graph-svg");
+  const keepFocus = focusedKey(svg);
+  clearSvg(svg);
+  const data = graphState.data;
+  const layout = graphState.layout;
+  if (!data || !layout) return;
+  svg.setAttribute("viewBox", `${layout.box.x} ${layout.box.y} ${layout.box.w} ${layout.box.h}`);
+  const count = new Map(data.entities.map((e) => [e.name, e.count]));
+  const lens = graphState.lens;
+  const selected = graphState.selected;
+
+  // What is lit: a lens lights its captures and every entity they name; an entity lights itself and
+  // the captures that name it.
+  const litCaptures = new Set();
+  const litEntities = new Set();
+  if (lens) {
+    layout.captures.forEach((c) => {
+      if (c.tags.includes(lens)) {
+        litCaptures.add(c.node_id);
+        c.entities.forEach((n) => litEntities.add(n));
+      }
+    });
+  } else if (selected) {
+    litEntities.add(selected);
+    layout.captures.forEach((c) => {
+      if (c.entities.includes(selected)) litCaptures.add(c.node_id);
+    });
+  }
+  const focus = Boolean(lens || selected);
+
+  const edgeLayer = svgEl("g", {}, "graph-edges");
+  layout.captures.forEach((c) => {
+    c.entities.forEach((n) => {
+      const p = layout.pos.get(n);
+      if (!p) return;
+      const lit = litCaptures.has(c.node_id) && litEntities.has(n);
+      edgeLayer.appendChild(svgEl("line", { x1: c.x, y1: c.y, x2: p.x, y2: p.y },
+        `graph-link${lit ? " is-lit" : ""}${focus && !lit ? " is-dim" : ""}`));
+    });
+  });
+  layout.edges.forEach((e) => {
+    const a = layout.pos.get(e.a);
+    const b = layout.pos.get(e.b);
+    const lit = lens ? litEntities.has(e.a) && litEntities.has(e.b) : e.a === selected || e.b === selected;
+    const line = svgEl("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y },
+      `graph-edge${lit ? " is-lit" : ""}${focus && !lit ? " is-dim" : ""}`);
+    line.style.strokeWidth = String(1 + Math.min(e.weight, 5) * 1.1);
+    edgeLayer.appendChild(line);
+  });
+  svg.appendChild(edgeLayer);
+
+  layout.captures.forEach((c) => {
+    const lit = !focus || litCaptures.has(c.node_id);
+    const mark = svgEl("rect", { x: c.x - 4, y: c.y - 4, width: 8, height: 8, rx: 2 },
+      `graph-capture${lit ? "" : " is-dim"}`);
+    const title = svgEl("title");
+    title.textContent = c.title;
+    mark.appendChild(title);
+    svg.appendChild(mark);
+  });
+
+  data.entities.forEach((entity) => {
+    const p = layout.pos.get(entity.name);
+    const r = Math.min(28, 9 + (count.get(entity.name) || 1) * 2.6);
+    const lit = !focus || litEntities.has(entity.name);
+    const group = svgEl("g", { tabindex: 0, role: "button", "aria-pressed": entity.name === selected ? "true" : "false",
+      "aria-label": t("graph.entityLabel", `${entity.name}, in ${entity.count} captures`, { name: entity.name, n: entity.count }) },
+    `graph-entity${entity.name === selected ? " is-selected" : ""}${lit ? "" : " is-dim"}`);
+    group.appendChild(svgEl("circle", { cx: p.x, cy: p.y, r }, "graph-entity-body"));
+    group.appendChild(svgText(p.x, p.y + r + 16, shortLabel(entity.name, 16), "graph-entity-label"));
+    group.dataset.key = `entity:${entity.name}`;
+    const pick = () => {
+      graphState.selected = graphState.selected === entity.name ? null : entity.name;
+      graphState.lens = null;
+      paintGraphLenses();
+      drawGraph();
+    };
+    group.addEventListener("click", pick);
+    group.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        pick();
+      }
+    });
+    svg.appendChild(group);
+  });
+
+  if (!data.entities.length) {
+    showGraphEmpty(data.captures.length || data.undistilled.length
+      ? t("graph.noEntities", "Nothing here names an entity yet. Summarising is what finds them.")
+      : t("graph.nothingFiled", "Nothing in this orbit came through the Horizon, so there is nothing to draw yet. The columns have its sources."));
+  } else {
+    showGraphEmpty("");
+  }
+  restoreFocus(svg, keepFocus);
+  renderGraphPending();
+  renderGraphPanel(litCaptures);
+  syncGraphContext();
+}
+
+function renderGraphPending() {
+  const data = graphState.data;
+  const pendingBox = horizonEl("graph-pending");
+  const pending = data.undistilled || [];
+  pendingBox.hidden = !pending.length;
+  if (!pending.length) return;
+  horizonEl("graph-pending-line").textContent = t("graph.pending",
+    `${pending.length} not summarised yet, so they link to nothing.`, { n: pending.length });
+  const actions = pendingBox.querySelector(".graph-pending-actions");
+  actions.textContent = "";
+  actions.appendChild(distilOrbitControl(graphState.slug, pending.length));
+}
+
+function renderGraphPanel(litCaptures) {
+  const panel = horizonEl("graph-panel");
+  const keepFocus = focusedKey(panel);
+  panel.textContent = "";
+  const data = graphState.data;
+  const layout = graphState.layout;
+  let kicker;
+  let heading;
+  let near = [];
+  let items;
+  if (graphState.lens) {
+    kicker = t("graph.tag", "Tag");
+    heading = `#${graphState.lens}`;
+    items = layout.captures.filter((c) => litCaptures.has(c.node_id));
+    near = [...new Set(items.flatMap((c) => c.entities))];
+  } else if (graphState.selected) {
+    kicker = t("graph.entity", "Entity");
+    heading = graphState.selected;
+    items = layout.captures.filter((c) => c.entities.includes(graphState.selected));
+    near = data.edges.filter((e) => e.a === heading || e.b === heading)
+      .sort((x, y) => y.weight - x.weight)
+      .map((e) => (e.a === heading ? e.b : e.a));
+  } else {
+    kicker = t("graph.orbit", "Orbit");
+    heading = openOrbitTitle();
+    items = layout.captures;
+    near = data.entities.slice(0, 8).map((e) => e.name);
+  }
+  panel.appendChild(elt("p", "card-kicker", kicker));
+  panel.appendChild(elt("h2", "card-title", heading));
+  panel.appendChild(elt("p", "card-meta", t("graph.inCaptures", `${items.length} captures`, { n: items.length })));
+  const left = (data.omitted && data.omitted.entities) || 0;
+  if (left && !graphState.lens && !graphState.selected) {
+    panel.appendChild(elt("p", "card-note", t("graph.omitted",
+      `${left} less-named entities are not drawn.`, { n: left })));
+  }
+  if (near.length) {
+    panel.appendChild(elt("p", "card-kicker", graphState.lens || !graphState.selected
+      ? t("graph.entitiesHere", "Entities here")
+      : t("graph.together", "Often named together")));
+    const chips = elt("div", "card-chips");
+    near.slice(0, 10).forEach((name) => {
+      const chip = elt("button", "card-chip", name);
+      chip.type = "button";
+      chip.dataset.key = `chip:${name}`;
+      chip.addEventListener("click", () => {
+        graphState.selected = name;
+        graphState.lens = null;
+        paintGraphLenses();
+        drawGraph();
+      });
+      chips.appendChild(chip);
+    });
+    panel.appendChild(chips);
+  }
+  const list = elt("ol", "graph-items");
+  items.slice(0, 40).forEach((c) => {
+    const row = elt("li", "graph-item");
+    row.appendChild(elt("span", "", c.title));
+    row.appendChild(elt("span", "graph-item-origin", c.origin));
+    list.appendChild(row);
+  });
+  panel.appendChild(list);
+  if (graphState.selected || graphState.lens) {
+    const ask = elt("button", "btn btn-primary graph-ask", t("graph.ask", "Ask about this"));
+    ask.type = "button";
+    ask.addEventListener("click", openDock);
+    panel.appendChild(ask);
+  }
+  // A chip rebuilds this panel; the entity it names is where focus belongs next.
+  if (keepFocus && keepFocus.startsWith("chip:")) {
+    restoreFocus(horizonEl("graph-svg"), `entity:${keepFocus.slice(5)}`);
+  }
+}
+
+//: What the header shows for the open orbit: its title, or the label derived for it.
+function openOrbitTitle() {
+  return state.title || document.getElementById("orbit-title")?.textContent || "";
+}
+
+function syncGraphContext() {
+  if (document.body.dataset.view !== "orbit") return;
+  const slug = graphState.slug;
+  const chips = [];
+  if (state.orbitId) {
+    chips.push({ id: `orbit:${slug}`, orbit: { id: state.orbitId, slug, title: openOrbitTitle() } });
+  }
+  if (graphState.selected) {
+    chips.push({ id: `entity:${graphState.selected}`, scope: { kind: "entity", value: graphState.selected, orbit: slug } });
+  } else if (graphState.lens) {
+    chips.push({ id: `tag:${graphState.lens}`, scope: { kind: "tag", value: graphState.lens, orbit: slug } });
+  }
+  setAskContext(chips, { follow: graphState.follow !== false });
+}
+
 function initAskH() {
   horizonEl("ask-h-form").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -9540,18 +10665,21 @@ function initAskH() {
   // A preview is for ONE question in ONE scope; changing either means it no longer describes Ask.
   input.addEventListener("input", dismissAskHPlan);
   const scope = horizonEl("ask-h-scope");
-  scope.addEventListener("change", dismissAskHPlan);
+  scope.addEventListener("change", pickOtherScope);
   // Summaries land in the background, so the tags and entities on offer are refreshed whenever the
   // reader goes to pick one rather than only once at load.
   scope.addEventListener("focus", () => void loadAskHScopes());
   horizonEl("ask-h-send").addEventListener("click", () => void sendAskH());
   horizonEl("ask-h-dismiss").addEventListener("click", dismissAskHPlan);
+  renderAskHChips();
   void loadAskHScopes();
   void refreshAskHHistory();
   void reattachAskH();
 }
 
 initAskH();
+initDock();
+initViewModes();
 
 //: The address bar decides the first screen, so a reload lands where the reader was and a link to a
 //: orbit opens that orbit. `replace: true` on the way in: the first entry is this one, not a

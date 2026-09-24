@@ -30,7 +30,8 @@ What exists:
 - An HTTP API (`api.py`, the `api` extra) with a live reasoning-trace stream and a Trajectory drawer.
 - A web UI (`penumbra/web/`) that is a real end-user product. It is the only way an artifact leaves the product: Copy (Markdown) on an answer, the overview or a guide, a whole-orbit Markdown export, and a print stylesheet that appends the reference list.
 - `horizon.py`, Tier 0: a global capture Horizon (a SQLite index plus `horizon/nodes/<id>.json`) whose nodes are filed into orbits (invariant 78). `intake.py` is its serial capture queue (79), and `distill.py` is the separate summary pass (80). All three are reachable at `/horizon/*` and from the web UI, where the Horizon is the default screen.
-- A Horizon ask: a question over everything kept, a tag or an entity. `search.py` is its full-text index (character pairs for CJK) and its selection, `asks.py` its history, and it is reachable at `/horizon/ask*` and from the Horizon screen.
+- A Horizon ask: a question over everything kept, a tag or an entity. `search.py` is its full-text index (character pairs for CJK) and its selection, `asks.py` its history, and it is reachable at `/horizon/ask*` and from the ask dock at the foot of the screen.
+- A star map of the Horizon and a knowledge graph of each orbit, drawn from summaries' entities and tags (`topology.py`, `/horizon/topology`, `/horizon/graph`).
 
 The API is the only place a run is isolated in a subprocess (`runner.py` and `worker.py`); `cli.py` runs in-process.
 

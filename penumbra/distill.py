@@ -64,10 +64,12 @@ Write:
   or "PDF document".
 - summary: two or three sentences on what this says and why someone kept it. No preamble, no "This
   document...".
-- tags: up to 6 lowercase topic labels, reusable across other documents. Prefer general terms a
-  person would search by over phrases unique to this text.
-- entities: up to 6 proper nouns this is ABOUT — people, organisations, products, places. Not
-  every name that appears.
+- tags: up to 6 lowercase topic labels, reusable across other documents. Broad subjects a person
+  would search by (sleep, memory, coffee), not phrases unique to this text.
+- entities: up to 6 specific things this is ABOUT: people, organisations, products, places, and
+  named concepts such as a theory, a method, a condition, a stage or a part of the body (slow-wave
+  sleep, the hippocampus). Narrower than a tag, and each one something another document could
+  name too. Not every name that appears.
 
 Rules:
 - Write title and summary in the requested language. If none is given, use the document's own.
@@ -223,9 +225,13 @@ def distil_pending(
     on_node: Callable[[], None] | None = None,
     on_error: Callable[[str, Exception], None] | None = None,
     run: Callable[..., Distillation] | None = None,
+    node_ids: list[str] | None = None,
 ) -> list[str]:
     """Summarise up to `limit` nodes sitting at `ready_undistilled`, newest first. Returns the ids
     actually distilled.
+
+    `node_ids` narrows the pass to those nodes, in that order (one orbit's unsummarised captures,
+    for the star map's per-orbit button); any of them no longer at `ready_undistilled` is skipped.
 
     **The language ladder, and why it is shorter here than for an orbit.** `output_language()` is
     the operator's stated preference and wins whenever it is set (invariant 39's ladder, top rung).
@@ -244,7 +250,14 @@ def distil_pending(
     # which is the entire reason `clean_language` exists.
     chosen = output_language() or clean_language(language) or ""
     distilled: list[str] = []
-    for node in horizon.list_nodes(state="ready_undistilled", limit=limit, base_dir=base_dir):
+    if node_ids is None:
+        candidates = horizon.list_nodes(state="ready_undistilled", limit=limit, base_dir=base_dir)
+    else:
+        candidates = [
+            node for node in (horizon.get_node(i, base_dir=base_dir) for i in node_ids)
+            if node is not None and node.state == "ready_undistilled"
+        ][:limit]
+    for node in candidates:
         if should_stop is not None and should_stop():
             break
         # CLAIM it, do not label it. Two concurrent passes each snapshotted the same rows and each

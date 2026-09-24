@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS asks (
     created_at  REAL NOT NULL,
     scope_kind  TEXT NOT NULL,
     scope_value TEXT,
+    scope_orbit TEXT,
     question    TEXT NOT NULL,
     answer      TEXT NOT NULL,
     sources     TEXT NOT NULL,
@@ -46,6 +47,10 @@ def _ensure(conn) -> None:
         if key in _READY and Path(key).exists():
             return
         conn.executescript(_SCHEMA)
+        # A history written before `scope_orbit` existed gains the column in place.
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(asks)")}
+        if "scope_orbit" not in columns:
+            conn.execute("ALTER TABLE asks ADD COLUMN scope_orbit TEXT")
         _READY.add(key)
 
 
@@ -59,6 +64,7 @@ def _row(row) -> HorizonAsk:
         created_at=row["created_at"],
         scope_kind=row["scope_kind"],
         scope_value=row["scope_value"],
+        scope_orbit=row["scope_orbit"],
         question=row["question"],
         answer=Answer.model_validate_json(row["answer"]),
         sources=[AskSource.model_validate(s) for s in json.loads(row["sources"])],
@@ -72,6 +78,7 @@ def add_ask(
     scope_kind: str,
     scope_value: str | None,
     question: str,
+    scope_orbit: str | None = None,
     answer: Answer,
     sources: list[AskSource],
     strategy: str,
@@ -83,6 +90,7 @@ def add_ask(
         created_at=time.time(),
         scope_kind=scope_kind,
         scope_value=scope_value,
+        scope_orbit=scope_orbit,
         question=question,
         answer=answer,
         sources=sources,
@@ -92,13 +100,14 @@ def add_ask(
     with horizon._connect(base_dir) as conn:
         _ensure(conn)
         conn.execute(
-            "INSERT INTO asks (id, created_at, scope_kind, scope_value, question, answer, sources, "
-            "strategy, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO asks (id, created_at, scope_kind, scope_value, scope_orbit, question, answer, "
+            "sources, strategy, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 record.id,
                 record.created_at,
                 record.scope_kind,
                 record.scope_value,
+                record.scope_orbit,
                 record.question,
                 answer.model_dump_json(),
                 json.dumps([s.model_dump() for s in sources], ensure_ascii=False),
