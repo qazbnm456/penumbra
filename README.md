@@ -24,8 +24,8 @@ The web UI reaches all of it, and the HTTP API runs each `ask`, `guide` and `aud
 Penumbra is an application, not a library. Nothing here is meant to be imported into your own code, and installing it into a shared environment would bring numpy, an ONNX runtime and a PDF engine along. Give it its own environment:
 
 ```bash
-uv tool install "penumbra[api] @ git+https://github.com/qazbnm456/rlm-notebook"
-# or: pipx install "penumbra[api] @ git+https://github.com/qazbnm456/rlm-notebook"
+uv tool install "penumbra[api] @ git+https://github.com/qazbnm456/penumbra"
+# or: pipx install "penumbra[api] @ git+https://github.com/qazbnm456/penumbra"
 ```
 
 It is not on PyPI yet, hence the repository URL. Drop `[api]` if you only want the CLI. It needs **Python 3.11 or newer**, including 3.13 and 3.14.
@@ -66,7 +66,7 @@ docker run --rm -p 127.0.0.1:8000:8000 -v "$PWD/data:/data" --env-file .env penu
 ### To develop it
 
 ```bash
-git clone https://github.com/qazbnm456/rlm-notebook penumbra && cd penumbra
+git clone https://github.com/qazbnm456/penumbra && cd penumbra
 uv sync                       # includes the local OCR backends scanned PDFs need; no extra flag
 cp .env.example .env          # then fill in PN_MAIN_MODEL / PN_API_KEY
 set -a; . ./.env; set +a      # nothing loads .env automatically

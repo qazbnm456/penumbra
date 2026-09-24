@@ -602,7 +602,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             "  from a source checkout:  uv sync --extra api\n"
             "  otherwise, reinstall with the extra, e.g.\n"
             "      uv tool install 'penumbra[api] @ git+"
-            "https://github.com/qazbnm456/rlm-notebook'",
+            "https://github.com/qazbnm456/penumbra'",
             file=sys.stderr,
         )
         return 2
