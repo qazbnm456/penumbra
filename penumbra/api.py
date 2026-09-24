@@ -117,7 +117,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from python_multipart.exceptions import MultipartParseError
 from starlette.formparsers import MultiPartException
 
-from . import asks, auth, distill, horizon, intake, runner, search
+from . import asks, auth, distill, horizon, intake, runner, search, topology
 from .audio import GeneratePodcastScript
 from .citations import locate_answer_spans, strip_markers, verify_citations
 from .config import (
@@ -2887,6 +2887,9 @@ class DistilRequest(BaseModel):
     #: caller say it. BOUNDED here rather than checked in the handler — an unbounded value reached
     #: `sqlite3` and returned a plain-text `OverflowError` 500.
     limit: int = Field(20, ge=1, le=500)
+    #: Summarise only the captures filed into this orbit (the star map's per-orbit button). The
+    #: number is still the caller's, and the count the page showed is what `total` reports.
+    orbit_id: str | None = Field(default=None, max_length=200)
 
 
 #: The summary pass's own visible, stoppable state. Invariant 47 says every long-running action
@@ -2991,7 +2994,7 @@ def _distil_status() -> dict:
         return _distil_snapshot()
 
 
-def _run_distil_pass(limit: int, language: str) -> None:
+def _run_distil_pass(limit: int, language: str, node_ids: list[str] | None = None) -> None:
     """The summary pass, on a worker thread, reporting as it goes.
 
     `should_stop` is checked between nodes, so Stop ends the batch at a node boundary rather than
@@ -3037,6 +3040,7 @@ def _run_distil_pass(limit: int, language: str) -> None:
             should_stop=should_stop,
             on_node=tick,
             on_error=failed,
+            node_ids=node_ids,
         )
     except Exception as exc:  # noqa: BLE001 - the pass itself dying must still reach the page
         # `distil_pending` raising (a corrupt index, a disk error) is not one node failing. Without
@@ -3337,6 +3341,17 @@ async def cancel_horizon_intake() -> dict:
     return {"dropped": dropped, **_horizon_queue().status(), "distil": _distil_status()}
 
 
+@app.post("/horizon/distil/cancel")
+async def cancel_distil_pass() -> dict:
+    """Stop the summary pass alone, at the next node boundary, leaving captures waiting to be read
+    where they are. The Stop on one orbit's summarise button uses this: it sits where the intake
+    queue is not visible, and dropping the queue from there would fail captures the reader never
+    saw stopped. `/horizon/cancel` still stops both, for the Horizon's own strip."""
+    with _DISTIL_GUARD:
+        _DISTIL["cancel"] = True
+    return {"distil": _distil_status()}
+
+
 @app.post("/horizon/distil/dismiss")
 async def dismiss_distil_error() -> dict:
     """Clear the last summary pass's failure, because it is otherwise IMMORTAL.
@@ -3374,7 +3389,19 @@ async def distil_horizon(body: DistilRequest, request: Request) -> dict:
     # (invariant 80's shortened ladder). `output_language()` still outranks this inside the pass.
     language = request.headers.get("x-penumbra-interface-language", "")
 
-    pending = await asyncio.to_thread(horizon.count_nodes, state="ready_undistilled")
+    node_ids: list[str] | None = None
+    if body.orbit_id is not None and not body.orbit_id.strip():
+        raise HTTPException(400, "an orbit needs a value")
+    if body.orbit_id is not None:
+        def _in_orbit() -> list[str]:
+            ids = [m.node_id for m in horizon.nodes_in_orbit(body.orbit_id)]
+            nodes = (horizon.get_node(i) for i in ids)
+            return [n.id for n in nodes if n is not None and n.state == "ready_undistilled"]
+
+        node_ids = await asyncio.to_thread(_in_orbit)
+        pending = len(node_ids)
+    else:
+        pending = await asyncio.to_thread(horizon.count_nodes, state="ready_undistilled")
     total = min(body.limit, pending)
     with _DISTIL_GUARD:
         if _DISTIL["running"]:
@@ -3394,7 +3421,7 @@ async def distil_horizon(body: DistilRequest, request: Request) -> dict:
     # out, and a reader watching a disabled button learns nothing — `GET /horizon/status` carries the
     # progress and `POST /horizon/cancel` stops it (invariant 47).
     threading.Thread(
-        target=_run_distil_pass, args=(total, language), name="rlm-distil", daemon=True
+        target=_run_distil_pass, args=(total, language, node_ids), name="rlm-distil", daemon=True
     ).start()
     return {"started": True, **_distil_status()}
 
@@ -3571,9 +3598,14 @@ class HorizonAskScope(BaseModel):
 
     kind: Literal["all", "tag", "entity"] = "all"
     value: str | None = Field(default=None, max_length=search.SCOPE_VALUE_MAX)
+    #: Narrow the scope to the captures filed into one orbit: a tag or an entity on that orbit's
+    #: knowledge graph. The question is still asked over the Horizon and kept in its history.
+    orbit: str | None = Field(default=None, max_length=200)
 
     @model_validator(mode="after")
     def _value_matches_kind(self):
+        if self.orbit is not None and not self.orbit.strip():
+            raise ValueError("an orbit scope needs an orbit")
         if self.kind == "all":
             self.value = None
         elif not (self.value or "").strip():
@@ -3641,6 +3673,7 @@ def _select_or_http(question: str, scope: HorizonAskScope) -> search.Selection:
         budget, items_cap = _ask_bounds()
         return search.select_for_ask(
             question, scope.kind, scope.value, budget_chars=budget, max_items=items_cap,
+            orbit=slug(scope.orbit) if scope.orbit else None,
         )
     except search.SearchUnavailable as exc:
         raise HTTPException(500, str(exc)) from exc
@@ -3726,7 +3759,7 @@ def _ask_payload(record, corpus: Corpus | None) -> dict:
     return {
         "id": record.id,
         "created_at": record.created_at,
-        "scope": {"kind": record.scope_kind, "value": record.scope_value},
+        "scope": {"kind": record.scope_kind, "value": record.scope_value, "orbit": record.scope_orbit},
         "question": record.question,
         "text": prose,
         "citations": citations,
@@ -3750,6 +3783,24 @@ def _current_corpus(record) -> Corpus | None:
             return None
         corpus.add(source.model_copy(update={"id": s.source_id}))
     return corpus
+
+
+@app.get("/horizon/topology")
+async def horizon_topology() -> dict:
+    """What the star map draws: per orbit, its filed captures, how many are unsummarised, when it
+    last gained one and its most-named entities; the captures filed nowhere; and the bridges between
+    orbits that share an entity. Local, derived from summaries only, never a model call."""
+    return await asyncio.to_thread(topology.star_map)
+
+
+@app.get("/horizon/graph")
+async def horizon_graph(orbit: str | None = Query(None, max_length=200)) -> dict:
+    """The entity graph over one orbit's captures, or over everything when `orbit` is absent."""
+    # Slugged like `/horizon/distil`'s `orbit_id`: memberships are keyed by the slug, so a raw id
+    # that differs from it (any orbit named in Chinese, invariant 10) would draw nothing.
+    if orbit is not None and not orbit.strip():
+        raise HTTPException(400, "an orbit needs a value")
+    return await asyncio.to_thread(topology.graph, slug(orbit) if orbit else None)
 
 
 @app.get("/horizon/concepts")
@@ -3809,7 +3860,9 @@ async def ask_horizon(body: HorizonAskRequest, request: Request) -> dict:
     answer = Answer.model_validate(result)
     record = await asyncio.to_thread(
         lambda: asks.add_ask(
-            scope_kind=body.scope.kind, scope_value=body.scope.value, question=question,
+            scope_kind=body.scope.kind, scope_value=body.scope.value,
+            scope_orbit=slug(body.scope.orbit) if body.scope.orbit else None,
+            question=question,
             answer=answer, sources=sources, strategy=strategy, run_id=run_id,
         )
     )
@@ -3823,7 +3876,8 @@ async def list_horizon_asks(limit: int = Query(50, ge=1, le=200), offset: int = 
     return {
         "asks": [
             {"id": r.id, "created_at": r.created_at, "question": r.question,
-             "scope": {"kind": r.scope_kind, "value": r.scope_value}, "count": len(r.sources)}
+             "scope": {"kind": r.scope_kind, "value": r.scope_value, "orbit": r.scope_orbit},
+             "count": len(r.sources)}
             for r in records
         ]
     }

@@ -1873,12 +1873,19 @@ body.is-resizing .cols {
   display: none;
 }
 
+/* The invitation sits on the column's centre line in both directions. Left-aligned inside a
+   vertically centred block, it read as a stray paragraph that had drifted off the axis. */
 .chat-history.is-invitation .chat-overview {
   border-color: transparent;
   background: none;
-  align-items: flex-start;
+  align-items: center;
+  text-align: center;
   padding-left: 0;
   padding-right: 0;
+}
+
+.chat-history.is-invitation .chat-starter {
+  align-items: center;
 }
 
 .chat-overview {
@@ -6694,7 +6701,6 @@ body[data-view="horizon"] .orbit-picker {
    finding gets a capture back by its words, asking gets an answer out of many of them. Quieter
    than capture, like the find field, because keeping is still the primary act on this screen. */
 .ask-h {
-  margin-top: var(--ib-gap-lg);
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
@@ -6876,5 +6882,597 @@ body[data-view="horizon"] .orbit-picker {
 .ask-h-run[hidden],
 .ask-h-error[hidden],
 .ask-h-history[hidden] {
+  display: none;
+}
+
+/* --- How a place is drawn: the header's two-way toggle ----------------------------------------- */
+.view-mode {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-1);
+}
+
+.view-mode-btn {
+  font-family: var(--sans);
+  font-size: var(--text-md);
+  color: var(--text-dim);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  padding: var(--space-2) var(--space-6);
+  cursor: pointer;
+}
+
+.view-mode-btn[aria-pressed="true"] {
+  color: var(--text);
+  font-weight: 600;
+  background: var(--surface-3);
+}
+
+.view-mode-btn:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* --- The star map ----------------------------------------------------------------------------------
+   Map mode keeps the capture field and the running strip, and gives the rest of the screen to the
+   map. The list's own furniture (find, the stream, its empty and first-run notes) steps aside. */
+.view-horizon.is-map .horizon-scroll {
+  overflow: hidden;
+}
+
+.view-horizon.is-map .horizon-inner {
+  max-width: none;
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-8) var(--ib-gap-lg) 64px;
+}
+
+.view-horizon.is-map .capture,
+.view-horizon.is-map .capture-hint,
+.view-horizon.is-map .capture-note,
+.view-horizon.is-map .intake-strip,
+.view-horizon.is-map .pending-note,
+.view-horizon.is-map .distil-error {
+  width: 100%;
+  max-width: var(--ib-measure);
+  margin-left: auto;
+  margin-right: auto;
+  box-sizing: border-box;
+}
+
+.view-horizon.is-map .find,
+.view-horizon.is-map .stream,
+.view-horizon.is-map .stream-empty,
+.view-horizon.is-map .first-run,
+.view-horizon.is-map .stream-foot {
+  display: none;
+}
+
+.starmap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 420px;
+  margin-top: var(--space-7);
+  display: flex;
+  flex-direction: column;
+}
+
+.starmap-svg {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  border-radius: var(--radius-lg);
+  background: radial-gradient(ellipse at 50% 52%, var(--surface-1) 0%, var(--bg) 70%);
+}
+
+.map-ring {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.map-bridge {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 5;
+  opacity: 0.6;
+}
+
+.map-bridge-label {
+  font-family: var(--sans);
+  font-size: 12px;
+  fill: var(--accent-text);
+  text-anchor: middle;
+}
+
+.map-hole-glow {
+  fill: var(--highlight-wash);
+  opacity: 0.45;
+}
+
+.map-hole-ring {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 9;
+  stroke-dasharray: 60 22 34 30;
+  opacity: 0.85;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: map-turn 24s linear infinite;
+}
+
+.map-hole-core {
+  fill: #000;
+}
+
+@keyframes map-turn {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+.map-hole-label {
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 600;
+  fill: var(--text);
+  text-anchor: middle;
+}
+
+.map-hole-sub,
+.map-planet-sub {
+  font-family: var(--sans);
+  font-size: 12px;
+  fill: var(--text-faint);
+  text-anchor: middle;
+}
+
+.map-dot {
+  fill: var(--text-faint);
+  opacity: 0.7;
+}
+
+.map-dot.is-done {
+  fill: var(--accent);
+  opacity: 1;
+}
+
+.map-planet {
+  cursor: pointer;
+  outline: none;
+  transition: opacity 160ms var(--ib-ease);
+}
+
+.map-planet.is-dim {
+  opacity: 0.28;
+}
+
+.map-planet-body {
+  fill: var(--surface-3);
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+
+.map-planet:hover .map-planet-body,
+.map-planet:focus-visible .map-planet-body {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.map-planet.is-selected .map-planet-body {
+  stroke: var(--accent);
+  stroke-width: 3;
+  fill: color-mix(in oklch, var(--accent) 22%, var(--surface-3));
+}
+
+.map-planet-label {
+  font-family: var(--sans);
+  font-size: 13.5px;
+  font-weight: 600;
+  fill: var(--text);
+  text-anchor: middle;
+}
+
+.starmap-empty {
+  position: absolute;
+  inset: 40% 0 auto;
+  margin: 0;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.starmap-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-7);
+  padding-top: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.legend-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.legend-dot.is-done {
+  background: var(--accent);
+}
+
+.legend-bridge {
+  width: 18px;
+  border-top: 1.5px dashed var(--accent);
+}
+
+.legend-note {
+  color: var(--text-faint);
+}
+
+.starmap-card {
+  position: absolute;
+  top: var(--space-11);
+  right: var(--space-5);
+  width: 300px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-8);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 32px -18px rgb(0 0 0 / 0.5);
+}
+
+.card-kicker {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+}
+
+.card-title {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.card-meta,
+.card-note {
+  margin: 0;
+  font-size: var(--text-md);
+  color: var(--text-dim);
+}
+
+.card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.card-chip {
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-4);
+}
+
+button.card-chip {
+  cursor: pointer;
+}
+
+button.card-chip:hover {
+  border-color: var(--accent-dim);
+}
+
+.card-enter,
+.graph-ask {
+  text-align: center;
+}
+
+.distil-orbit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.distil-orbit-cost {
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+}
+
+/* Tag lenses, on the map and on the graph. */
+.lenses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-bottom: var(--space-4);
+}
+
+.lens {
+  font-family: var(--sans);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-4);
+  cursor: pointer;
+}
+
+.lens[aria-pressed="true"] {
+  color: var(--accent-text);
+  border-color: var(--accent);
+  background: color-mix(in oklch, var(--accent) 14%, var(--surface-1));
+}
+
+.lens-count {
+  margin-left: var(--space-2);
+  opacity: 0.7;
+}
+
+/* --- The knowledge graph ---------------------------------------------------------------------- */
+.orbit-graph {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  background: var(--bg);
+}
+
+.graph-stage {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-7) var(--space-7) 64px;
+}
+
+.graph-svg {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+.graph-edge {
+  stroke: var(--border-strong);
+  opacity: 0.7;
+}
+
+.graph-link {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.graph-edge.is-lit,
+.graph-link.is-lit {
+  stroke: var(--accent);
+  opacity: 0.9;
+}
+
+.graph-edge.is-dim,
+.graph-link.is-dim,
+.graph-capture.is-dim,
+.graph-entity.is-dim {
+  opacity: 0.32;
+}
+
+.graph-capture {
+  fill: var(--text-dim);
+}
+
+.graph-entity {
+  cursor: pointer;
+  outline: none;
+}
+
+.graph-entity-body {
+  fill: color-mix(in oklch, var(--accent) 28%, var(--bg));
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.graph-entity:hover .graph-entity-body,
+.graph-entity:focus-visible .graph-entity-body {
+  stroke-width: 3;
+}
+
+.graph-entity.is-selected .graph-entity-body {
+  stroke: var(--text);
+  stroke-width: 3;
+}
+
+.graph-entity-label {
+  font-family: var(--sans);
+  font-size: 13px;
+  fill: var(--text);
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.graph-empty {
+  position: absolute;
+  inset: 40% var(--space-10) auto;
+  margin: 0;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.graph-pending {
+  position: absolute;
+  left: var(--space-7);
+  bottom: 72px;
+  width: 320px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+}
+
+.graph-pending-line {
+  margin: 0;
+  font-size: var(--text-md);
+  color: var(--text-dim);
+}
+
+.graph-panel {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-9) var(--space-8) 72px;
+  border-left: 1px solid var(--border);
+  background: var(--surface-1);
+}
+
+.graph-items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.graph-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-md);
+}
+
+.graph-item-origin {
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+
+/* --- The ask dock --------------------------------------------------------------------------------
+   Rests as a handle at the foot of the screen and slides up when the pointer nears the bottom edge,
+   when it takes focus, or while it holds something to read or act on. */
+.ask-dock {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  z-index: 900;
+  width: min(760px, calc(100vw - 32px));
+  max-height: 70vh;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-1);
+  border: 1px solid var(--border-strong);
+  border-bottom: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: 0 -12px 36px -20px rgb(0 0 0 / 0.55);
+  transform: translate(-50%, calc(100% - 40px));
+  transition: transform 260ms cubic-bezier(0.2, 0.9, 0.25, 1.05);
+}
+
+.ask-dock.is-open {
+  transform: translate(-50%, 0);
+}
+
+.ask-dock-handle {
+  flex: 0 0 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  font-family: var(--sans);
+  font-size: var(--text-md);
+  color: var(--text-dim);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.ask-dock-grip {
+  width: 36px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+
+.ask-dock .ask-h {
+  overflow-y: auto;
+  padding: 0 var(--space-8) var(--space-8);
+}
+
+.ask-h-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ask-h-chip {
+  font-family: var(--sans);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-4);
+  cursor: pointer;
+}
+
+.ask-h-chip[aria-pressed="true"] {
+  color: var(--accent-text);
+  border-color: var(--accent);
+  background: color-mix(in oklch, var(--accent) 14%, transparent);
+}
+
+.ask-h-close {
+  align-self: flex-start;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ask-dock,
+  .map-planet {
+    transition: none;
+  }
+
+  .map-hole-ring {
+    animation: none;
+  }
+}
+
+.first-run[hidden],
+.starmap[hidden],
+.starmap-card[hidden],
+.starmap-empty[hidden],
+.orbit-graph[hidden],
+.graph-empty[hidden],
+.graph-pending[hidden],
+.ask-dock[hidden],
+.lenses[hidden] {
   display: none;
 }

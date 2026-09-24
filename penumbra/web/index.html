@@ -63,6 +63,14 @@
       <div class="orbit-menu" id="orbit-menu" hidden aria-label="Your orbits"></div>
     </div>
 
+    <!-- How the current place is drawn: the Horizon as a star map or a list, an orbit as its
+         knowledge graph or the three columns. One control whose two labels follow the view, so the
+         header never shows a choice that does not apply to what is on screen. -->
+    <div class="view-mode" id="view-mode" role="group" aria-label="View" data-i18n-label="mode.label">
+      <button type="button" class="view-mode-btn" id="mode-a" aria-pressed="true"></button>
+      <button type="button" class="view-mode-btn" id="mode-b" aria-pressed="false"></button>
+    </div>
+
     <div class="header-actions">
     <button id="settings-open" class="header-btn" aria-label="Settings" data-i18n-label="app.settings"
             data-i18n-tip="app.settings" data-tip="Settings">⚙︎</button>
@@ -155,38 +163,25 @@
                 data-i18n-title="horizon.findClear" title="Clear" aria-label="Clear" data-i18n-label="horizon.findClear">×</button>
       </div>
 
-      <!-- Asking across what you kept, rather than inside one orbit. Two presses on purpose: the
-           first decides locally which captures the question would read and says how many, the
-           second spends (invariant 47: nothing paid starts without an explicit press). -->
-      <section class="ask-h" id="ask-h" aria-labelledby="ask-h-title">
-        <h2 class="ask-h-title" id="ask-h-title" data-i18n="askH.title">Ask what you kept</h2>
-        <form class="ask-h-form" id="ask-h-form">
-          <label class="sr-only" for="ask-h-input" data-i18n="askH.label">Question</label>
-          <textarea id="ask-h-input" class="ask-h-input" rows="1" autocomplete="off"
-                    data-i18n-placeholder="askH.placeholder"
-                    placeholder="Ask a question across your captures…"></textarea>
-          <label class="sr-only" for="ask-h-scope" data-i18n="askH.scope">Read from</label>
-          <select id="ask-h-scope" class="ask-h-scope">
-            <option value="all" data-i18n="askH.everything">Everything</option>
-          </select>
-          <button type="submit" class="btn" id="ask-h-check" data-i18n="askH.check">See what it reads</button>
-        </form>
-        <div class="ask-h-plan" id="ask-h-plan" hidden>
-          <p class="ask-h-plan-line" id="ask-h-plan-line" role="status"></p>
-          <ol class="ask-h-plan-list" id="ask-h-plan-list"></ol>
-          <div class="ask-h-actions">
-            <button type="button" class="btn btn-primary" id="ask-h-send" data-i18n="askH.send">Ask</button>
-            <button type="button" class="btn" id="ask-h-dismiss" data-i18n="askH.dismiss">Not now</button>
-          </div>
+      <!-- The star map: the Horizon at the centre, each orbit a planet, captures its moons, and a
+           dashed bridge where two orbits share an entity. Drawn from summaries only
+           (`topology.star_map`), never a model call. Shown instead of the list in map mode. -->
+      <div class="starmap" id="starmap" hidden>
+        <div class="lenses" id="starmap-lenses" role="group" aria-label="Tags" data-i18n-label="map.lenses"></div>
+        <svg class="starmap-svg" id="starmap-svg" viewBox="0 0 1000 640" preserveAspectRatio="xMidYMid meet"
+             role="img" aria-labelledby="starmap-title"><title id="starmap-title">Star map</title></svg>
+        <p class="starmap-empty" id="starmap-empty" hidden data-i18n="map.empty">
+          Capture something and the map starts to grow.
+        </p>
+        <div class="starmap-legend" id="starmap-legend">
+          <span class="legend-item"><span class="legend-dot is-done" aria-hidden="true"></span><span data-i18n="map.legendDone">Summarised</span></span>
+          <span class="legend-item"><span class="legend-dot" aria-hidden="true"></span><span data-i18n="map.legendPending">Not summarised yet</span></span>
+          <span class="legend-item"><span class="legend-bridge" aria-hidden="true"></span><span data-i18n="map.legendBridge">Orbits that share an entity</span></span>
+          <span class="legend-item legend-note" data-i18n="map.legendDistance">Closer to the centre means more recent.</span>
         </div>
-        <div class="ask-h-run" id="ask-h-run" hidden></div>
-        <p class="ask-h-error" id="ask-h-error" role="status" hidden></p>
-        <article class="ask-h-answer" id="ask-h-answer" hidden></article>
-        <details class="ask-h-history" id="ask-h-history" hidden>
-          <summary data-i18n="askH.history">Earlier questions</summary>
-          <ol class="ask-h-history-list" id="ask-h-history-list"></ol>
-        </details>
-      </section>
+        <aside class="starmap-card" id="starmap-card" hidden aria-live="polite"></aside>
+      </div>
+
 
       <!-- Only present while something is running (invariants 47 and 60). It renders exactly what
            GET /horizon/status returns and infers nothing. -->
@@ -455,6 +450,26 @@
     </section>
   </main>
 
+  <!-- An orbit drawn as its knowledge graph: its captures' entities as nodes, joined when one
+       capture names both, with tags as lenses. The other way to show an orbit; the three columns
+       are the same orbit, and the header's toggle moves between them. -->
+  <section class="orbit-graph" id="view-graph" hidden aria-label="Knowledge graph" data-i18n-label="graph.label">
+    <div class="graph-stage">
+      <div class="lenses" id="graph-lenses" role="group" aria-label="Tags" data-i18n-label="map.lenses"></div>
+      <svg class="graph-svg" id="graph-svg" viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid meet"
+           role="img" aria-labelledby="graph-title"><title id="graph-title">Knowledge graph</title></svg>
+      <p class="graph-empty" id="graph-empty" hidden></p>
+      <div class="graph-pending" id="graph-pending" hidden>
+        <p class="graph-pending-line" id="graph-pending-line"></p>
+        <div class="graph-pending-actions">
+          <button type="button" class="btn" id="graph-distil"></button>
+          <span class="graph-pending-cost" id="graph-pending-cost"></span>
+        </div>
+      </div>
+    </div>
+    <aside class="graph-panel" id="graph-panel" aria-live="polite"></aside>
+  </section>
+
   <!-- A SECOND overlay, reusing the `.modal-overlay` CLASS but never the source viewer's element:
        that one owns `sourceViewerAbort`/`closeSourceViewer` and writes into #source-viewer-title
        and #source-viewer-body. Markup here (not createElement) and toggled with `.hidden =`, which
@@ -509,6 +524,48 @@
      `life = 0` for a bad tone, so it did not expire either.
      `position: fixed; z-index: 1200`, so moving it costs nothing visually. -->
 <div class="notices" id="notices" role="status" aria-live="polite"></div>
+
+<!-- Asking what you kept, from anywhere: a panel that rests as a slim handle at the foot of the
+     star map, the list and the knowledge graph, and slides up when the pointer nears the bottom
+     edge or the handle takes focus. Its scope follows what is selected on screen. -->
+<div class="ask-dock" id="ask-dock" hidden>
+  <button type="button" class="ask-dock-handle" id="ask-dock-handle" aria-expanded="false" aria-controls="ask-h">
+    <span class="ask-dock-grip" aria-hidden="true"></span>
+    <span data-i18n="askH.title">Ask what you kept</span>
+  </button>
+  <!-- Two presses on purpose: the first decides locally which captures the question would read
+       and says how many, the second spends (invariant 47: nothing paid starts without a press). -->
+  <section class="ask-h" id="ask-h" aria-labelledby="ask-h-title">
+    <h2 class="sr-only" id="ask-h-title" data-i18n="askH.title">Ask what you kept</h2>
+    <div class="ask-h-chips" id="ask-h-chips" role="group" aria-label="Read from" data-i18n-label="askH.scope"></div>
+    <form class="ask-h-form" id="ask-h-form">
+      <label class="sr-only" for="ask-h-input" data-i18n="askH.label">Question</label>
+      <textarea id="ask-h-input" class="ask-h-input" rows="1" autocomplete="off"
+                data-i18n-placeholder="askH.placeholder"
+                placeholder="Ask a question across your captures…"></textarea>
+      <label class="sr-only" for="ask-h-scope" data-i18n="askH.more">Other tags and entities</label>
+      <select id="ask-h-scope" class="ask-h-scope">
+        <option value="" data-i18n="askH.more">Other tags and entities</option>
+      </select>
+      <button type="submit" class="btn" id="ask-h-check" data-i18n="askH.check">See what it reads</button>
+    </form>
+    <div class="ask-h-plan" id="ask-h-plan" hidden>
+      <p class="ask-h-plan-line" id="ask-h-plan-line" role="status"></p>
+      <ol class="ask-h-plan-list" id="ask-h-plan-list"></ol>
+      <div class="ask-h-actions">
+        <button type="button" class="btn btn-primary" id="ask-h-send" data-i18n="askH.send">Ask</button>
+        <button type="button" class="btn" id="ask-h-dismiss" data-i18n="askH.dismiss">Not now</button>
+      </div>
+    </div>
+    <div class="ask-h-run" id="ask-h-run" hidden></div>
+    <p class="ask-h-error" id="ask-h-error" role="status" hidden></p>
+    <article class="ask-h-answer" id="ask-h-answer" hidden></article>
+    <details class="ask-h-history" id="ask-h-history" hidden>
+      <summary data-i18n="askH.history">Earlier questions</summary>
+      <ol class="ask-h-history-list" id="ask-h-history-list"></ol>
+    </details>
+  </section>
+</div>
 
 <div class="traj-backdrop" id="traj-backdrop" hidden></div>
 <div class="traj-drawer" id="traj-drawer" role="dialog" aria-modal="true"

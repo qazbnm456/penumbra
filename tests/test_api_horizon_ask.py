@@ -271,3 +271,77 @@ def test_the_landing_orbit_never_takes_the_reserved_handle(monkeypatch):
     node = _capture("https://x.example/a", "text")
     api._file_into_landing_orbit(node)
     assert horizon.memberships_for(node) == []
+
+
+def test_topology_and_graph_are_served(client):
+    _capture("https://x.example/a", "x", entities=["REM"], tags=["sleep"], state="ready")
+    star = client.get("/horizon/topology").json()
+    assert star["total"] == {"count": 1, "distilled": 1}
+    graph = client.get("/horizon/graph").json()
+    assert graph["entities"] == [{"name": "REM", "count": 1}]
+    assert client.get("/horizon/graph", params={"orbit": "nothing"}).json()["entities"] == []
+
+
+def test_an_orbit_narrowed_ask_is_kept_with_its_orbit(client, monkeypatch):
+    _mock_runner(monkeypatch, _answer())
+    node = _capture("https://x.example/a", "sleep consolidates memory", entities=["REM"])
+    horizon.promote_node(node, "sleep", create=True)
+    scope = {"kind": "entity", "value": "REM", "orbit": "sleep"}
+    body = client.post("/horizon/ask", json={"question": "q", "scope": scope}).json()
+    assert body["scope"] == scope
+    assert client.get("/horizon/asks").json()["asks"][0]["scope"] == scope
+
+
+def test_the_summary_pass_can_be_limited_to_one_orbit(client, monkeypatch):
+    seen: list = []
+
+    def fake_pass(limit, language, node_ids=None):
+        seen.append((limit, node_ids))
+        with api._DISTIL_GUARD:
+            api._DISTIL.update({"running": False})
+
+    monkeypatch.setattr(api, "_run_distil_pass", fake_pass)
+    inside = _capture("https://x.example/a", "one")
+    _capture("https://x.example/b", "two")
+    horizon.promote_node(inside, "sleep", create=True)
+    resp = client.post("/horizon/distil", json={"limit": 20, "orbit_id": "sleep"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["total"] == 1
+    import time
+
+    for _ in range(50):
+        if seen:
+            break
+        time.sleep(0.01)
+    assert seen == [(1, [inside])]
+
+
+def test_stopping_one_orbits_summary_leaves_the_capture_queue_alone(client, monkeypatch):
+    dropped: list = []
+    monkeypatch.setattr(api._horizon_queue(), "cancel_pending", lambda: dropped.append(1) or [])
+    resp = client.post("/horizon/distil/cancel")
+    assert resp.status_code == 200
+    assert dropped == []
+    with api._DISTIL_GUARD:
+        assert api._DISTIL["cancel"] is True
+        api._DISTIL["cancel"] = False
+
+
+def test_the_graph_and_a_narrowed_scope_accept_an_orbit_id_that_differs_from_its_slug(client, monkeypatch):
+    from penumbra.orbit import slug
+
+    _mock_runner(monkeypatch, _answer())
+    node = _capture("https://x.example/a", "sleep", entities=["REM"])
+    horizon.promote_node(node, "模型要睡覺", create=True)
+    assert client.get("/horizon/graph", params={"orbit": "模型要睡覺"}).json()["entities"][0]["name"] == "REM"
+    scope = {"kind": "entity", "value": "REM", "orbit": "模型要睡覺"}
+    preview = client.post("/horizon/ask/preview", json={"question": "q", "scope": scope}).json()
+    assert preview["count"] == 1
+    body = client.post("/horizon/ask", json={"question": "q", "scope": scope}).json()
+    assert body["scope"]["orbit"] == slug("模型要睡覺")
+
+
+def test_a_blank_orbit_is_refused_rather_than_matching_nothing(client):
+    assert client.get("/horizon/graph", params={"orbit": "   "}).status_code == 400
+    scope = {"kind": "tag", "value": "x", "orbit": "  "}
+    assert client.post("/horizon/ask/preview", json={"question": "q", "scope": scope}).status_code == 422

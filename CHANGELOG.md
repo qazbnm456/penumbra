@@ -20,11 +20,23 @@ Each entry states what the product does now and why. The reasoning behind each r
 
 #### Asking the Horizon
 
-- You can ask a question over everything you kept, one tag or one entity, not only inside an orbit. The first press decides locally, at no cost, which captures the question will read and says how many; the second press asks (invariant 47).
+- You can ask a question over everything you kept, one tag or one entity, or a tag or entity within one orbit, not only inside an orbit. The first press decides locally, at no cost, which captures the question will read and says how many; the second press asks (invariant 47).
 - The captures are picked with a full-text index inside the Horizon's own database. Chinese, Japanese and Korean text is indexed as overlapping character pairs instead of through a dictionary: jieba's default dictionary split 關係 on Traditional text, every dictionary variant split 海馬迴 so a search for it found nothing, and FTS5's own trigram tokenizer cannot match a two-character word at all. The index is derived from the captures and rebuilt on demand (invariant 78).
 - A scope that fits is read whole. A larger one reads what the question's words found, best first, up to `PN_HORIZON_ASK_CHARS` (1,000,000 characters, never above the orbit cap) and `PN_HORIZON_ASK_ITEMS` (40). When the words find nothing, it reads the newest captures and says so. Both bounds are set in the environment only (invariant 41).
 - Each answer is kept in the Horizon's ask history with the captures it read. Reopening one checks its citations again against the captures as they are now, so a removed capture leaves its citations unverified. A question about one orbit is still asked inside that orbit and joins its conversation.
 - Horizon asks run under the reserved handle `horizon-ask`, so the live ticker, Stop, the Trajectory drawer and recovery after a reload work exactly as they do in an orbit. No orbit id may start with that handle.
+
+#### The star map and the knowledge graph
+
+- The Horizon opens as a star map: the Horizon is the black hole at the centre with the captures filed nowhere circling it, each orbit is a planet whose moons are its captures (copper once summarised, grey before), closer rings mean more recent activity, and a dashed bridge joins two orbits whose captures name the same entity. A header toggle switches to the list, and the choice is remembered in the browser.
+- Selecting a planet opens a card with its sources, its most-named entities, a way in, and a button that summarises only that orbit's unsummarised captures, which names the number of model calls before the press and shows progress with a Stop while it runs (invariants 47 and 80).
+- An orbit opens as its knowledge graph: its captures' entities are the nodes, two entities are joined when one capture names both, and the line thickens with every capture that does. Tags are lenses above the graph that light up what carries them. The side panel lists the captures behind a selection, and the header toggle switches to the three columns. An orbit with no sources yet opens in the columns, where they are added.
+- Relations come only from what a summary wrote, never from a model call made to draw the picture. An unsummarised capture names nothing, so it is counted in its own box with the spend button rather than drawn as if it were linked (`topology.py`, invariant 78).
+- A summary now counts named concepts as entities (a theory, a method, a stage, a part of the body) as well as people, places and products, and keeps tags for broad subjects. That is what gives the graph nodes worth drawing.
+
+#### Asking from anywhere
+
+- The ask panel rests as a handle at the foot of the star map, the list and the knowledge graph, and slides up when the pointer nears the bottom edge. Its scope follows the selection on screen: everything, a tag lens, a planet, or an entity or tag inside the orbit on screen. An orbit chip asks straight into that orbit's conversation in the three columns; every other scope is a Horizon ask.
 
 #### Orbits and grounded chat
 
@@ -133,6 +145,7 @@ These are the few failures that shaped the current design. Smaller fixes are not
 - Concurrent source ingestion, because PDFium crashes under it (invariant 3).
 - A Traditional Chinese OCR recognition model and a layout-detection model as shipped defaults, because measured accuracy did not justify them.
 - A phone layout. This is a desktop application, and the server binds loopback.
+- A graph drawn from sources added straight into an orbit. Only captures filed through the Horizon carry entities, so such an orbit's graph says there is nothing to draw and points to the columns.
 
 ### Known limitations
 

@@ -280,8 +280,10 @@ class Selection:
 _MARKER_SLACK = 64
 
 
-def _scope_clause(kind: str, value: str | None) -> tuple[str, list[object]]:
-    """The WHERE fragment (over `nodes`) that keeps a readable node inside the scope."""
+def _scope_clause(kind: str, value: str | None, orbit: str | None = None) -> tuple[str, list[object]]:
+    """The WHERE fragment (over `nodes`) that keeps a readable node inside the scope. `orbit`
+    narrows any scope to the captures filed into that orbit, which is what a tag or an entity means
+    on the knowledge graph of one orbit."""
     if kind not in SCOPE_KINDS:
         raise ValueError(f"unknown scope {kind!r} (expected one of {', '.join(SCOPE_KINDS)})")
     placeholders = ", ".join("?" for _ in SEARCHABLE_STATES)
@@ -296,18 +298,23 @@ def _scope_clause(kind: str, value: str | None) -> tuple[str, list[object]]:
         sql += (f" AND CASE WHEN json_valid(nodes.{column}) THEN EXISTS "
                 f"(SELECT 1 FROM json_each(nodes.{column}) WHERE json_each.value = ?) ELSE 0 END")
         params.append(value)
+    if orbit is not None:
+        sql += " AND EXISTS (SELECT 1 FROM memberships m WHERE m.node_id = nodes.id AND m.orbit_id = ?)"
+        params.append(orbit)
     return sql, params
 
 
-def _scope_rows(kind: str, value: str | None, base_dir: str | Path):
-    clause, params = _scope_clause(kind, value)
+def _scope_rows(kind: str, value: str | None, base_dir: str | Path, orbit: str | None = None):
+    clause, params = _scope_clause(kind, value, orbit)
     sql = (f"SELECT id, title, origin, chars, preview FROM nodes WHERE {clause} "
            "ORDER BY created_at DESC, id ASC")
     with horizon._connect(base_dir) as conn:
         return conn.execute(sql, params).fetchall()
 
 
-def _ranked_in_scope(question: str, kind: str, value: str | None, base_dir: str | Path) -> list[str]:
+def _ranked_in_scope(
+    question: str, kind: str, value: str | None, base_dir: str | Path, orbit: str | None = None
+) -> list[str]:
     """Node ids in the scope that match `question`, best first.
 
     The scope is part of the FTS query, not a filter applied to the top hits afterwards: with a
@@ -318,7 +325,7 @@ def _ranked_in_scope(question: str, kind: str, value: str | None, base_dir: str 
     if not terms:
         return []
     sync(base_dir=base_dir)
-    clause, params = _scope_clause(kind, value)
+    clause, params = _scope_clause(kind, value, orbit)
     with horizon._connect(base_dir) as conn:
         _ensure(conn)
         rows = conn.execute(
@@ -349,6 +356,7 @@ def select_for_ask(
     *,
     budget_chars: int,
     max_items: int,
+    orbit: str | None = None,
     base_dir: str | Path = DEFAULT_HORIZON_DIR,
 ) -> Selection:
     """Pick the captures an ask over a scope reads.
@@ -359,9 +367,11 @@ def select_for_ask(
     fall back to the newest captures, and `strategy` says so, because that answer rests on recency
     rather than relevance.
     """
-    rows = _scope_rows(kind, value, base_dir)
+    rows = _scope_rows(kind, value, base_dir, orbit)
     by_id = {row["id"]: row for row in rows}
-    ranked = [node_id for node_id in _ranked_in_scope(question, kind, value, base_dir) if node_id in by_id]
+    ranked = [
+        node_id for node_id in _ranked_in_scope(question, kind, value, base_dir, orbit) if node_id in by_id
+    ]
     matched = set(ranked)
 
     def picked(row) -> Picked:

@@ -903,3 +903,62 @@ def test_strikethrough_renders_as_a_deletion_not_as_tildes():
     assert not any("~~Chunk" in p for p in parts), parts
     # A lone tilde, or a pair inside a word with nothing to close it, stays plain text.
     assert any("~ alone" in p for p in parts), parts
+
+
+def test_the_knowledge_graph_layout_is_stable_bounded_and_framed():
+    result = _run("graphLayout")
+    assert result["same"], "the same orbit drew a different picture on a second layout"
+    assert result["inside"], "an entity was placed off the stage"
+    assert result["box"]["w"] >= 900 and result["box"]["h"] >= 640, (
+        "a small graph was framed tighter than the minimum, which blows its labels up"
+    )
+    assert result["captureNearAnchors"], "a capture was drawn away from the entities it names"
+    assert result["linkedCloser"], "two linked entities ended up further apart than an unlinked one"
+
+
+def test_the_view_mode_preference_falls_back_to_its_default():
+    result = _run("viewModes")
+    assert result["fresh"] == ["map", "graph"]
+    assert result["stored"] == ["map", "cols"], "a stored value outside the pair was honoured"
+    assert result["blocked"] == "graph", "blocked storage broke the default"
+
+
+def test_a_scope_chip_names_what_it_reads():
+    result = _run("scopeLabels")
+    assert result["all"] == "Everything"
+    assert result["tagHistory"] == "#sleep \u00b7 Sleep"
+    assert result["entityChip"] == "Entity: REM"
+    assert result["tagChip"] == "#sleep"
+    assert result["orbitChip"] == "Orbit: Sleep"
+
+
+def test_a_running_summary_keeps_its_stop_through_a_redraw():
+    result = _run("distilControlSurvivesRedraw")
+    assert result["idleOffersSpend"] and not result["idleHasStop"]
+    assert result["redrawnHasStop"], "a redraw mid-pass lost the Stop while the pass kept running"
+    assert result["redrawnShowsProgress"]
+    assert not result["redrawnOffersSpend"], "a redraw mid-pass offered to spend again"
+
+
+def test_an_orbit_with_a_run_in_flight_opens_in_the_columns():
+    result = _run("orbitVisitWithRun")
+    assert result["busy"] == "cols"
+    assert result["recovered"] == "cols"
+    assert result["quiet"] is None, "an orbit with nothing running ignored the reader's preference"
+    assert result["empty"] == "cols"
+
+
+def test_a_refresh_keeps_the_readers_scope_and_plan():
+    result = _run("askContextOnRefresh")
+    assert result["afterPick"] == "orbit:sleep"
+    assert result["afterRefresh"] == {"chosen": "all", "dismissed": 0}, (
+        "a background refresh reset the scope the reader chose, or hid their plan"
+    )
+    assert result["afterLens"] == "tag:x"
+
+
+def test_a_summarise_control_claims_only_its_own_pass():
+    result = _run("distilControlClaimsOnlyItsOwnPass")
+    assert "Summarising 2 of 5" in result["mine"]
+    assert "Summarising" not in result["other"], "another orbit claimed progress it is not making"
+    assert "A summary pass is running." in result["other"]
