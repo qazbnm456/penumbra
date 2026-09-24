@@ -150,17 +150,18 @@
       const form = new FormData();
       item.files.forEach((file) => form.append("file", file, file.name));
       const out = await send("/horizon/upload", { method: "POST", body: form });
-      if (out.refused && out.refused.length && !(out.nodes || []).length) {
+      const refused = (out.refused || []).length;
+      if (refused && !(out.nodes || []).length) {
         throw new Error(out.refused.map((r) => r.filename).join(", "));
       }
-      return (out.nodes || []).length;
+      return { landed: (out.nodes || []).length, refused };
     }
     const out = await send("/horizon", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ urls: item.urls, texts: item.texts }),
     });
-    return (out.nodes || []).length;
+    return { landed: (out.nodes || []).length, refused: 0 };
   }
 
   // One pill per thing dropped, starting where it was let go and spiralling into the horizon.
@@ -190,7 +191,8 @@
 
   // The file types the server reads today. Anything else is refused HERE, with a sentence that
   // says so, instead of reaching the server and coming back as a bare "could not take that in".
-  const ACCEPTED = /\.(pdf|txt|md|markdown)$/i;
+  // The same list the server accepts (`ingest._ALLOWED_UPLOAD_SUFFIXES`).
+  const ACCEPTED = /\.(pdf|txt|md)$/i;
 
   // **The page decides when the island closes after a drop, not the shell.** The shell used to
   // infer "that was a drop" from the mouse button being released over the island, and during a
@@ -225,9 +227,17 @@
     announce("island.swallowing", "Working on it…");
     settle(startedAt);
     try {
-      const landed = await capture(item);
-      result("ok");
-      announce("island.swallowedCount", `${landed} sent into the Horizon`, { n: landed });
+      const { landed, refused } = await capture(item);
+      // **Nothing chosen may disappear quietly.** A drop of a PDF and a picture used to flash "ok"
+      // with the picture silently left out; any refusal, here or by the server, is shown as one.
+      const turnedAway = refused + unsupported.length;
+      result(turnedAway ? "bad" : "ok");
+      announce(
+        turnedAway ? "island.partial" : "island.swallowedCount",
+        turnedAway ? `${landed} sent into the Horizon, ${turnedAway} could not be read`
+          : `${landed} sent into the Horizon`,
+        { n: landed, refused: turnedAway }
+      );
     } catch (err) {
       result("bad");
       live.textContent = `${say("island.failed", "Could not take that in")}: ${err.message}`;

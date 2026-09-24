@@ -179,6 +179,7 @@ const STRINGS = {
     "island.swallowedCount": "{n} 樣東西已丟進視界",
     "island.failed": "收不進來",
     "island.unsupported": "目前只收 PDF、TXT 和 Markdown 檔",
+    "island.partial": "{n} 樣已丟進視界，{refused} 樣無法讀取",
     "island.swallowing": "處理中…",
     "chat.needSource": "請先加入來源，每個回答都以你的來源為依據。",
     "panels.label": "軌道面板",

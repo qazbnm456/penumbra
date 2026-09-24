@@ -134,7 +134,7 @@ from .config import (
     tts_voice_map,
     write_settings,
 )
-from .corpus import CorpusTooLargeError
+from .corpus import Corpus, CorpusTooLargeError
 from .guide import GenerateFAQ, GenerateKeyInsight, GenerateSummary, GenerateTimeline
 from .ingest import ingest_pasted_text, ingest_uploaded_file, is_url, with_injection_flags
 from .naming import SuggestLanguage, SuggestTitle, fallback_title, normalize_title
@@ -3178,6 +3178,18 @@ _FIRST_ORBIT_TITLES = {"zh": "第一個軌道", "en": "First orbit"}
 _CAPTURE_LANGUAGE = {"name": ""}
 
 
+_LANDING_LOCK = threading.Lock()
+
+
+def _next_source_guess(orbit: Orbit | None) -> int:
+    """A stand-in for the id the source will get, for measuring its marker. One digit more than
+    the largest id in use is always at least as long as the real one, so the estimate never
+    undercounts."""
+    if orbit is None or not orbit.sources:
+        return 10
+    return max(int(s.id[1:]) for s in orbit.sources if s.id[1:].isdigit()) * 10 + 10
+
+
 def _file_into_landing_orbit(node_id: str) -> None:
     """File a freshly parsed capture into the landing orbit, unless the reader turned that off.
 
@@ -3188,6 +3200,9 @@ def _file_into_landing_orbit(node_id: str) -> None:
     fails a whole question loudly past that cap, and quietly growing one orbit toward it with
     every capture would turn "just throw everything in" into an orbit you can no longer ask. Such a
     node stays in the Horizon, where it always was.
+
+    When no orbit is chosen, a deleted first orbit is re-created by the next capture: deleting it
+    clears what it held, not the rule that captures land there. The setting's `off` stops that.
     """
     choice = landing_orbit()
     if choice == "off":
@@ -3198,14 +3213,23 @@ def _file_into_landing_orbit(node_id: str) -> None:
     if horizon.memberships_for(node_id):
         return
     target = choice or FIRST_ORBIT_ID
-    existing = load_orbit(target)
-    if existing is None and choice is not None:
-        return  # a chosen orbit that has since been deleted is not re-created behind the reader
-    held = sum(len(b.text) for s in (existing.sources if existing else []) for b in s.blocks)
-    if held + node.chars > max_corpus_chars():
-        _log.info("not filing %s into %s: it would pass the corpus cap", node_id, target)
-        return
-    horizon.promote_node(node_id, target, create=existing is None)
+    # One filing at a time: the intake worker and an upload can both finish a node at once, and
+    # two filings checked against the same "before" could each pass the cap and together exceed it.
+    with _LANDING_LOCK:
+        existing = load_orbit(target)
+        if existing is None and choice is not None:
+            return  # a chosen orbit that has since been deleted is not re-created behind the reader
+        # The REAL assembled length, markers and separators included (`Corpus.blob`), not the sum
+        # of block text: a 50-character paste becomes 68 characters of blob (its marker and a
+        # newline), so counting text alone let the first orbit pass invariant 8's cap and fail
+        # every question after.
+        source = horizon.node_source(node_id).model_copy(update={"id": f"s{_next_source_guess(existing)}"})
+        held = len(corpus_of(existing).blob()) if existing and existing.sources else 0
+        added = len(Corpus(sources=[source]).blob())
+        if held + (2 if held else 0) + added > max_corpus_chars():
+            _log.info("not filing %s into %s: it would pass the corpus cap", node_id, target)
+            return
+        horizon.promote_node(node_id, target, create=existing is None)
     if existing is None:
         lang = "zh" if "chinese" in _CAPTURE_LANGUAGE["name"].lower() else "en"
 
