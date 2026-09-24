@@ -506,3 +506,53 @@ def test_removing_a_source_keeps_its_capture_from_being_suggested_back(client, m
     membership = horizon.promote_node(b, "sleep", create=True)
     assert client.delete(f"/orbits/sleep/sources/{membership.source_id}").status_code == 200
     assert client.get("/horizon/suggestions").json()["count"] == 0
+
+
+def test_the_graph_draws_similar_captures_including_an_unsummarised_one(client, monkeypatch):
+    a = _capture("https://x.example/a", "x", entities=["REM"], state="ready")
+    b = _capture("https://x.example/b", "y")  # not summarised
+    monkeypatch.setattr(api, "_similar_or_none", lambda: (lambda ids: [{"a": a, "b": b, "score": 0.9}]))
+    graph = client.get("/horizon/graph").json()
+    assert graph["similar"] == [{"a": a, "b": b, "score": 0.9}]
+    assert b in {c["node_id"] for c in graph["captures"]}, "the linked unsummarised capture was not drawn"
+    assert b in {u["node_id"] for u in graph["undistilled"]}, "it still needs a summary and still says so"
+
+
+def test_an_unsummarised_capture_can_be_suggested_by_similarity(client, monkeypatch):
+    monkeypatch.setenv("PN_LANDING_ORBIT", "off")
+    filed = _capture("https://x.example/a", "x", entities=["REM"], state="ready", title="Sleep review")
+    horizon.promote_node(filed, "sleep", create=True)
+    loose = _capture("https://x.example/b", "y")
+    monkeypatch.setattr(api, "_matches_or_none",
+                        lambda: (lambda node_id, among: [(filed, 0.9)] if node_id == loose else []))
+    body = client.get("/horizon/suggestions").json()
+    row = next(s for s in body["suggestions"] if s["node_id"] == loose)
+    assert row["orbit"] == "sleep" and row["like"] == "Sleep review"
+
+
+def test_vector_status_and_a_second_download_is_refused(client, monkeypatch):
+    monkeypatch.setattr(api, "_download_model", lambda: None)
+    status = client.get("/horizon/vectors").json()
+    assert status["installed"] is False and status["bytes"] > 100_000_000
+    assert client.post("/horizon/vectors/download").status_code == 200
+    assert client.post("/horizon/vectors/download").status_code == 409
+    assert client.delete("/horizon/vectors").status_code == 409
+    with api._VECTORS_LOCK:
+        api._VECTOR_DL.update(running=False, cancel=False)
+
+
+
+def test_a_poll_during_add_cannot_cache_the_answer_from_before_it(client, monkeypatch):
+    monkeypatch.setenv("PN_LANDING_ORBIT", "off")
+    filed = _capture("https://x.example/a", "x", entities=["REM", "hippocampus"], state="ready")
+    horizon.promote_node(filed, "sleep", create=True)
+    loose = _capture("https://x.example/b", "y", entities=["REM", "hippocampus"], state="ready")
+    real = horizon.promote_node
+
+    def promote_with_a_poll(*args, **kwargs):
+        client.get("/horizon/suggestions")  # a poll lands while the membership is being written
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(horizon, "promote_node", promote_with_a_poll)
+    assert client.post(f"/horizon/{loose}/promote", json={"orbit_id": "sleep"}).status_code == 200
+    assert client.get("/horizon/suggestions").json()["count"] == 0

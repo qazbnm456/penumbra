@@ -7556,3 +7556,35 @@ button.card-chip:hover {
   margin-left: auto;
   margin-right: auto;
 }
+
+.graph-similar {
+  stroke: var(--text-faint);
+  stroke-width: 1.2;
+  stroke-dasharray: 3 4;
+}
+
+.graph-similar.is-dim {
+  opacity: 0.25;
+}
+
+.graph-capture.is-waiting {
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 1.4;
+}
+
+.vectors-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.vectors-state {
+  font-size: var(--text-md);
+}
+
+.vectors-error {
+  font-size: var(--text-sm);
+  color: var(--bad-text);
+}

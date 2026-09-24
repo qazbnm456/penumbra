@@ -54,8 +54,17 @@ def _names(raw: str | None) -> list[str]:
     return [v.strip() for v in values if isinstance(v, str) and v.strip()] if isinstance(values, list) else []
 
 
+#: How many unsummarised captures one call compares by similarity, newest first. Each costs at most
+#: five vector searches (`vectors.mutual_matches`).
+_SIMILAR_CANDIDATES = 30
+
+
 def suggestions(
-    landing: str | None = None, *, limit: int = 50, base_dir: str | Path = DEFAULT_HORIZON_DIR
+    landing: str | None = None,
+    *,
+    limit: int = 50,
+    similar=None,
+    base_dir: str | Path = DEFAULT_HORIZON_DIR,
 ) -> list[dict]:
     """Best orbit per capture worth filing, strongest first.
 
@@ -108,8 +117,54 @@ def suggestions(
             page_title = preview.get("title") if isinstance(preview, dict) else None
             title = row["title"] or page_title or row["origin"]
             out.append({"node_id": node_id, "title": title, **best})
+    if similar is not None:
+        out.extend(_by_similarity(similar, landing, orbits_of, dismissed, base_dir))
     out.sort(key=lambda s: (-s["score"], s["title"]))
     return out[:limit]
+
+
+def _by_similarity(similar, landing, orbits_of, dismissed, base_dir) -> list[dict]:
+    """Unsummarised captures, offered for the orbit of the filed capture they most resemble, when
+    local relations are on. `similar(node_id, filed)` returns that capture's mutual matches among
+    the filed ones. The score is placed at the threshold, below any match by shared entities,
+    because similarity is the weaker signal (`vectors.py`)."""
+    with horizon._connect(base_dir) as conn:
+        rows = conn.execute(
+            "SELECT id, title, origin, preview FROM nodes WHERE state = 'ready_undistilled' "
+            "ORDER BY created_at DESC LIMIT ?",
+            (_SIMILAR_CANDIDATES,),
+        ).fetchall()
+        titles = {r[0]: r[1] or r[2] for r in conn.execute("SELECT id, title, origin FROM nodes")}
+    filed = {node for node, orbits in orbits_of.items() if orbits - ({landing} if landing else set())}
+    out: list[dict] = []
+    for row in rows:
+        node_id = row["id"]
+        if orbits_of.get(node_id, set()) - ({landing} if landing else set()):
+            continue
+        # A handful of vector searches for this capture, never one per filed capture: the first
+        # version searched once for every filed capture, per candidate, and took 27 seconds at a
+        # thousand captures on an endpoint the island polls every four seconds.
+        best = None
+        for other, score in similar(node_id, filed):
+            if other not in filed:
+                continue
+            for orbit_id in orbits_of.get(other, set()) - ({landing} if landing else set()):
+                if (node_id, orbit_id) in dismissed:
+                    continue
+                if best is None or score > best[2]:
+                    best = (orbit_id, other, score)
+        if best:
+            try:
+                preview = json.loads(row["preview"] or "{}")
+            except ValueError:
+                preview = {}
+            page_title = preview.get("title") if isinstance(preview, dict) else None
+            out.append({
+                "node_id": node_id, "title": row["title"] or page_title or row["origin"],
+                "orbit": best[0], "shared": [], "tags": [], "score": _THRESHOLD,
+                "like": titles.get(best[1], ""), "similarity": best[2],
+            })
+    return out
 
 
 def dismiss(node_id: str, orbit_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> None:

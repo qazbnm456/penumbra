@@ -105,6 +105,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -117,7 +118,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from python_multipart.exceptions import MultipartParseError
 from starlette.formparsers import MultiPartException
 
-from . import asks, auth, concepts, distill, filing, horizon, intake, runner, search, topology
+from . import asks, auth, concepts, distill, filing, horizon, intake, runner, search, topology, vectors
 from .align import AlignConcepts
 from .audio import GeneratePodcastScript
 from .citations import locate_answer_spans, strip_markers, verify_citations
@@ -248,6 +249,11 @@ async def _lifespan(_app: FastAPI):
     # `resume_interrupted` resets both owned states through `horizon.reset_interrupted_states` and
     # re-queues whatever was still waiting (invariants 78/79/80).
     await asyncio.to_thread(_horizon_queue().resume_interrupted)
+    _forget_suggestions()
+    # Local relations catch up on whatever landed while the server was down: free, local, and only
+    # when the reader already turned them on by downloading the model.
+    if await asyncio.to_thread(_vectors_ready):
+        _vector_worker().nudge()
     yield
     # A SHORT timeout, and the boolean is read rather than ignored. `_JOIN_TIMEOUT` defaults to two
     # minutes because an in-flight OCR pass cannot be interrupted — blocking an ASGI shutdown that
@@ -277,6 +283,12 @@ async def _lifespan(_app: FastAPI):
     with _DISTIL_GUARD:
         _DISTIL["cancel"] = True
     _stop_long_distil()
+    with _VECTORS_LOCK:
+        _VECTOR_DL["cancel"] = True
+        worker = _VECTORS["worker"]
+        _VECTORS["worker"] = None  # a later lifecycle in this process builds a fresh one
+    if worker is not None:
+        await asyncio.to_thread(worker.stop, 5.0)
     if not await asyncio.to_thread(_horizon_queue().stop, timeout=5.0):
         _log.info("intake: a capture was still parsing at shutdown; it will resume on next start")
 
@@ -1292,6 +1304,7 @@ async def delete_source_endpoint(orbit_id: str, source_id: str) -> OrbitResponse
         horizon.forget_membership(orbit_id, source_id)
         for node_id in removed:
             filing.dismiss(node_id, slug(orbit_id))
+        _forget_suggestions()
     except Exception:  # noqa: BLE001 - an index write must never undo a completed orbit write
         _log.warning("could not drop the horizon membership for %s/%s", orbit_id, source_id)
     return _orbit_response(orbit)
@@ -3208,6 +3221,8 @@ def _run_distil_pass(limit: int, language: str, node_ids: list[str] | None = Non
     finally:
         with _DISTIL_GUARD:
             _DISTIL.update({"running": False, "cancel": False})
+        # New summaries change what a capture is embedded from, whether or not the pass finished.
+        _vector_worker().nudge()
 
 
 def _resume_auto_distil() -> None:
@@ -3334,6 +3349,7 @@ def _auto_distil_after_intake() -> None:
         # No alignment here, for the same reason: it is an RLM run, and this is the intake worker's
         # thread. Names an automatic pass writes are aligned at the end of the next pass the reader
         # presses.
+        _vector_worker().nudge()  # new summaries change what a capture is embedded from
     except Exception as exc:  # noqa: BLE001 - same contract as the manual pass
         with _DISTIL_GUARD:
             _DISTIL["error"] = f"{type(exc).__name__}: {exc}"[:300]
@@ -3420,13 +3436,136 @@ def _file_into_landing_orbit(node_id: str) -> None:
 def _horizon_queue() -> intake.IntakeQueue:
     queue = intake.shared()
     queue.set_idle_hook(_auto_distil_after_intake)
-    queue.set_ready_hook(_file_into_landing_orbit)
+    queue.set_ready_hook(_on_capture_ready)
     return queue
+
+
+def _on_capture_ready(node_id: str) -> None:
+    """A capture finished parsing: file it into the landing orbit, and wake the local embedder."""
+    _file_into_landing_orbit(node_id)
+    _vector_worker().nudge()
+
+
+# --- local relations (`vectors.py`) --------------------------------------------------------------
+
+_VECTORS: dict[str, object] = {"worker": None}
+_VECTORS_LOCK = threading.Lock()
+
+#: The model download's visible, stoppable state (invariant 47). A download is not a model call and
+#: costs no money, but it is 130 MB the reader asked for, so it shows progress and can be stopped.
+_VECTOR_DL: dict[str, object] = {"running": False, "done": 0, "total": 0, "error": "", "cancel": False}
+
+
+def _vector_worker() -> vectors.Worker:
+    with _VECTORS_LOCK:
+        worker = _VECTORS["worker"]
+        if worker is None:
+            worker = vectors.Worker(_horizon_queue_base())
+            worker.start()
+            _VECTORS["worker"] = worker
+        return worker
+
+
+def _horizon_queue_base():
+    return intake.shared().base_dir
+
+
+def _vectors_ready() -> bool:
+    return vectors.installed(_horizon_queue_base())
+
+
+def _vector_status() -> dict:
+    worker = _VECTORS["worker"]
+    with _VECTORS_LOCK:
+        download = {k: v for k, v in _VECTOR_DL.items() if k != "cancel"}
+    return {
+        "installed": _vectors_ready(),
+        "bytes": vectors.MODEL_BYTES,
+        "download": download,
+        "embedding": dict(worker.state) if worker is not None else {"running": False, "error": ""},
+    }
+
+
+def _download_model() -> None:
+    def progress(done: int, total: int) -> None:
+        with _VECTORS_LOCK:
+            _VECTOR_DL.update(done=done, total=total)
+
+    def stopped() -> bool:
+        with _VECTORS_LOCK:
+            return bool(_VECTOR_DL["cancel"])
+
+    try:
+        vectors.download(base_dir=_horizon_queue_base(), on_progress=progress, should_stop=stopped)
+        _vector_worker().nudge()
+    except vectors.DownloadStopped:
+        pass
+    except Exception as exc:  # noqa: BLE001 - reported on the settings page
+        with _VECTORS_LOCK:
+            _VECTOR_DL["error"] = f"{type(exc).__name__}: {exc}"[:300]
+        _log.warning("vectors: download failed: %s", exc)
+    finally:
+        with _VECTORS_LOCK:
+            _VECTOR_DL.update(running=False, cancel=False)
+
+
+@app.get("/horizon/vectors")
+async def vector_status() -> dict:
+    """Whether local relations are on (the model is installed), and any download or embedding in
+    progress."""
+    return await asyncio.to_thread(_vector_status)
+
+
+@app.post("/horizon/vectors/download")
+async def download_vector_model() -> dict:
+    """Turn local relations on: download the pinned embedding model once. An explicit press; the
+    size is stated beside the button before it."""
+    with _VECTORS_LOCK:
+        if _VECTOR_DL["running"]:
+            raise HTTPException(409, "the model is already downloading")
+        _VECTOR_DL.update(running=True, done=0, total=vectors.MODEL_BYTES, error="", cancel=False)
+    threading.Thread(target=_download_model, name="penumbra-model-download", daemon=True).start()
+    return await asyncio.to_thread(_vector_status)
+
+
+@app.post("/horizon/vectors/cancel")
+async def cancel_vector_download() -> dict:
+    with _VECTORS_LOCK:
+        _VECTOR_DL["cancel"] = True
+    return await asyncio.to_thread(_vector_status)
+
+
+@app.delete("/horizon/vectors")
+async def remove_vector_model() -> dict:
+    """Turn local relations off: delete the model and every stored vector."""
+    with _VECTORS_LOCK:
+        if _VECTOR_DL["running"]:
+            raise HTTPException(409, "the model is downloading; stop it first")
+    await asyncio.to_thread(vectors.remove, _horizon_queue_base())
+    return await asyncio.to_thread(_vector_status)
+
+
+def _similar_or_none():
+    """The similarity function readers use, or `None` when local relations are off or the index
+    cannot be read (a missing extension, a corrupt table): relations from summaries still work."""
+    if not _vectors_ready():
+        return None
+    base = _horizon_queue_base()
+
+    def similar(node_ids: list[str]) -> list[dict]:
+        try:
+            return vectors.similar_pairs(node_ids, base_dir=base)
+        except Exception as exc:  # noqa: BLE001 - a weak signal is dropped, never an error page
+            _log.warning("vectors: similarity unavailable: %s", exc)
+            return []
+
+    return similar
 
 
 def _file_quietly(node_id: str) -> None:
     """`_file_into_landing_orbit` for the captures that skip the queue (pasted text, uploads). A
     failure to file never fails the capture: it has already landed in the Horizon."""
+    _vector_worker().nudge()
     try:
         _file_into_landing_orbit(node_id)
     except Exception:  # noqa: BLE001 - filing is a convenience on top of a capture that succeeded
@@ -4030,7 +4169,9 @@ async def horizon_graph(orbit: str | None = Query(None, max_length=200)) -> dict
     # that differs from it (any orbit named in Chinese, invariant 10) would draw nothing.
     if orbit is not None and not orbit.strip():
         raise HTTPException(400, "an orbit needs a value")
-    return await asyncio.to_thread(topology.graph, slug(orbit) if orbit else None)
+    return await asyncio.to_thread(
+        lambda: topology.graph(slug(orbit) if orbit else None, similar=_similar_or_none())
+    )
 
 
 def _landing_slug() -> str | None:
@@ -4049,8 +4190,51 @@ def _landing_slug() -> str | None:
 async def filing_suggestions() -> dict:
     """Captures that probably belong in an orbit they are not in, by shared entities and tags.
     Local and free; nothing is filed until the reader accepts one (through `/promote`)."""
-    found = await asyncio.to_thread(filing.suggestions, _landing_slug())
+    found = await asyncio.to_thread(_suggestions_cached)
     return {"suggestions": found, "count": len(found)}
+
+
+#: Suggestions for a few seconds, computed by one caller at a time. Two pollers ask (the island every
+#: four seconds while hovered, the Horizon on its busy poll) and neither needs a fresher answer.
+#: A cached answer is valid only for the GENERATION it was computed in: any action that changes the
+#: answer bumps the generation, without taking the lock, so it never waits on a computation and an
+#: answer computed before the action can never be served after it.
+_SUGGEST_CACHE: dict[str, object] = {"at": 0.0, "value": None, "gen": 0, "for_gen": -1}
+_SUGGEST_LOCK = threading.Lock()
+_SUGGEST_TTL = 3.0
+
+
+def _suggestions_cached() -> list[dict]:
+    with _SUGGEST_LOCK:
+        gen = int(_SUGGEST_CACHE["gen"])
+        fresh = time.monotonic() - float(_SUGGEST_CACHE["at"]) < _SUGGEST_TTL
+        if _SUGGEST_CACHE["value"] is not None and fresh and _SUGGEST_CACHE["for_gen"] == gen:
+            return list(_SUGGEST_CACHE["value"])
+        found = filing.suggestions(_landing_slug(), similar=_matches_or_none())
+        _SUGGEST_CACHE.update(at=time.monotonic(), value=found, for_gen=gen)
+        return list(found)
+
+
+def _forget_suggestions() -> None:
+    """A filing, a dismissal or a removal changes the answer at once. Lock-free on purpose: this is
+    called on the event loop, and waiting for a computation there would stall every request."""
+    _SUGGEST_CACHE["gen"] = int(_SUGGEST_CACHE["gen"]) + 1
+
+
+def _matches_or_none():
+    """`vectors.mutual_matches` for filing, or `None` when local relations are off or unreadable."""
+    if not _vectors_ready():
+        return None
+    base = _horizon_queue_base()
+
+    def matches(node_id: str, among: set[str]) -> list[tuple[str, float]]:
+        try:
+            return vectors.mutual_matches(node_id, among, base_dir=base)
+        except Exception as exc:  # noqa: BLE001 - a weak signal is dropped, never an error page
+            _log.warning("vectors: similarity unavailable: %s", exc)
+            return []
+
+    return matches
 
 
 class DismissSuggestion(BaseModel):
@@ -4067,6 +4251,7 @@ async def dismiss_suggestion(body: DismissSuggestion) -> dict:
         raise HTTPException(400, f"invalid node id {body.node_id!r}: not a node id")
     await asyncio.to_thread(_node_or_404, body.node_id)
     await asyncio.to_thread(filing.dismiss, body.node_id, slug(body.orbit))
+    _forget_suggestions()
     return {"dismissed": True}
 
 
@@ -4234,6 +4419,7 @@ async def delete_horizon_node(node_id: str) -> dict:
     if not horizon.is_node_id(node_id):
         raise HTTPException(400, f"invalid node id {node_id!r}: not a node id")
     removed = await asyncio.to_thread(horizon.remove_node, node_id)
+    _forget_suggestions()
     if not removed:
         raise HTTPException(404, f"no such node: {node_id!r}")
     return {"removed": removed}
@@ -4242,6 +4428,7 @@ async def delete_horizon_node(node_id: str) -> dict:
 @app.post("/horizon/{node_id}/promote")
 async def promote_horizon_node(node_id: str, body: PromoteRequest) -> dict:
     """Copy a node into an orbit as a real, citable `Source`. The node is NOT consumed."""
+    _forget_suggestions()
     await asyncio.to_thread(_node_or_404, node_id)
     if body.create and slug(body.orbit_id).startswith(HORIZON_ASK_KEY):
         raise HTTPException(400, f"{body.orbit_id!r} is reserved; choose another orbit id")
@@ -4256,6 +4443,8 @@ async def promote_horizon_node(node_id: str, body: PromoteRequest) -> dict:
         membership = await asyncio.to_thread(
             horizon.promote_node, node_id, body.orbit_id, create=body.create
         )
+        # Again AFTER the write: a poll that ran during it computed the answer from before it.
+        _forget_suggestions()
     except FileNotFoundError as exc:
         #: `create=False` and the orbit is gone — a stale picker option naming something the
         #: reader has since deleted. A 404 says which case it is; re-creating it was the bug.
