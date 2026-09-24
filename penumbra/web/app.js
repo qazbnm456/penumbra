@@ -6597,8 +6597,15 @@ function trajInit() {
 //: itself when there was none (see `renderTickerAffordance`). `false` is not an error: a trace is
 //: only as durable as retention keeps it, and a run that failed before its first REPL turn never
 //: had one.
+//: Whose runs these are. A Horizon ask runs under its own handle (no orbit may take that prefix,
+//: the server refuses it), so its trajectory is read from there even while no orbit is open.
+function trajOwner(runId) {
+  return runId && runId.startsWith(`${HORIZON_ASK_KEY}-`) ? HORIZON_ASK_KEY : state.orbitId;
+}
+
 async function openTrajectory(runIds, wanted) {
-  if (!trajEl.drawer || !state.orbitId) return false;
+  const owner = trajOwner(wanted || (runIds || []).find(Boolean));
+  if (!trajEl.drawer || !owner) return false;
   //: **THE TRIGGER IS RECORDED HERE, before the fetch below.** `trajTakeFocus` reads
   //: `document.activeElement` when the drawer opens — which is after an `await`, by which time the
   //: Steps pill that was pressed has been replaced by a chat re-render, so what got recorded was
@@ -6609,7 +6616,7 @@ async function openTrajectory(runIds, wanted) {
   if (!runId) return false;
   try {
     trajData = await api(
-      `/orbits/${encodeURIComponent(state.orbitId)}/runs/${encodeURIComponent(runId)}/trajectory`
+      `/orbits/${encodeURIComponent(owner)}/runs/${encodeURIComponent(runId)}/trajectory`
     );
   } catch (err) {
     // A trace is only as durable as retention keeps it (invariant 34). Losing one must degrade
@@ -9140,6 +9147,411 @@ function initHorizon() {
 }
 
 initHorizon();
+
+// --- Asking the Horizon ------------------------------------------------------------------------
+//
+// A question over everything kept, a tag or an entity, rather than inside one orbit. The server
+// runs it under a reserved handle (`api.HORIZON_ASK_KEY`), so the ordinary run routes serve its
+// ticker, Stop and trajectory with no second copy of any of them.
+
+const HORIZON_ASK_KEY = "horizon-ask";
+
+const askH = {
+  plan: null, // the last preview: what Ask will read
+  running: false,
+  generation: 0, // bumped by every new preview, so a late reply cannot overwrite a newer one
+};
+
+function askHScope() {
+  const raw = horizonEl("ask-h-scope").value || "all";
+  if (raw === "all") return { kind: "all" };
+  const cut = raw.indexOf(":");
+  return { kind: raw.slice(0, cut), value: raw.slice(cut + 1) };
+}
+
+function askHScopeLabel(scope) {
+  if (!scope || scope.kind === "all") return t("askH.everything", "Everything");
+  if (scope.kind === "tag") return `#${scope.value}`;
+  return scope.value || "";
+}
+
+async function loadAskHScopes() {
+  const select = horizonEl("ask-h-scope");
+  let data;
+  try {
+    data = await api("/horizon/concepts");
+  } catch {
+    return; // Everything still works; the narrower scopes simply are not offered
+  }
+  const keep = select.value;
+  while (select.options.length > 1) select.remove(1);
+  const group = (label, kind, rows) => {
+    if (!rows || !rows.length) return;
+    const optgroup = document.createElement("optgroup");
+    optgroup.label = label;
+    rows.forEach((row) => {
+      const option = document.createElement("option");
+      option.value = `${kind}:${row.name}`;
+      option.textContent = kind === "tag" ? `#${row.name} (${row.count})` : `${row.name} (${row.count})`;
+      optgroup.appendChild(option);
+    });
+    select.appendChild(optgroup);
+  };
+  group(t("askH.tags", "Tags"), "tag", data.tags);
+  group(t("askH.entities", "Entities"), "entity", data.entities);
+  if ([...select.options].some((option) => option.value === keep)) select.value = keep;
+}
+
+function askHShowError(message) {
+  const el = horizonEl("ask-h-error");
+  el.textContent = message || "";
+  el.hidden = !message;
+}
+
+function askHPlanLine(plan) {
+  if (!plan.count) {
+    return plan.in_scope && (plan.too_large || []).length >= plan.in_scope
+      ? t("askH.planTooLarge", "Everything in this scope is too large to read in one question.")
+      : t("askH.planEmpty", "Nothing in this scope can be read yet.");
+  }
+  const parts = [
+    plan.count === plan.in_scope
+      ? t("askH.planAll", `This reads all ${plan.count} captures in this scope.`, { count: plan.count })
+      : t("askH.plan", `This reads ${plan.count} of ${plan.in_scope} captures.`,
+        { count: plan.count, total: plan.in_scope }),
+  ];
+  if (plan.strategy === "matched" && plan.count < plan.in_scope) {
+    parts.push(t("askH.planMatched", "The ones your words found, best first."));
+  } else if (plan.strategy === "recent" && (plan.too_large || []).length) {
+    parts.push(t("askH.planRecentTooLarge", "What your words found is too large, so these are the newest."));
+  } else if (plan.strategy === "recent") {
+    parts.push(t("askH.planRecent", "Your words found nothing here, so these are the newest."));
+  }
+  if (plan.too_large && plan.too_large.length) {
+    parts.push(t("askH.planSkipped", `${plan.too_large.length} too large to include.`,
+      { n: plan.too_large.length }));
+  }
+  parts.push(t("askH.planCost", "Asking starts one paid model run."));
+  // Chinese runs sentences together; a space between them reads as a stray gap.
+  return parts.join(uiLang().startsWith("zh") ? "" : " ");
+}
+
+function renderAskHPlan(plan) {
+  horizonEl("ask-h-plan-line").textContent = askHPlanLine(plan);
+  const list = horizonEl("ask-h-plan-list");
+  list.textContent = "";
+  const SHOWN = 8;
+  plan.items.slice(0, SHOWN).forEach((item) => list.appendChild(elt("li", "", item.title)));
+  if (plan.items.length > SHOWN) {
+    list.appendChild(elt("li", "ask-h-plan-more",
+      t("askH.planMore", `and ${plan.items.length - SHOWN} more`, { n: plan.items.length - SHOWN })));
+  }
+  horizonEl("ask-h-send").disabled = !plan.count || askH.running;
+  horizonEl("ask-h-plan").hidden = false;
+}
+
+async function previewAskH() {
+  const question = horizonEl("ask-h-input").value.trim();
+  if (!question) {
+    horizonEl("ask-h-input").focus();
+    return;
+  }
+  askHShowError("");
+  const generation = ++askH.generation;
+  const scope = askHScope();
+  const check = horizonEl("ask-h-check");
+  check.disabled = true;
+  try {
+    const plan = await api("/horizon/ask/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, scope }),
+    });
+    if (generation !== askH.generation) return;
+    askH.plan = { ...plan, question, scope };
+    renderAskHPlan(plan);
+  } catch (err) {
+    if (generation !== askH.generation) return;
+    askH.plan = null;
+    horizonEl("ask-h-plan").hidden = true;
+    askHShowError(readableError(err.message));
+  } finally {
+    check.disabled = false;
+  }
+}
+
+function dismissAskHPlan() {
+  askH.plan = null;
+  askH.generation += 1;
+  horizonEl("ask-h-plan").hidden = true;
+}
+
+//: Strokes through the sentences a citation backs, numbered by the capture they point at. The
+//: orbit renderer numbers against its References panel, which a Horizon answer does not have, so
+//: this one numbers against the answer's own source list below it.
+function renderAskHAnswer(ask) {
+  const article = horizonEl("ask-h-answer");
+  article.textContent = "";
+  article.appendChild(elt("p", "ask-h-question", ask.question));
+  article.appendChild(elt("p", "ask-h-meta",
+    `${askHScopeLabel(ask.scope)} · ${t("askH.readCount", `${ask.sources.length} captures`, { n: ask.sources.length })}`));
+
+  const numberOf = new Map(ask.sources.map((source, i) => [source.source_id, i + 1]));
+  const text = ask.text || "";
+  const ranges = [];
+  (ask.citations || []).forEach((citation) => {
+    const needle = citation.answer_span;
+    if (!needle) return;
+    const at = text.indexOf(needle);
+    if (at !== -1) ranges.push({ start: at, end: at + needle.length, citation });
+  });
+  ranges.sort((a, b) => a.start - b.start);
+  const kept = [];
+  ranges.forEach((range) => {
+    if (kept.length && range.start < kept[kept.length - 1].end) return;
+    kept.push(range);
+  });
+  const last = new Map();
+  const emit = (parent, from, to) => {
+    if (to <= from) return;
+    let cursor = from;
+    kept.forEach((range) => {
+      if (range.end <= cursor || range.start >= to) return;
+      const sliceFrom = Math.max(range.start, cursor);
+      const sliceTo = Math.min(range.end, to);
+      if (sliceFrom > cursor) parent.appendChild(document.createTextNode(text.slice(cursor, sliceFrom)));
+      const stroke = elt("span", range.citation.verified ? "citation" : "citation is-unverified",
+        text.slice(sliceFrom, sliceTo));
+      stroke.title = range.citation.title || "";
+      last.set(range, stroke);
+      parent.appendChild(stroke);
+      cursor = sliceTo;
+    });
+    if (cursor < to) parent.appendChild(document.createTextNode(text.slice(cursor, to)));
+  };
+  const prose = elt("div", "ask-h-prose");
+  renderMarkdownInto(prose, text, emit);
+  last.forEach((stroke, range) => {
+    const n = numberOf.get(range.citation.source_id);
+    if (n) stroke.dataset.reference = String(n);
+  });
+  article.appendChild(prose);
+
+  const cited = new Set((ask.citations || []).map((c) => c.source_id));
+  const sources = elt("ol", "ask-h-sources");
+  ask.sources.forEach((source) => {
+    const row = elt("li", cited.has(source.source_id) ? "ask-h-source is-cited" : "ask-h-source");
+    row.appendChild(elt("span", "", source.title));
+    if (source.origin && source.origin !== source.title) row.appendChild(elt("span", "ask-h-source-origin", source.origin));
+    sources.appendChild(row);
+  });
+  article.appendChild(elt("p", "ask-h-sources-head", t("askH.sources", "Read")));
+  article.appendChild(sources);
+
+  if (ask.follow_ups && ask.follow_ups.length) {
+    article.appendChild(elt("p", "ask-h-sources-head", t("chat.askNext", "Ask next")));
+    const next = elt("div", "starter-questions");
+    ask.follow_ups.forEach((question) => {
+      const chip = elt("button", "starter-question", question);
+      chip.type = "button";
+      chip.addEventListener("click", () => {
+        horizonEl("ask-h-input").value = question;
+        void previewAskH();
+      });
+      next.appendChild(chip);
+    });
+    article.appendChild(next);
+  }
+  article.hidden = false;
+}
+
+async function refreshAskHHistory() {
+  let data;
+  try {
+    data = await api("/horizon/asks?limit=20");
+  } catch {
+    return;
+  }
+  const details = horizonEl("ask-h-history");
+  const list = horizonEl("ask-h-history-list");
+  list.textContent = "";
+  (data.asks || []).forEach((ask) => {
+    const row = elt("li", "ask-h-history-row");
+    const open = elt("button", "ask-h-history-open", ask.question);
+    open.type = "button";
+    open.addEventListener("click", async () => {
+      try {
+        renderAskHAnswer(await api(`/horizon/asks/${encodeURIComponent(ask.id)}`));
+        askHShowError("");
+      } catch (err) {
+        askHShowError(readableError(err.message));
+      }
+    });
+    row.appendChild(open);
+    row.appendChild(elt("span", "ask-h-history-when",
+      `${askHScopeLabel(ask.scope)} · ${relativeTime(ask.created_at)}`));
+    const remove = elt("button", "ask-h-history-remove", "×");
+    remove.type = "button";
+    remove.setAttribute("aria-label", t("askH.remove", "Remove this question"));
+    remove.title = t("askH.remove", "Remove this question");
+    remove.addEventListener("click", async () => {
+      try {
+        await api(`/horizon/asks/${encodeURIComponent(ask.id)}`, { method: "DELETE" });
+      } catch (err) {
+        askHShowError(readableError(err.message));
+        return;
+      }
+      void refreshAskHHistory();
+    });
+    row.appendChild(remove);
+    list.appendChild(row);
+  });
+  details.hidden = !(data.asks || []).length;
+}
+
+function askHSetRunning(running) {
+  askH.running = running;
+  horizonEl("ask-h-check").disabled = running;
+  horizonEl("ask-h-send").disabled = running || !(askH.plan && askH.plan.count);
+}
+
+async function sendAskH() {
+  const plan = askH.plan;
+  if (!plan || !plan.count || askH.running) return;
+  askHShowError("");
+  const token = crypto.randomUUID();
+  const runId = `${HORIZON_ASK_KEY}-${token}`;
+  let cancelled = false;
+  const holder = horizonEl("ask-h-run");
+  const status = runStatus({
+    orbitId: HORIZON_ASK_KEY,
+    runIds: [runId],
+    label: t("chat.thinking", "Thinking…"),
+    onCancel: () => {
+      cancelled = true;
+      holder.hidden = true;
+      holder.textContent = "";
+      askHSetRunning(false);
+      askHShowError(t("askH.stopped", "Stopped. Nothing was kept."));
+    },
+  });
+  holder.textContent = "";
+  holder.appendChild(status.node);
+  holder.hidden = false;
+  horizonEl("ask-h-plan").hidden = true;
+  askHSetRunning(true);
+  openTicker(HORIZON_ASK_KEY, runId, (event) => status.onEvent(event));
+  try {
+    const ask = await api("/horizon/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question: plan.question,
+        scope: plan.scope,
+        node_ids: plan.items.map((item) => item.node_id),
+        run_id: token,
+      }),
+    });
+    status.finish();
+    if (cancelled) return;
+    renderAskHAnswer(ask);
+    askH.plan = null;
+    void refreshAskHHistory();
+  } catch (err) {
+    status.finish();
+    if (!cancelled) askHShowError(readableError(err.message));
+  } finally {
+    closeTicker(runId);
+    if (!cancelled) {
+      holder.hidden = true;
+      holder.textContent = "";
+      askHSetRunning(false);
+    }
+  }
+}
+
+//: **A reload must not lose a question that is still billing** (invariant 47). The run outlives
+//: the page, so the Horizon asks the server what is in flight under its handle and puts a status
+//: row with a working Stop back until it ends.
+async function reattachAskH() {
+  let runs;
+  try {
+    runs = (await api(`/orbits/${HORIZON_ASK_KEY}/runs`)).runs || [];
+  } catch {
+    return;
+  }
+  if (!runs.length || askH.running) return;
+  const holder = horizonEl("ask-h-run");
+  let ended = false;
+  const status = runStatus({
+    orbitId: HORIZON_ASK_KEY,
+    runIds: runs,
+    label: t("askH.stillRunning", "A question is still running"),
+    onCancel: () => {
+      ended = true;
+      holder.hidden = true;
+      holder.textContent = "";
+      askHSetRunning(false);
+    },
+  });
+  holder.textContent = "";
+  holder.appendChild(status.node);
+  holder.hidden = false;
+  askHSetRunning(true);
+  runs.forEach((runId) => openTicker(HORIZON_ASK_KEY, runId, (event) => status.onEvent(event)));
+  const poll = setInterval(async () => {
+    if (ended) {
+      clearInterval(poll);
+      return;
+    }
+    let left;
+    try {
+      left = (await api(`/orbits/${HORIZON_ASK_KEY}/runs`)).runs || [];
+    } catch {
+      return;
+    }
+    if (left.some((runId) => runs.includes(runId))) return;
+    clearInterval(poll);
+    ended = true;
+    status.finish();
+    holder.hidden = true;
+    holder.textContent = "";
+    askHSetRunning(false);
+    void refreshAskHHistory();
+    // The server saves the answer a moment AFTER the run leaves its in-flight list, so a second
+    // look catches an answer the first one arrived too early for.
+    setTimeout(() => void refreshAskHHistory(), 3000);
+  }, 2500);
+}
+
+function initAskH() {
+  horizonEl("ask-h-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    void previewAskH();
+  });
+  const input = horizonEl("ask-h-input");
+  input.addEventListener("keydown", (event) => {
+    // Enter checks, Shift+Enter breaks the line; never while an IME is composing a character.
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
+      event.preventDefault();
+      void previewAskH();
+    }
+  });
+  // A preview is for ONE question in ONE scope; changing either means it no longer describes Ask.
+  input.addEventListener("input", dismissAskHPlan);
+  const scope = horizonEl("ask-h-scope");
+  scope.addEventListener("change", dismissAskHPlan);
+  // Summaries land in the background, so the tags and entities on offer are refreshed whenever the
+  // reader goes to pick one rather than only once at load.
+  scope.addEventListener("focus", () => void loadAskHScopes());
+  horizonEl("ask-h-send").addEventListener("click", () => void sendAskH());
+  horizonEl("ask-h-dismiss").addEventListener("click", dismissAskHPlan);
+  void loadAskHScopes();
+  void refreshAskHHistory();
+  void reattachAskH();
+}
+
+initAskH();
 
 //: The address bar decides the first screen, so a reload lands where the reader was and a link to a
 //: orbit opens that orbit. `replace: true` on the way in: the first entry is this one, not a

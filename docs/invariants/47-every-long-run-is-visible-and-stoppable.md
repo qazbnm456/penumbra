@@ -12,7 +12,7 @@ Stop also reaches a run that has not spawned yet. Every run is announced before 
 
 A reload is not an exemption. The worker survives the page, so `GET /orbits/{id}/runs` lists what is in flight and the UI mounts a status with a working Stop for it.
 
-Tier 0's two long actions are stopped globally, with no run id, because there is nothing to disambiguate: intake is one serial queue (invariant 79) and the summary pass runs one batch at a time. `/horizon/cancel` stops both on purpose, because a reader pressing Stop while both run is not asking for one of them. The automatic summary pass shares the same progress state as the manual one; before it did, the one batch that runs without a press had no progress, no Stop and no failure channel.
+Tier 0's intake and summary pass are stopped globally, with no run id, because there is nothing to disambiguate: intake is one serial queue (invariant 79) and the summary pass runs one batch at a time. `/horizon/cancel` stops both on purpose, because a reader pressing Stop while both run is not asking for one of them. The automatic summary pass shares the same progress state as the manual one; before it did, the one batch that runs without a press had no progress, no Stop and no failure channel. A Horizon ask is the exception at Tier 0: several can run at once, so it is stopped by run id like an orbit's runs, under the reserved handle `horizon-ask`, and `/horizon/cancel` does not reach it.
 
 ## A run's state belongs to that run
 

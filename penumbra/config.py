@@ -306,6 +306,24 @@ def max_corpus_chars() -> int:
     return _env_int("PN_MAX_CORPUS_CHARS", _DEFAULT_MAX_CORPUS_CHARS)
 
 
+#: How much a Horizon ask may read. Far below `PN_MAX_CORPUS_CHARS` on purpose: the corpus sits in
+#: the REPL rather than the prompt, so size costs memory more than tokens, but every irrelevant item
+#: is one more place the model has to look before it answers.
+_DEFAULT_HORIZON_ASK_CHARS = 1_000_000
+_DEFAULT_HORIZON_ASK_ITEMS = 40
+
+
+def horizon_ask_chars() -> int:
+    """`PN_HORIZON_ASK_CHARS`: the character budget one Horizon ask assembles, never above
+    `max_corpus_chars()`. Environment only, because it bounds a paid run (invariant 41)."""
+    return min(_env_int("PN_HORIZON_ASK_CHARS", _DEFAULT_HORIZON_ASK_CHARS), max_corpus_chars())
+
+
+def horizon_ask_items() -> int:
+    """`PN_HORIZON_ASK_ITEMS`: how many captures one Horizon ask may read at most."""
+    return _env_int("PN_HORIZON_ASK_ITEMS", _DEFAULT_HORIZON_ASK_ITEMS)
+
+
 #: Ranges `PN_FETCH_ALLOW_CIDRS` may never overlap. Listing one of these does not widen the
 #: carve-out — it turns the DNS-rebinding defence off for that range, which is the whole attack
 #: `resolved_host_is_safe` exists to stop. Deliberately NOT derived from `ipaddress`'s own

@@ -30,6 +30,7 @@ What exists:
 - An HTTP API (`api.py`, the `api` extra) with a live reasoning-trace stream and a Trajectory drawer.
 - A web UI (`penumbra/web/`) that is a real end-user product. It is the only way an artifact leaves the product: Copy (Markdown) on an answer, the overview or a guide, a whole-orbit Markdown export, and a print stylesheet that appends the reference list.
 - `horizon.py`, Tier 0: a global capture Horizon (a SQLite index plus `horizon/nodes/<id>.json`) whose nodes are filed into orbits (invariant 78). `intake.py` is its serial capture queue (79), and `distill.py` is the separate summary pass (80). All three are reachable at `/horizon/*` and from the web UI, where the Horizon is the default screen.
+- A Horizon ask: a question over everything kept, a tag or an entity. `search.py` is its full-text index (character pairs for CJK) and its selection, `asks.py` its history, and it is reachable at `/horizon/ask*` and from the Horizon screen.
 
 The API is the only place a run is isolated in a subprocess (`runner.py` and `worker.py`); `cli.py` runs in-process.
 
@@ -154,7 +155,7 @@ This index does not grow. An entry that has gained a second paragraph has taken 
 
 46. **Every run-taking handler announces its run id (`api._announced`) before any preparatory work, not just before the spawn.** On a new orbit `_resolve_language` always runs and always outlasts the 5s grace period, so without this the client reports a missing run while the request succeeds. ([why](docs/invariants/46-run-ids-are-announced-before-any-pre-work.md))
 
-47. **Every long-running action shows that it is running and offers a way to stop it, and no action starts without an explicit press.** A Tier 1 Stop names a run id and can reach a run that has not spawned yet; the Tier 0 Stop is global because nothing there can be ambiguous. ([why](docs/invariants/47-every-long-run-is-visible-and-stoppable.md))
+47. **Every long-running action shows that it is running and offers a way to stop it, and no action starts without an explicit press.** A Tier 1 Stop, and a Horizon ask's, names a run id and can reach a run that has not spawned yet; the Tier 0 intake and summary Stop is global because nothing there can be ambiguous. ([why](docs/invariants/47-every-long-run-is-visible-and-stoppable.md))
 
 48. **The interface language (`web/i18n.js`) is a browser preference, kept separate from the output language (invariant 39), which is a server setting.** A reader in Taiwan may want a Chinese interface over English papers, and merging the two would make that impossible to express. ([why](docs/invariants/48-interface-language-is-separate-from-output.md))
 
@@ -218,7 +219,7 @@ This index does not grow. An entry that has gained a second paragraph has taken 
 
 77. **Every request needs the API token (`auth.py`), the static assets are the only exception, and a `Host` header that is a DNS name is refused.** Being reachable only from this machine is not the same as being reachable only by this app: every browser the user runs is on this machine too. ([why](docs/invariants/77-the-local-api-token.md))
 
-78. **The Horizon (`horizon.py`) is an index, not a corpus: nothing at Tier 0 ever assembles a blob, and every write to it is a SQL delta (`update_node`; there is deliberately no `save_node`).** The 8,000,000-character cap governs an orbit (8), and a Horizon meant to hold thousands of nodes can coexist with it only by never building one. ([why](docs/invariants/78-the-horizon-is-an-index-not-a-corpus.md))
+78. **The Horizon (`horizon.py`) is an index, not a corpus: nothing at Tier 0 assembles a blob over the Horizon, only a Horizon ask over a selection `search.select_for_ask` has bounded, and every write to it is a SQL delta (`update_node`; there is deliberately no `save_node`).** The 8,000,000-character cap governs an orbit (8), and a Horizon meant to hold thousands of nodes can coexist with it only by never building one over all of them. ([why](docs/invariants/78-the-horizon-is-an-index-not-a-corpus.md))
 
 79. **A capture always lands: submitting creates a `queued` node before anything is fetched, a parse failure becomes a `failed` node that keeps its message, and intake (`intake.py`) runs one item at a time.** A worker that dies on one bad link would otherwise leave every later capture `queued` forever, which looks exactly like still working. ([why](docs/invariants/79-a-capture-always-lands.md))
 

@@ -108,21 +108,24 @@ import threading
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from python_multipart.exceptions import MultipartParseError
 from starlette.formparsers import MultiPartException
 
-from . import auth, distill, horizon, intake, runner
+from . import asks, auth, distill, horizon, intake, runner, search
 from .audio import GeneratePodcastScript
 from .citations import locate_answer_spans, strip_markers, verify_citations
 from .config import (
     PenumbraConfig,
     auto_distil_enabled,
     auto_distil_max_per_batch,
+    horizon_ask_chars,
+    horizon_ask_items,
     landing_orbit,
     max_corpus_chars,
     max_trace_files,
@@ -165,6 +168,7 @@ from .schema import (
     FAQ,
     PODCAST_TIMEOUT_FACTOR,
     Answer,
+    AskSource,
     ChatTurn,
     Citation,
     KeyInsight,
@@ -531,6 +535,10 @@ async def _mutate_or_http(orbit_id: str, apply, *, create: bool) -> Orbit:
         orbit_path(orbit_id)
     except ValueError as exc:
         raise _invalid_orbit_id(orbit_id, exc) from exc
+    if create and slug(orbit_id).startswith(HORIZON_ASK_KEY):
+        # Reserved: Horizon asks run under this handle, and an orbit holding it would share their
+        # run list and their Stop.
+        raise HTTPException(400, f"{orbit_id!r} is reserved; choose another orbit id")
     try:
         return await asyncio.to_thread(mutate_orbit, orbit_id, apply, create=create)
     except ValidationError as exc:
@@ -3213,6 +3221,9 @@ def _file_into_landing_orbit(node_id: str) -> None:
     if horizon.memberships_for(node_id):
         return
     target = choice or FIRST_ORBIT_ID
+    if slug(target).startswith(HORIZON_ASK_KEY):
+        _log.warning("landing orbit %r uses the reserved Horizon ask handle; not filing", target)
+        return
     # One filing at a time: the intake worker and an upload can both finish a node at once, and
     # two filings checked against the same "before" could each pass the cap and together exceed it.
     with _LANDING_LOCK:
@@ -3540,6 +3551,319 @@ async def capture_into_horizon(body: CaptureRequest, request: Request) -> dict:
     return {"nodes": [node.model_dump() for node in nodes]}
 
 
+# --- Asking the Horizon ----------------------------------------------------------------------------
+
+#: The handle every Horizon ask runs under: `_ACTIVE_RUNS`, `_BUSY` and the run-id prefix treat it
+#: as an orbit id, so the existing stream, cancel, in-flight and trajectory routes serve these runs
+#: unchanged (`/orbits/horizon-ask/runs/...`). The UI never mints an orbit with this id.
+HORIZON_ASK_KEY = "horizon-ask"
+
+#: What `AnswerQuestion` is told when there is no conversation before this question. Every Horizon
+#: ask stands alone: it has no thread to follow up in.
+_NO_HISTORY = "(no prior turns in this conversation)"
+
+
+class HorizonAskScope(BaseModel):
+    """Checked on the way IN, so a malformed scope is a 422 before anything is spent rather than a
+    failure to save an answer already paid for."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["all", "tag", "entity"] = "all"
+    value: str | None = Field(default=None, max_length=search.SCOPE_VALUE_MAX)
+
+    @model_validator(mode="after")
+    def _value_matches_kind(self):
+        if self.kind == "all":
+            self.value = None
+        elif not (self.value or "").strip():
+            raise ValueError(f"a {self.kind} scope needs a value")
+        return self
+
+
+class HorizonAskPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str
+    scope: HorizonAskScope = Field(default_factory=HorizonAskScope)
+
+
+class HorizonAskRequest(RunOptions):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str
+    scope: HorizonAskScope = Field(default_factory=HorizonAskScope)
+    #: The captures the preview showed. Given, they are what the run reads, so the number the
+    #: reader agreed to is the number that is spent; absent, the selection is made again here.
+    node_ids: list[str] | None = None
+
+
+class HorizonAskCitation(CitationResponse):
+    node_id: str | None = None
+    title: str | None = None
+
+
+def _ask_bounds() -> tuple[int, int]:
+    """`(budget_chars, max_items)`. Both readers raise `SystemExit` on a malformed value, which must
+    reach the client as a 500 rather than escape the handler (invariant 24)."""
+    try:
+        return horizon_ask_chars(), horizon_ask_items()
+    except SystemExit as exc:
+        raise HTTPException(500, f"server misconfigured: {exc}") from exc
+
+
+def _question_or_422(text: str) -> str:
+    question = (text or "").strip()
+    if not question:
+        raise HTTPException(422, "ask a question first")
+    return question
+
+
+def _selection_payload(selection: search.Selection, budget: int, items_cap: int) -> dict:
+    def item(p: search.Picked) -> dict:
+        return {"node_id": p.node_id, "title": p.title, "origin": p.origin, "chars": p.chars,
+                "matched": p.matched}
+
+    return {
+        "items": [item(p) for p in selection.items],
+        "count": len(selection.items),
+        "chars": selection.chars,
+        "in_scope": selection.in_scope,
+        "strategy": selection.strategy,
+        "too_large": [item(p) for p in selection.too_large],
+        "budget_chars": budget,
+        "max_items": items_cap,
+    }
+
+
+def _select_or_http(question: str, scope: HorizonAskScope) -> search.Selection:
+    try:
+        budget, items_cap = _ask_bounds()
+        return search.select_for_ask(
+            question, scope.kind, scope.value, budget_chars=budget, max_items=items_cap,
+        )
+    except search.SearchUnavailable as exc:
+        raise HTTPException(500, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def _chosen_or_422(node_ids: list[str]) -> list[search.Picked]:
+    """The captures a client named, checked the way a fresh selection would have been: each must
+    exist, be readable and fit the same budget."""
+    if not node_ids:
+        raise HTTPException(422, "there is nothing to read in this scope yet")
+    if len(set(node_ids)) != len(node_ids):
+        raise HTTPException(422, "the same capture was named twice")
+    budget, items_cap = _ask_bounds()
+    if len(node_ids) > items_cap:
+        raise HTTPException(422, f"at most {items_cap} captures can be read at once")
+    picked: list[search.Picked] = []
+    for node_id in node_ids:
+        if not horizon.is_node_id(node_id):
+            raise HTTPException(400, f"invalid node id {node_id!r}: not a node id")
+        node = horizon.get_node(node_id)
+        if node is None:
+            raise HTTPException(404, f"no such node: {node_id!r}")
+        if node.state not in search.SEARCHABLE_STATES:
+            raise HTTPException(422, f"node {node_id!r} has no readable text yet")
+        title = node.title or node.preview.get("title") or node.origin
+        picked.append(search.Picked(node_id, title, node.origin, node.chars, True))
+    if sum(p.chars for p in picked) > budget:
+        raise HTTPException(422, "those captures are more than one question may read")
+    return picked
+
+
+def _ask_corpus(picked: list[search.Picked]) -> tuple[Corpus, list[AskSource]]:
+    """The bounded corpus one ask reads (invariant 78: a selection, never the whole Horizon), with
+    each capture renumbered `s1`, `s2`, ... the way filing renumbers into an orbit."""
+    corpus = Corpus()
+    sources: list[AskSource] = []
+    for p in picked:
+        try:
+            source = horizon.node_source(p.node_id)
+        except horizon.UNREADABLE_SOURCE as exc:
+            _log.warning("horizon ask: skipping %s, its text cannot be read (%s)", p.node_id, exc)
+            continue
+        if source is None:
+            continue
+        source_id = f"s{len(sources) + 1}"
+        corpus.add(source.model_copy(update={"id": source_id}))
+        sources.append(AskSource(source_id=source_id, node_id=p.node_id, title=p.title, origin=p.origin))
+    return corpus, sources
+
+
+def _require_captures(sources: list[AskSource]) -> None:
+    """`_require_sources` for a Horizon ask: refuse the paid run when nothing readable was picked,
+    so a press never spends money on an empty corpus."""
+    if not sources:
+        raise HTTPException(422, "none of those captures could be read")
+
+
+def _ask_payload(record, corpus: Corpus | None) -> dict:
+    """An ask as the client renders it. With `corpus`, citations are checked against it; without
+    one (a capture has since gone), they come back unverified with the reason."""
+    by_source = {s.source_id: s for s in record.sources}
+    prose = _prose(record.answer.text)
+    if corpus is not None:
+        checked = _citation_responses(record.answer.citations, corpus, _prose(record.answer.text))
+    else:
+        located = locate_answer_spans(record.answer.citations, prose)
+        checked = [
+            CitationResponse(source_id=c.source_id, locator=c.locator, quote=c.quote, verified=False,
+                             reason="a capture this answer read has been removed",
+                             answer_span=c.answer_span)
+            for c in located
+        ]
+    citations = []
+    for c in checked:
+        origin = by_source.get(c.source_id)
+        citations.append(HorizonAskCitation(
+            **c.model_dump(),
+            node_id=origin.node_id if origin else None,
+            title=origin.title if origin else None,
+        ).model_dump())
+    return {
+        "id": record.id,
+        "created_at": record.created_at,
+        "scope": {"kind": record.scope_kind, "value": record.scope_value},
+        "question": record.question,
+        "text": prose,
+        "citations": citations,
+        "follow_ups": record.answer.follow_ups,
+        "sources": [s.model_dump() for s in record.sources],
+        "strategy": record.strategy,
+        "run_id": record.run_id,
+    }
+
+
+def _current_corpus(record) -> Corpus | None:
+    """The corpus an old ask read, rebuilt from the captures as they are NOW, or `None` if any of
+    them is gone or unreadable. Same ids as when it ran, so its citations point where they did."""
+    corpus = Corpus()
+    for s in record.sources:
+        try:
+            source = horizon.node_source(s.node_id)
+        except horizon.UNREADABLE_SOURCE:
+            return None
+        if source is None:
+            return None
+        corpus.add(source.model_copy(update={"id": s.source_id}))
+    return corpus
+
+
+@app.get("/horizon/concepts")
+async def horizon_concepts() -> dict:
+    """The tags and entities an ask can be narrowed to, most used first."""
+    return await asyncio.to_thread(search.concepts)
+
+
+@app.post("/horizon/ask/preview")
+async def preview_horizon_ask(body: HorizonAskPreviewRequest) -> dict:
+    """What an ask over this scope would read, decided locally: no model, no cost. The client shows
+    the count before the reader spends anything."""
+    question = _question_or_422(body.question)
+    selection = await asyncio.to_thread(_select_or_http, question, body.scope)
+    return _selection_payload(selection, *_ask_bounds())
+
+
+@app.post("/horizon/ask")
+async def ask_horizon(body: HorizonAskRequest, request: Request) -> dict:
+    """Ask a question over the whole Horizon, a tag or an entity, and keep the answer in the
+    Horizon's ask history.
+
+    The run id is announced before the selection is made, because reading captures off disk is
+    pre-work a ticker must be able to wait through (invariant 46).
+    """
+    question = _question_or_422(body.question)
+    config = _config()
+    run_id = _derive_run_id(HORIZON_ASK_KEY, body.run_id)
+    with _announced(run_id):
+        if body.node_ids is not None:
+            picked = await asyncio.to_thread(_chosen_or_422, body.node_ids)
+            strategy = "chosen"
+        else:
+            selection = await asyncio.to_thread(_select_or_http, question, body.scope)
+            if not selection.items:
+                raise HTTPException(422, "there is nothing to read in this scope yet")
+            picked, strategy = selection.items, selection.strategy
+        corpus, sources = await asyncio.to_thread(_ask_corpus, picked)
+        _require_captures(sources)
+        try:
+            blob = corpus.blob(max_chars=config.max_corpus_chars)
+        except CorpusTooLargeError as exc:
+            raise HTTPException(413, str(exc)) from exc
+    result = await _run_isolated(
+        HORIZON_ASK_KEY,
+        _dotted(AnswerQuestion),
+        {
+            "sources": blob,
+            "history": _NO_HISTORY,
+            "question": question,
+            "output_language": output_language() or _DEFAULT_CHAT_LANGUAGE,
+        },
+        config,
+        run_id,
+        fresh=body.fresh,
+    )
+    answer = Answer.model_validate(result)
+    record = await asyncio.to_thread(
+        lambda: asks.add_ask(
+            scope_kind=body.scope.kind, scope_value=body.scope.value, question=question,
+            answer=answer, sources=sources, strategy=strategy, run_id=run_id,
+        )
+    )
+    # Checked against the corpus the model actually read, the rule `ask` follows.
+    return _ask_payload(record, corpus)
+
+
+@app.get("/horizon/asks")
+async def list_horizon_asks(limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)) -> dict:
+    records = await asyncio.to_thread(asks.list_asks, limit=limit, offset=offset)
+    return {
+        "asks": [
+            {"id": r.id, "created_at": r.created_at, "question": r.question,
+             "scope": {"kind": r.scope_kind, "value": r.scope_value}, "count": len(r.sources)}
+            for r in records
+        ]
+    }
+
+
+def _ask_or_404(ask_id: str):
+    if not asks.is_ask_id(ask_id):
+        raise HTTPException(400, f"invalid ask id {ask_id!r}")
+    try:
+        record = asks.get_ask(ask_id)
+    except (ValueError, TypeError) as exc:
+        # A row that no longer parses (pydantic's error is a ValueError): 409 with the reason, as
+        # for a corrupt orbit file (invariant 27), never a bodyless 500.
+        raise HTTPException(
+            409, f"ask {ask_id!r} is stored but cannot be read ({type(exc).__name__})"
+        ) from exc
+    if record is None:
+        raise HTTPException(404, f"no such ask: {ask_id!r}")
+    return record
+
+
+@app.get("/horizon/asks/{ask_id}")
+async def get_horizon_ask(ask_id: str) -> dict:
+    """One past ask, its citations checked again against the captures as they are now."""
+    def _load() -> dict:
+        record = _ask_or_404(ask_id)
+        return _ask_payload(record, _current_corpus(record))
+
+    return await asyncio.to_thread(_load)
+
+
+@app.delete("/horizon/asks/{ask_id}")
+async def delete_horizon_ask(ask_id: str) -> dict:
+    def _remove() -> bool:
+        _ask_or_404(ask_id)
+        return asks.remove_ask(ask_id)
+
+    return {"removed": await asyncio.to_thread(_remove)}
+
+
 @app.get("/horizon/{node_id}")
 async def get_horizon_node(node_id: str) -> dict:
     node = await asyncio.to_thread(_node_or_404, node_id)
@@ -3598,6 +3922,8 @@ async def delete_horizon_node(node_id: str) -> dict:
 async def promote_horizon_node(node_id: str, body: PromoteRequest) -> dict:
     """Copy a node into an orbit as a real, citable `Source`. The node is NOT consumed."""
     await asyncio.to_thread(_node_or_404, node_id)
+    if body.create and slug(body.orbit_id).startswith(HORIZON_ASK_KEY):
+        raise HTTPException(400, f"{body.orbit_id!r} is reserved; choose another orbit id")
     try:
         #: **The picker can name an orbit that is already gone.** Its options come from the list
         #: fetched when the Horizon rendered, so a stale option is enough — no race needed — and

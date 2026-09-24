@@ -155,6 +155,39 @@
                 data-i18n-title="horizon.findClear" title="Clear" aria-label="Clear" data-i18n-label="horizon.findClear">×</button>
       </div>
 
+      <!-- Asking across what you kept, rather than inside one orbit. Two presses on purpose: the
+           first decides locally which captures the question would read and says how many, the
+           second spends (invariant 47: nothing paid starts without an explicit press). -->
+      <section class="ask-h" id="ask-h" aria-labelledby="ask-h-title">
+        <h2 class="ask-h-title" id="ask-h-title" data-i18n="askH.title">Ask what you kept</h2>
+        <form class="ask-h-form" id="ask-h-form">
+          <label class="sr-only" for="ask-h-input" data-i18n="askH.label">Question</label>
+          <textarea id="ask-h-input" class="ask-h-input" rows="1" autocomplete="off"
+                    data-i18n-placeholder="askH.placeholder"
+                    placeholder="Ask a question across your captures…"></textarea>
+          <label class="sr-only" for="ask-h-scope" data-i18n="askH.scope">Read from</label>
+          <select id="ask-h-scope" class="ask-h-scope">
+            <option value="all" data-i18n="askH.everything">Everything</option>
+          </select>
+          <button type="submit" class="btn" id="ask-h-check" data-i18n="askH.check">See what it reads</button>
+        </form>
+        <div class="ask-h-plan" id="ask-h-plan" hidden>
+          <p class="ask-h-plan-line" id="ask-h-plan-line" role="status"></p>
+          <ol class="ask-h-plan-list" id="ask-h-plan-list"></ol>
+          <div class="ask-h-actions">
+            <button type="button" class="btn btn-primary" id="ask-h-send" data-i18n="askH.send">Ask</button>
+            <button type="button" class="btn" id="ask-h-dismiss" data-i18n="askH.dismiss">Not now</button>
+          </div>
+        </div>
+        <div class="ask-h-run" id="ask-h-run" hidden></div>
+        <p class="ask-h-error" id="ask-h-error" role="status" hidden></p>
+        <article class="ask-h-answer" id="ask-h-answer" hidden></article>
+        <details class="ask-h-history" id="ask-h-history" hidden>
+          <summary data-i18n="askH.history">Earlier questions</summary>
+          <ol class="ask-h-history-list" id="ask-h-history-list"></ol>
+        </details>
+      </section>
+
       <!-- Only present while something is running (invariants 47 and 60). It renders exactly what
            GET /horizon/status returns and infers nothing. -->
       <div class="intake-strip" id="intake-strip" hidden>

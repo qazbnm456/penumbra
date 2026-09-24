@@ -197,6 +197,36 @@ class Answer(BaseModel):
     follow_ups: list[str] = Field(default_factory=list)
 
 
+
+class AskSource(BaseModel):
+    """One capture a Horizon ask read, and the source id it had inside that ask's corpus."""
+
+    source_id: str
+    node_id: str
+    title: str
+    origin: str
+
+
+class HorizonAsk(BaseModel):
+    """One question asked over the Horizon rather than inside an orbit, kept in the Horizon's ask
+    history (`asks.py`).
+
+    `sources` is the corpus the answer was grounded in, in order, so its citations can be checked
+    again later against the captures as they are then. A capture removed since leaves its citations
+    unverified rather than silently repointed (invariant 12's reason, one tier down).
+    """
+
+    id: str
+    created_at: float
+    scope_kind: Literal["all", "tag", "entity"] = "all"
+    scope_value: str | None = None
+    question: str
+    answer: Answer
+    sources: list[AskSource] = Field(default_factory=list)
+    #: How the captures were picked (`search.Selection.strategy`): `all`, `matched` or `recent`.
+    strategy: str = "all"
+    run_id: str | None = None
+
 class Summary(BaseModel):
     """`GenerateSummary`'s SUBMIT shape (`guide.py`) — the key points across a collection's sources."""
 
