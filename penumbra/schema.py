@@ -131,9 +131,45 @@ class Distillation(BaseModel):
     summary: str = ""
     #: Lowercase, short, reusable across nodes. The join key a later slice needs for implicit edges.
     tags: list[str] = Field(default_factory=list)
-    #: Proper nouns the node is ABOUT — people, organisations, products, places.
+    #: The specific things the node is ABOUT: people, organisations, products, places, and named
+    #: concepts (a theory, a method, a stage). Narrower than a tag.
     entities: list[str] = Field(default_factory=list)
 
+
+
+class EntityMention(BaseModel):
+    """An entity named by a long document's summary, with the coordinate of a block that names it.
+
+    The coordinate is copied from a `[[SRC:...]]` marker like a citation's, and the host drops any
+    mention whose coordinate is not a real block of the document. That is invariant 5's guarantee
+    and no more: the block exists, not that it is about this entity.
+    """
+
+    name: str
+    source_id: str
+    locator: str
+
+
+class LongDistillation(BaseModel):
+    """`DistillLongDocument`'s SUBMIT shape: a `Distillation` whose entities carry coordinates."""
+
+    title: str = ""
+    summary: str = ""
+    tags: list[str] = Field(default_factory=list)
+    entities: list[EntityMention] = Field(default_factory=list)
+
+
+class ConceptMerge(BaseModel):
+    """Two entity names for one thing: `alias` is read as `canonical` from now on."""
+
+    alias: str
+    canonical: str
+
+
+class ConceptMerges(BaseModel):
+    """`AlignConcepts`' SUBMIT shape."""
+
+    merges: list[ConceptMerge] = Field(default_factory=list)
 
 class NodeMembership(BaseModel):
     """A node that has been promoted into one orbit, and the source id it got there.

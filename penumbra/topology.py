@@ -16,7 +16,7 @@ from collections import Counter, defaultdict
 from itertools import combinations
 from pathlib import Path
 
-from . import horizon
+from . import concepts, horizon
 from .horizon import DEFAULT_HORIZON_DIR
 from .search import SEARCHABLE_STATES
 
@@ -53,6 +53,16 @@ def _label(row) -> str:
     return (preview.get("title") if isinstance(preview, dict) else None) or row["origin"]
 
 
+def _entity(name: str, count: int, alias_table: dict[str, str]) -> dict:
+    """An entity as drawn, with the other names a merge folded into it, so the reader can see and
+    undo each one."""
+    entry: dict = {"name": name, "count": count}
+    merged = sorted(alias for alias, canonical in alias_table.items() if canonical == name)
+    if merged:
+        entry["aliases"] = merged
+    return entry
+
+
 def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
     """Per orbit (keyed by `slug`, the filename token memberships are written with, which
     `/orbits` also reports): how many captures are filed into it, how many of those are unsummarised, when it
@@ -64,6 +74,9 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
                FROM nodes n LEFT JOIN memberships m ON m.node_id = n.id"""
         ).fetchall()
 
+    # Aliases applied as the rows are read (`concepts.py`): a merge changes what is drawn and
+    # nothing that was stored.
+    resolve = concepts.resolver(base_dir=base_dir)
     orbits: dict[str, dict] = {}
     entity_sets: dict[str, set[str]] = defaultdict(set)
     loose = {"count": 0, "undistilled": 0, "busy": 0}
@@ -91,7 +104,7 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
         if row["state"] == "ready_undistilled":
             entry["undistilled"] += 1
         entry["last_filed_at"] = max(entry["last_filed_at"], float(row["promoted_at"] or 0))
-        entities = _names(row["entities"])
+        entities = list(dict.fromkeys(resolve(e) for e in _names(row["entities"])))
         entry["_entities"].update(entities)
         entry["_tags"].update(_names(row["tags"]))
         entity_sets[row["orbit_id"]].update(entities)
@@ -140,12 +153,14 @@ def graph(orbit_id: str | None = None, *, base_dir: str | Path = DEFAULT_HORIZON
     with horizon._connect(base_dir) as conn:
         rows = conn.execute(sql, params).fetchall()
 
+    resolve = concepts.resolver(base_dir=base_dir)
+    alias_table = concepts.aliases(base_dir=base_dir)
     entity_count: Counter[str] = Counter()
     tag_count: Counter[str] = Counter()
     parsed = []
     undistilled = []
     for row in rows:
-        entities = _names(row["entities"])
+        entities = list(dict.fromkeys(resolve(e) for e in _names(row["entities"])))
         tags = _names(row["tags"])
         if row["state"] == "ready_undistilled" and not entities and not tags:
             undistilled.append({"node_id": row["id"], "title": _label(row)})
@@ -167,7 +182,7 @@ def graph(orbit_id: str | None = None, *, base_dir: str | Path = DEFAULT_HORIZON
                 "state": row["state"], "entities": named, "tags": tags,
             })
     return {
-        "entities": [{"name": name, "count": entity_count[name]}
+        "entities": [_entity(name, entity_count[name], alias_table)
                      for name in sorted(kept, key=lambda n: (-entity_count[n], n))],
         "edges": [{"a": a, "b": b, "weight": w} for (a, b), w in sorted(pairs.items())],
         "tags": [{"name": name, "count": n} for name, n in tag_count.most_common()],

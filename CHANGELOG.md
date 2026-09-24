@@ -34,6 +34,14 @@ Each entry states what the product does now and why. The reasoning behind each r
 - Relations come only from what a summary wrote, never from a model call made to draw the picture. An unsummarised capture names nothing, so it is counted in its own box with the spend button rather than drawn as if it were linked (`topology.py`, invariant 78).
 - A summary now counts named concepts as entities (a theory, a method, a stage, a part of the body) as well as people, places and products, and keeps tags for broad subjects. That is what gives the graph nodes worth drawing.
 
+#### Summaries, concepts and filing
+
+- A short capture is summarised by one call that reads all of it, up to 12,000 characters, instead of its first 4,000. A longer one is summarised by an RLM run in a worker subprocess that reads the whole document from a map of its sections, the way a planner is handed a compact summary of a tree; each entity it names carries the coordinate of a block that names it, checked before SUBMIT and again by the host, which drops any it cannot find (invariants 21, 67 and 80).
+- The summarise buttons state the cost before the press, as a range when long captures are waiting (`/horizon/distil/estimate`), and Stop ends a long-document run at once rather than after it finishes.
+- Concept alignment runs once at the end of a summary pass the reader pressed (never after the automatic one, which runs on the intake thread and also leaves long captures for a press), over the entity names no alignment has seen, and decides which are the same thing (Matthew Walker and 馬修·沃克). The answer is an alias table every reader applies: the star map, the graph, the tag and entity lists and scoped asks. Stored summaries are never rewritten, so a merge is undone with one press in the graph's side panel, and an undone pair is not proposed again (invariant 80).
+- Filing suggestions are computed locally: a capture in no orbit, or only in the landing orbit, is offered for the orbit whose captures share at least two of its entities, or one entity and one tag. Nothing is filed until the reader presses Add, and a declined pair is not offered again.
+- The notch island shows three facts on hover in one glyph: an arc for how much of the Horizon is summarised (it breathes while a pass runs), the ring inside it turning faster while something is being read, and four dots for filing suggestions waiting. A screen reader hears the same facts when they change.
+
 #### Asking from anywhere
 
 - The ask panel rests as a handle at the foot of the star map, the list and the knowledge graph, and slides up when the pointer nears the bottom edge. Its scope follows the selection on screen: everything, a tag lens, a planet, or an entity or tag inside the orbit on screen. An orbit chip asks straight into that orbit's conversation in the three columns; every other scope is a Horizon ask.

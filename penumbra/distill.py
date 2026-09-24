@@ -40,13 +40,24 @@ from . import horizon
 from .citations import strip_markers
 from .config import clean_language, output_language
 from .corpus import Corpus
-from .schema import Distillation
+from .schema import Distillation, LongDistillation
 
 _log = logging.getLogger(__name__)
 
-#: How much of the node the model is shown. Same budget as `naming.SuggestTitle`, and for the same
-#: reason: a summary needs the subject, not the document.
-_EXCERPT_CHARS = 4000
+#: Up to this many characters of text, a document is summarised by ONE call that reads all of it.
+#: Past it, by `distill_long.DistillLongDocument`, an RLM run that reads the whole document from a
+#: section map, when the caller supplies a way to run one (`run_long`). A summary made from a
+#: document's first few thousand characters named the subject of its introduction and nothing else,
+#: which is why the one-call path reads the whole of a short document rather than a prefix.
+SHORT_LIMIT = 12_000
+
+#: What the one-call path is shown: the whole of a short document, and the head of a long one only
+#: when no RLM runner was supplied (tests, or a caller with no subprocess to run it in).
+_EXCERPT_CHARS = SHORT_LIMIT
+
+#: How many lines the section map may have. A document with more blocks is mapped by runs of
+#: consecutive blocks, so the map stays a map rather than a second copy of the document.
+_MAP_LINES = 160
 
 #: Caps on what comes back, applied host-side. A model asked for "two or three sentences" that
 #: returns two pages is not an error worth failing a capture over — it is a value to trim.
@@ -135,7 +146,8 @@ class DistillNode:
     """
 
     async def arun(self, *, sources: str = "", language: str = "") -> Distillation:
-        excerpt = (sources or "")[:_EXCERPT_CHARS]
+        # Room for the marker lines `Corpus.excerpt` adds, so a document at the limit is read whole.
+        excerpt = (sources or "")[: _EXCERPT_CHARS + 400]
         if not excerpt.strip():
             return Distillation()
         import dspy
@@ -158,12 +170,52 @@ class DistillNode:
         )
 
 
+def text_length(source) -> int:
+    return sum(len(block.text) for block in source.blocks)
+
+
+def section_map(source) -> str:
+    """One line per block (locator, size, opening words), or per run of blocks past `_MAP_LINES`.
+
+    The opening words are the block's own text, cut short; they are for finding a section, and the
+    model reads the section itself in the REPL before saying anything about it.
+    """
+    blocks = list(source.blocks)
+    if not blocks:
+        return ""
+    per_line = max(1, -(-len(blocks) // _MAP_LINES))
+    lines = [f"{text_length(source)} characters in {len(blocks)} blocks."]
+    for start in range(0, len(blocks), per_line):
+        group = blocks[start : start + per_line]
+        size = sum(len(b.text) for b in group)
+        opening = " ".join(group[0].text.split())[:90]
+        where = group[0].locator if len(group) == 1 else f"{group[0].locator} .. {group[-1].locator}"
+        lines.append(f"{where} ({size} chars): {opening}")
+    return "\n".join(lines)
+
+
+def from_long(result: LongDistillation, source) -> Distillation:
+    """A `Distillation` from a long document's result, keeping only the entities whose coordinate
+    is a real block of THIS document. The validator checked the same thing before SUBMIT; this is
+    the host holding the line when a run submitted anyway (invariant 66)."""
+    real = {block.locator for block in source.blocks}
+    names = [
+        mention.name
+        for mention in result.entities
+        if mention.source_id == source.id and mention.locator in real
+    ]
+    return _sanitize(Distillation(
+        title=result.title, summary=result.summary, tags=list(result.tags), entities=names,
+    ))
+
+
 def distil_source(
     source,
     language: str = "",
     *,
     run: Callable[..., Distillation] | None = None,
     on_error: Callable[[Exception], None] | None = None,
+    run_long: Callable[..., Distillation] | None = None,
 ) -> Distillation | None:
     """Distil one already-parsed `Source`. Returns `None` if the model call failed.
 
@@ -200,13 +252,15 @@ def distil_source(
                 "asyncio.to_thread(...), the way api.py handles every other blocking call"
             )
 
-    excerpt = Corpus(sources=[source]).excerpt(_EXCERPT_CHARS)
+    long = run_long is not None and text_length(source) > SHORT_LIMIT
+    excerpt = "" if long else Corpus(sources=[source]).excerpt(_EXCERPT_CHARS)
     try:
-        result = (
-            run(sources=excerpt, language=language)
-            if run is not None
-            else asyncio.run(DistillNode().arun(sources=excerpt, language=language))
-        )
+        if long:
+            result = run_long(source, language)
+        elif run is not None:
+            result = run(sources=excerpt, language=language)
+        else:
+            result = asyncio.run(DistillNode().arun(sources=excerpt, language=language))
     except Exception as exc:  # noqa: BLE001 - a missing summary must never cost a capture
         _log.exception("distill: could not summarise %s", getattr(source, "origin", "?"))
         if on_error is not None:
@@ -226,6 +280,8 @@ def distil_pending(
     on_error: Callable[[str, Exception], None] | None = None,
     run: Callable[..., Distillation] | None = None,
     node_ids: list[str] | None = None,
+    run_long: Callable[..., Distillation] | None = None,
+    defer_long: bool = False,
 ) -> list[str]:
     """Summarise up to `limit` nodes sitting at `ready_undistilled`, newest first. Returns the ids
     actually distilled.
@@ -251,12 +307,18 @@ def distil_pending(
     chosen = output_language() or clean_language(language) or ""
     distilled: list[str] = []
     if node_ids is None:
-        candidates = horizon.list_nodes(state="ready_undistilled", limit=limit, base_dir=base_dir)
+        # With long captures deferred, the newest `limit` SHORT ones: filtering a newest-`limit`
+        # page afterwards left older short captures behind whenever the newest were long.
+        page = 100_000 if defer_long else limit
+        candidates = horizon.list_nodes(state="ready_undistilled", limit=page, base_dir=base_dir)
     else:
         candidates = [
             node for node in (horizon.get_node(i, base_dir=base_dir) for i in node_ids)
             if node is not None and node.state == "ready_undistilled"
         ][:limit]
+    if defer_long:
+        # Left waiting for a press rather than summarised from a prefix: see the auto pass.
+        candidates = [node for node in candidates if node.chars <= SHORT_LIMIT][:limit]
     for node in candidates:
         if should_stop is not None and should_stop():
             break
@@ -298,7 +360,7 @@ def distil_pending(
                 on_node()
             horizon.update_node(node.id, base_dir=base_dir, state="ready_undistilled")
             continue
-        result = distil_source(source, chosen, run=run, on_error=report)
+        result = distil_source(source, chosen, run=run, on_error=report, run_long=run_long)
         # Counted after the CALL, not before it: progress that runs ahead of the spend would tell a
         # reader a node was summarised while the model was still thinking about it (invariant 60).
         if on_node is not None:

@@ -278,14 +278,16 @@ def test_promoting_a_node_with_no_text_yet_is_a_clean_400(client):
 
 
 def test_status_and_cancel_report_what_is_actually_happening(client):
-    """TWO things can be happening, and they are reported side by side rather than merged: parsing
-    and summarising fail differently, cost differently and stop differently, so a single "busy"
-    would let the page claim one while the other was true (invariant 60)."""
+    """THREE things can be happening, and they are reported side by side rather than merged:
+    parsing, summarising and aligning concepts fail differently, cost differently and stop
+    differently, so a single "busy" would let the page claim one while another was true
+    (invariant 60)."""
     assert client.get("/horizon/status").json() == {
         "running": False,
         "current": None,
         "pending": 0,
         "distil": {"running": False, "done": 0, "total": 0, "failed": 0, "error": ""},
+        "align": {"running": False, "error": ""},
     }
     body = client.post("/horizon/cancel").json()
     assert body["dropped"] == 0

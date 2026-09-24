@@ -359,8 +359,9 @@ mod platform {
         };
         let centre = rest.x + rest.w / 2.0;
         let bar = rest.h.max(24.0);
-        // Icons only, so the hover shape only has to fit the ring below the notch; the armed one
-        // stays wide because it is a drop target, and a bigger target is easier to hit.
+        // Icons only, so the hover shape only has to fit the status glyph below the notch (the
+        // ring, the arc around it and the four dots under it); the armed one stays wide because it
+        // is a drop target, and a bigger target is easier to hit.
         let hover_w = rest.w + 40.0;
         let armed_w = (rest.w + 160.0).max(340.0);
         Some(Geometry {
@@ -368,7 +369,7 @@ mod platform {
             inset: if top > 0.0 { top } else { 0.0 },
             screen_h: frame.size.height,
             rest,
-            hover: Rect { x: centre - hover_w / 2.0, y: 0.0, w: hover_w, h: bar + 52.0 },
+            hover: Rect { x: centre - hover_w / 2.0, y: 0.0, w: hover_w, h: bar + 76.0 },
             armed: Rect { x: centre - armed_w / 2.0, y: 0.0, w: armed_w, h: bar + 118.0 },
         })
     }

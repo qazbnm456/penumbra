@@ -81,8 +81,66 @@
       document.body.dataset.state = state;
       const words = LINES[state];
       if (words) announce(...words);
+      if (state === "hover") startGlance();
+      else stopGlance();
     },
   };
+
+  // --- the status glyph: what the Horizon is doing, read while the pointer rests here -------------
+
+  const arc = document.getElementById("duo-arc");
+  const dots = [...document.querySelectorAll(".duo-dot")];
+  let glanceTimer = null;
+  let litBefore = 0;
+  let lastSpoken = "";
+
+  async function glance() {
+    let status;
+    let topo;
+    let suggested;
+    try {
+      [status, topo, suggested] = await Promise.all([
+        send("/horizon/status", {}),
+        send("/horizon/topology", {}),
+        send("/horizon/suggestions", {}),
+      ]);
+    } catch {
+      return; // the glyph keeps what it last showed; the island still works without it
+    }
+    const total = (topo.total && topo.total.count) || 0;
+    const done = (topo.total && topo.total.distilled) || 0;
+    document.body.style.setProperty("--done", String(total ? Math.round((done / total) * 100) : 0));
+    const distil = status.distil || {};
+    if (distil.running || (status.align && status.align.running)) document.body.dataset.summarising = "";
+    else delete document.body.dataset.summarising;
+    if (status.current || status.pending) document.body.dataset.reading = "";
+    else delete document.body.dataset.reading;
+    const lit = Math.min(4, suggested.count || 0);
+    dots.forEach((dot, i) => {
+      dot.classList.toggle("is-lit", i < lit);
+      dot.classList.toggle("is-new", i < lit && i >= litBefore);
+    });
+    litBefore = lit;
+    // The glyph says nothing a screen reader can see, so its facts are spoken instead, and only
+    // when they change: a live region repeated every four seconds is noise.
+    const spoken = `${done}/${total}/${suggested.count || 0}`;
+    if (spoken !== lastSpoken) {
+      lastSpoken = spoken;
+      announce("island.glance", `${done} of ${total} summarised, ${suggested.count || 0} to file`,
+        { done, total, n: suggested.count || 0 });
+    }
+  }
+
+  function startGlance() {
+    if (glanceTimer) return;
+    void glance();
+    glanceTimer = setInterval(glance, 4000);
+  }
+
+  function stopGlance() {
+    clearInterval(glanceTimer);
+    glanceTimer = null;
+  }
 
   // --- open the workspace --------------------------------------------------------------------------
 
@@ -106,7 +164,7 @@
 
   // --- capture -------------------------------------------------------------------------------------
 
-  async function send(path, init) {
+  async function send(path, init = {}) {
     const headers = { ...(init.headers || {}), Authorization: `Bearer ${token}` };
     if (typeof uiLangName === "function") headers["X-Penumbra-Interface-Language"] = uiLangName();
     const resp = await fetch(path, { ...init, headers });

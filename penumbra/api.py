@@ -117,7 +117,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from python_multipart.exceptions import MultipartParseError
 from starlette.formparsers import MultiPartException
 
-from . import asks, auth, distill, horizon, intake, runner, search, topology
+from . import asks, auth, concepts, distill, filing, horizon, intake, runner, search, topology
+from .align import AlignConcepts
 from .audio import GeneratePodcastScript
 from .citations import locate_answer_spans, strip_markers, verify_citations
 from .config import (
@@ -138,6 +139,7 @@ from .config import (
     write_settings,
 )
 from .corpus import Corpus, CorpusTooLargeError
+from .distill_long import DistillLongDocument
 from .guide import GenerateFAQ, GenerateKeyInsight, GenerateSummary, GenerateTimeline
 from .ingest import ingest_pasted_text, ingest_uploaded_file, is_url, with_injection_flags
 from .naming import SuggestLanguage, SuggestTitle, fallback_title, normalize_title
@@ -171,7 +173,9 @@ from .schema import (
     AskSource,
     ChatTurn,
     Citation,
+    ConceptMerges,
     KeyInsight,
+    LongDistillation,
     Node,
     Orbit,
     Overview,
@@ -267,6 +271,12 @@ async def _lifespan(_app: FastAPI):
         with contextlib.suppress(Exception):
             run.cancel()
     _ACTIVE_RUNS.clear()
+    # The summary pass's own worker (a long document, or concept alignment) is not in
+    # `_ACTIVE_RUNS`, and it runs in its own session, so neither Ctrl-C nor the desktop shell's
+    # exit reaches it: left alone it outlived the server and kept billing (invariants 22, 81).
+    with _DISTIL_GUARD:
+        _DISTIL["cancel"] = True
+    _stop_long_distil()
     if not await asyncio.to_thread(_horizon_queue().stop, timeout=5.0):
         _log.info("intake: a capture was still parsing at shutdown; it will resume on next start")
 
@@ -1276,7 +1286,12 @@ async def delete_source_endpoint(orbit_id: str, source_id: str) -> OrbitResponse
     # entry that is simply wrong. Best-effort: the Horizon is a separate store and an orbit edit
     # must not fail because of it.
     try:
+        # Taking a capture out of an orbit is also an answer to "does it belong there": filing
+        # suggestions do not offer it straight back.
+        removed = [m.node_id for m in horizon.nodes_in_orbit(slug(orbit_id)) if m.source_id == source_id]
         horizon.forget_membership(orbit_id, source_id)
+        for node_id in removed:
+            filing.dismiss(node_id, slug(orbit_id))
     except Exception:  # noqa: BLE001 - an index write must never undo a completed orbit write
         _log.warning("could not drop the horizon membership for %s/%s", orbit_id, source_id)
     return _orbit_response(orbit)
@@ -2994,6 +3009,135 @@ def _distil_status() -> dict:
         return _distil_snapshot()
 
 
+#: The long-document worker the summary pass is waiting on, if any, so Stop can end it at once
+#: rather than after a multi-minute RLM run (invariant 47). Guarded by `_DISTIL_GUARD`.
+_DISTIL_RUN: dict[str, object] = {"run": None}
+
+#: What `DistillLongDocument` is told when no output language was resolved.
+_DEFAULT_DISTIL_LANGUAGE = "the language the document is written in"
+
+
+def _run_pass_task(dotted: str, kwargs: dict, prefix: str) -> object:
+    """Run one `RLMTask` in a worker subprocess (invariant 21) from the summary pass's own thread,
+    registered in `_DISTIL_RUN` so the pass's Stop ends it at once. Raises on failure."""
+    try:
+        config = PenumbraConfig.from_env()
+    except SystemExit as exc:
+        raise RuntimeError(f"server misconfigured: {exc}") from exc
+    run_id = f"{prefix}-{uuid.uuid4().hex[:12]}"
+
+    async def go():
+        _TRACE_DIR.mkdir(parents=True, exist_ok=True)
+        run = await runner.start_run(run_id, _TRACE_DIR, dotted, kwargs)
+        with _DISTIL_GUARD:
+            _DISTIL_RUN["run"] = run
+            stopped = bool(_DISTIL["cancel"])
+        if stopped:
+            run.cancel()
+        try:
+            return await runner.wait_result(run, timeout=config.run_timeout_seconds)
+        finally:
+            with _DISTIL_GUARD:
+                _DISTIL_RUN["run"] = None
+
+    return asyncio.run(go())
+
+
+def _run_long_distil(source, language: str):
+    """Summarise one long document with `DistillLongDocument`. Raises on failure, which
+    `distil_source` turns into a node left at `ready_undistilled` with the reason reported."""
+    doc = source.model_copy(update={"id": "s1"})
+    blob = Corpus(sources=[doc]).blob(max_chars=max_corpus_chars())
+    result = _run_pass_task(
+        _dotted(DistillLongDocument),
+        {
+            "sources": blob,
+            "section_map": distill.section_map(doc),
+            "output_language": language or _DEFAULT_DISTIL_LANGUAGE,
+        },
+        "horizon-distil",
+    )
+    return distill.from_long(LongDistillation.model_validate(result), doc)
+
+
+#: Concept alignment's own visible state, beside the summary pass's (invariant 60: a status line
+#: names the stage that is actually running). Guarded by `_DISTIL_GUARD`.
+_ALIGN: dict[str, object] = {"running": False, "error": "", "failures": 0}
+
+#: Consecutive failures on the same names after which alignment sets them aside.
+_ALIGN_GIVE_UP = 2
+
+#: How many new names one alignment run considers. The rest wait for the next pass.
+_ALIGN_BATCH = 60
+
+
+def _align_after_pass(base_dir) -> None:
+    """Concept alignment, once, at the end of a summary pass that wrote new entity names.
+
+    Only ever after a pass the reader pressed or turned on (invariant 80): alignment never starts on
+    its own. Skipped when the pass was stopped, when nothing new was named, and when there is
+    nothing to compare against. A failure is reported and leaves the names unseen, so the next pass
+    tries again; the summaries themselves are already saved either way.
+    """
+    with _DISTIL_GUARD:
+        if _DISTIL["cancel"]:
+            return
+    new = concepts.unseen(base_dir=base_dir)
+    if not new:
+        return
+    counts = concepts.all_names(base_dir=base_dir)
+    batch = new[:_ALIGN_BATCH]
+    if len(counts) < 2:
+        concepts.mark_seen(batch, base_dir=base_dir)
+        return
+    with _DISTIL_GUARD:
+        _ALIGN.update({"running": True, "error": ""})
+    try:
+        result = _run_pass_task(
+            _dotted(AlignConcepts),
+            {"known": concepts.known_listing(counts, set(batch)), "new_names": concepts.json_list(batch)},
+            "horizon-align",
+        )
+        merges = ConceptMerges.model_validate(result)
+        concepts.apply_merges(
+            [(m.alias, m.canonical) for m in merges.merges], set(counts), batch=set(batch),
+            base_dir=base_dir,
+        )
+        concepts.mark_seen(batch, base_dir=base_dir)
+    except Exception as exc:  # noqa: BLE001 - reported on the page; the summaries are already kept
+        with _DISTIL_GUARD:
+            stopped = bool(_DISTIL["cancel"])
+            if not stopped:
+                # Counted per BATCH: a failure of other names does not count against these.
+                key = tuple(batch)
+                failures = int(_ALIGN.get("failures", 0)) + 1 if _ALIGN.get("batch") == key else 1
+                _ALIGN.update({"failures": failures, "batch": key})
+                _ALIGN["error"] = f"{type(exc).__name__}: {exc}"[:300]
+            gave_up = int(_ALIGN.get("failures", 0)) >= _ALIGN_GIVE_UP
+        _log.warning("align: %s", exc)
+        if gave_up:
+            # The same names failing twice in a row are set aside rather than paid for at the end of
+            # every later pass; the error stays on the page, and new names are still aligned.
+            concepts.mark_seen(batch, base_dir=base_dir)
+            with _DISTIL_GUARD:
+                _ALIGN["failures"] = 0
+    else:
+        with _DISTIL_GUARD:
+            _ALIGN["failures"] = 0
+    finally:
+        with _DISTIL_GUARD:
+            _ALIGN["running"] = False
+
+
+def _stop_long_distil() -> None:
+    """End the long-document worker the pass is waiting on, if there is one."""
+    with _DISTIL_GUARD:
+        run = _DISTIL_RUN["run"]
+    if run is not None:
+        with contextlib.suppress(Exception):
+            run.cancel()
+
+
 def _run_distil_pass(limit: int, language: str, node_ids: list[str] | None = None) -> None:
     """The summary pass, on a worker thread, reporting as it goes.
 
@@ -3016,6 +3160,10 @@ def _run_distil_pass(limit: int, language: str, node_ids: list[str] | None = Non
         # the orbit surface already shows its own model errors in full rather than replacing
         # them with "something went wrong".
         with _DISTIL_GUARD:
+            if _DISTIL["cancel"]:
+                # Stop killed the node's worker: that is what the reader asked for, not a crash to
+                # report (invariant 60). The node goes back to waiting, like any unsummarised one.
+                return
             _DISTIL["failed"] = int(_DISTIL["failed"]) + 1
             _DISTIL["error"] = f"{type(exc).__name__}: {exc}"[:300]
         _log.warning("distil: %s failed: %s", node_id, exc)
@@ -3041,7 +3189,9 @@ def _run_distil_pass(limit: int, language: str, node_ids: list[str] | None = Non
             on_node=tick,
             on_error=failed,
             node_ids=node_ids,
+            run_long=_run_long_distil,
         )
+        _align_after_pass(_horizon_queue().base_dir)
     except Exception as exc:  # noqa: BLE001 - the pass itself dying must still reach the page
         # `distil_pending` raising (a corrupt index, a disk error) is not one node failing. Without
         # this the thread dies, `running` is cleared by the `finally`, and the page sees a pass that
@@ -3112,7 +3262,11 @@ def _auto_distil_after_intake() -> None:
     # yields to a waiting capture, so the honest number is what this batch may spend, not the
     # backlog. `should_stop` keeps both of its existing reasons AND gains the shared cancel flag, so
     # the strip's Stop reaches this pass too.
-    pending = horizon.count_nodes(state="ready_undistilled", base_dir=queue.base_dir)
+    # Only what this pass will actually take: long captures are left for a press (below).
+    pending = sum(
+        1 for node in horizon.list_nodes(state="ready_undistilled", limit=100_000, base_dir=queue.base_dir)
+        if node.chars <= distill.SHORT_LIMIT
+    )
     total = min(limit, pending)
     # `total` is also what `distil_pending` is CAPPED at below, not just what the strip announces.
     # Passing the raw `limit` there let the pass re-list `ready_undistilled` when it actually ran
@@ -3149,6 +3303,8 @@ def _auto_distil_after_intake() -> None:
 
     def failed(node_id: str, exc: Exception) -> None:
         with _DISTIL_GUARD:
+            if _DISTIL["cancel"]:
+                return  # stopped, not failed (see the manual pass)
             _DISTIL["failed"] = int(_DISTIL["failed"]) + 1
             _DISTIL["error"] = f"{type(exc).__name__}: {exc}"[:300]
         _log.warning("auto-distil: %s failed: %s", node_id, exc)
@@ -3171,7 +3327,13 @@ def _auto_distil_after_intake() -> None:
             should_stop=should_stop,
             on_node=tick,
             on_error=failed,
+            # Long captures are left for a press: an RLM run can hold this thread, which is the
+            # intake worker, for minutes, and a capture dropped meanwhile would sit at `queued`.
+            defer_long=True,
         )
+        # No alignment here, for the same reason: it is an RLM run, and this is the intake worker's
+        # thread. Names an automatic pass writes are aligned at the end of the next pass the reader
+        # presses.
     except Exception as exc:  # noqa: BLE001 - same contract as the manual pass
         with _DISTIL_GUARD:
             _DISTIL["error"] = f"{type(exc).__name__}: {exc}"[:300]
@@ -3325,7 +3487,9 @@ async def horizon_status() -> dict:
     """What is happening, from the two things that can be happening. Reported side by side rather
     than merged: parsing and summarising fail differently, cost differently, and stop differently,
     and a single "busy" would let the page claim one while the other was true (invariant 60)."""
-    return {**_horizon_queue().status(), "distil": _distil_status()}
+    with _DISTIL_GUARD:
+        align = {"running": bool(_ALIGN["running"]), "error": str(_ALIGN["error"])}
+    return {**_horizon_queue().status(), "distil": _distil_status(), "align": align}
 
 
 @app.post("/horizon/cancel")
@@ -3338,6 +3502,7 @@ async def cancel_horizon_intake() -> dict:
     # is asking for that as well, and the pass ends at the next node boundary.
     with _DISTIL_GUARD:
         _DISTIL["cancel"] = True
+    _stop_long_distil()
     return {"dropped": dropped, **_horizon_queue().status(), "distil": _distil_status()}
 
 
@@ -3349,7 +3514,69 @@ async def cancel_distil_pass() -> dict:
     saw stopped. `/horizon/cancel` still stops both, for the Horizon's own strip."""
     with _DISTIL_GUARD:
         _DISTIL["cancel"] = True
+    _stop_long_distil()
     return {"distil": _distil_status()}
+
+
+#: What one long-document summary may cost, in model calls: the planner's turns plus the
+#: sub-model reads it makes. Stated as a range because the model decides how much to read.
+_LONG_CALLS = (3, 8)
+
+#: The most one concept-alignment run is expected to take, added to the top of the range.
+_ALIGN_CALLS = 6
+
+
+@app.get("/horizon/distil/estimate")
+async def distil_estimate(orbit: str | None = Query(None, max_length=200)) -> dict:
+    """How many model calls summarising what is waiting would take, for the label beside the
+    button (invariant 80: the number is known before the spend). A short capture is one call; a long
+    one is an RLM run whose cost is a range."""
+    if orbit is not None and not orbit.strip():
+        raise HTTPException(400, "an orbit needs a value")
+
+    try:
+        budget = PenumbraConfig.from_env()
+        # Every planner step, every sub-model call, the one extraction dspy makes when the steps run
+        # out, and all of it again for each whole-run retry the harness is allowed.
+        per_run = budget.max_retries * (budget.max_iterations + budget.max_llm_calls + 1)
+    except SystemExit:
+        per_run = _LONG_CALLS[1]  # no model configured: nothing can run, the label is moot
+
+    def _count() -> dict:
+        if orbit is not None:
+            ids = [m.node_id for m in horizon.nodes_in_orbit(slug(orbit))]
+            nodes = [n for n in (horizon.get_node(i) for i in ids) if n is not None]
+        else:
+            nodes = horizon.list_nodes(state="ready_undistilled", limit=100_000)
+        waiting = [n for n in nodes if n.state == "ready_undistilled"]
+        long = sum(1 for n in waiting if n.chars > distill.SHORT_LIMIT)
+        short = len(waiting) - long
+        return {
+            "count": len(waiting), "short": short, "long": long,
+            # A BOUND, not a guess: an RLM run is capped by its step and call budgets, so the top
+            # of the range is what the worst case can spend, including the one alignment run a pass
+            # may end with. The bottom is the least a long document can take.
+            "calls_min": short + long * _LONG_CALLS[0],
+            "calls_max": short + (long + (1 if waiting else 0)) * max(per_run, _LONG_CALLS[1]),
+        }
+
+    return await asyncio.to_thread(_count)
+
+
+class AliasRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    alias: str = Field(min_length=1, max_length=200)
+
+
+@app.post("/horizon/aliases/remove")
+async def remove_entity_alias(body: AliasRequest) -> dict:
+    """Undo one merge concept alignment made. Nothing stored was changed by the merge, so nothing
+    needs restoring: the name is simply read as itself again."""
+    removed = await asyncio.to_thread(concepts.remove_alias, body.alias)
+    if not removed:
+        raise HTTPException(404, f"{body.alias!r} is not merged into anything")
+    return {"removed": True}
 
 
 @app.post("/horizon/distil/dismiss")
@@ -3373,6 +3600,9 @@ async def dismiss_distil_error() -> dict:
             raise HTTPException(409, "a summary pass is running")
         _DISTIL["error"] = ""
         _DISTIL["failed"] = 0
+        # Alignment's failure sits on the same line and is just as immortal otherwise: nothing
+        # clears it until another alignment starts, which after a give-up may be never.
+        _ALIGN["error"] = ""
         return {"dismissed": True, **_distil_snapshot()}
 
 
@@ -3801,6 +4031,43 @@ async def horizon_graph(orbit: str | None = Query(None, max_length=200)) -> dict
     if orbit is not None and not orbit.strip():
         raise HTTPException(400, "an orbit needs a value")
     return await asyncio.to_thread(topology.graph, slug(orbit) if orbit else None)
+
+
+def _landing_slug() -> str | None:
+    """The landing orbit's slug, or None when captures land nowhere. Membership in it alone still
+    counts as unfiled for suggestions."""
+    try:
+        choice = landing_orbit()
+    except SystemExit:
+        return None
+    if choice == "off":
+        return None
+    return slug(choice or FIRST_ORBIT_ID)
+
+
+@app.get("/horizon/suggestions")
+async def filing_suggestions() -> dict:
+    """Captures that probably belong in an orbit they are not in, by shared entities and tags.
+    Local and free; nothing is filed until the reader accepts one (through `/promote`)."""
+    found = await asyncio.to_thread(filing.suggestions, _landing_slug())
+    return {"suggestions": found, "count": len(found)}
+
+
+class DismissSuggestion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str
+    orbit: str = Field(min_length=1, max_length=200)
+
+
+@app.post("/horizon/suggestions/dismiss")
+async def dismiss_suggestion(body: DismissSuggestion) -> dict:
+    """Do not suggest filing this capture into this orbit again."""
+    if not horizon.is_node_id(body.node_id):
+        raise HTTPException(400, f"invalid node id {body.node_id!r}: not a node id")
+    await asyncio.to_thread(_node_or_404, body.node_id)
+    await asyncio.to_thread(filing.dismiss, body.node_id, slug(body.orbit))
+    return {"dismissed": True}
 
 
 @app.get("/horizon/concepts")

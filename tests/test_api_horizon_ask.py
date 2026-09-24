@@ -345,3 +345,164 @@ def test_a_blank_orbit_is_refused_rather_than_matching_nothing(client):
     assert client.get("/horizon/graph", params={"orbit": "   "}).status_code == 400
     scope = {"kind": "tag", "value": "x", "orbit": "  "}
     assert client.post("/horizon/ask/preview", json={"question": "q", "scope": scope}).status_code == 422
+
+
+def test_stop_ends_a_long_document_worker_at_once(client):
+    class _Run:
+        cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+    run = _Run()
+    api._DISTIL_RUN["run"] = run
+    try:
+        assert client.post("/horizon/distil/cancel").status_code == 200
+        assert run.cancelled
+    finally:
+        api._DISTIL_RUN["run"] = None
+        with api._DISTIL_GUARD:
+            api._DISTIL["cancel"] = False
+
+
+def test_the_estimate_counts_a_long_capture_as_a_range(client):
+    from penumbra import distill
+
+    short = _capture("https://x.example/a", "short")
+    long = _capture("https://x.example/b", "x" * (distill.SHORT_LIMIT + 10))
+    horizon.promote_node(short, "mix", create=True)
+    horizon.promote_node(long, "mix", create=True)
+    got = client.get("/horizon/distil/estimate", params={"orbit": "mix"}).json()
+    # The top is a bound: the long document and the one alignment run, each at the full RLM budget.
+    cfg = api.PenumbraConfig.from_env()
+    per_run = cfg.max_retries * (cfg.max_iterations + cfg.max_llm_calls + 1)
+    assert got == {"count": 2, "short": 1, "long": 1, "calls_min": 4, "calls_max": 1 + 2 * per_run}
+    assert client.get("/horizon/distil/estimate").json()["count"] == 2
+
+
+def test_a_pass_that_wrote_new_names_ends_with_one_alignment(client, monkeypatch):
+    from penumbra import concepts
+
+    _capture("https://x.example/a", "x", entities=["Matthew Walker"], state="ready")
+    _capture("https://x.example/b", "y", entities=["馬修·沃克"], state="ready")
+    calls = []
+
+    def fake_task(dotted, kwargs, prefix):
+        calls.append((dotted, prefix, kwargs["new_names"]))
+        return {"merges": [{"alias": "馬修·沃克", "canonical": "Matthew Walker"},
+                           {"alias": "Nobody", "canonical": "Matthew Walker"}]}
+
+    monkeypatch.setattr(api, "_run_pass_task", fake_task)
+    # A server teardown (every TestClient exit) sets the Stop flag; a pass clears it when it starts.
+    with api._DISTIL_GUARD:
+        api._DISTIL["cancel"] = False
+    api._align_after_pass(horizon.DEFAULT_HORIZON_DIR)
+    assert len(calls) == 1 and calls[0][0].endswith(":AlignConcepts")
+    assert concepts.aliases() == {"馬修·沃克": "Matthew Walker"}, "an invented name was merged"
+    assert concepts.unseen() == []
+    api._align_after_pass(horizon.DEFAULT_HORIZON_DIR)
+    assert len(calls) == 1, "names already aligned were paid for again"
+    assert client.post("/horizon/aliases/remove", json={"alias": "馬修·沃克"}).json() == {"removed": True}
+    assert client.post("/horizon/aliases/remove", json={"alias": "馬修·沃克"}).status_code == 404
+
+
+def test_a_stopped_pass_does_not_go_on_to_align(monkeypatch):
+    _capture("https://x.example/a", "x", entities=["A"], state="ready")
+    _capture("https://x.example/b", "y", entities=["B"], state="ready")
+    monkeypatch.setattr(api, "_run_pass_task", lambda *a: pytest.fail("aligned after Stop"))
+    with api._DISTIL_GUARD:
+        api._DISTIL["cancel"] = True
+    try:
+        api._align_after_pass(horizon.DEFAULT_HORIZON_DIR)
+    finally:
+        with api._DISTIL_GUARD:
+            api._DISTIL["cancel"] = False
+
+
+def test_a_failed_alignment_is_reported_and_tried_again_next_pass(client, monkeypatch):
+    from penumbra import concepts
+
+    _capture("https://x.example/a", "x", entities=["A"], state="ready")
+    _capture("https://x.example/b", "y", entities=["B"], state="ready")
+
+    def boom(*_):
+        raise RuntimeError("worker died")
+
+    monkeypatch.setattr(api, "_run_pass_task", boom)
+    with api._DISTIL_GUARD:
+        api._DISTIL["cancel"] = False
+    api._align_after_pass(horizon.DEFAULT_HORIZON_DIR)
+    assert "worker died" in client.get("/horizon/status").json()["align"]["error"]
+    assert set(concepts.unseen()) == {"A", "B"}
+    api._align_after_pass(horizon.DEFAULT_HORIZON_DIR)  # the same names failing a second time
+    assert concepts.unseen() == [], "a persistent failure would be paid for at the end of every pass"
+    with api._DISTIL_GUARD:
+        api._ALIGN.update({"error": "", "failures": 0})
+
+
+def test_suggestions_are_served_and_can_be_declined(client, monkeypatch):
+    monkeypatch.setenv("PN_LANDING_ORBIT", "off")
+    filed = _capture("https://x.example/a", "x", entities=["REM", "hippocampus"], state="ready")
+    horizon.promote_node(filed, "sleep", create=True)
+    loose = _capture("https://x.example/b", "y", entities=["REM", "hippocampus"], state="ready")
+    body = client.get("/horizon/suggestions").json()
+    assert body["count"] == 1 and body["suggestions"][0]["node_id"] == loose
+    declined = client.post("/horizon/suggestions/dismiss", json={"node_id": loose, "orbit": "sleep"})
+    assert declined.status_code == 200
+    assert client.get("/horizon/suggestions").json()["count"] == 0
+    bad = client.post("/horizon/suggestions/dismiss", json={"node_id": "../x", "orbit": "sleep"})
+    assert bad.status_code == 400
+
+
+
+def test_shutting_down_ends_the_summary_passs_worker():
+    """A long-document or alignment worker runs in its own session; the server's teardown must end
+    it, or it outlives the server and keeps billing (invariants 22, 81)."""
+    class _Run:
+        cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+    run = _Run()
+    with TestClient(api.app, base_url="http://127.0.0.1",
+                    headers={"Authorization": f"Bearer {auth.api_token()}"}):
+        api._DISTIL_RUN["run"] = run
+    try:
+        assert run.cancelled
+    finally:
+        api._DISTIL_RUN["run"] = None
+        with api._DISTIL_GUARD:
+            api._DISTIL["cancel"] = False
+
+
+def test_a_stopped_node_is_not_counted_as_a_failure(monkeypatch):
+    from penumbra import distill
+
+    node = _capture("https://x.example/long", "x" * (distill.SHORT_LIMIT + 5))
+    monkeypatch.setattr(api, "_configure_in_process_model", lambda: None)
+
+    def stopped_worker(source, language):
+        with api._DISTIL_GUARD:
+            api._DISTIL["cancel"] = True  # the reader pressed Stop while it ran
+        raise RuntimeError("worker produced no output (exit -9)")
+
+    monkeypatch.setattr(api, "_run_long_distil", stopped_worker)
+    with api._DISTIL_GUARD:
+        api._DISTIL.update(
+            {"running": True, "done": 0, "total": 1, "failed": 0, "error": "", "cancel": False}
+        )
+    api._run_distil_pass(1, "", [node])
+    status = api._distil_status()
+    assert status["failed"] == 0 and status["error"] == "", status
+    assert horizon.get_node(node).state == "ready_undistilled"
+
+
+def test_removing_a_source_keeps_its_capture_from_being_suggested_back(client, monkeypatch):
+    monkeypatch.setenv("PN_LANDING_ORBIT", "off")
+    a = _capture("https://x.example/a", "x", entities=["REM", "hippocampus"], state="ready")
+    b = _capture("https://x.example/b", "y", entities=["REM", "hippocampus"], state="ready")
+    horizon.promote_node(a, "sleep", create=True)
+    membership = horizon.promote_node(b, "sleep", create=True)
+    assert client.delete(f"/orbits/sleep/sources/{membership.source_id}").status_code == 200
+    assert client.get("/horizon/suggestions").json()["count"] == 0

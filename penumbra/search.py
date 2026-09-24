@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import get_args
 
+from . import concepts as aliases_store
 from . import horizon
 from .horizon import DEFAULT_HORIZON_DIR
 from .schema import NodeState
@@ -280,7 +281,9 @@ class Selection:
 _MARKER_SLACK = 64
 
 
-def _scope_clause(kind: str, value: str | None, orbit: str | None = None) -> tuple[str, list[object]]:
+def _scope_clause(
+    kind: str, value: str | None, orbit: str | None = None, base_dir: str | Path = DEFAULT_HORIZON_DIR
+) -> tuple[str, list[object]]:
     """The WHERE fragment (over `nodes`) that keeps a readable node inside the scope. `orbit`
     narrows any scope to the captures filed into that orbit, which is what a tag or an entity means
     on the knowledge graph of one orbit."""
@@ -295,9 +298,13 @@ def _scope_clause(kind: str, value: str | None, orbit: str | None = None) -> tup
         column = "tags" if kind == "tag" else "entities"
         # CASE, not `json_valid(...) AND EXISTS(...)`: SQLite does not promise to short-circuit
         # AND, and `json_each` over a malformed column raises instead of matching nothing.
+        # An entity scope matches every name alignment folded into it (`concepts.py`).
+        names = aliases_store.names_for(value, base_dir=base_dir) if kind == "entity" else [value]
+        marks = ", ".join("?" for _ in names)
         sql += (f" AND CASE WHEN json_valid(nodes.{column}) THEN EXISTS "
-                f"(SELECT 1 FROM json_each(nodes.{column}) WHERE json_each.value = ?) ELSE 0 END")
-        params.append(value)
+                f"(SELECT 1 FROM json_each(nodes.{column}) WHERE json_each.value IN ({marks})) "
+                f"ELSE 0 END")
+        params.extend(names)
     if orbit is not None:
         sql += " AND EXISTS (SELECT 1 FROM memberships m WHERE m.node_id = nodes.id AND m.orbit_id = ?)"
         params.append(orbit)
@@ -305,7 +312,7 @@ def _scope_clause(kind: str, value: str | None, orbit: str | None = None) -> tup
 
 
 def _scope_rows(kind: str, value: str | None, base_dir: str | Path, orbit: str | None = None):
-    clause, params = _scope_clause(kind, value, orbit)
+    clause, params = _scope_clause(kind, value, orbit, base_dir)
     sql = (f"SELECT id, title, origin, chars, preview FROM nodes WHERE {clause} "
            "ORDER BY created_at DESC, id ASC")
     with horizon._connect(base_dir) as conn:
@@ -325,7 +332,7 @@ def _ranked_in_scope(
     if not terms:
         return []
     sync(base_dir=base_dir)
-    clause, params = _scope_clause(kind, value, orbit)
+    clause, params = _scope_clause(kind, value, orbit, base_dir)
     with horizon._connect(base_dir) as conn:
         _ensure(conn)
         rows = conn.execute(
@@ -434,4 +441,13 @@ def concepts(*, limit: int = 60, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> 
                 (*SEARCHABLE_STATES, SCOPE_VALUE_MAX, limit),
             ).fetchall()
             out[key] = [{"name": row["name"], "count": int(row["n"])} for row in rows]
+    # Entities are listed under their canonical names, so a scope picked from here matches every
+    # name folded into it.
+    resolve = aliases_store.resolver(base_dir=base_dir)
+    merged: dict[str, int] = {}
+    for row in out.get("entities", []):
+        name = resolve(row["name"])
+        merged[name] = merged.get(name, 0) + row["count"]
+    ranked = sorted(merged.items(), key=lambda r: (-r[1], r[0]))
+    out["entities"] = [{"name": n, "count": c} for n, c in ranked]
     return out
