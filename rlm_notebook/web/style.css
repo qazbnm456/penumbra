@@ -1861,6 +1861,17 @@ body.is-resizing .cols {
   justify-content: center;
 }
 
+.chat-start {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+/* Invariant 36: the author `display` above beats the browser's own `[hidden]` rule. */
+.chat-start[hidden] {
+  display: none;
+}
+
 .chat-history.is-invitation .chat-overview {
   border-color: transparent;
   background: none;
@@ -3523,6 +3534,24 @@ select:hover {
   margin-bottom: var(--space-5);
 }
 
+/* **The tab strip stays put while the column scrolls.** Opening a References card low in the list
+   scrolls `.col-studio` to the card, and the strip went with it: at 1280px the reader was left
+   inside References with no visible way to Studio, Podcast or Notes. Sticky at the scroller's
+   top edge, which sits `--space-7` above the bar because the column pads its content, and opaque
+   so rows do not show through. `scroll-padding-top` keeps a scrolled-to card below it. */
+.col-studio:not(.is-collapsed) {
+  scroll-padding-top: var(--space-11);
+}
+
+.col-studio:not(.is-collapsed) .studio-bar {
+  position: sticky;
+  top: calc(-1 * var(--space-7));
+  z-index: 2;
+  margin-top: calc(-1 * var(--space-7));
+  padding-top: var(--space-7);
+  background: var(--surface-1);
+}
+
 /* The view switcher and the Guide-kind row sit one above the other, and both used to be bordered
    pills of the same size — so nothing said which one contained the other. They are different
    LEVELS: this row changes what the whole column is showing, the row inside Studio only picks a
@@ -4170,8 +4199,24 @@ body.is-resizing .studio-grip {
    two small meta affordances stay together; the suggestions are a different KIND of thing and get a
    rule of their own to sit under. */
 
-.turn-answer .ticker-affordance {
-  margin-top: var(--space-2);
+.turn-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-5);
+  margin-top: var(--space-7);
+}
+
+/* An earlier turn whose only footer item is Regenerate (hidden there) would keep an empty 1rem gap. */
+.turn:has(~ .turn:not(.is-stopped)) .turn-footer:not(:has(.reference-link, .ticker-affordance)) {
+  display: none;
+}
+
+/* The row owns the spacing; each item's own top margin would stagger the row. */
+.turn-footer > .reference-link,
+.turn-footer > .ticker-affordance,
+.turn-footer > .turn-regenerate {
+  margin-top: 0;
 }
 
 .turn-followups {
@@ -6072,6 +6117,33 @@ textarea::placeholder {
   color: var(--bad);
 }
 
+/* Try again on a failed row: the same box as Forget beside it, with the accent carrying which of
+   the two is the way forward. */
+.node-retry {
+  border: 1px solid var(--field-border);
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: var(--radius);
+  padding: var(--space-1) var(--space-3);
+}
+
+.node-retry:hover {
+  border-color: var(--accent);
+}
+
+.node-retry:active {
+  transform: scale(0.94);
+}
+
+.node-retry:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
 .node-danger:active {
   transform: scale(0.94);
 }
@@ -6514,6 +6586,7 @@ body[data-view="inbox"] .notebook-picker {
      references" button. On paper a button is noise; the reference list below replaces them. */
   .chat-starter,
   .reference-link,
+  .turn-footer,
   .col-chat > .panel-head {
     display: none !important;
   }

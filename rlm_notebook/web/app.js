@@ -1082,7 +1082,10 @@ async function showSourceViewer(sourceId, locator, quote) {
   const title = document.getElementById("source-viewer-title");
   const body = document.getElementById("source-viewer-body");
   if (overlay.hidden) openModal(overlay);
-  title.textContent = sourceId;
+  // The row that was clicked already knows the source's name, so the heading never flashes the
+  // bare id while the text loads.
+  const known = (state.sources || []).find((s) => s.id === sourceId);
+  title.textContent = known ? sourceDisplayName(known) : sourceId;
   body.textContent = t("cite.loading", "Loading…");
 
   try {
@@ -3746,6 +3749,20 @@ function regenerateTurnButton(question) {
   return wrapper;
 }
 
+// **ONE footer row under an answer, not three lines.** The references link, the steps pill and
+// Regenerate each sat on a line of their own (a block button, a block wrapper, then an inline-block
+// after it), so the newest answer ended in three short rows of chrome. The references link moves
+// out of the rendered answer only when it is that answer's last child, which is where
+// `renderAnswerWithCitations` puts it; every other caller of that function keeps its own layout.
+function turnFooter(content, turn) {
+  const footer = elt("div", "turn-footer");
+  const refs = content && content.lastElementChild;
+  if (refs && refs.classList.contains("reference-link")) footer.appendChild(refs);
+  if (turn.run_id) footer.appendChild(renderTickerAffordance(turn.run_id));
+  footer.appendChild(regenerateTurnButton(turn.question));
+  return footer;
+}
+
 function renderTurn(turn) {
   const wrapper = document.createElement("div");
   wrapper.className = "turn";
@@ -3772,7 +3789,6 @@ function renderTurn(turn) {
     answer.classList.add("is-failed");
     answer.appendChild(elt("div", "turn-failed-head", t("chat.askFailed", "That question did not run")));
     answer.appendChild(elt("div", "turn-failed-why", readableError(turn.answer)));
-    if (turn.run_id) answer.appendChild(renderTickerAffordance(turn.run_id));
     //: **A WAY TO TRY AGAIN.** The failed branch rendered the heading, the reason and the steps
     //: pill and stopped — while the composer had already cleared, so the reader retyped their
     //: question by hand after a failure they did not cause. The Inbox's failed row has offered
@@ -3781,14 +3797,12 @@ function renderTurn(turn) {
     //: `.turn-regenerate` is hidden by a stylesheet rule on any turn but the last, so a mid-thread
     //: failure does not offer to redo an answer later turns were built on — the same rule the
     //: successful branch relies on, which is why this is the same factory and not a second button.
-    answer.appendChild(regenerateTurnButton(turn.question));
+    answer.appendChild(turnFooter(null, turn));
   } else {
-    answer.appendChild(renderAnswerWithCitations(turn.answer, turn.citations || [], turn.run_id));
+    const content = renderAnswerWithCitations(turn.answer, turn.citations || [], turn.run_id);
+    answer.appendChild(content);
     // `turn.run_id` is `None`/absent for any turn saved before this field existed — degrades
     // gracefully to no affordance rather than a broken link (schema.ChatTurn.run_id's own doc).
-    if (turn.run_id) {
-      answer.appendChild(renderTickerAffordance(turn.run_id));
-    }
     // Regenerate lives in the row this answer's OTHER affordances already occupy — the references
     // link and the steps pill — at the same quiet weight. Deliberately not a primary button:
     // re-answering costs a full model run, so it must not be the loudest thing under an answer the
@@ -3798,7 +3812,7 @@ function renderTurn(turn) {
     // reach the DOM through two paths (`rebuildHistory` and the `chat:turnAdded` replay) and a rule
     // that reads the DOM is right for both — the same reasoning `.turn-followups` already uses. It
     // also handles the pending row for free: a question in flight is not a moment to redo another.
-    answer.appendChild(regenerateTurnButton(turn.question));
+    answer.appendChild(turnFooter(content, turn));
     // Appended HERE, by renderTurn itself — NOT inside renderAnswerWithCitations, which five OTHER
     // call sites (Guide/Podcast) also use and must never show this button (blueprint's Notes
     // addendum, audit round 1). `generateOverview` appends its own via the same factory, for the
@@ -4192,10 +4206,26 @@ function supersededNote(el) {
   el.appendChild(overviewStarter(t("chat.generateOverview", "Summarise and suggest questions"), ""));
 }
 
+// The empty notebook's start buttons: pick the source kind, bring the Sources panel forward (it is
+// a separate tab in a narrow window), and put the reader in the field. A file opens the picker.
+function wireChatStart(start) {
+  start.querySelectorAll("[data-start-kind]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const kind = btn.dataset.startKind;
+      document.getElementById(`ktab-${kind}`).click();
+      setPanel("sources");
+      if (kind === "file") document.getElementById("source-file").click();
+      else document.getElementById(kind === "url" ? "source-url" : "source-text").focus();
+    });
+  });
+}
+
 function initChatPanel() {
   const history = document.getElementById("chat-history");
   const empty = document.getElementById("chat-empty");
   const overviewEl = document.getElementById("chat-overview");
+  const start = document.getElementById("chat-start");
+  wireChatStart(start);
 
   // ONE rebuild, used by every path that redraws the thread. The overview is the thread's first
   // entry now, so a `history.innerHTML = ""` that forgot to put it back would silently delete it —
@@ -4207,6 +4237,7 @@ function initChatPanel() {
   // the overview's own button (or its starter questions), a few lines above.
   const syncEmptyNote = (turns, pending) => {
     empty.hidden = turns.length > 0 || Boolean(pending) || (state.sources || []).length > 0;
+    start.hidden = empty.hidden;
     // **A thread with nothing in it is an INVITATION, not a card pinned to the top of a void.** An
     // independent review measured it: a bordered box holding one button, above about 550 pixels of
     // empty column. A conversation that has not started has no reason to be top-aligned - there is
@@ -4257,6 +4288,7 @@ function initChatPanel() {
     history.textContent = "";
     history.appendChild(overviewEl);
     history.appendChild(empty);
+    history.appendChild(start);
     syncEmptyNote(turns, pending);
     turns.forEach((turn) => history.appendChild(renderTurn(turn)));
     if (pending) history.appendChild(renderTurn(pending));
@@ -8260,6 +8292,20 @@ async function nodeActions(node, detail) {
   const actions = elt("div", "node-actions");
   // A left GROUP, so the destructive action stays right even when the row wraps.
   const main = elt("div", "node-actions-main");
+  if (node.state === "failed") {
+    // Re-submitting the same origin is already the retry path (`intake.submit` resets a `failed`
+    // node to `queued`), so this needs no new endpoint - only a way to ask for it.
+    //: FIRST in the row and the SAME SIZE as Forget: it was a full `.btn` after the "nothing to
+    //: file" note, so the row read as a sentence, then a big button, then a small one, and the
+    //: action that recovers the capture sat in the middle of it.
+    const retry = elt("button", "node-retry", t("inbox.retry", "Try again"));
+    retry.type = "button";
+    retry.addEventListener("click", async () => {
+      retry.disabled = true;
+      await captureValue(node.origin);
+    });
+    main.appendChild(retry);
+  }
 
   let books = { notebooks: [] };
   try {
@@ -8323,18 +8369,6 @@ async function nodeActions(node, detail) {
     main.appendChild(
       elt("span", "node-filed", t("inbox.filedIn", `In ${filed.join(", ")}`, { where: filed.join(", ") }))
     );
-  }
-
-  if (node.state === "failed") {
-    // Re-submitting the same origin is already the retry path (`intake.submit` resets a `failed`
-    // node to `queued`), so this needs no new endpoint - only a way to ask for it.
-    const retry = elt("button", "btn", t("inbox.retry", "Try again"));
-    retry.type = "button";
-    retry.addEventListener("click", async () => {
-      retry.disabled = true;
-      await captureValue(node.origin);
-    });
-    main.appendChild(retry);
   }
 
   actions.appendChild(main);

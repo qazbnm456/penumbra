@@ -455,7 +455,25 @@ def test_get_source_returns_full_text_every_block(client):
         "origin": "https://example.com/a",
         "flags": [],
         "blocks": [{"locator": "whole", "text": "content of https://example.com/a"}],
+        "preview": {},
     }
+
+
+def test_get_source_carries_the_preview_so_the_viewer_can_show_the_title(client):
+    """The source viewer headed itself with the HOST (`example.com`) because this response had no
+    `preview`, while every other surface already showed the page's own title. Same display-only
+    metadata the notebook response carries (invariant 51), and still never an image."""
+    from rlm_notebook.notebook import mutate_notebook
+
+    _add_a_source(client)
+
+    def _titled(nb):
+        nb.sources[0].preview = {"title": "A page about things", "site": "Example"}
+
+    mutate_notebook("mynb", _titled)
+
+    body = client.get("/notebooks/mynb/sources/s1").json()
+    assert body["preview"] == {"title": "A page about things", "site": "Example"}
 
 
 # --- /notebooks/{id}/notes -----------------------------------------------------------------------
