@@ -57,7 +57,8 @@ def test_a_drop_is_read_as_files_then_links_then_text():
         ]
     )
     assert files["names"] == ["paper.pdf"] and files["urls"] == [], "files win over a link beside them"
-    assert uris["urls"] == ["https://www.example.com/a", "http://b.org/"] and uris["names"] == ["example.com", "b.org"]
+    assert uris["urls"] == ["https://www.example.com/a", "http://b.org/"]
+    assert uris["names"] == ["example.com", "b.org"]
     assert url_text["urls"] == ["https://example.com/page"], "a lone URL as plain text is a link"
     assert text["texts"] == ["a thought worth keeping"]
     assert empty is None, "an empty drop is nothing, not an empty capture"
