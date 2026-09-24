@@ -32,10 +32,7 @@
   const say = (key, fallback, vars) => (typeof t === "function" ? t(key, fallback, vars) : fallback);
   const hole = document.getElementById("hole");
   const motes = document.getElementById("motes");
-  const line = document.getElementById("say-line");
-  const count = document.getElementById("count");
   const live = document.getElementById("live");
-  let swallowed = 0;
 
   // Pin the shape to the resting window's size in pixels at once. Left at `100%`, a window the
   // shell enlarges before its first `setState` arrives would drag the shape with it in one jump.
@@ -45,16 +42,27 @@
   if (typeof applyStaticI18n === "function") applyStaticI18n();
   document.documentElement.lang = typeof uiLang === "function" ? uiLang() : "en";
 
-  function setLine(key, fallback, vars) {
-    line.textContent = say(key, fallback, vars);
+  // No visible words: what a state means is spoken to a screen reader instead.
+  function announce(key, fallback, vars) {
+    live.textContent = say(key, fallback, vars);
+  }
+
+  // A result is shown by the ring itself: a flash for "taken in", a red shake for "refused".
+  function result(kind) {
+    document.body.dataset.result = kind;
+    setTimeout(() => {
+      if (document.body.dataset.result === kind) delete document.body.dataset.result;
+    }, 900);
   }
 
   // --- states, set by the shell --------------------------------------------------------------------
 
   const LINES = {
-    hover: ["island.hint", "Drop anything here"],
     armed: ["island.release", "Let go to send it into the Horizon"],
   };
+  // A swallow owns its own words until the island closes; a late `armed` from the shell must not
+  // put it back into the armed look while it is still taking something in.
+  let swallowing = false;
 
   window.island = {
     setState(state, edge, inset, width, height) {
@@ -67,9 +75,12 @@
         hole.style.width = `${width}px`;
         hole.style.height = `${height}px`;
       }
+      if (state === "swallow") swallowing = true;
+      if (state === "collapsed") swallowing = false;
+      if (swallowing && state === "armed") return;
       document.body.dataset.state = state;
       const words = LINES[state];
-      if (words) setLine(...words);
+      if (words) announce(...words);
     },
   };
 
@@ -80,6 +91,12 @@
   }
 
   hole.addEventListener("click", openWorkspace);
+  // Right-click: the shell's menu (open, configure, restart, quit). In the background there is no
+  // menu bar and no Dock icon, so this is the only place to quit from.
+  window.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    window.location.href = "/__shell/menu";
+  });
   hole.addEventListener("keydown", (event) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -154,7 +171,7 @@
     names.slice(0, 6).forEach((name, i) => {
       const mote = document.createElement("span");
       mote.className = "mote";
-      mote.textContent = name;
+      mote.dataset.name = name;
       mote.style.setProperty("--cx", `${cx}px`);
       mote.style.setProperty("--cy", `${cy}px`);
       mote.style.setProperty("--dx", `${x - cx + i * 14}px`);
@@ -171,22 +188,51 @@
     if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
   });
 
+  // The file types the server reads today. Anything else is refused HERE, with a sentence that
+  // says so, instead of reaching the server and coming back as a bare "could not take that in".
+  const ACCEPTED = /\.(pdf|txt|md|markdown)$/i;
+
+  // **The page decides when the island closes after a drop, not the shell.** The shell used to
+  // infer "that was a drop" from the mouse button being released over the island, and during a
+  // macOS drag session that state does not reliably follow the drop: the island went back to
+  // "armed" and wrote "Let go…" over the result. The page is the one that received the drop.
+  const SWALLOW_MIN = 1300;
+
+  function settle(startedAt) {
+    const wait = Math.max(0, SWALLOW_MIN - (Date.now() - startedAt));
+    setTimeout(() => {
+      window.location.href = "/__shell/rest";
+    }, wait);
+  }
+
   window.addEventListener("drop", async (event) => {
     event.preventDefault();
     const item = event.dataTransfer && readDrop(event.dataTransfer);
     if (!item) return;
+    const startedAt = Date.now();
     window.island.setState("swallow");
-    fall(item.names, event.clientX, event.clientY);
+    const unsupported = item.files.filter((f) => !ACCEPTED.test(f.name));
+    item.files = item.files.filter((f) => ACCEPTED.test(f.name));
+    if (unsupported.length && !item.files.length) {
+      result("bad");
+      announce("island.unsupported", "Only PDF, TXT and Markdown files for now");
+      settle(startedAt);
+      return;
+    }
+    fall(item.files.length ? item.files.map((f) => f.name) : item.names, event.clientX, event.clientY);
+    // The pull keeps running while the server works, so a slow PDF still looks alive.
+    document.body.dataset.busy = "";
+    announce("island.swallowing", "Working on it…");
+    settle(startedAt);
     try {
       const landed = await capture(item);
-      swallowed += landed;
-      count.textContent = `+${swallowed}`;
-      count.hidden = false;
-      setLine("island.swallowed", `Sent into the Horizon`, {});
-      live.textContent = say("island.swallowedCount", `${landed} sent into the Horizon`, { n: landed });
+      result("ok");
+      announce("island.swallowedCount", `${landed} sent into the Horizon`, { n: landed });
     } catch (err) {
-      setLine("island.failed", "Could not take that in");
+      result("bad");
       live.textContent = `${say("island.failed", "Could not take that in")}: ${err.message}`;
+    } finally {
+      delete document.body.dataset.busy;
     }
   });
 })();

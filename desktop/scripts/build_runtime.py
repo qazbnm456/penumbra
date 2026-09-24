@@ -26,7 +26,6 @@ tesseract is only the fallback (invariant 7).
 from __future__ import annotations
 
 import argparse
-import io
 import os
 import platform
 import shutil
@@ -40,6 +39,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "desktop" / "src-tauri" / "runtime"
+#: Downloads worth keeping between builds (the deno archive), outside the repository.
+CACHE = Path.home() / "Library" / "Caches" / "penumbra-build"
 #: The container pins the same version (Dockerfile `DENO_VERSION`), so a desktop run and a
 #: container run execute the sandbox on the same deno.
 DENO_VERSION = "2.1.4"
@@ -90,7 +91,10 @@ def install_python(dest: Path) -> Path:
 
 
 def install_app(python: Path, home: Path) -> None:
-    run("uv", "pip", "install", "--python", str(python), "--no-cache", f"{ROOT}[api]")
+    # WITH uv's cache: every dependency is already there from the development environment, and a
+    # `--no-cache` install re-downloaded all of them on every build, which on a flaky connection
+    # stalled a build for 38 minutes at one package out of 33.
+    run("uv", "pip", "install", "--python", str(python), f"{ROOT}[api]")
     # Precompiled bytecode: the first launch imports numpy, onnxruntime and dspy, and compiling
     # them on that launch is seconds the reader spends watching a splash screen. UNCHECKED hashes,
     # not the default timestamps: a .deb, an AppImage or an MSI install does not keep source
@@ -104,14 +108,48 @@ def install_app(python: Path, home: Path) -> None:
 
 
 def install_deno(dest: Path, target: str) -> None:
+    """The official deno build for `target`, from a cache outside the repository.
+
+    Cached and resumable, because a 40 MB download through a flaky or proxied connection was cut
+    short on every attempt of one build (`IncompleteRead`, then an SSL EOF), and restarting it from
+    zero each time never finished. `curl -C -` continues a partial file where it stopped; once the
+    archive is complete it is kept, so later builds never download it again.
+    """
     url = f"https://github.com/denoland/deno/releases/download/v{DENO_VERSION}/deno-{target}.zip"
-    print("+ fetch", url, flush=True)
-    with urllib.request.urlopen(url, timeout=120) as response:
-        archive = zipfile.ZipFile(io.BytesIO(response.read()))
+    cache = CACHE / f"deno-{DENO_VERSION}-{target}.zip"
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    if not _is_zip(cache):
+        partial = cache.with_suffix(".part")
+        print("+ fetch", url, flush=True)
+        if shutil.which("curl"):
+            for attempt in range(1, 6):
+                done = subprocess.run(
+                    ["curl", "-fL", "--retry", "5", "--retry-all-errors", "-C", "-", "-o", str(partial), url],
+                    check=False,
+                )
+                if done.returncode == 0 and _is_zip(partial):
+                    break
+                print(f"+ fetch incomplete; resuming ({attempt}/5)", flush=True)
+        else:
+            with urllib.request.urlopen(url, timeout=120) as response:
+                partial.write_bytes(response.read())
+        if not _is_zip(partial):
+            raise SystemExit(f"could not download {url}; the partial file is kept at {partial}")
+        partial.replace(cache)
     dest.mkdir(parents=True, exist_ok=True)
-    archive.extractall(dest)
+    zipfile.ZipFile(cache).extractall(dest)
     for binary in dest.iterdir():
         binary.chmod(binary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def _is_zip(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        with zipfile.ZipFile(path) as archive:
+            return archive.testzip() is None
+    except zipfile.BadZipFile:
+        return False
 
 
 def adhoc_sign(root: Path) -> None:

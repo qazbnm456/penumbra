@@ -31,8 +31,10 @@ const HOVER_DELAY: Duration = Duration::from_millis(160);
 /// How long it stays open after the pointer leaves, so a drag that wobbles out and back in does not
 /// make it snap shut under the cursor.
 const LEAVE_GRACE: Duration = Duration::from_millis(380);
-/// How long the swallow plays before the island closes again.
-const SWALLOW_HOLD: Duration = Duration::from_millis(1400);
+/// How far a press must travel before it counts as a drag rather than a click.
+const DRAG_DISTANCE: f64 = 12.0;
+/// The longest the island stays open after a drop if the page never says it is done.
+const SWALLOW_BACKSTOP: Duration = Duration::from_millis(4000);
 /// How long the page's shrink animation takes; the window is only made small after it.
 const SHRINK_AFTER: Duration = Duration::from_millis(320);
 
@@ -83,6 +85,14 @@ impl State {
 
 static GEOMETRY: Mutex<Option<Geometry>> = Mutex::new(None);
 static WATCHING: AtomicBool = AtomicBool::new(false);
+/// Set by the page (`/__shell/rest`) once a drop has been swallowed: the page, not the pointer,
+/// knows when that happened.
+static REST_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// The page asks for the island to close (after a swallow). Picked up by the pointer loop.
+pub fn request_rest() {
+    REST_REQUESTED.store(true, Ordering::SeqCst);
+}
 
 /// Work out where the island goes. Must run on the main thread on macOS (AppKit's screen APIs).
 pub fn measure(app: &AppHandle) {
@@ -129,6 +139,19 @@ pub fn show(app: &AppHandle, url: url::Url, on_navigation: impl Fn(&url::Url) ->
     }
 }
 
+/// Room around the shape for what is drawn OUTSIDE it: the concave shoulders where it meets the top
+/// of the screen, and its shadow. At rest there is none, so the resting window is exactly the notch.
+const PAD_SIDE: f64 = 18.0;
+const PAD_BELOW: f64 = 30.0;
+
+fn padded(rect: Rect, edge: &str) -> Rect {
+    if edge == "left" {
+        Rect { x: rect.x, y: rect.y - PAD_SIDE, w: rect.w + PAD_BELOW, h: rect.h + 2.0 * PAD_SIDE }
+    } else {
+        Rect { x: rect.x - PAD_SIDE, y: rect.y, w: rect.w + 2.0 * PAD_SIDE, h: rect.h + PAD_BELOW }
+    }
+}
+
 fn place(app: &AppHandle, rect: Rect) {
     if let Some(window) = app.get_webview_window(LABEL) {
         let _ = window.set_size(LogicalSize::new(rect.w, rect.h));
@@ -165,25 +188,43 @@ fn watch(app: AppHandle) {
     let mut away_since: Option<Instant> = None;
     let mut swallow_until: Option<Instant> = None;
     let mut was_dragging = false;
+    let mut press_origin: Option<(f64, f64)> = None;
     loop {
         thread::sleep(TICK);
         let (Some(geo), Some((px, py))) = (geometry(), platform::pointer(&app)) else {
             continue;
         };
-        let dragging = platform::button_down();
+        // **A held button is not a drag.** Clicking the island twice held the button over it and
+        // armed it as if something were being dragged in. A drag here is a press that STARTED
+        // somewhere else and has MOVED since; a press that starts on the island is a click.
+        let pressed = platform::button_down();
+        if !pressed {
+            press_origin = None;
+        } else if press_origin.is_none() {
+            press_origin = Some((px, py));
+        }
+        let dragging = match press_origin {
+            Some((ox, oy)) => {
+                !geo.hover.contains(ox, oy, 4.0) && ((px - ox).powi(2) + (py - oy).powi(2)).sqrt() > DRAG_DISTANCE
+            }
+            None => false,
+        };
         let now = Instant::now();
 
+        let rest_asked = REST_REQUESTED.swap(false, Ordering::SeqCst);
         let next = match state {
+            _ if rest_asked => State::Rest,
+            // After a drop the island stays open until the page says it has finished, however the
+            // pointer moves (the backstop is only there if that message never comes).
             State::Swallow => match swallow_until {
                 Some(until) if now < until => State::Swallow,
                 _ => State::Rest,
             },
-            _ if dragging && geo.armed.contains(px, py, 70.0) => State::Armed,
             State::Armed if was_dragging && !dragging && geo.armed.contains(px, py, 0.0) => {
-                // Let go over the island: that was a drop.
-                swallow_until = Some(now + SWALLOW_HOLD);
+                swallow_until = Some(now + SWALLOW_BACKSTOP);
                 State::Swallow
             }
+            _ if dragging && geo.armed.contains(px, py, 70.0) => State::Armed,
             State::Armed | State::Hover => {
                 let region = if state == State::Armed { geo.armed } else { geo.hover };
                 if region.contains(px, py, 6.0) {
@@ -224,14 +265,16 @@ fn watch(app: AppHandle) {
                 });
             }
             State::Hover => {
-                place(&app, geo.hover);
+                place(&app, padded(geo.hover, geo.edge));
                 tell(&app, State::Hover, &geo);
             }
             State::Armed => {
-                place(&app, geo.armed);
+                place(&app, padded(geo.armed, geo.edge));
                 tell(&app, State::Armed, &geo);
             }
-            State::Swallow => tell(&app, State::Swallow, &geo),
+            // The page already put itself in the swallow state when it received the drop; telling it
+            // again would only race its own words.
+            State::Swallow => {}
         }
         state = next;
     }
@@ -261,13 +304,15 @@ mod platform {
         };
         let centre = rest.x + rest.w / 2.0;
         let bar = rest.h.max(24.0);
-        let hover_w = rest.w + 150.0;
-        let armed_w = (rest.w + 260.0).max(440.0);
+        // Icons only, so the hover shape only has to fit the ring below the notch; the armed one
+        // stays wide because it is a drop target, and a bigger target is easier to hit.
+        let hover_w = rest.w + 40.0;
+        let armed_w = (rest.w + 160.0).max(340.0);
         Some(Geometry {
             edge: "top",
             inset: if top > 0.0 { top } else { 0.0 },
             rest,
-            hover: Rect { x: centre - hover_w / 2.0, y: 0.0, w: hover_w, h: bar + 44.0 },
+            hover: Rect { x: centre - hover_w / 2.0, y: 0.0, w: hover_w, h: bar + 52.0 },
             armed: Rect { x: centre - armed_w / 2.0, y: 0.0, w: armed_w, h: bar + 118.0 },
         })
     }

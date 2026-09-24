@@ -12,6 +12,8 @@ Three smaller decisions follow the same line:
 - **The port is remembered.** The web UI keeps its per-reader choices in `localStorage`, which is scoped to the origin, and the origin includes the port. A fresh port each launch would forget the interface language and theme every time.
 - **Keys live in a configuration file the File menu opens**, never on the settings page, for invariant 41's reason: that page is writable by every token holder.
 
-The web UI learns it is in the desktop app from a `shell=desktop` fragment parameter, remembered for the session and stripped from the address bar with the token. It uses that for one thing only: an error that names an `PN_*` setting also says where that setting lives in the desktop app.
+**The island is the one page that may ask the shell for anything, and what it may ask is fixed.** The island (`island.html`, the shape in the notch) is the whole app while the workspace is closed, so it has to open the workspace, show the app's menu and say when a drop has finished. It does that by navigating to one of three fixed paths, `/__shell/open`, `/__shell/menu` and `/__shell/rest`, which the shell intercepts and refuses as navigations. Nothing is carried: no path, no argument, no text from the page. Everything else about the island is decided by the shell, which watches the pointer itself and tells the page which state to draw. The workspace window has no such paths; for it, invariant 81 holds without exception.
+
+The web UI learns it is in the desktop app from a `shell=desktop` fragment parameter, remembered for the session and stripped from the address bar with the token. It uses that for one thing only: an error that names a `PN_*` setting also says where that setting lives in the desktop app.
 
 Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

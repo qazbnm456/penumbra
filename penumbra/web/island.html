@@ -14,12 +14,12 @@
 <body data-state="collapsed" data-edge="top">
   <main class="hole" id="hole" role="button" tabindex="0" aria-label="Open Penumbra"
         data-i18n-label="island.open">
-    <div class="horizon" aria-hidden="true"><div class="accretion"></div><div class="core"></div></div>
-    <div class="say">
-      <span class="say-name">Penumbra</span>
-      <span class="say-line" id="say-line" data-i18n="island.hint">Drop anything here</span>
+    <!-- Icons only: the ring IS the interface. Its state is told by motion and colour, and the words
+         a sighted reader no longer sees go to the live region below for a screen reader. -->
+    <div class="horizon" aria-hidden="true">
+      <div class="pull"></div><div class="pull"></div><div class="pull"></div>
+      <div class="accretion"></div><div class="core"></div>
     </div>
-    <span class="count" id="count" hidden></span>
   </main>
   <div class="motes" id="motes" aria-hidden="true"></div>
   <p class="sr-only" id="live" role="status" aria-live="polite"></p>

@@ -212,3 +212,22 @@ Everything follows from it. The title and the distilled summary are set in the r
 - The summary action names the batch it will run before it spends anything. While it runs, automatic or pressed, the strip shows progress and a Stop. Stop ends at a node boundary: the item being parsed finishes, and everything still waiting becomes `failed` with "stopped before it was read" rather than sitting at `queued`, which would look exactly like still working.
 - A row left open through a parse stays open, and the page stays where it was. A repaint may not take the reader's place away.
 - An empty Horizon explains what a paste becomes, what an orbit is, and that summaries are a separate, deliberate spend. A search that found nothing does not.
+
+## 11. The island (`island.html`)
+
+**At rest the app is the notch, and the notch says nothing.** The desktop app runs in the background, and its only presence is a black shape in the MacBook notch, the same black and the same size, so at rest it cannot be told from the hardware. Where there is no notch it is a thin target at the top centre of the screen, or at the left edge on Windows and Linux.
+
+**Icons only.** The island carries one thing, a ring (`.horizon`: `.accretion` spinning around a black `.core`), and every state is told by what the ring does. A screen reader hears each state through a live region instead. An app name or a sentence in the notch was tried and removed: the shape is small, it is seen hundreds of times a day, and words there read as noise.
+
+| state | what the ring does |
+|---|---|
+| resting | nothing; the shape is the notch |
+| hover (the pointer rests on it) | the shape grows a capsule-shaped lower half and the ring turns slowly |
+| armed (something is dragged toward it) | the shape opens into a deep bowl, the ring grows and spins faster, and rings of light (`.pull`) collapse into the core |
+| taking in (after a drop) | the dropped item falls in as a glowing mote; the pull keeps going while the server works |
+| landed | the core swallows once and the ring flares |
+| refused (a file type the server cannot read) | the ring turns red and shakes |
+
+**The shape grows out of the hardware.** Its size is set per state and transitioned, anchored at the top centre, so it grows out of the notch and shrinks back into it; the window around it is enlarged first and made small last, so nothing is clipped. Concave shoulders (`.hole::before`, `::after`) join it to the top of the screen the way the notch meets the bezel, the lower corners are deep (a capsule when hovering, a 46px bowl when open), and a soft shadow appears only once it is open. Content stays below `--inset`, the notch's height, because the display has no pixels there.
+
+**Motion is transform and opacity only.** A blurred spinning ring and blurred falling motes stuttered in the transparent window, because a filter re-rasterises every frame. The ring's soft edge is a static mask and every moving layer has `will-change`, so each frame is a composited transform.
