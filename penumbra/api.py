@@ -3381,6 +3381,8 @@ async def upload_into_horizon(request: Request) -> dict:
         cap = max_upload_bytes()
     except SystemExit as exc:
         raise HTTPException(500, f"server misconfigured: {exc}") from exc
+    # The first orbit is titled in the reader's language, and it is often created by an upload.
+    _CAPTURE_LANGUAGE["name"] = request.headers.get("x-penumbra-interface-language", "")
     content_length = request.headers.get("content-length")
     if content_length is None:
         raise HTTPException(411, "Content-Length header is required for file uploads")

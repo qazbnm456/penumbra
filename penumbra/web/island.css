@@ -1,18 +1,19 @@
 /* The island. One black shape that grows out of the notch, the same black the hardware is, so at
-   rest it is indistinguishable from the notch itself. Everything else is drawn inside it.
+   rest it is indistinguishable from the notch itself. Inside it there is one thing, the ring, and
+   every state is told by what the ring does: no words.
 
    The window is transparent and the SHELL decides its size; this stylesheet only has to make the
-   shape fill that window with the right corners for each state, and animate between them. The
+   shape fill its target size with the right corners for each state, and animate between them. The
    shell enlarges the window BEFORE telling the page to grow and shrinks it AFTER the page has
    shrunk, so every visible transition happens here, in CSS, where it can be smooth. */
 
 :root {
   --ink: #000;
-  --cream: oklch(93% 0.015 75);
-  --dim: oklch(72% 0.015 75);
   --copper: oklch(75% 0.15 55);
   --copper-deep: oklch(54% 0.16 55);
+  --bad: oklch(64% 0.2 27);
   --grow: 340ms cubic-bezier(0.2, 0.9, 0.25, 1.05);
+  --shoulder: 14px;
   color-scheme: dark;
 }
 
@@ -22,15 +23,13 @@ body {
   height: 100%;
   background: transparent;
   overflow: hidden;
-  font: 13px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  color: var(--cream);
   user-select: none;
   -webkit-user-select: none;
 }
 
 /* The shape. Its size is set by island.js for each state and TRANSITIONED, anchored where the
    hardware is (top centre for the notch, left middle for an edge), so it grows out of that spot and
-   shrinks back into it. Width and height default to the whole window for the first paint. */
+   shrinks back into it. */
 .hole {
   position: absolute;
   box-sizing: border-box; /* the size island.js sets is the shape's OUTER size, padding included */
@@ -40,66 +39,93 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 14px;
   /* Below the notch: the display has no pixels in the top `--inset` of this window. */
-  padding: var(--inset, 0px) 18px 0;
+  padding-top: var(--inset, 0px);
   cursor: pointer;
   outline: none;
-  overflow: hidden;
-  transition: width var(--grow), height var(--grow), border-radius var(--grow), padding var(--grow);
+  transition: width var(--grow), height var(--grow), border-radius var(--grow), box-shadow var(--grow);
+}
+
+/* Depth, once it is open: a soft shadow below, so it reads as floating over the page rather than
+   painted onto it. None at rest, where it must be indistinguishable from the notch. */
+body:not([data-state="collapsed"]) .hole {
+  box-shadow: 0 14px 28px -8px oklch(0% 0 0 / 0.55), 0 2px 6px oklch(0% 0 0 / 0.35);
+}
+
+/* The shoulders: concave fillets where the shape meets the top of the screen, the way the notch and
+   the Dynamic Island flow out of the bezel instead of being cut straight down. Each is a square
+   whose inner corner is a quarter-circle hole, placed just outside the shape's top corners. */
+body[data-edge="top"] .hole::before,
+body[data-edge="top"] .hole::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: var(--shoulder);
+  height: var(--shoulder);
+  opacity: 1;
+  transition: opacity 180ms ease, width var(--grow), height var(--grow);
+}
+
+body[data-edge="top"] .hole::before {
+  right: 100%;
+  background: radial-gradient(circle at 0 100%, transparent calc(var(--shoulder) - 0.5px), var(--ink) var(--shoulder));
+}
+
+body[data-edge="top"] .hole::after {
+  left: 100%;
+  background: radial-gradient(circle at 100% 100%, transparent calc(var(--shoulder) - 0.5px), var(--ink) var(--shoulder));
+}
+
+body[data-state="collapsed"] .hole::before,
+body[data-state="collapsed"] .hole::after {
+  opacity: 0;
 }
 
 body[data-edge="top"] .hole {
   top: 0;
   left: 50%;
   transform: translateX(-50%);
+  border-radius: 0 0 11px 11px;
+}
+
+/* Hovering: a capsule's lower half, radius = the visible height below the notch over two. */
+body[data-edge="top"][data-state="hover"] .hole {
+  border-radius: 0 0 26px 26px;
+}
+
+/* Open: a deep, soft bowl rather than a box. */
+body[data-edge="top"][data-state="armed"] .hole,
+body[data-edge="top"][data-state="swallow"] .hole {
+  border-radius: 0 0 46px 46px;
 }
 
 body[data-edge="left"] .hole {
   left: 0;
   top: 50%;
   transform: translateY(-50%);
-}
-
-/* Top edge (the notch, or the top centre of a screen): square top corners fused to the bezel,
-   rounded bottom ones like the notch's own. */
-body[data-edge="top"] .hole {
-  border-radius: 0 0 12px 12px;
-}
-
-body[data-edge="top"][data-state="armed"] .hole,
-body[data-edge="top"][data-state="swallow"] .hole {
-  border-radius: 0 0 28px 28px;
-}
-
-/* Left edge (Windows, Linux): fused to the screen's left edge instead. */
-body[data-edge="left"] .hole {
   border-radius: 0 14px 14px 0;
 }
 
 /* At rest the shape carries nothing: it is the notch. */
-body[data-state="collapsed"] .hole > * {
+body[data-state="collapsed"] .horizon {
   opacity: 0;
+  transform: scale(0.5);
 }
 
-.hole > * {
-  transition: opacity 180ms ease;
-}
-
-/* --- the event horizon ------------------------------------------------------------------------ */
+/* --- the ring --------------------------------------------------------------------------------- */
 
 .horizon {
   position: relative;
-  width: 30px;
-  height: 30px;
   flex: none;
-  transition: width var(--grow), height var(--grow);
+  width: 40px;
+  height: 40px;
+  transition: width var(--grow), height var(--grow), opacity 200ms ease, transform var(--grow);
 }
 
 body[data-state="armed"] .horizon,
 body[data-state="swallow"] .horizon {
-  width: 64px;
-  height: 64px;
+  width: 84px;
+  height: 84px;
 }
 
 /* No `filter: blur` on a spinning layer: that re-blurs on every frame and stuttered in the
@@ -115,24 +141,46 @@ body[data-state="swallow"] .horizon {
   mask: radial-gradient(circle, transparent 38%, #000 50%, #000 62%, transparent 72%);
   will-change: transform;
   animation: orbit 3.2s linear infinite;
-  opacity: 0.55;
+  opacity: 0.7;
+  transition: opacity 200ms ease;
 }
 
-body[data-state="armed"] .accretion {
-  animation-duration: 1.1s;
+body[data-state="armed"] .accretion,
+body[data-state="swallow"] .accretion {
+  animation-duration: 1s;
   opacity: 1;
 }
 
 .core {
   position: absolute;
-  inset: 22%;
+  inset: 24%;
   border-radius: 50%;
   background: var(--ink);
-  box-shadow: 0 0 0 1px oklch(40% 0.05 55 / 0.6), 0 0 12px 2px oklch(20% 0.02 55);
+  box-shadow: 0 0 0 1px oklch(40% 0.05 55 / 0.6);
 }
 
-body[data-state="swallow"] .core {
-  animation: gulp 520ms cubic-bezier(0.34, 1.56, 0.64, 1);
+/* The pull: three rings collapsing into the core, staggered. Shown while something is near
+   (armed) and while it is being taken in (busy), which is what "being absorbed" looks like. */
+.pull {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--copper);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+body[data-state="armed"] .pull,
+body[data-busy] .pull {
+  animation: pull 1.2s cubic-bezier(0.5, 0, 0.9, 0.6) infinite;
+}
+
+.pull:nth-child(2) {
+  animation-delay: 0.4s;
+}
+
+.pull:nth-child(3) {
+  animation-delay: 0.8s;
 }
 
 @keyframes orbit {
@@ -141,46 +189,65 @@ body[data-state="swallow"] .core {
   }
 }
 
-@keyframes gulp {
-  40% {
-    transform: scale(1.25);
+@keyframes pull {
+  0% {
+    /* 1.4, not larger: the shape no longer clips its contents (the shoulders sit outside it), and
+       at 1.7 the outermost ripple spilled past its lower edge. */
+    transform: scale(1.4);
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(0.35);
+    opacity: 0;
   }
 }
 
-/* --- words ------------------------------------------------------------------------------------ */
+/* --- results ---------------------------------------------------------------------------------- */
 
-.say {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
+/* Taken in: the core swallows and the ring flares once. */
+body[data-result="ok"] .core {
+  animation: gulp 520ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-.say-name {
-  font-weight: 600;
-  letter-spacing: 0.01em;
+body[data-result="ok"] .accretion {
+  animation: orbit 1s linear infinite, flare 700ms ease-out;
 }
 
-.say-line {
-  color: var(--dim);
-  white-space: nowrap;
-  overflow: hidden;
+/* Refused (a file type the server cannot read): the ring turns red and shakes its head. */
+body[data-result="bad"] .horizon {
+  animation: refuse 420ms ease-in-out;
 }
 
-body[data-state="armed"] .say-line {
-  color: var(--copper);
+body[data-result="bad"] .accretion {
+  background: conic-gradient(from 0deg, transparent 0 15%, var(--bad) 30%, var(--bad) 45%, transparent 60%,
+      var(--bad) 80%, transparent 95%);
 }
 
-.count {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  color: var(--copper);
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: oklch(25% 0.03 55);
+@keyframes gulp {
+  40% {
+    transform: scale(1.3);
+  }
 }
 
-.count[hidden] {
-  display: none;
+@keyframes flare {
+  30% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+}
+
+@keyframes refuse {
+  20%,
+  60% {
+    transform: translateX(-6px);
+  }
+  40%,
+  80% {
+    transform: translateX(6px);
+  }
 }
 
 /* --- what was dropped, falling in -------------------------------------------------------------- */
@@ -191,60 +258,62 @@ body[data-state="armed"] .say-line {
   pointer-events: none;
 }
 
+/* A dropped item falls in as a small glowing mote, not a label: the island says nothing in words. */
 .mote {
   position: absolute;
-  max-width: 180px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: oklch(28% 0.03 55);
-  color: var(--cream);
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: clip;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--copper);
+  box-shadow: 0 0 8px 2px oklch(75% 0.15 55 / 0.5);
   /* Set per mote by island.js: where it starts, relative to the centre it falls into. */
   --dx: 0px;
   --dy: 0px;
   left: var(--cx);
   top: var(--cy);
+  /* Transform and opacity only, on its own layer: the first version blurred in the keyframes and
+     repainted every frame, which is what made the fall stutter. */
+  will-change: transform, opacity;
   animation: fall 900ms cubic-bezier(0.55, 0, 0.9, 0.35) forwards;
 }
 
-/* A spiral in two quarter turns, shrinking and stretching as it crosses the horizon. */
+/* A spiral in two quarter turns, shrinking as it crosses the horizon. */
 @keyframes fall {
   0% {
-    transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) rotate(0deg) scale(1);
+    transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1);
     opacity: 1;
-    filter: blur(0);
   }
   55% {
-    transform: translate(calc(-50% + var(--dy) * -0.45), calc(-50% + var(--dx) * 0.45)) rotate(160deg)
-      scale(0.55, 0.4);
+    transform: translate(calc(-50% + var(--dy) * -0.45), calc(-50% + var(--dx) * 0.45)) scale(0.7);
     opacity: 0.9;
   }
   100% {
-    transform: translate(-50%, -50%) rotate(330deg) scale(0.02, 0.01);
+    transform: translate(-50%, -50%) scale(0.05);
     opacity: 0;
-    filter: blur(3px);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hole {
+  .hole,
+  .horizon {
     transition: none;
   }
 
   .accretion,
-  body[data-state="armed"] .accretion {
+  body[data-state="armed"] .accretion,
+  body[data-result="ok"] .accretion {
+    animation: none;
+  }
+
+  body[data-state="armed"] .pull,
+  body[data-busy] .pull,
+  body[data-result="ok"] .core,
+  body[data-result="bad"] .horizon {
     animation: none;
   }
 
   .mote {
     animation: fade 400ms ease forwards;
-  }
-
-  body[data-state="swallow"] .core {
-    animation: none;
   }
 
   @keyframes fade {

@@ -272,6 +272,11 @@ fn remember(app: &AppHandle, key: &str, value: serde_json::Value) {
 
 /// Bring the workspace forward: from the island, the Dock, or a failure it has to show.
 fn open_workspace(app: &AppHandle) {
+    // A background app has no Dock icon and no menu bar; while the workspace is open it needs both
+    // (File > Open Configuration File…, Edit > Paste, Cmd+Q), so it becomes a regular app for as
+    // long as the window is up.
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
     if let Some(window) = app.get_webview_window(WINDOW) {
         let _ = window.unminimize();
         let _ = window.show();
@@ -279,12 +284,55 @@ fn open_workspace(app: &AppHandle) {
     }
 }
 
+/// Put the workspace away. The island and the server stay: Penumbra goes back to being a
+/// background app, with no Dock icon and no menu bar, until it is called again.
+fn close_workspace(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(WINDOW) {
+        let _ = window.hide();
+    }
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+}
+
+/// The island's right-click menu: in the background there is no menu bar and no Dock icon, so this
+/// is where Penumbra is opened, configured and quit from.
+fn island_menu(app: &AppHandle) {
+    let Some(island) = app.get_webview_window(island::LABEL) else {
+        return;
+    };
+    let items = (|| -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+        MenuBuilder::new(app)
+            .item(&MenuItemBuilder::with_id("open", word("Open Penumbra", "打開 Penumbra")).build(app)?)
+            .separator()
+            .item(&MenuItemBuilder::with_id("config", word("Open Configuration File…", "開啟設定檔…")).build(app)?)
+            .item(&MenuItemBuilder::with_id("restart", word("Restart Server", "重新啟動伺服器")).build(app)?)
+            .separator()
+            .item(&MenuItemBuilder::with_id("quit", word("Quit Penumbra", "結束 Penumbra")).build(app)?)
+            .build()
+    })();
+    if let Ok(menu) = items {
+        let _ = island.popup_menu(&menu);
+    }
+}
+
 /// The island page's navigations. Its own page stays; `/__shell/open`, the one thing it may ask
 /// for, opens the workspace and is refused as a navigation; everything else is refused.
 fn island_navigation(app: &AppHandle, url: &url::Url) -> bool {
     let ours = url.host_str() == Some("127.0.0.1") && url.port() == current_port(app);
-    if ours && url.path() == "/__shell/open" {
-        open_workspace(app);
+    // Acted on from the event loop, not inside this callback: it runs within WebKit's navigation
+    // decision, and opening a window or changing the app's activation from there did nothing,
+    // which is why clicking the island never opened the workspace while relaunching did.
+    let verb = if ours { url.path().strip_prefix("/__shell/") } else { None };
+    if let Some(verb) = verb {
+        let app = app.clone();
+        let verb = verb.to_string();
+        let target = app.clone();
+        let _ = target.run_on_main_thread(move || match verb.as_str() {
+            "open" => open_workspace(&app),
+            "menu" => island_menu(&app),
+            "rest" => island::request_rest(),
+            _ => {}
+        });
         return false;
     }
     ours && url.path() == "/island.html"
@@ -716,6 +764,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
 fn on_menu(app: &AppHandle, id: &str) {
     let window = app.get_webview_window(WINDOW);
     match id {
+        "open" => open_workspace(app),
+        "quit" => app.exit(0),
         "config" => open_as_text(&ensure_config(app)),
         "data" => {
             let _ = open::that_detached(data_dir(app));
@@ -745,6 +795,10 @@ fn on_menu(app: &AppHandle, id: &str) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        // Calling Penumbra again (a second launch from Finder, Spotlight or a shortcut) brings the
+        // workspace forward instead of starting a second copy. macOS reports that as `Reopen`; on
+        // Windows and Linux a second process would start, so this plugin forwards it instead.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| open_workspace(app)))
         .manage(ServerState::default())
         .menu(build_menu)
         .on_menu_event(|app, event| on_menu(app, event.id().as_ref()))
@@ -795,6 +849,11 @@ pub fn run() {
             if !migration_pending {
                 remember(&handle, "introduced", serde_json::json!(true));
             }
+            // At rest Penumbra is a background app: the island is its only presence.
+            #[cfg(target_os = "macos")]
+            if introduced {
+                let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
             boot(handle);
             Ok(())
         })
@@ -804,7 +863,7 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == WINDOW {
                     api.prevent_close();
-                    let _ = window.hide();
+                    close_workspace(window.app_handle());
                 }
             }
         })

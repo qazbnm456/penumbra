@@ -124,3 +124,17 @@ def test_the_setting_accepts_default_off_or_an_orbit_id_and_nothing_else(tmp_pat
     assert config.landing_orbit(base_dir=tmp_path) == "reading-list"
     with pytest.raises(ValueError):
         config.write_settings({"landing_orbit": "../escape"}, base_dir=tmp_path)
+
+
+def test_an_upload_that_creates_the_first_orbit_titles_it_in_the_readers_language(client):
+    """The first orbit is often created by a dropped file. The upload path did not pass the
+    interface language along, so a reader with a Chinese interface got an orbit named "First orbit"."""
+    resp = client.post(
+        "/horizon/upload",
+        files=[("file", ("notes.md", b"# notes\n\nsomething worth keeping", "text/markdown"))],
+        headers={"X-Penumbra-Interface-Language": "Traditional Chinese"},
+    )
+    assert resp.status_code == 200, resp.text
+    node_id = resp.json()["nodes"][0]["id"]
+    assert _filed(node_id) == [api.FIRST_ORBIT_ID]
+    assert load_orbit(api.FIRST_ORBIT_ID).title == "第一個軌道"

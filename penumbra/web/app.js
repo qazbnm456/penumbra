@@ -8836,6 +8836,25 @@ function facetLabels(books) {
   return out;
 }
 
+// **A workspace that was hidden is stale when it comes back.** In the desktop app the workspace is
+// loaded once and then hidden and shown, not reloaded: everything captured through the island in
+// between was in the Horizon and in the first orbit while this page still drew an empty stream. Its
+// return (focus or visibility) is when it catches up, the Horizon and the orbit rail both.
+function refreshWhenShown() {
+  let last = 0;
+  const catchUp = () => {
+    if (document.visibilityState !== "visible" || Date.now() - last < 500) return;
+    last = Date.now();
+    const horizonView = document.getElementById("view-horizon");
+    if (horizonView && !horizonView.hidden) refreshHorizon({ reset: false });
+    renderFacets();
+  };
+  window.addEventListener("focus", catchUp);
+  document.addEventListener("visibilitychange", catchUp);
+}
+
+refreshWhenShown();
+
 async function renderFacets() {
   const list = horizonEl("facet-list");
   let data;

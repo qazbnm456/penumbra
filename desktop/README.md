@@ -12,6 +12,7 @@ macOS 13 is the floor because the stylesheet uses `color-mix()`, which WKWebView
 
 ## What the shell does
 
+- **Lives in the notch.** At rest Penumbra is a background app with no Dock icon and no menu bar; its only presence is the island, a black shape in the MacBook notch (the top centre of a screen without one, the left edge on Windows and Linux). It opens when the pointer rests on it or when something is dragged toward it, swallows what is dropped on it into the Horizon, and opens the workspace when clicked. Right-click it to configure, restart or quit. Launching Penumbra again also opens the workspace.
 - **Accepts dropped files.** Tauri's own drop handler is turned off so the web UI's drop-anywhere capture receives them.
 - **Starts and stops the server.** On launch it runs the bundled `python -m penumbra.cli serve` on a loopback port, with an API token it mints for that launch, and moves the window onto the web UI once the server answers. Quitting stops the server, which ends every run in flight. If the app is killed instead of quit, the server notices its stdin pipe close and shuts itself down (invariant 81).
 - **Keeps the port.** The port is remembered between launches, because the web UI stores its interface language, theme and panel widths per origin, and the origin includes the port.
