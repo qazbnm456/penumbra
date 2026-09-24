@@ -103,6 +103,10 @@ class IntakeQueue:
         #: a STRUCTURAL fact (`intake.py` imports nothing model-related) rather than a promise.
         #: Anything it raises is logged and swallowed: a policy hook must not end intake.
         self._on_idle = on_idle
+        #: Called on the WORKER thread after a node's blocks are stored. Same contract as `_on_idle`:
+        #: the policy (filing into the landing orbit) belongs to whoever configures the queue, and
+        #: anything it raises is logged and swallowed, because a capture that parsed has landed.
+        self._on_ready: Callable[[str], None] | None = None
         self._queue: queue.Queue[object] = queue.Queue()
         self._thread: threading.Thread | None = None
         #: Guards `_thread`, `_stopping`, and the pairing of "drain" with "enqueue the sentinel".
@@ -209,6 +213,10 @@ class IntakeQueue:
                 return
         self._ensure_worker()
         self._queue.put(_NUDGE)
+
+    def set_ready_hook(self, on_ready: Callable[[str], None] | None) -> None:
+        """Install the after-parse policy. See `_on_ready`."""
+        self._on_ready = on_ready
 
     def set_idle_hook(self, on_idle: Callable[[], None] | None) -> None:
         """Install (or clear) the callback run when the queue goes empty. Public because the POLICY
@@ -502,6 +510,12 @@ class IntakeQueue:
             # backends, and the contract is that a capture never kills the worker and never
             # disappears — it becomes a `failed` node the reader can see and retry.
             self._record_failure(node_id, exc)
+            return
+        if self._on_ready is not None:
+            try:
+                self._on_ready(node_id)
+            except BaseException:  # noqa: BLE001 - see `_maybe_idle`: a policy hook never ends intake
+                _log.exception("intake: the after-parse hook failed for %s", node_id)
 
 
 #: The API's single queue, created on first use. Single-process, like `api._ACTIVE_RUNS`

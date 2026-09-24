@@ -1845,6 +1845,16 @@ function settingRows() {
         "Off by default. Each summary is a model call on your own key, so a 200-bookmark import costs nothing until you turn this on."
       ),
     },
+    {
+      key: "landing_orbit",
+      label: t("settings.landing", "Where new captures land"),
+      values: ["off"],
+      labels: { off: t("settings.landingOff", "Keep them in the Horizon only") },
+      help: t(
+        "settings.landingHelp",
+        "By default, everything you capture is also filed into your first orbit, so you can ask about it right away. It stays in the Horizon either way."
+      ),
+    },
   ];
 }
 

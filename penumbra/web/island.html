@@ -1,0 +1,29 @@
+<!doctype html>
+<!-- The Penumbra island: the whole app while it is not open. It lives in the MacBook notch (or at
+     the top centre of a screen without one, or on the left edge on Windows and Linux), and does
+     three things: say that Penumbra is there, swallow whatever is dropped on it into the Horizon,
+     and open the workspace when clicked. The desktop shell sizes this window and tells the page
+     which state it is in; the page draws that state. -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Penumbra</title>
+<link rel="stylesheet" href="island.css" />
+</head>
+<body data-state="collapsed" data-edge="top">
+  <main class="hole" id="hole" role="button" tabindex="0" aria-label="Open Penumbra"
+        data-i18n-label="island.open">
+    <div class="horizon" aria-hidden="true"><div class="accretion"></div><div class="core"></div></div>
+    <div class="say">
+      <span class="say-name">Penumbra</span>
+      <span class="say-line" id="say-line" data-i18n="island.hint">Drop anything here</span>
+    </div>
+    <span class="count" id="count" hidden></span>
+  </main>
+  <div class="motes" id="motes" aria-hidden="true"></div>
+  <p class="sr-only" id="live" role="status" aria-live="polite"></p>
+<script src="i18n.js"></script>
+<script src="island.js"></script>
+</body>
+</html>

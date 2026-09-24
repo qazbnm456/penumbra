@@ -23,6 +23,8 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod island;
+
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::webview::DownloadEvent;
 use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
@@ -245,8 +247,47 @@ fn choose_port(app: &AppHandle) -> u16 {
             .map(|addr| addr.port())
             .unwrap_or(47821),
     };
-    let _ = fs::write(&record, serde_json::json!({ "port": port }).to_string());
+    remember(app, "port", serde_json::json!(port));
     port
+}
+
+/// `desktop.json`, the shell's own small memory. Read-modify-write, so remembering one thing (the
+/// port) never forgets another (whether the reader has met the island yet).
+fn recall(app: &AppHandle) -> serde_json::Map<String, serde_json::Value> {
+    fs::read_to_string(data_dir(app).join("desktop.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default()
+}
+
+fn remember(app: &AppHandle, key: &str, value: serde_json::Value) {
+    let mut record = recall(app);
+    record.insert(key.to_string(), value);
+    let _ = fs::write(
+        data_dir(app).join("desktop.json"),
+        serde_json::Value::Object(record).to_string(),
+    );
+}
+
+/// Bring the workspace forward: from the island, the Dock, or a failure it has to show.
+fn open_workspace(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(WINDOW) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+/// The island page's navigations. Its own page stays; `/__shell/open`, the one thing it may ask
+/// for, opens the workspace and is refused as a navigation; everything else is refused.
+fn island_navigation(app: &AppHandle, url: &url::Url) -> bool {
+    let ours = url.host_str() == Some("127.0.0.1") && url.port() == current_port(app);
+    if ours && url.path() == "/__shell/open" {
+        open_workspace(app);
+        return false;
+    }
+    ours && url.path() == "/island.html"
 }
 
 fn mint_token() -> String {
@@ -487,6 +528,11 @@ fn boot(app: AppHandle) {
         if let Ok(url) = url::Url::parse(&target) {
             let _ = window.navigate(url);
         }
+        let island_target = format!("http://127.0.0.1:{port}/island.html#token={token}");
+        if let Ok(url) = url::Url::parse(&island_target) {
+            let nav = app.clone();
+            island::show(&app, url, move |u| island_navigation(&nav, u));
+        }
     });
 }
 
@@ -494,6 +540,10 @@ fn boot(app: AppHandle) {
 /// an `eval` into a page that is not there yet is lost, leaving "Starting…" up forever. Sent a few
 /// times over a few seconds, which costs nothing once it has landed.
 fn splash_failure(window: &WebviewWindow, detail: &str) {
+    // The workspace may be hidden (the island is the app at rest), and a failure nobody can see is
+    // the worst kind.
+    let _ = window.show();
+    let _ = window.set_focus();
     for _ in 0..10 {
         splash(window, "failed", true, detail);
         thread::sleep(Duration::from_millis(300));
@@ -701,12 +751,18 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             migrate_from_rlm_notebook(&handle);
+            island::measure(&handle);
+            // The workspace opens by itself only the first time, so the reader meets the app before
+            // meeting the island. After that the island IS the app at rest.
+            let introduced = MIGRATION_ERROR.lock().map(|e| e.is_none()).unwrap_or(false)
+                && recall(&handle).get("introduced").and_then(|v| v.as_bool()).unwrap_or(false);
             let nav = handle.clone();
             let dl = handle.clone();
             WebviewWindowBuilder::new(app, WINDOW, WebviewUrl::App("index.html".into()))
                 .title("Penumbra")
                 .inner_size(1440.0, 900.0)
                 .min_inner_size(900.0, 600.0)
+                .visible(!introduced)
                 // Tauri's own file-drop handler swallows the drag before the page sees it, so the
                 // web UI's drop-anywhere capture never fired. The page handles drops itself.
                 .disable_drag_drop_handler()
@@ -736,13 +792,30 @@ pub fn run() {
             if !migration_pending && !model_configured(&handle) {
                 ensure_config(&handle);
             }
+            if !migration_pending {
+                remember(&handle, "introduced", serde_json::json!(true));
+            }
             boot(handle);
             Ok(())
+        })
+        // Closing the workspace puts it away; the island stays, and so does the server. Quit is
+        // Cmd+Q (or File > Quit), which stops both.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == WINDOW {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .build(tauri::generate_context!())
         .expect("error while building the Penumbra desktop app");
 
     app.run(|app, event| {
+        #[cfg(target_os = "macos")]
+        if let RunEvent::Reopen { .. } = event {
+            open_workspace(app);
+        }
         if let RunEvent::Exit = event {
             let server = app.state::<ServerState>().0.lock().unwrap().take();
             if let Some(mut server) = server {

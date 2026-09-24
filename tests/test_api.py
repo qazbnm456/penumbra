@@ -2333,6 +2333,9 @@ def test_no_safety_bound_or_credential_is_readable_or_writable(client, monkeypat
         # token holder can call, so this changes WHEN summaries happen, not whether someone can
         # cause them. Its bound is the next line down, and stays off the page.
         "auto_distil",
+        # Also a BEHAVIOUR preference: it decides which of the reader's own tiers a capture lands
+        # in, and bounds nothing.
+        "landing_orbit",
     }
 
     client.put("/settings", json={"output_language": "Japanese"})
@@ -3222,7 +3225,7 @@ def test_the_interface_language_reaches_language_resolution_as_a_signal():
     from penumbra import api, naming
 
     src = inspect.getsource(api._resolve_language)
-    assert '"interface_language": request.headers.get("x-rlm-interface-language", "")' in src, src
+    assert '"interface_language": request.headers.get("x-penumbra-interface-language", "")' in src, src
 
     # The receiving end must actually declare it, or the kwarg is silently accepted and ignored
     # (invariant 39 records that exact asymmetry as the reason its own tripwire exists).
@@ -4563,3 +4566,19 @@ def test_a_cancelled_await_kills_the_worker_rather_than_orphaning_it(monkeypatch
     assert cancelled == [True], "the worker was left running with nothing able to reach it"
     assert "orphan-nb" not in api._ACTIVE_RUNS
     assert "orphan-nb-tok" not in api._RUN_PROCESSES
+
+
+def test_the_server_reads_the_interface_language_header_the_page_sends():
+    """The rename moved the header to `X-Penumbra-Interface-Language` in `app.js` and left the server
+    reading `x-rlm-interface-language`: HTTP headers are case-insensitive but a rename script is not.
+    Every notebook's language resolution then silently lost its strongest signal (invariant 69),
+    and the test pinning the server's source text agreed with itself. This ties the two ends."""
+    import re
+    from pathlib import Path
+
+    app = (Path(api.__file__).parent / "web" / "app.js").read_text(encoding="utf-8")
+    sent = set(re.findall(r'"(X-[A-Za-z-]*Interface-Language)"', app))
+    assert sent, "app.js no longer sends an interface-language header"
+    server = Path(api.__file__).read_text(encoding="utf-8")
+    for name in sent:
+        assert f'"{name.lower()}"' in server, f"the page sends {name} and the server never reads it"

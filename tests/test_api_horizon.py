@@ -27,6 +27,13 @@ from penumbra.schema import Distillation, Source, SourceBlock
 
 
 @pytest.fixture(autouse=True)
+def _no_landing_orbit(monkeypatch):
+    """These tests are about filing BY HAND, so automatic filing into the first orbit is off here;
+    `test_landing_orbit.py` covers it."""
+    monkeypatch.setenv("PN_LANDING_ORBIT", "off")
+
+
+@pytest.fixture(autouse=True)
 def _fake_web(monkeypatch):
     """Invariant 26 means this endpoint only ever takes http(s) URLs, so every capture test needs a
     fetcher that does not fetch."""
