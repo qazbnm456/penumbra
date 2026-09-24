@@ -133,7 +133,9 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
     }
 
 
-def graph(orbit_id: str | None = None, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
+def graph(
+    orbit_id: str | None = None, *, similar=None, base_dir: str | Path = DEFAULT_HORIZON_DIR
+) -> dict:
     """The entity graph over one orbit's captures, or over every readable capture when `orbit_id`
     is `None`.
 
@@ -181,7 +183,26 @@ def graph(orbit_id: str | None = None, *, base_dir: str | Path = DEFAULT_HORIZON
                 "node_id": row["id"], "title": _label(row), "origin": row["origin"],
                 "state": row["state"], "entities": named, "tags": tags,
             })
+    # Local relations, when they are on (`vectors.py`): pairs of captures whose text is alike. An
+    # unsummarised capture that has one is drawn too, linked by that alone, which is the one way it
+    # can join the picture before anyone pays for its summary.
+    alike: list[dict] = []
+    if similar is not None:
+        drawn = {c["node_id"] for c in captures}
+        waiting = {u["node_id"]: u for u in undistilled}
+        alike = similar(list(drawn | waiting.keys()))
+        linked = {n for p in alike for n in (p["a"], p["b"])}
+        by_id = {row["id"]: row for row in rows}
+        for node_id in linked & waiting.keys():
+            if len(captures) >= MAX_CAPTURES:
+                break
+            row = by_id[node_id]
+            captures.append({"node_id": node_id, "title": _label(row), "origin": row["origin"],
+                             "state": row["state"], "entities": [], "tags": []})
+        shown = {c["node_id"] for c in captures}
+        alike = [p for p in alike if p["a"] in shown and p["b"] in shown]
     return {
+        "similar": alike,
         "entities": [_entity(name, entity_count[name], alias_table)
                      for name in sorted(kept, key=lambda n: (-entity_count[n], n))],
         "edges": [{"a": a, "b": b, "weight": w} for (a, b), w in sorted(pairs.items())],

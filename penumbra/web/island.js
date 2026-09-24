@@ -94,7 +94,20 @@
   let litBefore = 0;
   let lastSpoken = "";
 
+  let glancing = false;
+
   async function glance() {
+    // One glance at a time, so a slow server is not asked again while it is still answering.
+    if (glancing) return;
+    glancing = true;
+    try {
+      await glanceOnce();
+    } finally {
+      glancing = false;
+    }
+  }
+
+  async function glanceOnce() {
     let status;
     let topo;
     let suggested;

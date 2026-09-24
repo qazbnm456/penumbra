@@ -42,6 +42,12 @@ Each entry states what the product does now and why. The reasoning behind each r
 - Filing suggestions are computed locally: a capture in no orbit, or only in the landing orbit, is offered for the orbit whose captures share at least two of its entities, or one entity and one tag. Nothing is filed until the reader presses Add, and a declined pair is not offered again.
 - The notch island shows three facts on hover in one glyph: an arc for how much of the Horizon is summarised (it breathes while a pass runs), the ring inside it turning faster while something is being read, and four dots for filing suggestions waiting. A screen reader hears the same facts when they change.
 
+#### Local relations
+
+- Settings has a Local relations row: one press downloads an embedding model (multilingual-e5-small, int8, about 130 MB) pinned to one revision and checked against its SHA-256, with progress and a Stop; another deletes it and every stored vector. Nothing is bundled, so a reader who never turns it on pays nothing (invariant 82).
+- With it on, every capture is embedded on this computer in the background, free and without a model call, and the knowledge graph draws a dashed line between captures whose text is alike, including an unsummarised capture, which is otherwise not linked to anything until it is paid for. Filing suggestions can offer an unsummarised capture for the orbit of the filed capture it most resembles.
+- The signal is kept weak on purpose, because similarity on this model sits in a narrow band and leans towards text in the same language: a line needs a score of 0.86 and mutual nearness, text under 40 characters is not compared, and a similarity suggestion ranks below one by shared entities.
+
 #### Asking from anywhere
 
 - The ask panel rests as a handle at the foot of the star map, the list and the knowledge graph, and slides up when the pointer nears the bottom edge. Its scope follows the selection on screen: everything, a tag lens, a planet, or an entity or tag inside the orbit on screen. An orbit chip asks straight into that orbit's conversation in the three columns; every other scope is a Horizon ask.
@@ -110,7 +116,7 @@ Each entry states what the product does now and why. The reasoning behind each r
 
 - **The project is Penumbra now, and it was called rlm-notebook.** It stopped being a NotebookLM-style notebook with a web server: it is a personal knowledge hub whose server exists only for the desktop app, on loopback. The vocabulary changed with it: a notebook is an **Orbit**, the Inbox is the **Horizon**, the package and command are `penumbra`, the API lives at `/orbits` and `/horizon`, and every setting is `PN_*` instead of `RN_*`.
 - Nothing is lost in the rename. On its first start `penumbra` moves `notebooks/` to `orbits/` and `inbox/` to `horizon/`, and renames the one database column that carried the old name; it never merges into a folder that already exists. A leftover `RN_*` variable is named in a warning and ignored rather than silently honoured. The desktop app moves its data folder to the new identifier (`tw.boik.penumbra`) and rewrites its configuration file with the new setting names. The on-disk hash prefix for orbits whose names reduce to nothing (`nb-<hash>`) is unchanged, because it is part of existing file names. Prompts the model reads say "collection", a word it understands without context.
-- The agent guide is `AGENTS.md`, an index of 81 invariants with one argument file each under `docs/invariants/`. `CLAUDE.md` is a one-line bridge.
+- The agent guide is `AGENTS.md`, an index of 82 invariants with one argument file each under `docs/invariants/`. `CLAUDE.md` is a one-line bridge.
 - OCR moved to `rapidocr`, which unblocks Python 3.13 and 3.14. `pymupdf` was replaced by `pypdfium2` because its only licences were AGPL or commercial.
 - `rlm-harness` is pinned to 1.10.0, and the worker uses only its public API.
 - Budgets were sized against measured distributions: `max_tokens` is 32768 because a smaller cap cut replies off mid-JSON, the step budget is 25, and the run timeout is 300s for API models and 1800s on the subscription path, scaled up for long podcasts (invariants 59 and 68).

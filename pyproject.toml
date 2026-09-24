@@ -98,6 +98,13 @@ dependencies = [
     # Pure Python, no ffmpeg requirement for this path (verified during design). Core, not an
     # opt-in extra, same "ship a working default" reasoning as OCR/TTS above.
     "yt-dlp>=2024.1",
+    # Local relations (`vectors.py`): an embedding model run on the CPU through the `onnxruntime`
+    # above, its tokenizer, and a vector index kept in the Horizon's own SQLite file. The MODEL is
+    # not a dependency: it is downloaded once when the reader turns the feature on, so a user who
+    # never does pays nothing in install size. `sqlite-vec` is Apache-2.0/MIT, `tokenizers`
+    # Apache-2.0, and the model (multilingual-e5-small) MIT.
+    "tokenizers>=0.19",
+    "sqlite-vec>=0.1.6",
 ]
 
 [project.optional-dependencies]

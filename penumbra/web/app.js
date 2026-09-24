@@ -1867,6 +1867,82 @@ function settingRows() {
   ];
 }
 
+// Local relations: the one setting that is a download rather than a value. Its model is fetched
+// once, on a press, with its size stated beside the button; removing it deletes the model and every
+// stored vector. No model call and no money, so it is not a safety bound (invariant 41).
+function renderVectorsRow(body) {
+  const wrap = elt("div", "setting-row");
+  // A `label` like every other row's, so it takes the same style; it names the control below.
+  const name = elt("label", "", t("settings.vectors", "Local relations"));
+  wrap.appendChild(name);
+  const line = elt("div", "vectors-line");
+  wrap.appendChild(line);
+  wrap.appendChild(elt("div", "setting-source", t("settings.vectorsHelp",
+    "Finds captures with similar content on this computer, so ones not yet summarised can be linked too. Free; the model is downloaded once.")));
+  body.appendChild(wrap);
+  let timer = null;
+  const mb = (n) => (n / 1048576).toFixed(0);
+  async function paint() {
+    let st;
+    try {
+      st = await api("/horizon/vectors");
+    } catch (err) {
+      line.textContent = readableError(err.message);
+      return;
+    }
+    if (!line.isConnected) return;
+    line.textContent = "";
+    const busy = st.download.running || (st.embedding && st.embedding.running);
+    if (st.download.running) {
+      line.appendChild(elt("span", "vectors-state", t("settings.vectorsDownloading",
+        `Downloading ${mb(st.download.done)} of ${mb(st.download.total)} MB`,
+        { done: mb(st.download.done), total: mb(st.download.total) })));
+      const stop = elt("button", "btn", t("run.stop", "\u23f9 Stop"));
+      stop.type = "button";
+      stop.addEventListener("click", async () => {
+        stop.disabled = true;
+        await api("/horizon/vectors/cancel", { method: "POST" }).catch(() => {});
+      });
+      line.appendChild(stop);
+    } else if (st.installed) {
+      line.appendChild(elt("span", "vectors-state", st.embedding && st.embedding.running
+        ? t("settings.vectorsWorking", "On. Comparing new captures\u2026")
+        : t("settings.vectorsOn", "On")));
+      const off = elt("button", "btn", t("settings.vectorsRemove", "Turn off and delete the model"));
+      off.type = "button";
+      off.addEventListener("click", async () => {
+        off.disabled = true;
+        try {
+          await api("/horizon/vectors", { method: "DELETE" });
+        } catch (err) {
+          notify(readableError(err.message));
+        }
+        void paint();
+      });
+      line.appendChild(off);
+    } else {
+      const go = elt("button", "btn", t("settings.vectorsDownload", `Download the model (${mb(st.bytes)} MB)`,
+        { mb: mb(st.bytes) }));
+      go.type = "button";
+      go.addEventListener("click", async () => {
+        go.disabled = true;
+        try {
+          await api("/horizon/vectors/download", { method: "POST" });
+        } catch (err) {
+          notify(readableError(err.message));
+        }
+        void paint();
+      });
+      line.appendChild(go);
+    }
+    const why = st.download.error || (st.embedding && st.embedding.error);
+    if (why) line.appendChild(elt("span", "vectors-error", readableError(why)));
+    clearTimeout(timer);
+    if (busy) timer = setTimeout(paint, 1000);
+  }
+  void paint();
+}
+
 // The INTERFACE language row. Client-side only — it never reaches the server, because it is not a
 // server setting: `PN_OUTPUT_LANGUAGE` decides what the MODEL writes, this decides what the buttons
 // say, and a reader who wants a Chinese interface over English papers needs both to be expressible.
@@ -1950,6 +2026,7 @@ function renderSettings(state_) {
 
   const inputs = new Map();
   renderUiLanguageRow(body);
+  renderVectorsRow(body);
 
   settingRows().forEach((row) => {
     const entry = state_[row.key] || { value: null, source: "default", env_var: "" };
@@ -10362,7 +10439,7 @@ function distilOrbitControl(slug, count) {
 
 // --- filing suggestions ---------------------------------------------------------------------------
 
-const suggest = { items: [], open: false, lastFetch: 0 };
+const suggest = { items: [], open: false, lastFetch: 0, inFlight: false, again: false };
 
 async function ensureOrbitTitles() {
   if (orbitTitles.size) return;
@@ -10377,13 +10454,27 @@ async function ensureOrbitTitles() {
 }
 
 async function refreshSuggestions({ force = false } = {}) {
+  // One request at a time: a slow answer must not be asked for again while it is still coming. A
+  // forced refresh (after Add or Not this) that arrives meanwhile runs once that one lands, since
+  // the answer in flight may predate the action.
+  if (suggest.inFlight) {
+    if (force) suggest.again = true;
+    return;
+  }
   if (!force && Date.now() - suggest.lastFetch < 5000) return;
   suggest.lastFetch = Date.now();
+  suggest.inFlight = true;
   let data;
   try {
     data = await api("/horizon/suggestions");
   } catch {
     return;
+  } finally {
+    suggest.inFlight = false;
+    if (suggest.again) {
+      suggest.again = false;
+      void refreshSuggestions({ force: true });
+    }
   }
   await ensureOrbitTitles();
   suggest.items = data.suggestions || [];
@@ -10409,8 +10500,9 @@ function renderSuggestions() {
     const row = elt("li", "suggest-row");
     row.appendChild(elt("span", "suggest-title", item.title));
     const why = [...item.shared, ...item.tags.map((tag) => `#${tag}`)].join(t("list.sep", ", "));
-    row.appendChild(elt("span", "suggest-why", t("suggest.why", `Into ${where}: both name ${why}`,
-      { where, why })));
+    row.appendChild(elt("span", "suggest-why", item.like
+      ? t("suggest.like", `Into ${where}: its content is like ${item.like}`, { where, like: item.like })
+      : t("suggest.why", `Into ${where}: both name ${why}`, { where, why })));
     const add = elt("button", "btn", t("suggest.add", "Add"));
     add.type = "button";
     add.addEventListener("click", async () => {
@@ -10565,7 +10657,8 @@ function layoutGraph(data) {
       p.y = Math.min(H - 60, Math.max(50, p.y + f.y * scale));
     });
   }
-  // Captures sit beside the entities they name; one naming none waits at the edge.
+  // Captures sit beside the entities they name; one naming none waits at the edge, unless local
+  // relations link it to a capture that is placed, in which case it sits beside that one.
   const captures = data.captures.map((c, i) => {
     const anchors = c.entities.map((n) => pos.get(n)).filter(Boolean);
     const jitterA = stableHash(c.node_id) * Math.PI * 2;
@@ -10577,6 +10670,18 @@ function layoutGraph(data) {
     const cx = anchors.reduce((s, a) => s + a.x, 0) / anchors.length;
     const cy = anchors.reduce((s, a) => s + a.y, 0) / anchors.length;
     return { ...c, x: cx + jitterR * Math.cos(jitterA), y: cy + jitterR * Math.sin(jitterA), anchors };
+  });
+  const at = new Map(captures.map((c) => [c.node_id, c]));
+  (data.similar || []).forEach((pair) => {
+    const a = at.get(pair.a);
+    const b = at.get(pair.b);
+    if (!a || !b) return;
+    const [loose, placed] = !a.anchors.length && b.anchors.length ? [a, b] : !b.anchors.length && a.anchors.length ? [b, a] : [null, null];
+    if (!loose || loose.moved) return;
+    const angle = stableHash(`${loose.node_id}s`) * Math.PI * 2;
+    loose.x = placed.x + 34 * Math.cos(angle);
+    loose.y = placed.y + 34 * Math.sin(angle);
+    loose.moved = true;
   });
   // Framed to what was drawn, so a small graph fills the stage instead of sitting in its middle;
   // never tighter than a minimum, so two entities are not blown up to fill a screen.
@@ -10659,10 +10764,21 @@ function drawGraph() {
   });
   svg.appendChild(edgeLayer);
 
+  // Local relations: a dashed line between two captures whose text is alike.
+  const placed = new Map(layout.captures.map((c) => [c.node_id, c]));
+  (data.similar || []).forEach((pair) => {
+    const a = placed.get(pair.a);
+    const b = placed.get(pair.b);
+    if (!a || !b) return;
+    edgeLayer.appendChild(svgEl("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y },
+      `graph-similar${focus ? " is-dim" : ""}`));
+  });
+
   layout.captures.forEach((c) => {
     const lit = !focus || litCaptures.has(c.node_id);
+    const waiting = c.state === "ready_undistilled";
     const mark = svgEl("rect", { x: c.x - 4, y: c.y - 4, width: 8, height: 8, rx: 2 },
-      `graph-capture${lit ? "" : " is-dim"}`);
+      `graph-capture${waiting ? " is-waiting" : ""}${lit ? "" : " is-dim"}`);
     const title = svgEl("title");
     title.textContent = c.title;
     mark.appendChild(title);
@@ -10782,6 +10898,10 @@ function renderGraphPanel(litCaptures) {
     panel.appendChild(merged);
   }
   panel.appendChild(elt("p", "card-meta", t("graph.inCaptures", `${items.length} captures`, { n: items.length })));
+  if ((data.similar || []).length && !graphState.lens && !graphState.selected) {
+    panel.appendChild(elt("p", "card-note", t("graph.similarNote",
+      "Dashed lines join captures with similar content, compared on this computer. Hollow squares are not summarised yet.")));
+  }
   const left = (data.omitted && data.omitted.entities) || 0;
   if (left && !graphState.lens && !graphState.selected) {
     panel.appendChild(elt("p", "card-note", t("graph.omitted",
