@@ -3153,9 +3153,13 @@ def test_a_failed_answer_offers_the_same_retry_a_failed_capture_does():
     js = _strip_js_comments((WEB / "app.js").read_text(encoding="utf-8"))
     start = js.index("  } else if (turn.failed) {")
     branch = js[start : js.index("\n  } else {", start)]
-    assert "regenerateTurnButton(" in branch, (
-        "a failed answer offers no way to try again, while a failed capture does"
+    # Through the answer footer, which both branches share, so follow it one level.
+    footer = js[js.index("function turnFooter(") :]
+    footer = footer[: footer.index("\n}\n")]
+    offers = "regenerateTurnButton(" in branch or (
+        "turnFooter(" in branch and "regenerateTurnButton(" in footer
     )
+    assert offers, "a failed answer offers no way to try again, while a failed capture does"
     assert "turn-failed-why" in branch, "the failure branch no longer shows the reason"
 
 

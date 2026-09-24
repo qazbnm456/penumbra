@@ -1404,6 +1404,9 @@ class SourceDetailResponse(BaseModel):
     origin: str
     flags: list[str]
     blocks: list[SourceBlockResponse]
+    #: The same display-only page metadata the notebook response carries (invariant 51), so the
+    #: source viewer can head itself with the page's title rather than its host.
+    preview: dict[str, str] = {}
 
 
 @app.get("/notebooks/{notebook_id}/sources/{source_id}", response_model=SourceDetailResponse)
@@ -1430,6 +1433,7 @@ async def get_source(notebook_id: str, source_id: str) -> SourceDetailResponse:
         origin=source.origin,
         flags=source.flags,
         blocks=[SourceBlockResponse(locator=b.locator, text=b.text) for b in source.blocks],
+        preview=source.preview,
     )
 
 

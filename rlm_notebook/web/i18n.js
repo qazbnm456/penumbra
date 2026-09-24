@@ -134,6 +134,9 @@ const STRINGS = {
 
     // --- chat
     "chat.head": "對話",
+    "chat.startUrl": "貼上連結",
+    "chat.startText": "貼上文字",
+    "chat.startFile": "上傳檔案",
     "chat.needSource": "請先加入來源，每個回答都以你的來源為依據。",
     "panels.label": "筆記本面板",
     "chat.export": "匯出",

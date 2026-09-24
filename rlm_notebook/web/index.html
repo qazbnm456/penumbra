@@ -290,6 +290,13 @@
              avoiding, and it is three lines. -->
         <div class="chat-overview" id="chat-overview" hidden></div>
         <p class="empty-note" id="chat-empty" data-i18n="chat.empty">Ask a question once you've added a source.</p>
+        <!-- An empty notebook's first move. "Add source" is disabled until its field has something in
+             it, so the page had no enabled primary action at all. These jump to the source form. -->
+        <div class="chat-start" id="chat-start" hidden>
+          <button type="button" class="btn btn-primary" data-start-kind="url" data-i18n="chat.startUrl">Paste a link</button>
+          <button type="button" class="btn" data-start-kind="text" data-i18n="chat.startText">Paste text</button>
+          <button type="button" class="btn" data-start-kind="file" data-i18n="chat.startFile">Upload a file</button>
+        </div>
       </div>
 
       <!-- The whole box is the field. The textarea has no chrome of its own; the surrounding form

@@ -54,6 +54,8 @@ Each entry states what the product does now and why. The reasoning behind each r
 - A zero-build web UI served by the API is the product's main surface (invariant 29). It has a warm paper theme and a dark theme, Literata for reading and Public Sans for the interface, one copper accent, and an English and a Traditional Chinese interface.
 - Every long-running action shows that it is running, with elapsed time and a Stop, and starts only on an explicit press (invariant 47).
 - Below 640px wide (a narrow desktop window or high zoom), a notebook shows one panel at a time through a Sources, Chat and Studio tab row.
+- An empty notebook offers Paste a link, Paste text and Upload a file as its first move. An answer's references link, steps pill and Regenerate share one footer row. The Studio's tab strip stays pinned while its column scrolls.
+- The source viewer is headed by the page's own title, which the source-detail response now carries.
 - A settings page covers presentation choices only: interface and output language, podcast voices, and the auto-summary toggle. Safety bounds stay in the environment (invariant 41).
 
 #### Server, CLI and deployment
@@ -111,7 +113,4 @@ These are the few failures that shaped the current design. Smaller fixes are not
 
 - Guides are not persisted, and a guide run that outlives a notebook switch cannot be recovered.
 - The in-memory run maps have no multi-worker story, and the API has one shared token with no accounts.
-- The source viewer is titled by the host (for example `arxiv.org`) rather than the source's title, because the source-detail response carries no preview.
-- Opening a References card low in the list can scroll the Studio's tab strip out of view at 1280px wide.
-- An answer's footer actions sit on separate lines, and an empty notebook has no primary action.
 - The Tauri shell is not built. It will need to require macOS with Safari 16.2 or later (for `color-mix()`), and to provide downloads and a print command.
