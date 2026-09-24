@@ -4355,7 +4355,8 @@ def test_no_handler_reaches_a_model_run_without_the_source_guard():
             continue
         if "_run_isolated(" not in body:
             continue
-        if "_require_sources(" not in body:
+        # `_require_captures` is the same guard for a Horizon ask, whose corpus is picked captures.
+        if "_require_sources(" not in body and "_require_captures(" not in body:
             offenders.append(name.group(1))
     assert not offenders, (
         "these handlers spawn a model run without checking there is anything to run it against — "

@@ -14,7 +14,7 @@ Tier 0  horizon.py     thousands of nodes, a SQLite index, never a blob
 Tier 1  orbit.py  about 10 to 50 sources, one JSON file, the corpus blob, invariant 8
 ```
 
-The rule is narrow and absolute: if anything at Tier 0 calls `Corpus.blob()` over the Horizon, invariant 8 applies to a collection designed to outgrow it. Anything Tier 0 reads from the text, such as distillation, search or a future embedding, reads one node's blocks or `Corpus.excerpt` over a bounded selection, never the whole Horizon.
+The rule is narrow and absolute: if anything at Tier 0 calls `Corpus.blob()` over the Horizon, invariant 8 applies to a collection designed to outgrow it. Anything Tier 0 reads from the text reads one node's blocks or a bounded selection, never the whole Horizon. Distillation reads one node. The search index reads one node at a time to build its row. A Horizon ask is the one place a blob is assembled at Tier 0, and it is assembled from a selection that `search.select_for_ask` has already bounded by `PN_HORIZON_ASK_CHARS` and `PN_HORIZON_ASK_ITEMS`, which can never exceed the orbit cap, and then measured against that cap again before the run. That is the same bound an orbit lives under, applied to a selection instead of to a collection, so the ask is a temporary orbit and not an exception to this rule. "Ask the whole Horizon" therefore means "ask what the question's words select from the whole Horizon", and the preview says how many captures that is before anything is spent.
 
 ## A node is a parsed Source not yet bound to an orbit
 
@@ -49,9 +49,17 @@ The initialisation cache checks that the database file still exists. Without tha
 
 `busy_timeout` and `foreign_keys` are both per connection. Without the second, the `ON DELETE CASCADE` on `memberships` does nothing.
 
+## The search index
+
+`search.py` keeps a full-text index in the same `index.db`, as an FTS5 table beside `nodes`. It is derived: every row can be rebuilt from a node row and its blocks file, `sync` rebuilds whatever is missing or older than its node, and a `search_rows` mapping with `ON DELETE CASCADE` plus a trigger removes a node's index row when the node goes. The mapping uses `AUTOINCREMENT`, because a reused rowid would hand a new node the words of a deleted one if its index row were ever left behind.
+
+Chinese, Japanese and Korean text is indexed as overlapping character pairs, computed in Python because Python's `sqlite3` cannot register an FTS5 tokenizer. FTS5's `unicode61` tokenizer makes a whole run of Han characters one token, and its `trigram` tokenizer cannot match a two-character word, which is most of Chinese vocabulary. A dictionary segmenter was measured and refused: jieba's default dictionary split 關係 on Traditional text, its Traditional dictionary and a Simplified-conversion round trip both split 海馬迴 into 海馬 / 迴在, and a search for 海馬迴 then found nothing. Pairs need no dictionary, carry no Traditional or Simplified bias and never lose a term to a wrong cut; they are the standard CJK analyzer in Lucene for the same reasons. The table is contentless (`content=''`, `contentless_delete=1`, SQLite 3.43 or newer), because storing the paired text would double every node's size.
+
+The searchable states are derived from `schema.NodeState` minus `queued`, `parsing` and `failed`. A hand-written list once said `distilled`, a state that does not exist (a summarised node is `ready`), and every summarised capture would have dropped out of search.
+
 ## Not here
 
-There are no parsers beyond what `ingest_one` handles, no embeddings, no implicit edges, no graph and no cross-orbit search. The index carries `tags` and `entities` so a later feature can use them without a migration. WAL needs a real local filesystem and degrades or fails on a network share, as the orbit files already do, more quietly.
+There are no parsers beyond what `ingest_one` handles, no embeddings, no implicit edges and no graph. Traditional and Simplified spellings of the same word do not match each other in the index. The find box on the Horizon still matches the distilled fields by substring; the full-text index serves Horizon asks. WAL needs a real local filesystem and degrades or fails on a network share, as the orbit files already do, more quietly.
 
 ---
 

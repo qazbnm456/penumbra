@@ -18,6 +18,14 @@ Each entry states what the product does now and why. The reasoning behind each r
 - Distillation writes a short title, summary, tags and entities for each capture so it can be found again. It is off by default and bounded by an environment-only cap, because summarising every capture of a 200-bookmark import would silently spend 200 model calls. A failed summary leaves the node usable (invariant 80).
 - Search reads titles, summaries, tags, entities and origins. Several words must all match, and a query with no spaces (such as Chinese) is matched as one substring.
 
+#### Asking the Horizon
+
+- You can ask a question over everything you kept, one tag or one entity, not only inside an orbit. The first press decides locally, at no cost, which captures the question will read and says how many; the second press asks (invariant 47).
+- The captures are picked with a full-text index inside the Horizon's own database. Chinese, Japanese and Korean text is indexed as overlapping character pairs instead of through a dictionary: jieba's default dictionary split 關係 on Traditional text, every dictionary variant split 海馬迴 so a search for it found nothing, and FTS5's own trigram tokenizer cannot match a two-character word at all. The index is derived from the captures and rebuilt on demand (invariant 78).
+- A scope that fits is read whole. A larger one reads what the question's words found, best first, up to `PN_HORIZON_ASK_CHARS` (1,000,000 characters, never above the orbit cap) and `PN_HORIZON_ASK_ITEMS` (40). When the words find nothing, it reads the newest captures and says so. Both bounds are set in the environment only (invariant 41).
+- Each answer is kept in the Horizon's ask history with the captures it read. Reopening one checks its citations again against the captures as they are now, so a removed capture leaves its citations unverified. A question about one orbit is still asked inside that orbit and joins its conversation.
+- Horizon asks run under the reserved handle `horizon-ask`, so the live ticker, Stop, the Trajectory drawer and recovery after a reload work exactly as they do in an orbit. No orbit id may start with that handle.
+
 #### Orbits and grounded chat
 
 - Ingestion covers text, web pages, PDFs (including scans, through local hybrid OCR that ships on by default) and YouTube captions. Ingestion runs on the host and one source at a time, because PDFium is not thread-safe: four PDFs ingested concurrently crashed the process (invariants 3, 7 and 33).
@@ -82,7 +90,7 @@ Each entry states what the product does now and why. The reasoning behind each r
 
 - **The project is Penumbra now, and it was called rlm-notebook.** It stopped being a NotebookLM-style notebook with a web server: it is a personal knowledge hub whose server exists only for the desktop app, on loopback. The vocabulary changed with it: a notebook is an **Orbit**, the Inbox is the **Horizon**, the package and command are `penumbra`, the API lives at `/orbits` and `/horizon`, and every setting is `PN_*` instead of `RN_*`.
 - Nothing is lost in the rename. On its first start `penumbra` moves `notebooks/` to `orbits/` and `inbox/` to `horizon/`, and renames the one database column that carried the old name; it never merges into a folder that already exists. A leftover `RN_*` variable is named in a warning and ignored rather than silently honoured. The desktop app moves its data folder to the new identifier (`tw.boik.penumbra`) and rewrites its configuration file with the new setting names. The on-disk hash prefix for orbits whose names reduce to nothing (`nb-<hash>`) is unchanged, because it is part of existing file names. Prompts the model reads say "collection", a word it understands without context.
-- The agent guide is `AGENTS.md`, an index of 80 invariants with one argument file each under `docs/invariants/`. `CLAUDE.md` is a one-line bridge.
+- The agent guide is `AGENTS.md`, an index of 81 invariants with one argument file each under `docs/invariants/`. `CLAUDE.md` is a one-line bridge.
 - OCR moved to `rapidocr`, which unblocks Python 3.13 and 3.14. `pymupdf` was replaced by `pypdfium2` because its only licences were AGPL or commercial.
 - `rlm-harness` is pinned to 1.10.0, and the worker uses only its public API.
 - Budgets were sized against measured distributions: `max_tokens` is 32768 because a smaller cap cut replies off mid-JSON, the step budget is 25, and the run timeout is 300s for API models and 1800s on the subscription path, scaled up for long podcasts (invariants 59 and 68).
@@ -130,3 +138,4 @@ These are the few failures that shaped the current design. Smaller fixes are not
 
 - Guides are not persisted, and a guide run that outlives an orbit switch cannot be recovered.
 - The in-memory run maps have no multi-worker story, and the API has one shared token with no accounts.
+- Traditional and Simplified spellings of the same word do not match each other in Horizon search, and a Horizon ask stands alone, with no follow-up thread. The Horizon's find box still matches summaries, tags and origins by substring; the full-text index serves asks.
