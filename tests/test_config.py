@@ -312,3 +312,138 @@ def test_the_repl_output_cap_is_this_projects_own_choice(monkeypatch):
     monkeypatch.delenv("RN_MAX_OUTPUT_CHARS", raising=False)
     assert NotebookConfig.from_env().max_output_chars == 40_000
     assert NotebookConfig().max_output_chars == 40_000
+
+
+# --- invariant 59: a budget the provider will actually accept -------------------------------------
+
+
+def test_max_tokens_is_clamped_to_what_the_model_will_accept(caplog):
+    """**The shipped default refused every call for the model `.env.example` itself names.**
+
+    `RN_MAX_TOKENS` defaults to 32768 for invariant 59's reason: dspy reads `content` and discards
+    `reasoning_content`, so a reasoning model's chain of thought is billed against a cap it never
+    appears in and a smaller number returns a reply cut mid-JSON. That argument is about the
+    DISTRIBUTION of replies and says nothing about the provider's own ceiling, which is lower for
+    most models people actually run — `openai/gpt-4o` and `gpt-4o-mini` at 16384, `gpt-4-turbo` and
+    `claude-3-opus` at 4096, `gemini-2.0-flash` at 8192.
+
+    OpenAI refuses an oversized `max_tokens` BEFORE it checks the key, so the request never left the
+    machine: ask, guide, overview, title and podcast all answered 502 with `max_tokens is too
+    large: 32768`, and a valid key changed nothing. Proven by an A/B on a live server where
+    `RN_MAX_TOKENS=8000` reached the provider and the default did not. It is invisible to anyone
+    whose own model has a ≥32k output cap, which is why it survived to a seventh review round.
+    """
+    import logging
+
+    from rlm_notebook.config import _CLAMPED, _max_tokens_for
+
+    _CLAMPED.clear()
+    with caplog.at_level(logging.WARNING, logger="rlm_notebook.config"):
+        assert _max_tokens_for("openai/gpt-4o", 32768) == 16384
+    # SAID, not silently corrected: invariant 9's rule is that a silent override makes an
+    # operator's belief about their own run false. Both numbers, so they can choose differently.
+    assert "32768" in caplog.text and "16384" in caplog.text and "openai/gpt-4o" in caplog.text
+
+    # Once per model per process. `setup()` runs in every worker subprocess (invariant 21), so an
+    # un-deduplicated warning would print on every single run.
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="rlm_notebook.config"):
+        assert _max_tokens_for("openai/gpt-4o", 32768) == 16384
+    assert not caplog.text.strip()
+
+
+def test_a_budget_already_under_the_ceiling_and_an_unknown_model_are_left_alone():
+    """The clamp is a floor-finder, not a policy. A value the model accepts passes through
+    untouched, and a model litellm has never heard of — a proxy, a local server, a name from a
+    private deployment — keeps whatever the operator set. The metadata is a convenience, not an
+    authority, and refusing to run because a table has no entry would break every self-hosted setup
+    this product is aimed at.
+    """
+    import contextlib
+    import io
+
+    from rlm_notebook.config import _max_tokens_for
+
+    assert _max_tokens_for("openai/gpt-4o", 8000) == 8000
+
+    # **And it does it QUIETLY.** litellm writes a red "Provider List: …" banner to STDOUT (not
+    # stderr, not logging) before raising on a model it does not know - which is the ordinary case
+    # here, since any proxy or local server is one - and `cli.py` prints the answer to stdout. Two
+    # ANSI banners were interleaving with the answer to every question.
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        assert _max_tokens_for("myproxy/some-private-deployment", 32768) == 32768
+    assert out.getvalue() == "" and err.getvalue() == "", (
+        f"the lookup printed on a miss: stdout={out.getvalue()[:80]!r} stderr={err.getvalue()[:80]!r}"
+    )
+    assert _max_tokens_for("", 32768) == 32768
+    assert _max_tokens_for("openai/gpt-4o", 0) == 0
+
+
+def test_setup_hands_the_clamped_budget_to_the_harness(monkeypatch):
+    """The clamp has to reach `rlm_harness.configure`, not merely exist. `setup()` is the ONE place
+    either entry point configures a model, so this is the only seam where it can be applied once
+    for the CLI and the API's worker subprocess alike.
+    """
+    import sys
+    import types
+
+    from rlm_notebook import config as config_module
+
+    seen: dict = {}
+    fake = types.ModuleType("rlm_harness")
+    fake.configure = lambda cfg, **kw: seen.update(max_tokens=cfg.max_tokens)
+    monkeypatch.setitem(sys.modules, "rlm_harness", fake)
+
+    cfg = config_module.NotebookConfig(main_model="openai/gpt-4o", max_tokens=32768)
+    config_module.setup(cfg)
+    assert seen["max_tokens"] == 16384, (
+        f"the harness was handed {seen.get('max_tokens')}, which the provider refuses outright"
+    )
+
+    # **AND THE SUB SEAT.** `RLMConfig` carries one `max_tokens` and `rlm_harness.configure` builds
+    # both LMs from the same kwargs, so a split-role install (which `README.md` advertises and
+    # invariant 35 supports) handed the sub LM a value ITS provider refuses. The lower of the two
+    # ceilings is the only number both seats accept. Invisible by default, because `RN_SUB_MODEL`
+    # inherits `RN_MAIN_MODEL`.
+    seen.clear()
+    config_module.setup(
+        config_module.NotebookConfig(
+            main_model="openai/gpt-5", sub_model="openai/gpt-4o-mini", max_tokens=32768
+        )
+    )
+    assert seen["max_tokens"] == 16384, (
+        f"the sub model's ceiling was ignored: the harness was handed {seen.get('max_tokens')} "
+        "for a seat that accepts 16384"
+    )
+
+
+def test_the_trace_reports_the_budget_the_run_actually_had():
+    """**The Trajectory drawer's Initial-state panel exists to answer "how much rope did it have".**
+
+    `traces.run_meta` stamped `config.max_tokens` — the operator's REQUESTED value — while
+    `trajectory.budget_summary` reads the cap off the LM the run used. Once `setup()` began clamping,
+    the drawer printed two different generation caps in one viewport: the BUDGET note said 16384 and
+    the chip four rows below said `max tokens 32768`. `budget_summary`'s own docstring states the
+    rule the chip was breaking ("never off `NotebookConfig`, because the configured cap can be one
+    no call ever saw"), and invariant 75 exists to say this number is the one that matters.
+
+    Both SEATS, for the same reason `setup` clamps both: one `max_tokens` reaches both LMs.
+    """
+    from rlm_notebook.traces import _effective_max_tokens
+
+    class Cfg:
+        def __init__(self, main, sub="", wanted=32768):
+            self.main_model = main
+            self.sub_model = sub
+            self.max_tokens = wanted
+
+    assert _effective_max_tokens(Cfg("openai/gpt-4o-mini")) == 16384
+    assert _effective_max_tokens(Cfg("openai/gpt-5", "openai/gpt-4o-mini")) == 16384, (
+        "the drawer would report a budget the sub LM never had"
+    )
+    # Unknown models and an already-small value pass through, and a trace is never worth failing
+    # over a metadata lookup.
+    assert _effective_max_tokens(Cfg("myproxy/x")) == 32768
+    assert _effective_max_tokens(Cfg("openai/gpt-4o-mini", "", 4000)) == 4000
+    assert _effective_max_tokens(object()) is None

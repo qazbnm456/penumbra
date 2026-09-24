@@ -8,12 +8,15 @@ __pycache__/
 # uv / virtualenv
 .venv/
 
-# Run artifacts (traces + persisted notebooks a live run writes; not source). The settings
+# Run artifacts (traces, persisted notebooks, and the Tier 0 Inbox a live run writes; not source).
+# /inbox/ holds index.db and one JSON file per captured node — a user's whole capture history, so
+# committing it would publish everything they ever threw in. The settings
 # page writes notebooks/.settings — inside an already-ignored directory, and deliberately NOT a
 # .json file, since list_notebook_summaries globs notebooks/*.json (which pathlib matches against
 # dotfiles too) and would report it as a corrupt notebook.
 /traces/
 /notebooks/
+/inbox/
 *.jsonl
 
 # Secrets / local env (only .env.example is tracked)
@@ -40,3 +43,6 @@ __pycache__/
 
 # Built by playground/build.py — regenerate rather than edit.
 /playground/dist/
+
+# Coverage data — a local run artifact, never source.
+.coverage

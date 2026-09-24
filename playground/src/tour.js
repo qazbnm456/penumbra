@@ -139,6 +139,55 @@
     // run on a machine, not a browser tab" — an implementation detail with no referent for someone
     // who does not yet know what they are looking at. It made the product sound worse than it is.
     // Say what the product does; the demo boundary is a one-line aside, not an apology.
+    // THE INBOX IS THE FIRST SCREEN, and for a while the script behaved as though it were not:
+    // fifteen steps, every one of them a control in the three-column notebook, reached by opening
+    // that notebook before the reader had seen anything. The half of the product the redesign was
+    // FOR - throw it in, let it be read, find it again, file it when you know what it is for - had
+    // no step at all.
+    //
+    // Three of these describe controls this page cannot let anyone press: capture, distillation
+    // and promotion all write, and there is no server here. So they ask for the one thing a
+    // recorded page can honestly offer - look, and touch the control - and say plainly which part
+    // needs the real app. Find and opening a row are NOT in that set: both are reads, both are
+    // answered from the recorded index, and both do exactly what they do in the product.
+    inboxIntro: {
+      en: ["Everything lands here first",
+           "This is the Inbox. A link, a thought, a PDF: it goes in without you deciding what it " +
+           "is for, and it is read in the background.\n\nClick the field to carry on. Actually " +
+           "keeping something is the one thing this recorded page cannot do for you."],
+      "zh-Hant": ["每樣東西都先落在這裡",
+           "這是收納袋。一個連結、一個念頭、一份 PDF，先丟進來，不用先決定它要幹嘛，背景會自己去讀。" +
+           "\n\n點一下輸入框就可以繼續。真的把東西收進來，是這個錄好的展示頁唯一做不到的事。"],
+    },
+    inboxFind: {
+      en: ["Find it again months later",
+           "Type two or three letters into Find.\n\nIt searches the distilled title, summary, " +
+           "tags and entities: the description of the thing, not the words you have " +
+           "forgotten. Every row below is a real capture with a summary a model really wrote."],
+      "zh-Hant": ["幾個月後還找得回來",
+           "在「找東西」那欄打兩三個字。\n\n它查的是整理過的標題、摘要、標籤和人事物：查的是這東西「是什麼」，不是你早就忘掉的那幾個字。下面每一列都是真的收進來的，摘要也是" +
+           "真的跑過模型寫出來的。"],
+    },
+    inboxOpen: {
+      en: ["Open one",
+           "Press the dot at the left of any row.\n\nIt opens in place: the text as it was " +
+           "captured, the tags it was given, and where it came from. Nothing is filed anywhere " +
+           "yet, and nothing has to be."],
+      "zh-Hant": ["打開其中一則",
+           "按任一列左邊的圓點。\n\n它會就地展開：收進來當時的原文、它拿到的標籤，還有它從哪來的。" +
+           "現在還沒歸檔到任何地方，也不一定要歸。"],
+    },
+    inboxEnter: {
+      en: ["Go into a notebook",
+           "A notebook is one facet of yourself, and filing something into one is a deliberate " +
+           "act, which is why nothing above has been filed yet.\n\nPress the notebook in the " +
+           "rail on the left (on a narrow window, its name at the top). The rest of the tour " +
+           "happens inside it, starting from empty."],
+      "zh-Hant": ["進去一本筆記本",
+           "一本筆記本就是你的一個面向，把東西歸進去是一個刻意的動作，所以上面那些都還沒被歸走。" +
+           "\n\n按左邊清單裡的那本筆記本進去（視窗窄的時候，按上面的名字）。接下來的導覽都在裡面，" +
+           "從空的開始。"],
+    },
     sources: {
       en: ["Add the sources",
            "Press Add source. This notebook's sources arrive one after another.\n\n" +
@@ -296,6 +345,7 @@
       close: "Close",
       footer: "A playground: the rlm-notebook web UI itself, running against recorded data in " +
         "your browser. Nothing is sent anywhere and nothing is kept.",
+      simulatedLine: "Recorded demo. No server, no model, no network.",
       footerLink: "See how it is built",
       turnEpisode: (n) => `${n}-turn episode`,
     },
@@ -308,6 +358,7 @@
       close: "關閉",
       footer: "這是示範頁：rlm-notebook 的網頁介面本體，跑在你的瀏覽器裡，讀的是預先錄好的資料。" +
         "沒有任何東西被送出，也沒有留下任何東西。",
+      simulatedLine: "示範模式。沒有伺服器、沒有模型、沒有連線。",
       footerLink: "看它是怎麼做的",
       turnEpisode: (n) => `${n} 輪的節目`,
     },
@@ -319,7 +370,43 @@
     return typeof v === "function" ? v(...args) : v;
   };
 
+  //: A row to open, and therefore an Inbox worth touring. An empty `fixtures.inbox` is a real
+  //: build (`build.py` takes what is on the author's machine), and two steps pointing at an empty
+  //: stream would be the "press something that is not there" failure the rest of this file is a
+  //: record of avoiding.
+  //:
+  //: Read from the FIXTURE, never by counting rows. `skipIf` is polled and skipping is permanent,
+  //: so a DOM count skips the step the first time it lands mid-re-render; see `PG.hasInbox`.
+  const hasStream = () => PG.hasInbox;
+
   PG.SCRIPT = [
+    { id: "inbox-intro", key: "inboxIntro", side: "bottom", align: "start",
+      target: "#capture-form", touch: "#capture-form",
+      // No `skipIf`: the field is the Inbox's defining control and is there whether or not anything
+      // has been captured yet. The two steps after it read the stream, so those do skip.
+      done: () => !!PG.touched["inbox-intro"] },
+    { id: "inbox-find", key: "inboxFind", side: "bottom", align: "start", target: ".find",
+      skipIf: () => !hasStream(),
+      // Two characters, not one: `refreshInbox` re-queries on every keystroke, and a step that
+      // completes on the first letter moves the popover while the reader is still typing into it.
+      done: () => ((document.getElementById("stream-search") || {}).value || "").trim().length >= 2 },
+    // **`is-open`, NOT `aria-expanded`.** driver.js writes `aria-expanded="true"` onto whatever it
+    // spotlights, as part of its own stage bookkeeping - so a predicate reading that attribute was
+    // satisfied by the act of arming the step, and "open a row" completed itself before the reader
+    // could see it. (It is also a lie to a screen reader on any target that owns the attribute for
+    // real, which `#notebook-current` does.) `is-open` is the app's own class and driver touches
+    // nothing but `driver-active-element`.
+    { id: "inbox-open", key: "inboxOpen", side: "right", align: "start",
+      target: "#stream .node .node-open",
+      skipIf: () => !hasStream(),
+      done: () => !!document.querySelector("#stream .node.is-open") },
+    // THE DOOR, and `enters` rather than `fulfil`. Both make "Next" call the product's own
+    // `openNotebook`, so a reader who does not want to hunt for the rail gets exactly the state
+    // pressing it would have produced - but `fulfil` names a STAGE the shim advances, and this
+    // step advances none. Saying `fulfil: "enter"` claimed one that does not exist.
+    { id: "inbox-enter", key: "inboxEnter", side: "right", align: "start", enters: true,
+      target: () => `#facet-list .facet:nth-child(${PG.facetIndex || 1}), #facet-list .facet, #notebook-current`,
+      done: () => document.body.dataset.view === "notebook" },
     {
       id: "sources",
       key: "sources",

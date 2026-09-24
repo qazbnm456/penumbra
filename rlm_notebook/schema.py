@@ -13,6 +13,13 @@ from pydantic import BaseModel, Field
 
 SourceKind = Literal["text", "web", "pdf", "youtube"]
 
+#: Where a Tier 0 node is in the intake pipeline (`inbox.py`). `ready_undistilled` is a REAL state,
+#: not a degraded `ready`: distillation is a model call and can fail or be cancelled, and the whole
+#: promise of the Inbox is that throwing something in always works. A node whose distillation failed
+#: is still a usable node, listed under its origin — losing the capture because the summariser was
+#: unreachable would break the one thing the feature is for.
+NodeState = Literal["queued", "parsing", "distilling", "ready", "ready_undistilled", "failed"]
+
 
 class SourceBlock(BaseModel):
     """One citable unit of a source's text, tagged with the locator a citation must echo verbatim.
@@ -56,6 +63,93 @@ class Source(BaseModel):
             if block.locator == locator:
                 return block.text
         return None
+
+
+class Node(BaseModel):
+    """One captured thing in the Inbox (Tier 0) — NOT yet part of any notebook.
+
+    **A node is a parsed `Source` that is not bound to a notebook yet, plus the metadata distilled
+    from it.** That is the whole design, and it is what makes Tier 0 cheap: `ingest.ingest_one`
+    already produces a fully-parsed, citable `Source` host-side (invariant 3), and `Source.marker()`
+    COMPUTES the `[[SRC:<id>|<locator>]]` coordinate from the id rather than baking it into the
+    stored block text (invariant 4). So a node can hold its blocks with no id assigned yet, and
+    promotion is re-id + append rather than a re-fetch — no new parsing, no new marker scheme, and
+    citations work exactly as they already do.
+
+    The blocks live on disk (`inbox/nodes/<id>.json`), not in this object and not in the index: this
+    is the row a listing renders, and a listing of a thousand nodes must not carry a thousand
+    corpora. `inbox.node_source` loads them when something actually needs the text.
+
+    Distinct from `Source` on purpose. A `Source` belongs to exactly one notebook and carries an id
+    that notebook assigned; a node is global, pre-curation, and may end up in zero, one or several
+    notebooks — which is the "different facets of yourself" premise the Inbox exists for.
+    """
+
+    id: str
+    kind: SourceKind
+    #: The URL or path this came from. Pasted text gets `ingest.ingest_pasted_text`'s
+    #: `f"pasted:{snippet} #{hash}"`, which is already content-derived — NOT the bare string
+    #: `"pasted"`, which an earlier draft of this comment said and which would collide every paste
+    #: into one node. Display and dedupe only, never a locator — the rule `Source.origin` follows.
+    origin: str
+    state: NodeState = "queued"
+    #: Why `state` is `failed`, kept rather than discarded so a reader can tell a dead link from an
+    #: unparseable PDF without re-running anything.
+    error: str | None = None
+    #: The distillation. All optional: a node that never reached `distilling`, or whose model call
+    #: failed, is still a node (see `NodeState`).
+    title: str | None = None
+    summary: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    entities: list[str] = Field(default_factory=list)
+    #: DISPLAY-ONLY page metadata, carried over from `Source.preview` — and it NEVER references an
+    #: image, for invariant 51's reason: rendering `og:image` makes the READER's browser fetch a URL
+    #: the page author chose, which turns every captured link into a beacon.
+    preview: dict[str, str] = Field(default_factory=dict)
+    #: `injection_scan.py`'s deterministic flags (invariant 6) — additive metadata, never a gate.
+    flags: list[str] = Field(default_factory=list)
+    #: Total characters across every block, so a listing can show weight without loading the text.
+    chars: int = 0
+    created_at: float
+    updated_at: float
+
+
+class Distillation(BaseModel):
+    """What the cheap summariser produces for one Inbox node (`distill.py`).
+
+    A separate shape from `Node` rather than four loose return values, because it is what
+    `inbox.update_node` is handed as one delta (invariant 78) and what a test compares against.
+    Every field is display prose or a display label — none of it is citable, and none of it is ever
+    read back as a fact. That is the same line invariant 32 draws for a note: distilled metadata is
+    a way to FIND a node, never a source for an answer about it.
+    """
+
+    #: A short label. Not the node's origin and not a filename — the thing a reader scans a list by.
+    title: str = ""
+    #: Two or three sentences. Model-authored prose, so invariant 39 applies: it follows the
+    #: READER's language, not the document's.
+    summary: str = ""
+    #: Lowercase, short, reusable across nodes. The join key a later slice needs for implicit edges.
+    tags: list[str] = Field(default_factory=list)
+    #: Proper nouns the node is ABOUT — people, organisations, products, places.
+    entities: list[str] = Field(default_factory=list)
+
+
+class NodeMembership(BaseModel):
+    """A node that has been promoted into one notebook, and the source id it got there.
+
+    Recorded because promotion does NOT consume the node (`inbox.promote_node`): the node is the
+    thing that persists, and a notebook is a view over a selection of them. Without this row,
+    "which notebooks is this in?" would have to be answered by parsing every notebook file.
+    """
+
+    node_id: str
+    notebook_id: str
+    #: The id `notebook.append_sources` ASSIGNED — never the node id. Invariant 50: ids come from the
+    #: max in use, because `len(sources) + 1` produced two live sources under one id once removal
+    #: existed.
+    source_id: str
+    promoted_at: float
 
 
 class Citation(BaseModel):
@@ -309,3 +403,12 @@ class Notebook(BaseModel):
     sources: list[Source] = Field(default_factory=list)
     turns: list[ChatTurn] = Field(default_factory=list)
     notes: list[Note] = Field(default_factory=list)
+    #: The highest source number ever ALLOCATED here — not the highest currently in use. Bumped by
+    #: `notebook.next_source_id`, and the reason it has to be persisted rather than re-derived is
+    #: that removal frees the top of the range: delete the highest source and `max(live) + 1` hands
+    #: its id straight to the next one, which is invariant 12's reassignment arriving through the
+    #: one gap `next_source_id` was written to close. Optional and defaulting to None so every
+    #: notebook written before this field existed still loads (the precedent `run_id`/`notes`/
+    #: `title`/`overview` set); `next_source_id` derives the starting value for those from what the
+    #: file itself still references, which is the closest thing to a migration this needs.
+    source_seq: int | None = None

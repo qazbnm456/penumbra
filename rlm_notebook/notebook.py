@@ -221,6 +221,36 @@ def notebook_lock(notebook_id: str, *, base_dir: str | Path = DEFAULT_NOTEBOOKS_
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
+def delete_notebook(notebook_id: str, *, base_dir: str | Path = DEFAULT_NOTEBOOKS_DIR) -> bool:
+    """Remove a notebook and everything stored beside it. Returns whether it was there.
+
+    **A product that offers Forget for a node and ✕ for a source could not delete a NOTEBOOK — from
+    anywhere.** No endpoint, no CLI verb, no control: once one existed it was permanent, and
+    emptying it left "Untitled notebook · 0" in the facet rail forever. `app.js` even ships the
+    string "a deleted notebook" for a state nothing could produce. The CHANGELOG already treats one
+    stray empty notebook as worth a compensating write; a reader who made one by hand had no
+    recourse at all. Curation without deletion is not curation.
+
+    Taken under `notebook_lock`, like every other write, so a `mutate_notebook` in flight finishes
+    first rather than re-creating the file behind this. The audio goes with it (`clear_audio`) —
+    one file per notebook is what made retention a non-question (invariant 42), and orphaning it
+    would make it one.
+
+    Deliberately NOT this function's job: the Inbox's membership rows. They live in another store
+    and the caller drops them best-effort AFTER the file is gone, exactly as source removal already
+    does — an index write must never undo a completed notebook write.
+    """
+    path = notebook_path(notebook_id, base_dir=base_dir)
+    with notebook_lock(notebook_id, base_dir=base_dir):
+        existed = path.exists()
+        path.unlink(missing_ok=True)
+        clear_audio(notebook_id, base_dir=base_dir)
+    #: The picker sorts by this and `last_modified` reads it, so a stale entry for a notebook that
+    #: no longer exists would keep sorting a ghost. Cheap to drop, and nothing else reaps it.
+    _MTIMES.pop(notebook_id, None)
+    return existed
+
+
 def mutate_notebook(
     notebook_id: str,
     apply: Callable[[Notebook], None],
@@ -248,7 +278,8 @@ def mutate_notebook(
 
     The `create=False` miss is checked BEFORE taking the lock as well as inside it. Not an
     optimisation: `notebook_lock` creates its sidecar file just by being entered, so without this
-    every 404-ing request (`DELETE /notebooks/<anything>/notes/n1` — unauthenticated, invariant 25)
+    every 404-ing request (`DELETE /notebooks/<anything>/notes/n1`, which any token holder can send
+    — invariant 25)
     left a permanent zero-byte file behind, invisible to `list_notebook_summaries`' `*.json` glob.
     Found by an independent security review, which reproduced 503 files from 503 requests against
     notebooks that never existed. The check inside the lock is what makes it correct; this one only
@@ -318,8 +349,56 @@ def ingest_sources_for(notebook: Notebook, new_values: list[str]) -> list[Source
     )
 
 
+#: Every field, anywhere under a `Notebook`, that stores a source id. `_ever_referenced` walks
+#: exactly these, and `test_notebook.py`'s tripwire fails if the schema grows another one — the
+#: scan is a backstop for notebooks written before `source_seq` existed, and a backstop that
+#: silently stops covering a new artifact is worse than none.
+_SOURCE_ID_FIELDS = (
+    ("turns", "answer", "citations", "source_id"),
+    ("overview", "citations", "source_id"),
+    ("overview", "source_ids"),
+    ("podcast", "source_ids"),
+    ("podcast", "utterances", "citations", "source_id"),
+)
+
+
+def _ever_referenced(notebook: Notebook) -> set[int]:
+    """Source numbers this notebook FILE still points at, including ones whose source is gone.
+
+    Only consulted for a notebook saved before `source_seq` existed, where there is no recorded
+    high-water mark to read. It cannot see the Inbox's `NodeMembership` rows — those live in a
+    different store — which is exactly why it is the fallback and the counter is the rule.
+
+    Walks `_SOURCE_ID_FIELDS` rather than naming the artifacts inline, so the tripwire that checks
+    that list against the schema is checking what this actually reads. Written by hand first, and
+    the tripwire immediately found a fifth field missing from it: a podcast utterance carries
+    citations of its own.
+    """
+    numbers: set[int] = set()
+
+    def visit(value: object, path: tuple[str, ...]) -> None:
+        if value is None:
+            return
+        if isinstance(value, list):
+            for item in value:
+                visit(item, path)
+        elif path:
+            visit(getattr(value, path[0], None), path[1:])
+        elif isinstance(value, str) and value.startswith("s") and value[1:].isdigit():
+            numbers.add(int(value[1:]))
+
+    for field_path in _SOURCE_ID_FIELDS:
+        visit(notebook, field_path)
+    return numbers
+
+
 def next_source_id(notebook: Notebook) -> str:
-    """The next free `s<n>`, derived from the MAX id in use — never from `len(sources) + 1`.
+    """ALLOCATE the next `s<n>` — never `len(sources) + 1`, and never an id already handed out.
+
+    **This mutates `notebook.source_seq`, and that is the point.** It is the one allocator both
+    append sites go through, so making the bump part of the allocation is what stops a third site
+    from getting the numbering right and the bookkeeping wrong — the exact split that left
+    `promote_note` reproducing this bug after `append_sources` had been fixed.
 
     Length-based numbering is safe only while sources are append-only, which stopped being true the
     moment a source could be REMOVED. Reproduced before this existed: delete `s2` from `s1,s2,s3`
@@ -327,9 +406,26 @@ def next_source_id(notebook: Notebook) -> str:
     resolving to whichever `Corpus.get` reaches first. A stored citation pointing at `s3` then reads
     the wrong text, which is precisely what invariant 12 forbids, and it is the same bug
     `_next_note_id` was written for (invariant 32) one field over.
+
+    **`max(live ids) + 1` fixed only the MIDDLE of that range.** Remove the HIGHEST source and its
+    id is free again: `s1,s2,s3` minus `s3` allocates `s3` to the next source added, and a citation
+    saved against the old `s3` then verifies TRUE — `citations.py` checks that a coordinate exists,
+    never that it still means what it meant (invariant 5) — while opening text that never contained
+    the quote. Both tests written for this property removed a middle source, so both stayed green.
+    A high-water mark that only ever increases is the property invariant 12 actually asks for, and
+    it has to be PERSISTED: `api.py` drops the Inbox membership rows for a removed source on the
+    promise that its id "will never come back", and those rows are in a store this file cannot read.
+
+    Ids are therefore allowed to have HOLES. Nothing reads them as a count or an index.
     """
     used = [int(s.id[1:]) for s in notebook.sources if s.id.startswith("s") and s.id[1:].isdigit()]
-    return f"s{max(used, default=0) + 1}"
+    if notebook.source_seq is None:
+        # No recorded mark: recover one from what the file still references, so a notebook already
+        # on disk that lost its highest source is safe on the next append without a migration step.
+        notebook.source_seq = max(used + list(_ever_referenced(notebook)), default=0)
+    allocated = max([notebook.source_seq, *used]) + 1
+    notebook.source_seq = allocated
+    return f"s{allocated}"
 
 
 def remove_source(notebook: Notebook, source_id: str) -> None:

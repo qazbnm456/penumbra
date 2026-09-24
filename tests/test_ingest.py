@@ -190,3 +190,106 @@ def test_ingest_pasted_text_different_text_gets_a_different_origin():
     a = ingest_pasted_text("first text", "s1")
     b = ingest_pasted_text("second text", "s2")
     assert a.origin != b.origin
+
+
+# --- kind_for and ingest_one are ONE dispatch (invariant 79) -----------------------------------------
+
+
+def test_kind_for_agrees_with_ingest_ones_own_dispatch(tmp_path, monkeypatch):
+    """The tripwire the factoring exists for, in the shape invariant 28 already uses for the two
+    guide registries: don't assert that two things agree, MAKE them fail when they stop.
+
+    `kind_for` was extracted from `ingest_one` so the Inbox can record a node before anything is
+    parsed (invariant 79). Invariant 79's own argument for the extraction is "a second dispatch is
+    how a `.pdf` URL ends up filed as `web`" — which is only true while something checks. Mutating
+    `kind_for` to always return `"text"` was previously caught by one incidental assertion, and
+    `test_the_worker_stores_the_blocks_and_corrects_the_kind` did NOT fail, because `store_blocks`
+    overwrites `kind` anyway.
+
+    Drives the REAL `ingest_one` with each parser replaced by a recorder, so the branch actually
+    taken is what gets compared — not a second reading of the same `if` chain.
+    """
+    from rlm_notebook import ingest as ingest_module
+
+    taken: list[str] = []
+
+    def recorder(kind):
+        def fake(value, source_id, **kwargs):
+            taken.append(kind)
+            return Source(
+                id=source_id, kind="text", origin=str(value),
+                blocks=[SourceBlock(locator="whole", text="x")],
+            )
+        return fake
+
+    monkeypatch.setattr(ingest_module, "parse_youtube", recorder("youtube"))
+    monkeypatch.setattr(ingest_module, "parse_web", recorder("web"))
+    monkeypatch.setattr(ingest_module, "parse_pdf", recorder("pdf"))
+    monkeypatch.setattr(ingest_module, "parse_text", recorder("text"))
+
+    plain = tmp_path / "notes.txt"
+    plain.write_text("hello", encoding="utf-8")
+    upper = tmp_path / "SCAN.PDF"
+    upper.write_bytes(b"%PDF-1.4")
+
+    cases = [
+        "https://www.youtube.com/watch?v=abc123",
+        "https://example.com/article",
+        # A URL ending `.pdf` is `web`, because BOTH check `is_url` before the suffix. This is the
+        # exact case invariant 79 names, so it is the one that most needs pinning.
+        "https://example.com/paper.pdf",
+        str(tmp_path / "paper.pdf"),
+        str(upper),
+        str(plain),
+    ]
+    for value in cases:
+        taken.clear()
+        ingest_module.ingest_one(value, "s1")
+        assert taken == [ingest_module.kind_for(value)], (
+            f"kind_for said {ingest_module.kind_for(value)!r} but ingest_one took {taken!r} "
+            f"for {value!r} — the two dispatches have drifted"
+        )
+
+
+def test_the_kind_guess_and_the_parse_take_the_same_branch(monkeypatch, tmp_path):
+    """`kind_for` exists so the Inbox can file a node before anything is fetched (invariant 79), and
+    both its docstring and `ingest_one`'s said it had been "factored out" of the parse. It had not:
+    each held its own copy of the same four-branch chain, which is precisely the second dispatch
+    that comment warns produces a `.pdf` URL filed as `web`.
+
+    They share one chain now. This pins that they cannot disagree — for everything except a URL,
+    where `parse_web` sniffs content type and a corrected kind is the documented design.
+    """
+    from rlm_notebook import ingest
+
+    took: list[str] = []
+
+    def stub(kind):
+        def parse(*args, **kwargs):
+            took.append(kind)
+            return Source(
+                id="s1", kind=kind, origin="o", blocks=[SourceBlock(locator="whole", text="t")]
+            )
+
+        return parse
+
+    monkeypatch.setattr(ingest, "parse_youtube", stub("youtube"))
+    monkeypatch.setattr(ingest, "parse_web", stub("web"))
+    monkeypatch.setattr(ingest, "parse_pdf", stub("pdf"))
+    monkeypatch.setattr(ingest, "parse_text", stub("text"))
+
+    a_pdf = tmp_path / "paper.PDF"
+    a_txt = tmp_path / "notes.txt"
+    a_pdf.write_bytes(b"%PDF-1.7")
+    a_txt.write_text("hello", encoding="utf-8")
+
+    for value in (
+        "https://www.youtube.com/watch?v=abc",
+        "https://example.com/a",
+        str(a_pdf),
+        str(a_txt),
+    ):
+        took.clear()
+        guessed = ingest.kind_for(value)
+        ingest.ingest_one(value, "s1")
+        assert took == [guessed], f"{value}: filed as {guessed!r} but parsed as {took}"

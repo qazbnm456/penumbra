@@ -11,6 +11,2547 @@ questions with verifiable citations, and get a distilled research artifact out.
 
 ## [Unreleased]
 
+- **Round thirty-one (design confirmation): `VERDICT: COMPLETE`.** There is now an independent
+  COMPLETE on both halves of the author's end condition: functional completeness and
+  interactivity (round twenty-eight) and design (this round).
+  - The citation-to-passage loop was confirmed on the hardest case: the newest answer's lowest card,
+    with the quote at the end of a 4.1k-character block. It held in 32 of 32 runs, across 1440×900,
+    1440×800, 1280×800 and 1280×720, light and dark, en and zh-Hant, and both a mouse click and
+    Enter.
+  - Early cards do not move the column.
+  - A design sweep of 8 configurations × 15 states found no BLOCKER or HIGH. Its only repeating
+    audit failure is the decorative `·`, already POLISH.
+  - The judge's summary of the design: the verification loop "is now excellent". The palette and
+    type are "coherent and distinctive in both themes". Every run shows its state in place with
+    Stop, the Inbox gives calm typographic recall, and print produces a true artifact.
+  - **Open, MEDIUM:**
+    - The source viewer is headed by the host ("arxiv.org") rather than the source's title, because
+      `SourceDetailResponse` carries no `preview`. The comment at `sourceDisplayName` claiming this
+      was fixed is stale.
+    - Opening a low card scrolls the Studio's tab strip out of view at 1280×720 and 1280×800.
+    - The "Interface language" help line uses an unstyled class (`setting-help`).
+  - **Open, POLISH:**
+    - Three `margin: -var(...)` declarations are invalid CSS and are dropped (style.css ~2397, ~4350,
+      ~6458).
+    - The printed "(未驗證)" is italic, which shears Han text.
+    - The raw verifier reason shows in English under zh-Hant.
+    - Strikethrough is unsupported.
+
+- **Round thirty (design confirmation): the quote marking and the three small fixes held. The
+  marked words still missed the window, and that is now fixed.**
+  - The quote is legible on its wash: 11.99:1 in light, 6.88:1 in dark.
+  - The capture focus is now a single ring, at least 3:1 in both themes.
+  - zh-Hant still renders in Songti TC.
+  - `color-scheme` reaches the settings selects.
+  - **HIGH, fixed: for a References card low in the list (the newest answer's, which is the common
+    case), the marked words landed below the window at 1280×800 and 1440×800.** `focusReference`
+    scrolled the card while it was a collapsed head, and loading the passage then grew it. After the
+    load, the marked words are now scrolled into the window, with `scroll-margin-block` so they do
+    not stop flush against the edge. Verified at 1280×800, 1280×720 and 1440×800, light and dark,
+    on the last card: the words sit fully inside the window.
+  - Also: `.empty-note` joins the rule that keeps Han text upright. It was being sheared by an
+    italic in four empty states.
+  - **Recorded as MEDIUM:**
+    - A new answer can land partly below the fold.
+    - Opening a notebook shows the top of the thread rather than the latest turn.
+
+- **Round twenty-nine: a dedicated UI/UX DESIGN review against the author's original brief.** The
+  judge studied what macapp.supply actually lists (Craft, Obsidian, Hejour, Letterboxx, Muse,
+  Glance) and this category's leaders (NotebookLM, Perplexity, Readwise Reader, Heptabase). It then
+  judged every surface at 1440 and 1280, light and dark, en and zh-Hant, and audited cross-platform
+  risk for the Tauri targets.
+  - Its verdict on the design itself: a coherent, distinctive identity that holds across both
+    themes and both languages. The Inbox's typographic recall, the numbered citation, in-place run
+    states with Stop, the honest stale markers, the podcast transport and the print stylesheet are
+    "at or above the bar" set by NotebookLM and Perplexity. It found one HIGH.
+  - **HIGH, fixed: opening a citation never visibly marked the cited words in the source passage.**
+    The quote reused `.citation`, which rests unmarked since citations became numbers, so the
+    product's verification loop ended on an unhighlighted wall of text. Nothing scrolled the words
+    into view inside the 24rem passage either. The words are now a `<mark class="source-quote">`,
+    washed and stroked at rest. The reference card scrolls its own passage to them, and the source
+    viewer centres the quote rather than its block. Verified with a quote 4,800px deep, light and
+    dark.
+  - **Cheap cross-platform fixes, done:**
+    - `PMingLiU`/`MingLiU` added to `--serif`: Windows ships no other CJK serif, so zh-Hant fell back
+      to a sans in WebView2.
+    - `color-scheme` is declared per theme, so native `<select>` popups follow the palette.
+    - The Inbox capture field's double focus ring is gone.
+  - **Recorded for the Tauri shell work, not the web UI:**
+    - The WebKit floor is Safari 16.2 because of `color-mix()`, and 18 for unprefixed
+      `backdrop-filter`, which degrades gracefully. `minimumSystemVersion` must match.
+    - Export, "Download mp3" and print rely on browser affordances the shell must provide.
+  - **Recorded as MEDIUM:**
+    - An answer's footer actions sit on three lines rather than one action row.
+    - The Studio panel is a stack of bordered boxes.
+    - An empty notebook has no primary action.
+    - A failed Inbox row mixes three button sizes.
+    - The injection flag shows a raw slug.
+
+- **Round twenty-eight (confirmation): `VERDICT: COMPLETE`, with no BLOCKER and no HIGH on any
+  core journey at desktop scope.** This meets the stop condition the author set.
+  - Both round-twenty-seven fixes held.
+  - The stuck-control sweep was clean in both directions: every run-related control came back
+    usable after the run ended, and none unlocked while its lock should still hold. It covered 60
+    combinations: 4 run kinds × 5 contexts × success, failure and Stop, plus a 9-case zh-Hant subset.
+    A negative control confirmed the detector can fail.
+  - Journeys, contrast (canvas-resolved, with a 21.00 sanity check) and a 40-stop focus walk were all
+    sound at 1440 and 1280, light and dark, en and zh-Hant.
+  - **Open, recorded as MEDIUM and not blocking:**
+    - Podcast Generate comes back live while a question started during the podcast still runs,
+      after the podcast is stopped or fails. Pressing it is a deliberate second run, and both runs
+      keep their Stop.
+    - After a recovered run ends or fails, its "Load the result" line becomes the last child and
+      hides the last turn's ↻ Regenerate.
+    - The overview's "Start with" chips stay beside the first answer's "Ask next".
+    - Clear stays hidden after a fresh notebook's first answer, and is enabled during a recovered run.
+    - A chip overwrites a draft.
+    - A run row keeps its label in the old language after a language switch.
+    - A guide that succeeds after a mid-run source change is cached as current.
+    - Keyboard focus falls to `<body>` after Stop.
+    - A failed question can land just below the fold.
+    - The podcast panel does not relabel on a language switch.
+    - "Load the result" after a guide outlives a notebook switch finds nothing, because guides are
+      memory-only.
+  - **Open, POLISH:**
+    - The Inbox `·` separators measure 2.24:1 and 2.62:1 (decorative).
+    - The "Ask next" chips print.
+    - The server-derived "Untitled notebook" stays English under zh-Hant.
+
+- **Round twenty-seven (confirmation): round twenty-six's fixes held, and every lock-or-flag pairing
+  the judge tried passed. Two HIGHs remained, both regressions of mine; both are fixed.**
+  - **The suggested-question chips ("Start with", "Ask next") did nothing when the composer was
+    empty, which is their normal state.** Their guard read `#ask-submit.disabled`, and an earlier
+    round made Send disabled whenever the field is empty. They now ask the lock itself
+    (`composerLocked()`, plus the sources check). Verified with a real mouse click on an empty
+    composer: the chip's question runs.
+  - **↻ Regenerate stuck disabled after Stop on a recovered run.** This happened after a re-mount or
+    a rebuild during recovery. A button built while the lock held is disabled by construction, and
+    `syncRunGuards` releases only what it marked itself. `stopWatching` now emits
+    `chat:pending false` once the flag is gone. The handler derives the hold from its owners, so
+    nothing another run holds is released. The harness pins the resync, and removing it fails the
+    test. Verified: after F5, a re-open and Stop, ↻ Regenerate and Send are usable again.
+  - Recorded as MEDIUM:
+    - Clear conversation stays hidden after a fresh notebook's first answer.
+    - A chip overwrites a draft in the composer.
+
+- **Round twenty-six (confirmation): round twenty-five's fixes held for every single action. The
+  judge's pairwise matrix found two more HIGHs, both fixed.**
+  - **↻ Regenerate on the last turn stayed live during an overview run and got past the composer
+    lock.** It emitted `chat:regenerate`, which never asked `composerLocked()`. Then the overview's
+    end released the composer while that question still ran, a second question could start, and the
+    first answer's rebuild dropped the second one's Stop. The root cause was that one boolean
+    (`chat:pending`) had TWO owners, the overview and a question, and either one's `false` released
+    both. Now:
+    - The composer is held while either owner is live
+      (`pending || overviewRunning || pendingTurn.pending`).
+    - The notebook switch emits only after releasing both owners.
+    - ↻ Regenerate is disabled whenever the composer is locked, and its handler asks the same lock.
+  - **Re-opening a notebook with a recovered run cleared its recovery flag.** `recoveredRuns` was a
+    Set keyed by notebook id, so the OLD mount's teardown deleted the NEW mount's flag. The composer
+    unlocked, a second paid question could start, and a rebuild dropped the row with the first run's
+    only Stop. The flag is now per mount (a Map from notebook id to mount), and only its owner may
+    clear it.
+  - Verified in the browser:
+    - During an overview, ↻ Regenerate is disabled and a click starts nothing.
+    - The composer unlocks after the overview ends, and again after a question ends.
+    - After F5 plus re-opening the same notebook, the lock holds, Enter starts no second worker, and
+      the Stop survives a rebuild.
+  - The judge also found a harness trap worth keeping: `goto(<same URL>)` is not an F5. Chrome
+    keeps the old document's sockets, and with two runs in flight that hits the 6-per-host cap.
+    Use `Page.reload`.
+  - Recorded as MEDIUM:
+    - Clear conversation stays enabled during a recovered run.
+    - The podcast panel does not relabel on a language switch.
+
+- **Round twenty-five (confirmation): round twenty-four's three fixes held.** The judge ran the class
+  as a matrix: 31 surface × context combinations, each with success, failure and Stop, and all of
+  them passed. Combining two conditions found two more HIGHs, both fixed.
+  - **The composer lock could be bypassed.** `autoGrow` recomputed Send from text and sources alone,
+    and it runs on every `sources:changed`, which a language switch or a source change emits. The
+    submit handler, which Enter goes through, checked nothing. So a draft plus a repaint re-enabled
+    Send mid-run, and typing plus Enter submitted past the recovery guard. Either way a second paid
+    question started, and one of the two ended with no Stop anywhere. The fix is one predicate,
+    `composerLocked()`: a chat or overview run holds the composer, or a recovered run is in flight.
+    The send button and the submit handler both ask it.
+  - **A recovered run lost its only Stop to any thread rebuild.** Its row lives in `#chat-history`,
+    and `rebuildHistory` restored the turns and the pending question but not that row. Removing a
+    source, Clear conversation and an answer landing all wiped it. It now travels the same way the
+    pending turn's row does (`recoveredRow`).
+  - Verified in the browser:
+    - Draft, then Regenerate, then a language switch: Send stays off, and a click starts nothing.
+    - A recovered run plus Enter starts no second worker.
+    - A recovered run's Stop survives a source removal and still kills the worker.
+  - Recorded as MEDIUM: a failed question can land just below the fold, because the status row
+    attached after the scroll leaves the thread 62px from the bottom, beyond `PINNED_SLACK`.
+
+- **Round twenty-four (confirmation): round twenty-three's chat fix held. The same cross-notebook
+  test on the other three run surfaces found the same defect in all three; all fixed.** Each run
+  released SHARED state when it ended before checking which notebook it belonged to.
+  - **Overview.** Both exits cleared `overviewRunning` and sent `chat:pending false` first. An
+    overview ending in A unlocked B's composer mid-question, so a second paid question could start,
+    and released B's own overview so a repaint wiped its Stop. `releaseIfMine()` now releases only
+    while `live()`, and `onCancel` is gated the same way.
+  - **Guides.** `settle()` deleted the running entry by KIND. A Summary ending in A removed B's
+    running Summary, taking its dot and then its Stop. It now removes the entry only if it is this
+    run's own node.
+  - **Podcast.** The `finally` re-enabled Generate unconditionally. In B that allowed a second paid
+    run, whose status row the first run's render then overwrote. It now re-enables only in the
+    notebook that pressed it.
+  - Verified in the browser. With A's run ended and B's own run still going, B keeps:
+    - its locked composer and its question's Stop;
+    - its overview's Stop through a language switch;
+    - its Summary dot and Stop through a tab round trip;
+    - a disabled Generate and a Stop for the podcast.
+  - Two source-count tests now count the `releaseIfMine()` exits as well.
+
+- **Round twenty-three (confirmation): the round-twenty-two fix held across every in-notebook
+  re-render tried. One more HIGH, across a notebook switch, found and fixed.**
+  - **A running chat question followed the reader into another notebook.** The chat's switch
+    handler never cleared `pendingTurn`, and `askQuestion`'s catch had no generation guard (the guide
+    and podcast catches did). The effects:
+    - A failure landed in notebook B's thread, and its ↻ Regenerate ran A's question on B's sources
+      as a real, paid run.
+    - Any re-render in B drew A's question as pending, with a Stop.
+    - A's `finally` unlocked B's composer while B's own question was still running.
+  - Now:
+    - The switch clears `pendingTurn`.
+    - The success, catch and `finally` paths act only on this run's turn, in the notebook that
+      asked.
+    - Returning to A finds the run through `reattachInFlightRuns`.
+  - Verified in the browser on both the success and failure paths:
+    - B's thread stays empty through A's end and through a re-render in B.
+    - With B's own question running, A's end leaves B pending with its Stop and its composer locked.
+  - Recorded as MEDIUM: a run row keeps its "Starting…" label in the old language after a language
+    switch.
+
+- **Round twenty-two (confirmation): all three round-twenty-one fixes held. One more HIGH was found
+  and fixed, plus two regressions or omissions of mine.**
+  - **Removing a source while a chat question ran deleted that run's only Stop, and the run kept
+    billing.** The chat half of the round-twenty-one guide defect, and one I introduced: round
+    seventeen made source removal emit `chat:rerender`, and the rebuild drew the pending turn as a
+    bare "Thinking…". The run's status row now travels with the pending turn (`statusNode`), and
+    `renderTurn` re-attaches it. Verified: the Stop survives a removal and still kills the worker.
+  - **The guide-tab busy dot, which round twenty-one claimed was verified, was invisible.** The tabs'
+    tooltip owns `::after`, so the dot inherited `opacity: 0; position: absolute` and showed as an
+    orange blob on hover. It is now a real `.tab-busy` element, measured 6×6 at opacity 1.
+  - **Deleting a note had no confirmation and no accessible name.** Every other delete confirms. It
+    now confirms, and is named "Delete this note".
+  - Recorded as MEDIUM:
+    - "Load the result" after a guide run outlives a notebook switch finds nothing, because guides
+      are memory-only.
+    - Keyboard focus falls to `<body>` after Stop.
+    - A guide that succeeds after a mid-run source change is cached as current.
+
+- **Round twenty-one (confirmation): the round-twenty fix held for all four guides. Three more HIGHs
+  were found and fixed.**
+  - **A failed overview regeneration removed the overview on screen.** Stop already restored it; the
+    failure path did not. The failure now appears above the kept overview, and its ↻ Regenerate is
+    the retry.
+  - **A running guide lost its only Stop to any re-render**, whether a tab switch, a language switch
+    or a source change, and the run kept billing. When it finished, its result was drawn into
+    whichever tab was open: Summary content under the FAQ label, with FAQ's Copy and Regenerate.
+    Four tabs share one `#guide-body`.
+    - Each run now owns its status row in a `running` map, and `showKind` re-attaches it.
+    - A result or a failure lands in its own kind; failures are kept in a `failures` map.
+    - A tab with a run in flight carries a dot and `aria-busy`.
+  - **Changing the interface language deleted every generated guide.** The language listener
+    re-emitted `sources:changed`, which invalidates the cache. It now passes `relabel: true`, and
+    the Studio re-renders without invalidating.
+  - **Caught before shipping, by the browser check and not by the suite:** the first version called
+    `tabs.find` on a NodeList. That throws before the request is sent, so every guide generation
+    would have stalled, and all 1040 tests stayed green.
+    `test_no_nodelist_is_called_with_an_array_only_method` now pins the whole class, scoped per
+    function because `tabs` is an Array elsewhere. It fails on exactly that line when the line is
+    reverted.
+  - Verified in the browser:
+    - the overview is kept on failure;
+    - a Summary run keeps its Stop across tab switches and lands only in Summary;
+    - a Timeline failure does not appear under FAQ;
+    - a language switch keeps the guide, re-labelled.
+  - Recorded as MEDIUM, not fixed:
+    - A guide whose run succeeds after the sources changed mid-run is cached as current.
+    - Keyboard focus falls to `<body>` after Stop.
+    - After Regenerate then Stop on the last chat turn, the "(stopped)" row takes that turn's
+      ↻ Regenerate.
+
+- **Round twenty (confirmation): the podcast fix held on every failure path; the same defect was
+  found once more, on the guides, and fixed.** Stopping a guide regeneration, or having one fail,
+  deleted the guide the reader already had. Regenerate dropped the cache entry before the run
+  started, and guides live only in page memory (invariant 38), so a reload could not bring the guide
+  back.
+  - The entry being replaced now travels with the run (`fetchKind(kind, { previous })`).
+  - Stop restores it.
+  - A failure shows its message above it, with ↻ Regenerate still offered as the retry.
+  - `cacheEpoch` stops a restore from resurrecting a guide made from a corpus that has since changed.
+  - Verified in the browser for both paths, including after a tab round trip.
+  - Also: an empty podcast script now clears `state.podcast` too, because the server had already
+    deleted that episode.
+
+  This entry originally said the class was complete across the overview, chat, podcast and guides.
+  It was not: round twenty-one found the overview's FAILURE path still removed the overview (below).
+
+- **Round nineteen (confirmation): (a) through (f) re-checked. Five held; one found a bug in my own
+  round-eighteen fix.**
+  - `renderSavedEpisode` restored an episode loaded from disk correctly. For an episode generated in
+    the same session, a Stop or a failed regeneration re-rendered it as "This episode's audio is
+    gone" and removed Play and Download, while the mp3 was intact on disk.
+  - The cause was that the success path rebuilt `state.podcast` without `audio_suffix`. It is now
+    kept.
+  - The restored player's URL is now versioned by the episode's run id, like the fresh path:
+    otherwise the plain URL could replay the previous episode's cached bytes.
+  - Verified in the browser: generate, then Regenerate, then Stop leaves the player, Download and
+    the transcript on screen.
+  - Also: the Notes help text now names the ☆ star rather than the retired "+ Save as note".
+
+- **Round eighteen (desktop scope): three design HIGHs, all fixed and re-measured in a real
+  browser.**
+  - **Copy covered the first line of a Summary or Insight guide.** Round seventeen's corner
+    reservation covered chat answers only. `.guide-prose` now gets the same right float, sized down
+    to Copy's bottom edge: a float of 1.5rem let Insight's second line run under Copy's last 4px.
+    There is now no prose under Copy on any of the four kinds, light or dark.
+  - **Timeline dates measured 3.72:1 in Paper.** A new `--studio-accent-text` token (the
+    `--accent-text` split, for the Studio hue) brings them to 5.93:1.
+  - **The address link inside an open reference measured 4.20:1.** It now uses `--accent-text` and
+    measures 4.72:1.
+  - **Print (was MEDIUM, cheap).** The page now opens with the notebook's title, because the header
+    it lived in is hidden in print. The overview's regenerate button, the "N references" buttons and
+    the chat panel label no longer print.
+  - **Function judge: `VERDICT: COMPLETE`**, with no BLOCKER and no HIGH on any core journey. Two of
+    its MEDIUMs were cheap and misleading on a core journey, so they are fixed and checked in the
+    browser:
+    - Stopping or failing a podcast regeneration blanked the existing episode until a reload.
+      `renderSavedEpisode` now puts it back.
+    - With no sources, Enter still submitted. The question was lost, and the reply quoted the
+      server's internal id. The submit handler now applies the send button's gate.
+    - Also fixed: "1 steps".
+  - **Recorded as MEDIUM or POLISH, not chased:**
+    - At 400% zoom the header, tab row and composer leave a short reading window.
+    - The "File into…" picker's border is faint.
+    - A queued node is shown by colour alone.
+    - Two focus rings are clipped.
+    - Assorted polish in the judge's report.
+
+- **Round seventeen: six HIGHs from two judges, all fixed. The review loop now stops on a
+  severity bar.** The user noticed the rounds were drifting toward rare races and ceremony and
+  changed the stop condition. The work is done when judges find no BLOCKER or HIGH on the core
+  journeys (capture → notebook → ask/cite → Studio → export) at desktop and phone widths. Rare races
+  and polish are recorded here and no longer chased round by round.
+
+  Function judge:
+  - **Removing a source left chat and podcast citations to it shown, copied and exported as
+    verified until a reload.** The handler never took `turns` from the response. `renumberStrokes`
+    now re-stamps the verdict along with the number.
+  - **Deleting a notebook mid-overview left a paid run with no Stop.** `/overview` runs two tasks
+    against one `_ACTIVE_RUNS` slot. `_run_isolated` now holds the counted `_BUSY` guard itself.
+    Reproduced in both registration orders.
+  - **Medium: one Ctrl-C still waited out TTS synthesis (40.1s measured).** `asyncio.run` joins the
+    default executor, however the request was cancelled. Long host-side calls (synthesis, fetch, PDF,
+    OCR) now run on a daemon thread through `_abandonable`, and the same probe exits in 3.6s. Notebook
+    writes stay on `to_thread`, because a write should finish.
+  - **Medium: exports from pasted text broke their own lists.** List items are now one line
+    (`markdownInline`), and the raw `pasted:… #hash` origin no longer appears.
+  - **Polish:** guide Copy headings read `## summary`; a failed guide had no retry, and a late failure
+    could land in the wrong notebook. Both fixed.
+
+  Design judge (measured in a real browser before and after):
+  - Three of its four HIGHs were earlier fixes lost to CSS cascade order. **Skip link** painted under
+    the header (z-index tie). **Copy** fell into the flow because `[data-tip] { position: relative }`
+    outranked it; it now sits beside the star, and a right float reserves the corner, so neither
+    control covers prose. **Save-as-note on touch** was opacity 0 because a later rule beat the
+    `any-hover: none` escape. The escape now comes last in the file, and
+    `test_the_touch_escape_comes_after_every_rule_it_overrides` pins the order.
+  - **Dark-theme print** was 1.23:1. Both dark palettes are now `screen`-only, and it measures 17.3:1.
+  - **Medium:** `renumberStrokes` stamped a number on every fragment of a split stroke ("¹a
+    ¹parametric¹"). It now stamps only the fragment the renderer marks `data-stroke-end`.
+
+  **Recorded, not fixed this round.**
+  - Function judge:
+    - A Stop is shown during synthesis that can do nothing.
+    - The Notes empty state still names "+ Save as note".
+    - A refused Inbox upload shows a temp path instead of the file name.
+    - Back after deleting leaves `?nb=` in the address bar.
+  - Design judge:
+    - Export floats mid-header and hovers in the destructive colour.
+    - The reference address link is 4.20:1.
+    - Print omits the title and still shows the regenerate and "N references" buttons.
+    - At 320px the sticky Save in settings has no backing band.
+    - A queued node is shown by colour alone.
+    - A failed node's actions mix three sizes.
+    - The trajectory transport clips its focus rings.
+    - Focus order inside a card jumps back up to the star.
+    - Seven polish items.
+
+  **Narrow windows: one panel at a time.** Below 640px a notebook now shows one panel at a time,
+  switched by a sticky Sources · Chat · Studio tab row. Scope note: this is a DESKTOP application
+  (the planned Tauri shell; `serve` binds loopback, so a phone cannot reach it). I first framed and
+  prioritised this as a "phone layout" without checking that scope, and the user caught it. Narrow
+  widths matter only as a narrow desktop window or 400% zoom (WCAG 1.4.10 reflow). The user decided
+  to keep the tab row on that footing, and touch-only issues are at most MEDIUM.
+  Measured at 375 and 320:
+  - The conversation starts at y=149 instead of about 700px down, and the composer stays pinned to
+    the bottom edge.
+  - A notebook with no sources opens on Sources.
+  - A citation click switches to Studio › References.
+  - Arrow keys move between the tabs (WAI-ARIA tabs), and each panel keeps its own scroll position.
+  - Desktop is unchanged.
+
+  Three things the narrow view exposed:
+  - A Studio collapse remembered from a wide window took over the narrow grid. Collapse is a side-column
+    state, so it now applies only above 1024px; the preference is kept and re-applied when the
+    window is wide again.
+  - `1fr` let a long reference title widen the column to 512px. It is now `minmax(0, 1fr)`, and
+    the overflow had been hidden because `.cols` is itself a scroller.
+  - The grid rows stretched and made the tab row about 200px tall on short panels.
+
+  Also from the list above: Export and Clear now sit together on the right of the chat header, and
+  only Clear hovers red. The stale overview heading no longer runs under Copy.
+
+- **Round sixteen. Round fifteen's shutdown fix could not run, and the export it added carried
+  wrong numbers and dropped a whole guide's text.**
+
+  **The server could not be quit while a run was in flight (B1).** `Server.shutdown()` ends in
+  `await server.wait_closed()`, which since Python 3.12 waits for every open connection, and
+  `force_exit` does not break out of it. The judge reproduced it against the shipped `serve`:
+  SIGTERM, then four SIGINTs, and the process stayed up. The only exit left was SIGKILL, which
+  reparented the worker and its grandchild to init, still billing. That also made round fifteen's
+  `_lifespan` cancel loop dead code, because uvicorn skips `lifespan.shutdown()` on a forced exit and
+  `_ACTIVE_RUNS` is empty by construction when it does run. The test written for that loop put
+  `FakeRun`s in the map by hand and could see neither fact. `cli._cmd_serve` now passes
+  `timeout_graceful_shutdown=3`, so one Ctrl-C cancels the open request, and `_run_isolated`'s
+  `except BaseException` kills the process group. SIGHUP gets a handler that re-raises it as
+  SIGTERM. **The first draft raised `KeyboardInterrupt` from that handler instead. It passed its unit
+  test, but run live it crashed the event loop with a traceback and no lifespan teardown.** Verified
+  live after the change, with a stand-in worker that leads its own process group and has a sleeping
+  grandchild in it: one SIGHUP, then "Shutting down … Finished server process", and both processes
+  gone. The replacement test runs the real `_cmd_serve` and fires the handler it installed. It no
+  longer asserts that `"SIGHUP"` appears in the source, which a comment would satisfy.
+
+  **Copy on a Timeline dropped every event's text (H2).** `guideMarkdown` read `event.what`, a field
+  the server has never sent (`schema.TimelineEvent` declares `description`), so a copied timeline
+  was a list of bare dates. The harness fixture had been written to match that line rather than the
+  wire, so its assertion passed on an input the product cannot produce. Fixed, along with the
+  fixture. A new tripwire (`test_the_client_only_reads_guide_fields_the_schema_declares`) reads the
+  pydantic models and fails on any `event.`/`item.`/`utterance.` field they do not declare. It is
+  scoped to the functions that consume each payload, because `event` is also every DOM handler's
+  argument. Mutation-checked: restoring `event.what` fails both it and the export test.
+
+  **Reference numbers still ran out of reading order on five of seven surfaces (H3).** Round
+  fourteen's `inReadingOrder` was applied to the overview and the chat turns only. The podcast and
+  all four guide kinds render the same numbered stroke and were numbered in the order the model
+  emitted them. Measured: identical citations numbered `s1, s2, s3` in the overview and
+  `s3, s1, s2` in a Summary guide, and the Markdown export carried that list out. Each surface now
+  sorts against its own prose (an utterance's `text`, a guide's `text`, an FAQ item's `answer`, a
+  timeline event's `description`).
+
+  **Deleting a notebook during TTS synthesis orphaned its episode (H4).** The delete endpoint's 409
+  reads `_ACTIVE_RUNS`, which empties when the subprocess returns, and synthesis runs entirely after
+  that. So a DELETE mid-synthesis answered `{"deleted": true}`, and the handler then wrote the mp3
+  back. The next notebook to take that id was served the previous one's audio. There are two fixes.
+  `_BUSY` (slug-keyed, counted) holds a notebook for the whole `audio` request, and the delete guard
+  reads it. Separately, if the podcast record write fails, the mp3 written just before it is
+  cleared. That closes the one interleaving the guard cannot: DELETE checks and then deletes across
+  an `await`. Each half has its own test, driven from inside `synthesize`, and each fails when its
+  half is reverted.
+
+  **`tests/readable_error_parts.mjs` was untracked (H5)**, and 45 tests import it, so a commit of
+  the index as it stood would have shipped a suite that fails on checkout. It is added now, and
+  `.coverage` is ignored.
+
+  **Printing kept the citation numbers and hid the list they point at (M6).** `@media print` hides
+  `.col-studio`, where `#panel-references` lives, and the stylesheet's comment claimed the opposite.
+  Un-hiding the panel would not fix it, because the panel is only built while its tab is showing.
+  `installPrintReferences` builds a list at `beforeprint` from `collectReferences()`, the same order
+  every mark was stamped from, and removes it at `afterprint`. It prints nothing on the Inbox and
+  never stacks a second list. The "(unverified)" label in both this list and the Markdown export is
+  localized now (`copy.unverified`), where the export had hardcoded English.
+
+  **Docs (P7).** `README.md` now describes Copy, Export and printing. `AGENTS.md`'s scope note names
+  the export surface and adds `_BUSY` to the in-memory maps that have no multi-worker story.
+
+  **Not acted on: P8.** Exported prose carries no inline marks, so outside the app a list that
+  starts at "3." has nothing in the text to attach to. The judge called this deliberate, and so did
+  round fifteen. It stays recorded here.
+
+- **Round fifteen. The product could not hand over the thing it exists to produce, and quitting it
+  left paid runs running.**
+
+  **Quitting the server orphaned every in-flight run.** The worker is spawned
+  `start_new_session=True` so `killpg` can take its Deno grandchild with it (invariant 22) — and
+  that same flag puts it in a DIFFERENT session, so the terminal's Ctrl-C and a terminal close's
+  SIGHUP never reach it either. Reproduced against the shipped `serve`: the first Ctrl-C made the
+  server wait for the whole run; the second left the worker and its `deno` child reparented to init
+  and still billing, until their own wall-clock backstop — up to 1500s on the API path and **9000s
+  on the subscription path**. No `/cancel`, no UI, no signal, and a restarted server knows nothing
+  about it. Invariant 47 failing at the one moment the reader has decided to stop everything.
+  Shutdown cancels every active run now, and `_run_isolated` cancels on the way out of a cancelled
+  await — the same one-line gap in both places, since the `finally` that forgets the run is exactly
+  what makes it unreachable.
+
+  **The product had no way out for any artifact.** `README.md` and `AGENTS.md` describe the purpose
+  as "get a distilled research artifact out the other end"; measured across 8,269 lines of
+  `app.js`, `navigator.clipboard` appeared ONCE — copying a markdown link's URL — there was no copy
+  on an answer, the overview or a Guide kind, no export of any kind, and `@media print` matched
+  ZERO rules, so Cmd+P printed the three-column application shell. The only export in the product
+  was the podcast's audio file. And the one remaining route, select-and-copy, was broken by the
+  citation click handler firing on the mouseup that ends a drag — a guard the podcast transcript's
+  line handler has carried, with exactly that argument, since it shipped. There is now a Copy on
+  every artifact surface, an Export that writes the whole notebook as Markdown, and a print
+  stylesheet; what leaves carries the SAME numbered reference list the panel shows, with an
+  unverified citation marked as such, so an artifact cannot launder a claim that failed
+  verification.
+
+  **A persisted Audio Overview whose file is missing rendered a fully armed, dead transport.**
+  `audio/file` 404s, `play()`'s promise rejects, and the rejection is swallowed on purpose — so
+  pressing Play produced nothing at all: no toast, no state change, no message, on the most
+  expensive artifact the product makes (invariant 64) and the one it persists deliberately (42).
+  Reachable by any backup restore or a desktop sync that moves the JSON without the blob. The
+  server already says so (`audio_suffix: null`), so the state is stated and the transcript kept.
+
+  **The reading-order fix from round fourteen was not a consistent ordering.** The comparator read
+  `a.seen < 0 || b.seen < 0 ? a.at - b.at : …`, so ONE span-less citation dragged its neighbours
+  back into emission order: `[s3(Gamma), sX, s1(Alpha)]` came out `s3, sX, s1` and the reader met
+  `[3] … [1]` — the same defect, reintroduced in the case the product's own prompt asks for
+  (`instructions.py` tells the model to omit `answer_span` when it cannot point precisely, and
+  `locate_answer_spans` nulls any span it cannot find verbatim, so a MIXED array is the designed
+  common case). Only the locatable citations are permuted now, among the positions they already
+  hold, which is consistent by construction and makes true the claim that a span-less one does not
+  move. The shipped test covered only the two PURE cases, which is why one defect was invisible.
+
+  **Two write sites could still resurrect a deleted notebook**, and promote needed no race at all: a
+  stale picker option was enough, because the options come from the notebook list fetched when the
+  Inbox rendered. `create` is now what the CALLER meant — the UI mints an id for "a new notebook"
+  and says so — and the note path keeps lazy creation while refusing to undo a delete. Also: a file
+  NAMED `https://example.com/paper.md` took `node_id_for`'s origin-only branch, so two such uploads
+  collapsed to one node with the second discarded under `refused: []`, and the id collided with a
+  real capture of that URL. The capture PATH decides identity now, not a `startswith` on a string
+  the caller chose.
+
+- **Round fourteen's mediums, taken rather than deferred.**
+
+  **The one irreversible action was distinguished from Cancel by border hue alone**: identical
+  background, identical text colour, 1.49:1 between the two borders. WCAG 1.4.1 and 1.4.11, and
+  against every platform HIG for a destructive confirmation — the whole point is that the dangerous
+  button should not be the one you press by muscle memory. It differs in three ways now (fill, text
+  colour, border), with a `--bad-text` token joining `--warn-text`/`--accent-text` so the label
+  measures 6.70:1 in Paper and 5.99:1 in Study instead of 3.93.
+
+  **Reflow failed at 320 CSS px** — 400% zoom on a 1280px display, which is what SC 1.4.10 actually
+  asks for. `scrollWidth 331` against `clientWidth 320` in the English interface, and the first two
+  attempts at it measured as having changed nothing: no element's own rect passed 320, because the
+  11px came from a TOOLTIP's generated content. `overflow-x: clip` on the header (not `hidden`,
+  which would create a scroll container and break the sticky composer) removes the phantom scroll
+  while leaving the Y axis visible, so the tip still drops below the bar and the notebook menu still
+  escapes it.
+
+  **Three surfaces still spoke English to a Chinese reader**: `Host A`/`Host B` once per line down a
+  transcript of up to 90, `Thinking…` in the same pending bubble whose live ticker said 思考中…, and
+  the twelve `TRAJ_META_LABELS` chips that are the whole "Initial state" panel of the Trajectory
+  drawer — rendered raw in the same function that REJECTS the server's `timing_note` because
+  "interface copy belongs to the interface" (invariant 48).
+
+  **`/DESIGN.md` — a 47 KB internal spec — answered unauthenticated.** `auth.PUBLIC_PATHS` is derived
+  from the contents of `web/`, justified as "the static assets, which carry nothing private"; that is
+  an argument about assets and a design record is not one, and the derive-from-the-directory rule
+  made anything dropped in there public by default. The allowlist filters on asset suffixes now, so
+  deny-by-default holds for the next thing added.
+
+  **Stop did not reach the batch that had not started yet.** `cancel_pending` bumps
+  `_cancel_generation` for exactly this reason — and `_auto_distil_after_intake` read that counter at
+  ENTRY, i.e. after the bump, then wrote `cancel: False` over the flag the reader had just set. A
+  paid batch began milliseconds later with `should_stop()` already false. The automatic pass refuses
+  to start while the flag is set and no longer clears it; a NEW capture is the deliberate act that
+  turns it back on.
+
+  **Reference numbers ran 1, 3, 4, 6, 5 down one answer.** The interface owns the numbering
+  (invariant 48.5 exists so there is exactly one scheme) and assigned it in the order the MODEL
+  emitted citations. `answer_span` is the model pointing at its own prose (invariant 49), which is
+  precisely the coordinate for sorting by where the reader meets each mark; a citation with no span
+  keeps its array position, because nothing locates it.
+
+  Also: the source viewer was the widest reading surface in the product with no measure and the
+  chrome face (97.5 cpl in Public Sans; now 65 in Literata, sharing `--chat-measure`, which moved to
+  `:root` because a measure scoped to the chat column could not reach it); the Inbox's full text was
+  a mono `<pre>` for every kind, so a captured page containing a 520-character URL became a
+  horizontal scroller that **WKWebView does not make keyboard-reachable** — prose gets the reading
+  face and wraps, and the mono block stays for the scanned pages whose alignment is the point;
+  dropping a file on an open notebook refused and pointed elsewhere while the Sources panel 300px
+  away did exactly what the drop implied; `#panel-studio` was a tab stop while containing focusable
+  children; and `count_nodes`' comment claimed "one cheap query at thousands of rows" when
+  `json_valid()` on four unindexed columns makes every count a full scan — 11.89ms against 0.15ms at
+  30,000 rows. The filter is kept (the alternative is a spend action announcing a total it can never
+  reach) and the comment now carries the measurement and names the schema migration that is the
+  prerequisite for fixing it properly.
+
+- **Round fourteen, the design judge: the collapsed Studio rail was four blank squares, and I
+  deleted the markup that filled them.**
+
+  Round thirteen's ARIA pass rewrote the four Studio tab buttons to add `id`/`aria-controls`/
+  `aria-selected` and dropped their `<span class="tab-icon">✦︎</span>` in the same edit. The CSS
+  that turns the collapsed rail into an ICON strip survived in three places, so collapsing it —
+  Enter on the focused splitter, a double-click on the grip, or any drag under 170px, all persisted
+  to `localStorage` — removed Guide, Podcast, References and Notes behind four unlabelled 32px
+  squares with no visible way back. Accessibility made it worse rather than rescuing it: with
+  `.tab-label` at `display: none` the accessible name fell back to the tooltip, so a screen reader
+  announced "A two-host audio overview" and never the word "Podcast". The glyphs are back, the label
+  is `.sr-only`-hidden rather than removed from the tree, and a tripwire now fails on any class a
+  rule styles and the product never creates — which found 16 more, all dead CSS from three
+  superseded designs (the citation-detail slot, the pre-`ref-card` reference list, the inline trace
+  console), now deleted. `DESIGN.md` §10 already recorded this exact shape once for `.distil-btn`
+  and nothing failed on it either time.
+
+  **Round thirteen fixed the outer tab strip and left the two inside it.** `#guide-tabs` and
+  `#source-kind-tabs` carried which one is current in an underline ALONE — no role, no
+  `aria-selected`, no roving `tabindex`, no arrow keys, four and three separate tab stops — and the
+  podcast Length group, which decides what the next press COSTS (invariant 63), had no
+  `aria-pressed`. `DESIGN.md` §5.4 calls the guide strip and the view strip "the same idiom"; only
+  one of them kept the promise. SC 4.1.2, fixed one level up and left open one level down inside the
+  same panel.
+
+  **A source's title was readable nowhere and announced nowhere.** `sourceDisplayName` returned the
+  HOST, so the row's `aria-label` said "Open arxiv.org" and overrode its own content, the source
+  viewer headed itself with the host, and `.src-title` is line-clamped to two lines with no tooltip
+  — three surfaces, one cause. The Inbox's whole thesis is that if recall cannot be visual it has to
+  be typographic; a title truncated everywhere and absent from the accessibility tree is neither.
+
+  **The Trajectory strip drew a 180ms call as 67% of an axis labelled 1:39.** `renderTrajTimeline`
+  normalises segment widths by the sum of tool `duration_s` while the axis printed the run's wall
+  clock, so on a 99.1s run the 40.6s the model spent thinking between calls was drawn as nothing and
+  a 2.9s sub-LM call got the same 108px floor as a 2ms validator. A true label over an untrue
+  layout, which is what invariant 60 forbids. The axis names what the strip partitions — tool time,
+  formatted so sub-second totals do not all floor to `0:00` — and the wall clock stays on the header
+  stat, where it is true. Laying out against `total_s` instead is the other fix and is wrong here:
+  `TRAJ_SEG_MIN_PX` exists because these calls are milliseconds, so every segment would become a
+  sliver with no room for a label.
+
+  **And the first test written for that axis was theatre.** The scenario rebuilt the expression by
+  hand instead of extracting it, so reverting the product to the wall clock left it green. The logic
+  is a named `trajAxisLabel` now and the scenario runs that one; the same mutation fails.
+
+- **A designed outcome reported as a network fault.** `UNREACHABLE` matched the bare words "timed
+  out" anywhere and was tested above every provider branch, so a run that hit
+  `RN_RUN_TIMEOUT_SECONDS` — the thing invariant 68 exists for, since a `long` podcast asking for
+  60-90 accumulated utterances could not fit under the 300s default — told the reader "Could not
+  reach that address." for a run in which no address was involved, immediately after they had paid
+  for a 5x-budget episode. `runner.py` names the knob in the message precisely so they can act on
+  it; the branch kept the knob in the raw text and threw the diagnosis away. A dead local model
+  server (the commonest first-run failure for BYOK) read the same, and a proxy answering a model
+  request with a sign-in page put 645 characters of raw `<!doctype html>` in a toast. Four failures,
+  four sentences, with the source-URL one now reached only when it is not about a run or a provider.
+
+  **And the two harnesses that build `readableError` each carried their own copy of its parts.**
+  Adding three constants to one left the other silently assembling a DIFFERENT function — not an
+  error, just the wrong sentence in two scenarios, which is how the fix above was caught only by an
+  unrelated test. `tests/readable_error_parts.mjs` is the one list now: renaming a constant in
+  `app.js` fails loudly in both, where before it failed in one and lied in the other.
+
+- **Round fourteen: two blockers, both on paths round thirteen was working in, both mine.**
+
+  **Five paid endpoints ran a full model loop against an EMPTY corpus.** Round thirteen closed "the
+  one place a press spends money for nothing" on `ask` — and `guide` (four kinds) and `audio` never
+  had the check, so the Studio guides and the Audio Overview each spawned a run whose corpus blob
+  was the empty string. The podcast is the most expensive action in the product
+  (`PODCAST_TIMEOUT_FACTOR["long"] = 5.0` over 60-90 accumulated utterances, invariant 64), and its
+  Generate button was LIVE on a source-less notebook: the four guide tabs are gated by `showKind`,
+  but `#podcast-generate` is static markup whose only guard was "is a notebook open", and the
+  selected Studio tab is remembered — so pressing "+ New notebook" lands a reader who last used
+  Audio on an enabled button. Fixing the INSTANCE rather than the CLASS is what left five more, so
+  there is one `_require_sources` now and a tripwire that fails on a sixth handler reaching
+  `_run_isolated` without it — including a checked exemption for `_resolve_language`, which spawns
+  a run of its own and is reachable only from the five.
+
+  **`DELETE /notebooks/{id}` answered `{"deleted": true}` and the notebook came back.** Its own
+  docstring names that outcome as what its 409 prevents, but the 409 reads `_ACTIVE_RUNS`, which is
+  populated only AFTER `runner.start_run` returns — so it covers spawned runs and not ingestion,
+  which this file elsewhere says "can take minutes". A source landing after the delete re-created
+  the file through `create=True`, holding only that source: every earlier source, note, turn,
+  overview and podcast gone, and the Inbox membership rows already dropped. Reachable by dropping a
+  scanned PDF, thinking better of it, and pressing the ✕ the picker puts on every row. `create` is
+  now "it was not there when we started" rather than a constant, at all three sites — a concurrent
+  delete makes the write FAIL, which is the right way round, and `ask` gives up a paid answer rather
+  than resurrect a notebook the reader deleted. Second half of the same guard: `_ACTIVE_RUNS` is
+  keyed by the raw id and the file by `slug(id)`, so `"Reading List"` and `"Reading-List"` were two
+  keys and one file — the alias spelling walked straight past the 409.
+
+- **Round thirteen, third pass: the mediums worth taking now.** One tab stop per citation, not
+  one per fragment — a stroke crossing an inline `**` is emitted as several spans, and making every
+  one operable turned a single reference into three identical-sounding buttons, two of them
+  announcing no number at all, since only the last fragment carries `data-reference`. Keyboard-only,
+  and it arrived WITH the keyboard fix. The composer's disabled send glyph was still dimmed by
+  `opacity` at 2.77:1, the one control the "fill goes quiet, label stays readable" pass missed. The
+  References link printed "1 references." three times on one screen, in English only. The theme
+  toggle's label named the action and never the state, so no screen reader could tell Paper from
+  Study — and the splitter's `aria-valuenow` was the literal `50` written in the markup, so an AT
+  user pressing the arrow keys it handles so carefully was told nothing had moved. `SourcesRequest`
+  was the one request model without `extra="forbid"`: the singular typo `{"source": [...]}` answered
+  200, created the notebook and added nothing.
+
+- **Round thirteen, second pass: the four HIGHs left open after the blockers.**
+
+  **The product had a colour system and no size system.** 24 distinct `rem` font sizes and 29
+  spacing values, with zero `--text-*`/`--space-*` tokens — ten of the font sizes between 0.68 and
+  0.85rem, steps of 0.16-0.32px that nobody can perceive and that guaranteed no two labels in
+  different components ever agreed (inside ONE Inbox failure banner: `.distil-error` at 0.78 with
+  `.distil-error-count` at 0.76). The strongest evidence it was drift rather than a decision: the
+  Inbox rebuild reached for a scale and, finding none, defined `--ib-gap` scoped to itself. Both
+  scales take their steps from the MODES of what was already there rather than an invented ratio, so
+  retrofitting cost at most 0.80px on any type declaration and moved only 7 of 269 spacing
+  declarations by more than that — 146 and 205 declarations converted, `--ib-gap` re-pointed at the
+  global scale as a semantic alias, and a test that fails on any new literal. Fourteen spacing steps
+  is more than a scale wants; thinning it is now a safe change to make one component at a time,
+  which it was not before.
+
+  **The locked-out screen rendered the whole application as live.** No `?token=` — which an ordinary
+  bookmark produces, and a mis-handshaked Tauri sidecar too — gave a facet rail, "+ New notebook",
+  Settings and a FOCUSED capture field, all dead, with the remedy being a line of body text telling
+  the reader to hand-edit a URL. There was no field anywhere in the product to paste a token into,
+  although the app already persists one. There is a gate now: it replaces the surface, inerts
+  everything behind it (the drawer's own treatment), takes focus, and writes to the key the app
+  already reads.
+
+  **A settled turn was never re-scrolled**, so after a failed question 83px sat below the fold
+  containing both of that turn's actions — `Steps` and `↻ Regenerate`. The one affordance that
+  recovers from the error was the one you could not see. Re-pinned only if the reader was already at
+  the bottom, because yanking someone back while they read an earlier turn is the same bug the other
+  way round.
+
+  **Focus was dropped to `<body>` in two keyboard paths**: closing the notebook switcher with Escape
+  (the next Tab restarted at the skip link), and the `Steps` pill retiring, which set `disabled` on
+  the element the reader was standing on. `aria-disabled` keeps it focusable and inert, and the
+  retirement sentence is now a `role="status"` so it is announced rather than merely drawn.
+
+  Also: `.ask-hint` has been tuned for contrast three times and failed a fourth measurement at 3.54,
+  because `opacity` multiplies whatever is underneath and the surface under it changed again when
+  the composer gained a sticky background. "Recedes until engaged" is a colour decision, so it is
+  made in colour now — dim at rest, full strength on focus — and the decorative middot beside it is
+  `aria-hidden` rather than dimmed below the floor.
+
+- **Round thirteen. Seven blockers across two judges, and one of them was a claim made in this
+  file.** Both verdicts were NOT YET; every blocker is fixed, reproduced first and mutation-checked.
+
+  **The CHANGELOG said a regression "fails instead of hanging CI". It hung.** Round twelve's
+  `_DISTIL_GUARD` split shipped with two tests: one drives the deadlock through a real request, the
+  other through a proxy that refuses re-entry. The proxy one fails in 2s; the one ABOVE it in the
+  file never returns, and pytest runs a file top-down — so the regression hung the whole suite past
+  600s with no `pytest-timeout` and no `timeout-minutes`, which reads as "cancelled" rather than
+  "this test failed". The second test's own docstring is the argument against the first
+  ("a worse CI failure than the bug"). Both use the proxy now: the same regression fails in 2.15s.
+
+  **The UI reported a live notebook as deleted.** `promote_node` keys memberships on
+  `slug(notebook_id)` — right, because the slug identifies the FILE — while `GET /notebooks`
+  returned the id inside the file and no slug, so the two ends could never meet. Every node filed
+  into a notebook whose id differs from its slug rendered "In a deleted notebook" while that
+  notebook sat live in the same row's own picker. Unreachable from the web UI alone (invariant 37
+  mints `nb-<uuid8>`, whose slug is itself) and reachable from the first
+  `--notebook "reading list"`, or any CJK name, which is what invariant 10's hash fallback exists
+  for. `NotebookSummary` carries `slug` now; `NotebookResponse` always did.
+
+  **A notebook could not be deleted from anywhere** — no endpoint, no CLI verb, no control — so once
+  one existed it was permanent, and emptying it left "Untitled notebook · 0" in the facet rail
+  forever. The product ships Forget for a node and ✕ for a source, and `app.js` even carried the
+  string "a deleted notebook" for a state nothing could produce. `DELETE /notebooks/{id}` now
+  removes the file, its audio (invariant 42's one-file-per-notebook is what made retention a
+  non-question) and its membership rows, refuses with 409 while a run is in flight — deleting under
+  a worker would let `mutate_notebook` re-create the notebook it just deleted — and leaves the nodes
+  alone, because promotion COPIES (invariant 78).
+
+  **`playground/smoke.mjs` was failing and nobody had run it.** Round twelve added
+  `POST /inbox/distil/dismiss` to `api.py` and `app.js` and not to the shim, which is the exact
+  drift the playground's route-coverage check exists to catch — and CI runs neither `build.py` nor
+  `smoke.mjs`, so the guard was only as good as somebody remembering. The same correspondence is
+  now a pytest, and it caught the next one immediately: it failed on `DELETE /notebooks/{id}` the
+  moment that endpoint was added, before the shim learned it.
+
+  **Below 640px the composer was at the end of the document.** The one-scroller decision for phones
+  is right and it left the primary verb 9,934px down a 10,776px page on a 25-turn notebook — twelve
+  viewport-heights, growing with every turn, and below the fold even on an EMPTY notebook because
+  the Sources rail is 701px. Sticky inside `.col-chat`, with an opaque background and a top hairline
+  because content now passes under it. Verified: sticky at 375 and 640, static at 700, no overflow.
+
+  **The skip link — the first tab stop on every screen — pointed at a hidden element.**
+  `#capture-input` lives inside `#view-inbox`, which is `hidden` whenever a notebook is open, so in
+  a notebook it moved focus nowhere, left a dead fragment in the address bar and named a destination
+  that is not on that screen. SC 2.4.1 unsatisfied and SC 2.4.4 on the label. Both halves follow the
+  view now, and the press focuses the field itself rather than trusting the fragment.
+
+  **`role="tablist"` and `role="listbox"` were declared and never fulfilled.** `aria-selected` did
+  not appear ONCE in the product: all four Studio tabs reported "not selected", and the notebook
+  menu was a listbox whose options were `<button>`s with an interactive sibling, which is not a
+  listbox in any assistive technology. The tabs are a real tablist now (`aria-selected`,
+  `aria-controls`, `role="tabpanel"`, roving `tabindex`, arrow/Home/End keys); the menu drops the
+  roles it could not keep and marks the current notebook with `aria-current`. While wiring that:
+  `#facet-inbox` had `is-current` hardcoded in the markup and nothing ever removed it, so the rail
+  claimed the Inbox was current from inside a notebook.
+
+  **Three AA failures in the default theme, and one of them was round twelve's own doing.** Promoting
+  the citation superscript to the RESTING mark moved the whole burden of the signature interaction
+  onto the smallest type in the product: 8.93px at 4.20:1. The injection-scan flag — invariant 6's
+  entire transparency mechanism — measured 2.35:1, and the Trajectory strip's state glyphs 1.98:1
+  for the one that means "the validator rejected this". A signal colour and a text colour are not
+  the same colour: `--warn-text`/`--accent-text` join `--field-border` as tokens that exist because
+  a signal was reused as type. The superscript is 0.72em now and measures 6.45:1 in a browser,
+  sanity-checked at 21.00.
+
+  **And the one place a press spent money for nothing.** `PUT /title` and `POST /overview` both
+  refuse a source-less notebook; `ask` did not, so the composer accepted a question 20px from a
+  panel reading "Add a source first" and ran a full model loop against an empty corpus. A 422 and a
+  composer that says why.
+
+  Also: the page had **no `<!DOCTYPE html>`**, so the whole product rendered in quirks mode — nothing
+  visibly broken (no `<img>`, no `<table>`, `box-sizing` already reset) but every vertical position
+  on the reading surface 8px off the CSS as authored, in a product that measures characters-per-line
+  to two decimals. `/inbox/upload`'s 411 guard — invariant 30 on the DEFAULT drop target — could be
+  deleted with all 999 tests green, because `TestClient` always sends a `Content-Length`. And the
+  manual summary pass re-derived the inbox directory from the process cwd while the auto pass passed
+  the queue's resolved one, which is the asymmetry `IntakeQueue.__init__`'s comment was written to
+  close, on the other half of the same feature.
+
+- **Round twelve. The function judge found a single authenticated GET that ends the server, and the
+  design judge found that one dropped request fabricates the reader's notebook.** Both verdicts were
+  NOT YET; every blocker is fixed, reproduced first and mutation-checked after.
+
+  **`POST /inbox/distil` self-deadlocked the event loop whenever there was nothing to summarise.**
+  `_DISTIL_GUARD` is a plain `threading.Lock`, and the `total == 0` early return called
+  `_distil_status()`, which takes the same lock. The handler is `async`, so the deadlock was on the
+  ASGI event loop: the server answered nothing further, static page included, and survived SIGINT
+  and SIGTERM — only SIGKILL ended it. Every existing test posts with pending nodes, so the branch
+  was executed by nothing, while the shipped UI reaches it by design (`app.js` has a `started:
+  false` branch whose comment records it firing in the wild): a stale count, a second tab,
+  auto-distil finishing first, or a node deleted between the poll and the press. Split into
+  `_distil_snapshot()` (no lock, caller holds it) and `_distil_status()` (takes it). Deliberately
+  NOT an `RLock`, which would silence the next nested acquisition instead of preventing it — and a
+  test now fails if anyone swaps it, alongside one that drives the branch through a proxy which
+  refuses re-entry rather than waiting, so a regression fails instead of hanging CI.
+
+  **`openNotebook`'s bare `catch` treated every failure as "does not exist yet".** Blocking one
+  request to a notebook with four sources and two turns rendered it as: "Untitled notebook", no
+  sources, "Ask a question once you've added a source.", an empty notices rail, and the `?nb=`
+  dropped from the address bar. Four false statements about the reader's own data, no error, no
+  retry, and it did not heal when the request started working — while "Add source" from that screen
+  writes into a notebook the reader believes is empty. It also discarded what the server had gone
+  to the trouble of saying: invariant 27 makes a corrupted notebook file a 409 carrying the sentence
+  that says how to fix it, and the boot path turned that into "that notebook is not here any more".
+  `api()` now carries the status on the error, the placeholder is gated on a `fresh` flag that only
+  the two id-minting call sites pass, and the boot path's redundant existence probe is gone.
+
+  **The signature interaction was mouse-only.** `DESIGN.md` §2 calls the citation stroke "the
+  literal visual expression of the product's core value"; it had a `click` listener and nothing
+  else — no `tabindex`, no `role`, no key handler — and a recorded walk of 37 tab stops through a
+  notebook reached no citation at all. SC 2.1.1 and SC 4.1.2, both Level A. Now `tabindex="0"`,
+  `role="button"`, Enter and Space, a `:focus-visible` ring, and the reciprocal highlight on focus
+  as well as hover. Verified in a real browser: 13 Tab presses reach a citation, which draws a 2px
+  accent ring. The test runs the real `renderAnswerWithCitations` over the real markdown renderer,
+  so it covers the split-fragment case too.
+
+  **The reading surface had no measure on the machine most of its readers use.** Measured with each
+  block's own font advance: the chat answer ran 82 characters per line at 1440, 133 at 1920 and
+  **203 at 2560**, and the overview 99 / 163 / **247**, while `.inbox-inner` held 544px at every one
+  of those widths. The product capped its measure on the scanning surface and not on the reading
+  one. `--chat-measure: 38rem` on the block (not the column, so the gutters grow instead of the
+  line): now 52 and 61 cpl, constant from 1440 to 2560. The overview was also the one prose surface
+  the reading face never reached — Public Sans 14.4/21.6 directly above Literata 14.4/24.48, through
+  the same render function — and is now `.chat-overview-body`.
+
+  **The citation underline had become the thing the wash was moved for.** An independent review
+  measured a real overview at 1,996 characters with 16 strokes covering 1,914 of them: 95.9%, a
+  solid slab harder to read than plain text, answering "which part of this is grounded?" with "all
+  of it". The resting mark is now the superscript number; the stroke arrives on hover and focus,
+  one claim at a time. An UNVERIFIED stroke keeps its dashed rule at rest, because a warning that
+  only appears when you point at it is not a warning.
+
+  Also fixed: a rejected `fetch` reached the reader as Chrome's "Failed to fetch", untranslated even
+  in a zh-Hant interface, never saying that the page had lost its own loopback server — all three
+  browser spellings now answer with what to check. A failed summary pass was IMMORTAL: process
+  state that only the start of the next pass cleared, so one failure installed a banner on the
+  default screen for every later visitor, in a brand-new browser profile, with no dismiss — there is
+  a server-side dismiss now, refused with 409 while a pass owns the fields. `_` was a live `LIKE`
+  wildcard in the Inbox search, so `my_notes` also matched `myXnotes.txt` (`%` stays a wildcard: that
+  one is a recorded decision, and nobody types it by accident). A client disconnect during a spawn
+  skipped `except Exception` — `CancelledError` is a `BaseException` — leaving `_RUN_PROCESSES[id] =
+  None` and its trace file reserved for the life of the process, so that (notebook, token) pair
+  409'd forever. The podcast transcript's timecode measured 2.55:1 in Paper and 3.57:1 in Study
+  (failing AA in both, and 1.4.11 in Paper, since it is also the seek control) because
+  `--studio-accent` was inherited and then multiplied by `opacity: 0.75`. The Studio's outer tab and
+  its own first child tab were both called "Summary", 120px apart, one containing the other.
+
+  **The product had no keyboard shortcuts at all**, which an independent review called its clearest
+  "web page, not app" tell and the one that matters most for the planned Tauri shell: a window with
+  none is a browser tab with the chrome removed. Every global `keydown` in `app.js` handled exactly
+  one key, `Escape`. There is now ⌘/Ctrl-K (the primary field of the screen you are on — capture on
+  the Inbox, the composer in a notebook), ⌘F (find, going home first if you are in a notebook), ⌘,
+  (Settings), a skip link as the first tab stop, and the capture field focused on the screen built
+  for capture — it was the SIXTEENTH stop, behind three header controls and one per notebook, a
+  list that grows. Each binding reports whether it acted and only then swallows the browser's own:
+  the find field is hidden on an empty Inbox, and taking ⌘F away to do nothing would be worse than
+  not binding it.
+
+  **A disabled control lost its label, not just its fill.** `opacity` dims the whole button, so
+  "Add source" measured 1.52:1 and the capture send glyph 1.23:1 — invisible — while the copper
+  block behind them stayed the loudest thing on the rail, on the first-run screen, at the moment a
+  reader is deciding whether Enter does anything. Now the fill goes quiet and the label stays
+  readable: 6.68:1 in Paper and 6.58:1 in Study, measured with the sanity check at 21.00. The worst
+  case was `.ticker-toggle.is-absent`, which delivers a SENTENCE — "This run left no trace." —
+  through a `disabled` button and so inherited a control's WCAG exemption for free at 3.36:1.
+
+  **Two files with the same name both landed and one of them could never be filed.** Round eleven's
+  `node_id_for` fix made them two nodes, which is right; promoting the second into a notebook that
+  already held the first was a hard refusal with no way out, because nothing here renames a node or
+  a source. Invariant 79 lands the capture and invariant 78's promotion was a dead end one step
+  later. The display origin is disambiguated now (`notes (2).txt`) — neither silent nor shadowing,
+  since both sources exist, both are citable, and the name says which is which. Two tests that
+  pinned the refusal now pin the property the refusal was protecting: each source keeps its own text
+  and its own membership.
+
+  **The audio player was the browser's, on the artifact this product is proudest of.**
+  `<audio controls>` rendered Chrome's stock black pill — play, slider, volume, a `⋮` overflow menu
+  — inside a hand-drawn ink-on-paper panel, and it was the last un-themed surface in the product:
+  the native file picker was replaced for showing OS chrome in the wrong locale, and the scrollbars
+  and `<select>`s were themed for the same reason. It is also the worst one to leave
+  cross-platform, because a Tauri build is WKWebView on macOS, WebView2 on Windows and WebKitGTK on
+  Linux — three genuinely different players. The element is headless now and drives a transport
+  built from this product's own parts: a circular play button, a copper-thumbed scrub and a tabular
+  clock. A real `<button>` and a real `<input type="range">`, because both are keyboard-operable and
+  nameable for free and re-implementing a slider's drag/arrow/Home/End behaviour buys nothing —
+  with `aria-valuetext` carrying the TIME, since a range otherwise announces "437". `preload` moved
+  from `none` to `metadata` so the duration is known before the first press without pulling the
+  episode. Verified in a real browser: play, pause, live scrubbing, and the transcript's
+  `.is-speaking` following the handle.
+
+  **The harness lied about itself in both directions, one round after being fixed for the first.**
+  Round eleven closed three stated gaps and left the header claiming they were open — which is
+  worse, because a reviewer trusting it skips a test that is writable. Meanwhile the one real
+  remaining limit (document-level queries are still tables) was stated nowhere, and `El` had no
+  `tabIndex`, `href` or `data-*` mapping, so `[tabindex]`, `a[href]` and every `[data-*]` clause of
+  `trapTab`, `trajTakeFocus` and `FOCUSABLE_TARGET` matched nothing and were deletable green. Worse,
+  `test_starting_a_run_is_what_makes_the_guard_fire` said in its own docstring that deleting
+  `runStatus`'s first statement was now caught; deleting it left all 979 tests passing, because the
+  scenario calls `noteRunStarted` directly and the shim had no `document.createElement`. Pinning a
+  function is not pinning the call to it. The shim now has `createElement`, `createTextNode`,
+  `classList`, attributes and event dispatch, so `runStatus`, the markdown renderer and
+  `renderAnswerWithCitations` are executed rather than simulated.
+
+  **One of the round's findings was wrong, checked rather than assumed.** `promote_node`'s in-lock
+  `prior_membership()` read was called a no-op subsumed by the blocks comparison below it; removing
+  it fails `test_re_promoting_a_node_whose_text_changed_is_still_idempotent` every run, because a
+  node's text can move and the copied source then no longer matches. The comment says so and names
+  the test. Doc drift closed with the round: the README sent readers to "the URL `rlm-notebook
+  serve` prints", which does not exist (it prints a token; uvicorn prints the address, deliberately,
+  because an address announced before the bind is one an occupied port then fails to serve) — and
+  the lockout message pointed at the same non-existent thing. `kind_for` and `ingest_one` held
+  parallel copies of the same four-branch dispatch while both docstrings claimed one was factored
+  out of the other.
+
+- **Round eleven, the function judge: a citation could say `verified: true` about text it had never
+  read.** Three blockers, all reproduced before being fixed, all mutation-checked after.
+
+  **Removing the HIGHEST source freed its id.** `next_source_id` was `max(live ids) + 1`, which is
+  right only while the removed source is not the top of the range — and both tests written for
+  invariant 12 removed a MIDDLE source, so both stayed green. Delete `s3` from `s1,s2,s3`, add
+  anything, and the new source is `s3`: the citation saved against the old one comes back
+  `verified: true`, because `citations.py` checks that a coordinate EXISTS and never that it still
+  means what it meant (invariant 5), while opening a document that never contained the quote. The
+  allocator is now a persisted high-water mark (`schema.Notebook.source_seq`) that only rises, and
+  it has to be persisted rather than re-derived because `api.py` drops the Inbox's membership rows
+  for a removed source on the stated promise that its id "will never come back" — rows in a store
+  `notebook.py` cannot read. Notebooks already on disk recover a mark from the source ids the file
+  still references; a tripwire walks the schema for `source_id`/`source_ids` fields and fails if the
+  recovery scan misses one, which it did on its first run (a podcast utterance carries citations).
+
+  **One authenticated `GET /inbox` could end the server process.** `max_corpus_chars()` was the last
+  statement of the handler and the only unguarded `_env_int` reader left on a request path.
+  `SystemExit` is a `BaseException`, so Starlette's error middleware never sees it: a raw
+  `text/plain` 500, and then the process exits — on the default screen, from a typo in an env var
+  startup did not reject. Converted to a 500 (invariant 24) AND pre-read in `_lifespan`, the same
+  pairing the retention knobs and `auto_distil_max_per_batch` already have.
+
+  **Two uploaded files with the same name were one node, reported as two.** `node_id_for` hashed the
+  origin whenever it was non-empty, and an upload's origin is its filename; `add_node` is idempotent,
+  so the second file found the row already there and its bytes were discarded while the batch
+  answered `{"nodes": [A, A], "refused": []}`. Invariant 79 broken in the one way it cannot be seen,
+  since nothing failed. A filename is not an identity, so every origin now folds in the text —
+  except a URL, which must stay origin-only because a queued capture mints its id before the fetch,
+  and `capture_into_inbox` refuses anything that is not `is_url` before the queue. This also
+  silently falsified `promote_node`'s justification for its blocks-equality branch ("two DISTINCT
+  nodes sharing an origin necessarily differ in text"), which was untrue while a filename decided
+  identity alone.
+
+  **A lock-order inversion with nothing to time out.** `_enqueue` took `_idle` then `_guard`, while
+  `stop` and `cancel_pending` hold `_guard` across `_drain`, which reaches `_idle` through
+  `_finish_one`. Latent rather than routine, which is what makes it worth pinning: it would surface
+  as an unreproducible hang. Racing for it would prove nothing, so the test asserts the PROPERTY —
+  both locks are wrapped in a proxy that records what each thread holds when it takes another, and
+  any pair seen in both orders fails, anywhere in the class.
+
+  **Round ten's drawer fix had no test, and the harness could not have caught a repeat.** Both
+  reverts left the suite green. The shim's own header listed the gap honestly ("hiding a focused
+  element blurs it to `<body>`; this does not") and two more: `querySelectorAll` returned `[]` for
+  every selector, so `trapTab`'s body was unreachable and `if (true) return;` at the top of it left
+  961 tests passing. The harness now matches the selector subset `app.js` writes, refuses to focus a
+  hidden or disabled element, and blurs on hide — so the wrong order can be reproduced through the
+  shipped `trajTakeFocus` and lands on `<body>`, and `trapTab` is executed by a test for the first
+  time. The scenario's control order is `index.html`'s, deliberately: put the search box first and
+  the `:not(:disabled)` clause deletes green.
+
+  **A page that blocks bots was reported as a bad API key.** `FROM_PROVIDER` matched the literal
+  `litellm` anywhere, and every URL in the test guarding this was `example.com` — so capturing
+  `https://docs.litellm.ai/...` and getting a 403 sent the reader to change a credential that was
+  fine. A URL says what a message is ABOUT, never where it came FROM, so provenance is now decided
+  with URLs stripped. Same shape as the `\b499\b` gate directly above it.
+
+  **`kind_for` and `ingest_one` were the second dispatch that both their docstrings warned about.**
+  Each held its own copy of the same four-branch chain while claiming one had been "factored out" of
+  the other — true about the intent, false about the code, and one edit from a `.pdf` URL filed as
+  `web`. `ingest_one` reads `kind_for`'s answer now, and a test fails if they can diverge.
+
+  **One of the round's findings was wrong, and the check is worth recording.** `promote_node`'s
+  in-lock `prior_membership()` read was called a no-op subsumed by the blocks comparison below it.
+  Removing it fails `test_re_promoting_a_node_whose_text_changed_is_still_idempotent` on every run:
+  a node's text CAN move, and when it has, the source copied at promotion no longer matches the
+  node's current blocks, so the equality test refuses the promotion as a conflict with itself. The
+  membership row is the only thing that still knows they are the same capture. The comment now says
+  so and names the test.
+
+  Doc drift closed with it: the README called the server's token "one-time" (it is per-process and
+  every request needs it), `.env.example` attributed `RN_AUTO_DISTIL`/`RN_AUTO_DISTIL_MAX_PER_BATCH`
+  to `auth.py`/`api.py` when both are read by `config.py`'s own functions and omitted
+  `RN_MAX_CORPUS_CHARS` from the read-both-ways list, invariant 79's file described the shared
+  dispatch as fact rather than as the thing that had drifted, and `openTrajectory` still carried a
+  paragraph recommending the `alert` that the comment immediately below it says was removed.
+
+- **A tenth round, and the first thing both judges confirmed is that NOTHING was billed.** Every
+  model path died at `Missing credentials` before any network I/O. The previous round's briefs had
+  neutered `OPENAI_API_KEY`, which is not the variable that authenticates — `RN_API_KEY` is, and the
+  repo's `.env` defines it — so ~186 runs were billed across earlier rounds. Both briefs now empty
+  `RN_API_KEY`, `RN_BASE_URL` and `RN_SUB_MODEL`, forbid sourcing `.env` outright (the README and the
+  product's own error text both recommend that incantation), and tell the reviewer to stop and say
+  so if a model action ever succeeds. Verified by resolving `NotebookConfig.from_env()` under that
+  environment before dispatching: `api_key` empty, `base_url` empty, `sub_model` falling back to
+  main.
+
+  **The Trajectory drawer opened with focus on `<body>` on every path a person can actually take.**
+  `trajTakeFocus` focused the drawer's first focusable, `#traj-run` — and `renderTrajectory` then ran
+  `trajEl.run.hidden = runIds.length < 2`, hiding the element that had just been focused, which
+  blurs it. Every persisted "Steps" pill opens with ONE run id, so the picker was always hidden and
+  focus always landed outside an `aria-modal="true"` dialog: two Tab presses to reach anything, with
+  the page behind hidden from a screen reader the whole time. It stayed invisible because the drawer
+  opens correctly from `trajShowDrawer()` alone, which is the path every probe used. Render first,
+  focus second, and never target a `[hidden]` control. **And closing it returned focus nowhere**: the
+  recorded trigger is a `.ticker-toggle` inside a chat turn, which any re-render replaces, and
+  `.focus()` on a detached node is a silent no-op.
+
+  **The commonest BYOK first-run failure printed raw provider text on the Inbox front page.** Two
+  independent causes: `Missing credentials` was not a shape `BAD_KEY` knew, and `LEADING_NOISE` is
+  `^`-anchored so a class-name prefix SHIELDED the `[openai/gpt-4o-mini]` tag from the only rule
+  that strips it. The strips alternate until nothing more comes off now, `CLASS_NAME` learned
+  litellm's dash separator (`OpenAIException - `), and `FROM_PROVIDER` learned that `RLMTaskError`
+  has no word boundary before `LM`. The sentence also names **`RN_API_KEY`** — the variable the
+  product actually reads — where the provider's own wording named three credentials this product has
+  no concept of.
+
+  **Two instrument errors, both mine, both caught before they shipped a wrong fix.** The contrast
+  helper read the colour TOKEN and ignored `opacity`, so it reported 5.63 where the painted pixel was
+  3.70 — on the composer hint, whose whole design is an opacity. That is the second time a number
+  here came from a helper measuring something other than what a reader sees, and the rule now reads
+  every ancestor's opacity into the foreground alpha. And the `web_dom_harness` header claimed to
+  enumerate its limits while omitting three real ones, including the exact gap that hid the drawer
+  blocker: it does not model "hiding a focused element blurs it".
+
+  Also from the function half: **pressing Stop on a recovered run leaked the recovery flag** — a
+  second teardown path bypassed the only `recoveredRuns.delete` there is, so every later in-tab run
+  took the composer away for the life of the tab; `promote_node` read its membership snapshot
+  OUTSIDE the lock, so ten concurrent promotions of one node produced eight false 400s blaming a
+  source their own siblings had just created (invariant 34's named fault, at Tier 0); and
+  `playground/build.py` never copied the newly-added `favicon.svg` or `web/fonts/*.woff2` and never
+  rewrote CSS `url()`, so the published page 404'd five assets and fell back to system faces — on a
+  page whose entire premise is that it IS the shipped UI.
+
+  **Four fixes shipped in earlier rounds had no test at all**, each proven by reverting it with the
+  whole suite still green: `syncRunGuards` (the one priced in money), the tooltip restore,
+  `_MAX_CANCELLED_IDS`' placeholder eviction, and `IntakeQueue.submit`'s own stopped guard. Worse,
+  `noteRunStarted` — the single line that populates `activeRuns`, on which the entire run guard
+  depends — was testable by nobody, because one half is driven with `activeRuns` injected and the
+  other with `runStatus` stubbed. All five are pinned now, and the harness gained the scenarios to
+  do it: pressing Stop, a detached trigger, the seam between the two halves.
+
+  Docs: `.env.example` said "six are NOT read by `from_env`", named five, and counted one that IS —
+  it names the properties now, because the count is what went stale; invariant 41's headline said
+  three settings where the paragraph below it already explained the fourth; `README.md`, the
+  `Dockerfile` and `cli.py` all called `audio/` a working-directory path when it is
+  `notebooks/audio/`, and the Dockerfile's mount note — the one place that tells an operator what to
+  persist — omitted `inbox/`; and one incident was written up twice with two different numbers, in
+  the very paragraphs arguing that counts rot.
+
+  **Verified:** `uvx ruff@0.16.0 check .` clean; `uv run python -m pytest -q` → **961 passed**;
+  `smoke.mjs` at the same 13 "0 recorded runs" failures, plus three new assertions that every asset
+  the built page references exists and none is absolute. Every fix mutation-checked; every contrast
+  number re-measured through opacity with the helper sanity-checked at exactly 21.00 first.
+
+- **A ninth round. Its sharpest finding is that the harness built to stop this project asserting on
+  names instead of behaviour was itself asserting on a model the browser contradicts.**
+
+  `tests/web_dom_harness.mjs` gave its fake element a plain own `inert` boolean. Real `inert` is
+  INHERITED by the whole subtree — `app.js` says so in its own comment — and the difference was not
+  academic. `#notices` lived inside `.layout`; the Trajectory drawer is a body-level sibling, so it
+  inerts `.layout` and takes the toast rail with it by inheritance. `ALWAYS_LIVE = "#notices"` could
+  never fire for the drawer, because `#notices` was never a sibling on the drawer's walk path. The
+  harness said the rail was live, a real browser said it was inert, and the test passed over a
+  half-applied fix: the previous round's toast fix worked for the three `.modal-overlay` dialogs and
+  did nothing for the one surface invariant 70 calls "where a run's reasoning lives".
+
+  That is the third time this project has shipped a stub that ignores what the real object does
+  (`_Response.read(size)` ignoring `size`; `readableError`'s regex literals; this). The shim models
+  inheritance now and answers `inertly`, the scenarios read it, `#notices` moved to body level where
+  the exemption can actually reach it (`position: fixed`, so nothing moved on screen), and a source
+  assertion pins that placement — because a harness whose tree drifts from the markup answers a
+  question nobody asked. The first version had BOTH mistakes and they cancelled out into a green
+  test over a broken product.
+
+  **And `syncRunGuards` — the previous round's one fix priced in money — shipped with no test at
+  all.** `if (true) return;` in its body left all 945 green. Fourth instance of the same failure, in
+  the newest code, in exactly the class the harness beside it exists for; it simply had not been
+  pointed at it. Four mutations now go red, including "the guard touches a control something else
+  disabled" and "the guard ignores which notebook the run is on".
+
+  **An unreadable index row was invisible, immortal, and still billed for.** The previous round made
+  `list_nodes` skip it so `GET /inbox` would stop 500ing — and `count_nodes` is a separate
+  `COUNT(*)` over the same WHERE, so `total` went on including it: measured `total 3, rows 2`,
+  `Load more` offered on a page already holding everything, and a real summary pass reporting
+  `done 3 / total 4`, a number on the spend action that can never be reached. Every per-node
+  endpoint answered `400 "invalid node id"` about an id that is perfectly valid — the same mis-blame
+  fixed one endpoint over — **including `DELETE`, the only verb that could have cleared it.** The
+  count now shares the listing's readability filter (`json_valid`, SQLite's own, so it stays one
+  cheap query), the message names the ROW and points at the fix, and `DELETE` no longer resolves the
+  row it is about to remove.
+
+  Also: the run guard DELETED a static tooltip instead of restoring it, so a control lost its help
+  text for the rest of the session after a run it had nothing to do with; `traces._effective_max_tokens`'
+  two-seat `min()` was unpinned, which is the artifact the previous round added it for;
+  `IntakeQueue.submit`'s stopped check releases its lock before the enqueue, so a `stop()` in that
+  window still produced a permanent `queued` node and a leaked counter — the guard is inside
+  `_enqueue` now, under the lock that owns the counter; a cancelled-before-spawn id could leak its
+  `_RUN_PROCESSES` placeholder for the life of the process if a handler raised before the spawn,
+  making `cancel_run` answer "stopped before it started" for that id forever. And `AGENTS.md`'s node
+  requirement stated a COUNT that rotted inside the same slice that added the second file, so it
+  states the property instead.
+
+  **The design half of the same round found three more, all on the reload-recovery path the
+  previous round had just worked on.**
+
+  - **After a reload the composer was unguarded, and one press bought a second billed worker.** The
+    run guard deliberately exempts `#ask-submit`, arguing "the pending turn is its own guard" — true
+    in-tab, and exactly what a NEW tab does not have. Measured with writes stubbed: a real
+    `POST /ask` with a fresh run id, from both the composer and the last turn's `↻ Regenerate`. And
+    since `_run_isolated` overwrites the one slot `_ACTIVE_RUNS` keeps per notebook (invariant 23),
+    Stop then reaches only the second run and the first cannot be stopped at all. The exemption now
+    holds only while the run is one this tab started.
+  - **The live trace died permanently on the second Inbox↔notebook round trip during a run.** Each
+    `reattachInFlightRuns` mount starts a 2.5s poll that outlives it, so the PREVIOUS mount's
+    teardown looked the run id up, found the NEW mount's stream, and closed it — born at t+13324ms,
+    killed 584ms later, no `EventSource` created again, while the clock and Stop kept promising
+    otherwise. The exact inverse of the collision `openTicker` was taught to avoid one round
+    earlier, through the same lookup. A teardown may now only close the stream it opened.
+  - **A recovered run that FAILED said "That run has finished" and offered "Load the result"**,
+    which loaded nothing and said nothing, on the one path with no other channel, after a call that
+    was billed. The ticker's terminal event is where the page can learn this; the same failure
+    WITHOUT a reload had always rendered correctly, so the machinery existed and the recovered path
+    simply could not tell the two apart. The neutral wording is "ended" now, because "finished" is a
+    claim.
+
+  Plus `.ref-card-unverified` — the one label that says a citation could not be resolved — at
+  **4.17 / 4.14**, the third element in this family to be moved off a colour that was doing the
+  word's job.
+
+  **And the tests for all three are the point of the round.** The first attempt reproduced the
+  failure this project has now hit four times: the guard scenario INJECTED the recovery flag, so
+  `recoveredRuns.add` and `.delete` could both be deleted with every test still green, and seven of
+  nine mutations survived. `tests/web_dom_harness.mjs` runs `reattachInFlightRuns` itself now, with
+  one-line stubs for its collaborators and four modes — a run that fails, one that ends cleanly, one
+  where the poll wins and no terminal event ever arrives (the race the recovery exists for, and the
+  only mode where the mount's own teardown is load-bearing), and a notebook switch mid-run. All nine
+  mutations go red. One mutant that survived turned out to be genuinely equivalent, and the
+  redundant branch that made it so was deleted rather than left looking load-bearing.
+
+  **Verified:** `uvx ruff@0.16.0 check .` clean; `uv run python -m pytest -q` → **953 passed**;
+  `smoke.mjs` at the same 13 "0 recorded runs" failures. Every fix mutation-checked; the contrast
+  number measured with the helper sanity-checked at exactly 21.00 first.
+
+- **An eighth round, and its first finding is that round seven did not learn round seven's lesson.**
+  Round seven deleted a `readableError` test for asserting on a function's regex literals instead of
+  calling it — and then wrote two more of the same shape, for the two fixes it had itself called
+  blockers. An independent review replaced `closeTicker`'s whole body with a no-op, and
+  `trajTakeFocus`'s with `if (true) return;`, and **all 931 tests stayed green** both times. A
+  source-text assertion cannot see reachability, ordering, or whether a call does anything.
+
+  `tests/web_dom_harness.mjs` + `tests/test_web_behaviour.py` run these functions against a small
+  fake DOM, and seven mutations against them all go red — including the two that were invisible. The
+  harness states its own limit: it answers `querySelector` from a table rather than parsing CSS, so
+  a broken SELECTOR is still only covered by the source assertions, which is why those keep the half
+  they can genuinely see (a NEW `aria-modal` element in the markup must be named before the test
+  passes) and lose the half they could not.
+
+  **Two regressions the last round introduced, one root cause.** `inertEverythingExcept` inerts
+  every sibling — and two siblings are the overlay's OWN machinery, not the page behind it.
+  `.traj-backdrop` carries `pointer-events: auto` and a close listener, so **click-outside-to-close
+  on the Trajectory drawer silently stopped working** while the CSS and the listener both still
+  promised it (Escape and ✕ still worked, which is why nothing noticed). `#notices` is where every
+  toast lands, so a toast raised FROM a dialog had a dead ✕ — the click passed through to the dialog
+  behind it — and was never announced, because `inert` removes the subtree from the accessibility
+  tree too; `notify` defaults to `life = 0` for a bad tone, so it never went away either.
+
+  **And `openTicker` re-entered its own leak per run.** A second ticker for one run id overwrote the
+  map entry and ORPHANED the first stream: its own `onerror` looks itself up, finds the newer entry
+  or nothing, and returns — so nothing could ever close it and it reconnected every few seconds for
+  the life of the tab. Reachable by asking in notebook A, navigating away, and coming back while it
+  still runs. Same cliff the map was added to stop.
+
+  **A corrupt blocks file broke three things at once.** `node_source` returns `None` for a MISSING
+  file and RAISES for a truncated or wrong-shape one, after `claim_node` has already written
+  `distilling`. So the summary pass aborted mid-batch (every later node silently skipped), the node
+  was stranded in `distilling` — which nothing selects, `/inbox/cancel` cannot reach, and only a
+  restart recovers — and because `distilling` is one of the UI's busy states the Inbox then polled
+  about twice a second for the life of the tab with its progress strip hidden: invariant 79's named
+  failure, one state over. `GET /inbox/{id}/source` let it escape as a bodyless 500, and
+  `POST /inbox/{id}/promote` caught `ValidationError` broadly and blamed the NOTEBOOK — telling the
+  operator to remove by hand a `notebooks/<id>.json` that parses perfectly well. `promote_node`
+  raises `inbox.UnreadableNodeText` from the one call that knows which file it was reading.
+
+  **The `max_tokens` clamp was applied to one of its two seats.** `RLMConfig` carries ONE
+  `max_tokens` and `rlm_harness.configure` builds both LMs from the same kwargs, so a split-role
+  install — which `README.md` advertises and invariant 35 supports — handed the sub LM a value its
+  own provider refuses outright. The lower of the two ceilings is the only number both seats accept.
+  Invisible by default, because `RN_SUB_MODEL` inherits `RN_MAIN_MODEL`: the same reason the main
+  seat's version survived seven rounds.
+
+  Also: a membership was keyed on the RAW notebook id while the file is keyed on its slug, so
+  `"Foo Bar"` and `"Foo-Bar"` were one notebook on disk and two rows in the index — and after a
+  removal through one spelling, the next promotion handed the same source id to a different
+  document; a failed note save wiped the text the reader had typed, because `addNote` swallowed its
+  error and left the caller on the success path that clears the field; `settingsDraft` could outlive
+  a failed reload and be re-applied on the next open; `readableError` still printed the status code
+  and the URL for any fetch status outside the five it named (402, 406, 451 and a bare 400 are
+  ordinary paywall and bot-block answers) and read a website's 499 as "You stopped this one.";
+  `tickerLogs` was a `Map` accumulating every event of every run, read by nobody, described by a
+  comment naming a consumer that had stopped existing; the Trajectory drawer's Initial-state panel —
+  the one artifact whose job is "how much rope did it have" — reported the UNCLAMPED budget;
+  `IntakeQueue.submit` had no `stopped` guard, so a capture racing shutdown returned a permanent
+  `queued`; and ONE unparseable row turned `GET /inbox`, the application's front page, into a
+  bodyless 500 so that nothing rendered at all.
+
+  Docs: `AGENTS.md`'s Verify section now records that **`node` must be on PATH and the suite FAILS
+  without it** (hide it and the result is 9 failed, 0 skipped — deliberately, for the same reason
+  the `importorskip` trap above it gives), the multi-worker list gained the four in-memory maps it
+  had missed, and invariant 30's file stopped naming a mechanism the code had replaced. A route
+  count rotted inside the comment arguing that counts rot.
+
+  **The design half of the same round, and its first item costs money.** After a reload
+  `reattachInFlightRuns` puts the run indicator and its Stop back — and every run-STARTING control
+  came back live, because each one's guard lives in the tab's memory and the tab is new. One press
+  of Generate podcast then bought a SECOND worker: measured as two run ids, two `rlm_notebook.worker`
+  processes and two status rows counting in parallel, with nothing said. That is verbatim the
+  failure `reattachInFlightRuns`' own comment says it exists to prevent. The guard is driven off
+  `activeRuns` now — the map `runStatus` already keeps for the header dot — so a recovered run
+  counts exactly like one this tab started, and it never touches a control something else disabled
+  for its own reason.
+
+  - **All four Studio tab labels ellipsised in English at every desktop width**: "Summary & anal…",
+    "Podc…", "Referen…", "Not…", with no `title` to recover them (the tip existed only on the
+    collapsed rail). `#col-studio` is a fixed 340px at 1280 through 1920, and zh-Hant fit — so it
+    was the DEFAULT language that lost. Shortened rather than tooltipped, because the panel below a
+    tab says what it holds: once "Summary & analysis" became "Summary" the other three fit as they
+    always should have. Verified uncut at 1280/1440/1920 in both languages, with tips added anyway
+    for the translations this will meet later.
+  - **Two AA failures in Paper, the default theme**: `#podcast-generate` at **4.20:1** and
+    `.source-block-locator` at **4.10:1** — the second inside the source viewer, one of invariant
+    31's three deliberate whole-document exposures, on the coordinate a reader checks a citation
+    against. `.btn-danger` four rules below already stated the answer for its own identical
+    measurement ("the LABEL is `--text`; the colour lives in the border and the hover wash"), and
+    `.btn-offer` had not been given it. Now 13.60 and 7.36.
+  - **The capture send button stayed a saturated enabled primary over an empty field after any file
+    capture, for the rest of the session**, doing nothing when pressed — twelve lines below the
+    comment recording that exact defect being fixed on the TEXT path. No control assigns this
+    button's state by hand any more; a test forbids it.
+  - The drawer's Initial-state chip and its budget note printed **two different generation caps in
+    one viewport** (32768 vs 16384), because `traces.run_meta` read the `NotebookConfig` value that
+    the previous round's clamp had made fictional — on the one artifact whose whole job is invariant
+    75's third reading.
+
+  Also: five Trajectory playback controls were the only `data-tip`s in `index.html` with no
+  `data-i18n-tip`, so a Chinese interface announced "⏮ Previous step" two elements from one saying
+  關閉; the notebook picker's tooltip rendered at `left: -46px` at 375, off-screen, on the only
+  control that reaches a notebook on a phone; an expanded row's `<pre>` is a focusable scroll
+  container matching none of the focus-ring floor's selectors and wore Chrome's stock cobalt outline
+  in an ink-and-copper palette — and set whitespace-significant text in a proportional serif, so a
+  two-column capture lost its alignment; Settings' Save, the only global money-spending write in the
+  product, reported **nothing at all** on success while its failure path notified; `readableError`'s
+  output is prose now but was still set in `--mono`, a leftover from when it was a raw dump; and a
+  fullwidth `＋` survived in the English UI at the second of its two sites.
+
+  **Verified:** `uvx ruff@0.16.0 check .` clean; `uv run python -m pytest -q` → **945 passed**;
+  `smoke.mjs` at the same 13 "0 recorded runs" failures. Every fix mutation-checked; every contrast
+  number measured with the helper sanity-checked at exactly 21.00 first; and click-outside-to-close,
+  the in-dialog toast, the reload guard, the tab widths, the send button and the save toast all
+  re-confirmed in a real browser.
+
+- **A seventh round, and three of the four function blockers were in code the sixth round had just
+  written.** The lesson is the test, not the bugs: `readableError` was rewritten last round and
+  pinned by a test that re-compiled its regex LITERALS with Python's `re` and never called it.
+  Replacing the whole function body with `return String(text || "")` left all 917 tests green —
+  while the shipped function returned the EMPTY STRING for two of the commonest provider failures,
+  so a real error rendered as a blank `.distil-error-why` and a toast whose only content was its own
+  ✕. Pinning a function's inputs is not testing the function.
+
+  `tests/test_readable_error.py` RUNS it now, through node, against strings captured from a live
+  server, and CI installs node so it can never silently skip. Eight mutations were tried against it
+  and all eight go red. The old test is deleted, and the deletion is commented as the point.
+
+  **What that function was actually doing.**
+
+  - `TRAILING_BLOB` was unanchored and matched `[`, so it began at the `[vendor/model]` tag in
+    position 0 and ate everything. It is braces-only now, keeps the character before them, and the
+    tail ends `return cleaned || raw` — a guess about what is noise that eats the whole sentence is
+    strictly worse than the raw text it replaced.
+  - `BAD_KEY` carried `\b40[13]\b` and `OVER_QUOTA` `\b429\b`, matched against the whole message —
+    so a website answering 403 to a capture was reported as *"the model provider rejected the API
+    key. Check it in your environment"*. A paywalled or bot-blocked page is the commonest capture
+    failure there is. The provider branches are gated on a PROVENANCE test now, and a fetch failure
+    is translated into what its status means rather than having its number printed.
+  - `NO_SUCH_MODEL` carried `Received Model Group=`, which is litellm's router boilerplate and
+    appears in every router error — so the `max_tokens` failure below rendered as *"your provider
+    has no model called gpt-4o-mini"*, sending the reader to pick another OpenAI model that fails
+    identically, while the Inbox strip on the same page blamed something else.
+  - `\b500\b` matched `'code': 500` inside a provider's JSON payload.
+
+  **And the fourth: the shipped `RN_MAX_TOKENS=32768` made every model call fail for the model this
+  repo's own `.env.example` names.** Most models people run have a lower completion ceiling —
+  `gpt-4o` and `gpt-4o-mini` 16384, `gpt-4-turbo` and `claude-3-opus` 4096, `gemini-2.0-flash`
+  8192 — and OpenAI refuses an oversized `max_tokens` BEFORE it checks the key, so the request never
+  left the machine and a valid key changed nothing. Proven by an A/B on a live server where
+  `RN_MAX_TOKENS=8000` reached the provider and the default did not. `config._max_tokens_for` clamps
+  to the model's own ceiling and LOGS both numbers once per process rather than correcting silently
+  (invariant 9's rule); an unknown model keeps the operator's value, because the metadata is a
+  convenience and refusing to run over a missing table row would break every self-hosted setup. It
+  survived seven rounds because it is invisible to anyone whose own model has a ≥32k ceiling.
+
+  **`openTicker` had no close handle, and `reattachInFlightRuns` leaked one SSE socket per notebook
+  open.** Measured: at six opens the page could no longer make ANY request to its own server —
+  `fetch` stalled past eight seconds against Chrome's per-origin HTTP/1.1 cap while `curl` answered
+  the same server in two milliseconds. The row lifecycle round six added was correct; only the
+  streams leaked, because the one caller that awaits nothing had no way to end what it opened.
+
+  **The design half found two more places an argued rule had been applied to one of its sites.**
+
+  - **The Trajectory drawer claimed `aria-modal="true"` and kept none of it** — no focus taken,
+    nothing marked `inert`, and six consecutive Tabs reached the wordmark, the notebook picker,
+    Settings, the URL field and the destructive ✕ that removes a source. `aria-modal` makes that
+    worse than an honest non-modal: it hides the page behind from a screen reader's virtual cursor
+    while leaving every control on it reachable. Round two built the machinery for the Settings
+    dialog and `inertEverythingExcept` already knew about this drawer; it just never ran for the one
+    surface invariant 70 calls "where a run's reasoning lives". Measured after: zero focusable
+    controls outside the drawer, focus returned to the trigger, nothing left inert.
+  - **Changing the interface language inside Settings silently discarded every unsaved change in
+    the same dialog** — including `auto_distil`, the setting that decides whether captures spend
+    money. Set the output language to Japanese, turn auto-summary on, correct the interface
+    language, press Save, and you saved auto-summary OFF. The dialog was being rebuilt by clicking
+    its own open button, which re-ran `openModal` on an already-open dialog and dropped focus on the
+    floor. It RELOADS now, carrying a draft of what the reader had typed.
+
+  Also: twelve static controls carried a hardcoded English `aria-label`, which overrides both the
+  element's text and its translated `title`, so a Chinese interface announced "Go to the Inbox",
+  "Settings", "Toggle theme", "Capture", "Ask" — `data-i18n-label` routes them, and the key
+  tripwire that should have caught the five new keys did not know the attribute existed either;
+  three money-spending surfaces still printed the literal `（錯誤）` prefix round two banned, and
+  five surfaces now share one `failureBlock` with the Inbox row's measured treatment; four elements
+  inside the Trajectory drawer failed AA (the budget note's tag at **2.13:1**, which is the thing
+  that drawer exists to say); `document.title` did not follow a live language switch; Add source and
+  Add note were silent no-ops on an empty field while the two fields beside them disable themselves;
+  `distil_pending` counted a node with a missing blocks file as done with no failure; a doubled
+  ellipsis, a fullwidth `＋` in the English UI, a missing `aria-live` on Find, and a resize handle
+  with `role="separator"` and no value attributes.
+
+  **Verified:** `uvx ruff@0.16.0 check .` clean; `uv run python -m pytest -q` → **931 passed**;
+  `smoke.mjs` at the same 13 "0 recorded runs" failures. Every fix mutation-checked; every contrast
+  number re-measured from painted pixels with the helper sanity-checked at exactly 21 on
+  black-on-white first.
+
+- **A sixth round, and both judges independently found the same defect** — a source in a notebook
+  could be DELETED by keyboard and not OPENED by one. Two rows in this product had already been
+  given a real control for exactly that reason (`button.node-open` in the Inbox, after round three
+  found it; `button.ref-card-head` in the references), and the source row was still a bare `<li>`
+  with a click handler whose only focusable child was the destructive ✕. It reaches
+  `GET /notebooks/{id}/sources/{source_id}`, one of three deliberate whole-document exposures
+  (invariant 31), so "you can see it with a mouse" was the entire feature. The head is a real
+  button now, named by the source rather than by the word "Open", with the description left outside
+  it so the prose stays selectable — and the three rows are pinned together, because learning this
+  once per row is what produced the third one.
+
+  **The design half's other two blockers.**
+
+  - **The facet rail's tie-breaker printed `1970/1/22` on every notebook.** `new Date(b.updated_at)`
+    on epoch SECONDS, where both siblings multiply by 1000. So the rung that exists BECAUSE the
+    three above it tied was itself byte-identical across notebooks, 56 years wrong, and long enough
+    that the rail's 13rem clamp ellipsised it away. Fixing the arithmetic was not enough: a date
+    cannot separate notebooks promoted in the same minute, and three of them still rendered
+    identically. The ladder had run out of rungs, so it gains a terminal one that cannot tie — an
+    ordinal, which is what a file manager does, and not the notebook id (invariant 37, and round
+    five caught that handle leaking onto the public playground).
+  - **`.turn-failed-head` measured 4.27 / 4.37 against AA's 4.5** on the tinted block it sits on.
+    `.node-error-head` is the same element on the other surface; its rule already carried *those
+    exact two numbers* as the reason it had been moved off `--bad`. Found, argued, written down,
+    applied to one of the two places it applies — this project's recurring shape, so the two are now
+    paired by a test. Measured after: 13.91 / 12.55, which are the twin's own numbers.
+  - **Every failure surface printed raw `litellm`** for the commonest BYOK failure there is: a
+    bracketed model tag, a dotted exception class, an HTTP status, a Python dict repr and a literal
+    two-character `\n`, in the chat bubble, the summary strip, the podcast panel, the overview and
+    the capture note. `readableError`'s two strips were `^`-anchored and every real message nests
+    the class behind something — `[openai/gpt-4o-mini] litellm.AuthenticationError:` leads with a
+    bracket, `422: could not ingest: PdfiumError:` carries it in the middle — while the capture note
+    cleaned a string its own callers had already wrapped, which killed both anchors by construction.
+    It now recognises the three provider failures (bad key, quota, no such model) and the two parser
+    ones, keeps the MODEL STRING because that is the actionable half, and strips noise wherever it
+    sits. The live ticker was the surface still leaking after the first pass, and is included.
+
+  **The function half's other blocker: a recovered run never ended.** `reattachInFlightRuns` was the
+  one `runStatus` mount of five that called neither `openTicker` nor `finish()`, so after a reload
+  the row counted upward for as long as the tab stayed open while the worker had exited and
+  `GET .../runs` had gone empty — and its Stop, still on screen because `is-done` only stills the
+  pulsing dot, answered 404 and reported "it may still be going". `finish()` is the only route to
+  `noteRunFinished`, so the header's run dot leaked for the session. One test asserted the row
+  MOUNTS; nothing asserted it ever ends, which is this project's composition gap again. It now
+  watches two signals (the ticker for words, `/runs` for the authoritative ending, because a run
+  that finishes between the answer and the stream opening emits no terminal event) and REPLACES the
+  row rather than stilling it, because a finished run has a result this tab has not got.
+
+  Also: the auto-summary pass reported `done` greater than `total` (it announced
+  `min(limit, pending)` and then ran with the raw cap, so anything reaching `ready_undistilled` in
+  the window was summarised too — `2 / 1`, on the action that spends money); the notebook upload
+  endpoint kept only the LAST file of a multipart batch and said nothing, so `note.txt` +
+  `broken.pdf` answered 422 naming only the failure while the file that worked was neither stored
+  nor mentioned; a membership outlived the source it pointed at, so a node went on claiming to be
+  filed in a notebook whose copy of it had been removed; and `parse_web`'s bounded read had a test
+  that could not see the bound — the canned response ignored `read(n)`, so `resp.read(cap + 1)` →
+  `resp.read()` left the whole suite green. `IntakeQueue.has_pending_work` and `cancel_generation`
+  had no test at all, and both are how a Stop and a capture reach a batch running on the queue's own
+  thread.
+
+  Measured and fixed from the design judge's non-blocking list: five fields wore Chrome's UA
+  placeholder grey (`#ask-input` 3.62 / 3.17 at 17px) because nothing had ever set one; the two
+  "type here" fields had two focus languages, which the previous round had already settled for
+  their typeface; every input, textarea and `.node-danger` drew its boundary at 1.37 / 1.65 against
+  1.4.11's 3:1, on a token picked for a hairline between rows and reused for a component edge (a
+  measured `--field-border` now lands at 3.30 / 3.39, and `.node-danger` at 3.55 / 3.72); switching
+  the interface language left the whole Inbox in the old one until a reload, because the listener
+  that repaints the notebook column had never covered Tier 0; the Studio's vertical resize handle
+  stayed focusable and half off the left edge across the entire 641–1024 band, one breakpoint below
+  where the split it drags stops existing; Find was offered over a first-run Inbox with nothing to
+  find; an uploaded file's row printed its filename twice; the capture picker offered `.csv`, `.rst`
+  and `.markdown`, all three of which the server refuses; and **the document had no headings at
+  all** — not one `<h1>`–`<h6>`, so the outline a screen-reader user navigates by began at a node
+  row's `<h3>`.
+
+  **Verified:** `uvx ruff@0.16.0 check .` clean; `uv run python -m pytest -q` → **917 passed**;
+  every fix above mutation-checked against its own test, and every measurement re-taken from painted
+  pixels. One instrument was wrong and is worth recording: a contrast helper that pre-fills its
+  canvas with black makes every read-back opaque, so the background walk stops at the first
+  (transparent) element and reports 1.21 where the real figure is 13.91.
+
+- **Two independent reviews, run in parallel — one on design, one on function — and the second one
+  found that the summary pass had never worked.**
+
+  **`POST /inbox/distil` was dead in every shipped configuration, and 869 green tests said nothing.**
+  `config.setup()` is the only caller of `rlm_harness.configure`, and therefore the only thing that
+  gives `dspy` a model. It is invoked in `cli.py` and in `worker.py` — and `worker.py` is the
+  isolated subprocess every `RLMTask` runs in (invariant 21), which is why `ask`, the guides, the
+  podcast and `_resolve_language` all work. `distill.py` is deliberately NOT an `RLMTask`: it is a
+  plain `dspy.Predict` (invariant 80) on a thread inside the server, where nothing had ever called
+  `setup`. Every node came back `ValueError: No LM is loaded`. The reviewer proved it by pointing
+  `RN_BASE_URL` at a stub and watching zero HTTP requests arrive.
+
+  **The suite could not see it because every distillation test monkeypatches `distill.distil_source`
+  — exactly the function whose real body could not work.** Patching the unit under test at the seam
+  where the bug lives makes a green suite worth nothing. `tests/test_distil_live.py` patches nothing:
+  it stands up an OpenAI-compatible server on loopback and asserts on BYTES. It runs in a FRESH
+  INTERPRETER, which is not fussiness — `rlm_harness.configure` keeps the first LM a process builds
+  (configure against port A then port B and the LM still talks to A; the second LM comes back with
+  no `base_url` at all), and `dspy` caches completions on disk, so the first in-suite version passed
+  once and then hit the stub zero times while still reporting `done: 2, failed: 0`. Either cache
+  turns the assertion into one that passes over a re-broken build.
+
+  **And the failure had nowhere to go.** `_run_distil_pass` ticked `done` once per ATTEMPTED node
+  and discarded `distil_pending`'s return, so the status could only ever describe success: the strip
+  counted to 2 / 2 and vanished while both nodes sat unchanged. `_DISTIL` carries `failed` and
+  `error` now, `distil_source` takes an `on_error`, and the reason reaches the reader verbatim —
+  "RN_MAIN_MODEL is not set" is the actionable sentence, and this is a single-operator BYOK tool.
+
+  **A second gap fell out of testing the first: auto-summary never fired for a paste or a drop.**
+  The hook runs when the intake QUEUE goes idle, and pasted text and uploads never enter the queue
+  (both are bytes in hand). A queue that was never busy never goes idle. `IntakeQueue.nudge` asks
+  for the idle check on the queue's own thread — where the model calls belong, never a request
+  thread.
+
+  **The design review's verdict was that the Inbox was close to the bar and the surface BEHIND it
+  had not been brought along.** Acted on:
+
+  - **A notebook was a one-way door.** `.crumb { display: none }` above 860px, justified by "the
+    rail is the navigation whenever it is on screen" — and the rail lives inside `#view-inbox`,
+    which is hidden the moment a notebook opens. At the width the product is used at there was no
+    route back to the default surface at all. The crumb now keys off WHICH VIEW IS UP.
+  - **And there was no URL state**, so Back left the application rather than the notebook and a
+    notebook could not be bookmarked or reloaded into. `?nb=` plus `popstate`.
+  - **One notebook, three names, one of them the raw id.** The rail said "Christopher Alexander",
+    the File-into `<select>` said `reading`, and the line beside it said "已在 reading" — invariant
+    37's violation, one function away from the tripwire written for it, in the one control where the
+    reader must CHOOSE. The tripwire is global now: it walks every expression that becomes visible
+    text, and `notebook_id` may only be a lookup key, a URL segment or a request-body field.
+  - **Labels also collided** — three rail entries all reading "Christopher Alexander". `facetLabels`
+    lengthens only the groups that tie, and the id is not a rung even when the rungs run out.
+  - **Eight nested `<button>`s on first paint**, plus an `<h3>` inside one. The head is a container
+    with a stretched overlay button now: valid markup, one keyboard control per row, tags as
+    siblings. The failed-capture chip stopped wearing `.node-tag`, which made it look like a filter.
+  - **Four saturated copper fills at once, and two tab idioms ninety pixels apart.** Tabs use the
+    underline the Studio already used; a tab reports a position and does not promise an action. Both
+    ✨ emoji went — the 2023 AI tell, on a surface whose Inbox has no emoji anywhere. An empty thread
+    centres its invitation instead of pinning a bordered card above 550px of nothing.
+  - **The settings dialog had `aria-modal` and no focus management**, which is the half a keyboard
+    reader feels: eight Tabs still walked the page behind the scrim. The first fix was measurably
+    wrong — `.layout.inert = true` made the DIALOG inert too, since the overlays live inside it —
+    so siblings are marked, walking up, and focus returns to the trigger on close.
+  - **The steps pill apologised.** It was rendered on every finished artifact, so a run that failed
+    before producing a trace still offered it, and pressing it raised a native `alert()` carrying a
+    raw run UUID. An affordance whose only outcome is an apology is not one: it retires in place.
+  - **`auto_distil` was an API capability with no control, and Save DESTROYED it.** `PUT /settings`
+    is a full replacement and the page built its payload from the rendered inputs, so a key with no
+    row was a key the next save erased. A cross-language tripwire now fails if the server stores a
+    setting the page does not draw.
+  - **"Summarise them" next to "324 not summarised yet" summarised fifty.** The button names the
+    batch; `DISTIL_BATCH_CAP` is one number read by both the label and the request.
+  - Every header control wore Chrome's stock blue focus ring, because the rule named eight classes
+    and `.distil-btn` (an id) matched none of them. One zero-specificity rule covers everything
+    focusable. Four `<select>`s were left native while one was drawn; one element rule covers them,
+    with the chevron as a per-theme token because a data URI cannot use `currentColor`.
+  - `word-break: break-all` shredded prose into "A Patter / n Language"; `overflow-wrap: anywhere`.
+  - A pasted excerpt ended on a dangling preposition, which made a short note and a truncated one
+    indistinguishable. The send button was never `disabled` and sat there as a copper block doing
+    nothing on an empty field.
+
+  **Three more the function review found, each a real capability gap:**
+
+  - **A multi-file drop silently lost every file after an unsupported one.** The first `ValueError`
+    aborted the loop, keeping what was already stored and dropping the rest, under a 422 naming
+    neither. Every file is attempted and the refusals are named, by filename, inline.
+  - **A PDF URL could not be captured at all** — `trafilatura` ran unconditionally, so an arXiv link
+    came back "no extractable text content". Local PDF upload worked the whole time, which made it a
+    routing bug. `parse_web` sniffs content type (and magic bytes, for a PDF served as
+    `octet-stream`), and plain text is kept verbatim. `ingest.kind_for`'s own comment had predicted
+    this exact change. The fetch is also BOUNDED now, at the upload cap.
+  - **Search was one substring, so "design Rams" matched nothing** although "Rams" opens that node's
+    summary — the two words live in different columns. Terms AND, split on whitespace only, which
+    leaves a Chinese query as exactly one substring.
+
+  **Documentation drift, which this project treats as a defect:** `AGENTS.md`'s Scope note said
+  twice that the Inbox has no UI, through the whole stage that built it; invariant 41 was
+  contradicted by `auto_distil` with the reconciliation living only in invariant 80's file;
+  invariant 47's run-id rule did not cover `/inbox/cancel`; invariant 30 still called multi-file
+  upload "deliberately not attempted" after it shipped; `README.md` never mentioned the Inbox; and
+  two comments arguing AGAINST registers that rot carried counts that had rotted by ten. Those two
+  now carry the argument and no number. `tests/test_docs.py` puts tripwires under the Scope note's
+  checkable halves, in BOTH directions.
+
+  **A second independent design review then found eight more, and its first item was mine.**
+
+  - **The Inbox was deleting the last word of every pasted note.** `pastedExcerpt` cut at the last
+    space whenever that space fell past index 24 — which is most English sentences — without ever
+    checking whether the value had been truncated at all. "Swallow test note about editorial
+    recall." arrives complete at 41 characters and rendered as "Swallow test note about editorial".
+    The origin is `text[:60]`, so the client CAN tell: a value under the cap is shown whole, and a
+    value at it is cut and **ellipsised**. The no-glyph rule is `facetLabel`'s and belongs there — a
+    name in a 13rem slot — not on prose in a 63-character column, where the hand-written list of
+    dangling function words was producing "...is a river, not".
+  - **Every primary button failed WCAG AA in Paper.** Near-white on `--accent` at L=0.62 measures
+    3.56:1 against the 4.5:1 AA needs at 14.4px/600, and `#distil-btn` — copper text, the control
+    that spends money — measured the same. L=0.54 gives 4.95:1 both ways. The worst pair anywhere
+    is now 4.97 in light and 5.44 in dark. (My own first attempt to measure this was wrong: Chrome
+    returns `oklch()` in computed style and the script read those numbers as RGB, reporting 1.04.
+    The second pass resolves colours through a canvas.)
+  - **A failed answer was styled as a successful one** — same bubble, same reading face, a literal
+    "(error)" prefix doing all the work — while the Inbox used a red dot and a tinted block for the
+    same event. Two surfaces disagreeing about what failure looks like.
+  - **The summary pass reported a number it could not support.** `_DISTIL["failed"] = max(1, ...)`
+    when the PASS failed, so pressing "Summarise 2" with no credentials said "1 could not be
+    summarised" when nothing had been attempted. `failed` counts NODES; a pass that could not start
+    is zero with an error, and the page says so in different words.
+  - **`alert()` and `confirm()` are gone**, all sixteen. They cannot be styled, they block the
+    renderer (which is how one was found — a hung page mid-review), and in the planned Tauri shell
+    they become OS modals over the window. Notices are inline and non-blocking; the confirm is a
+    real dialog on the same `inert`/focus machinery, focused on **Cancel**, with Escape answering no.
+  - **Focus escaped the Settings dialog for one Tab press**, landing on the document with nothing
+    visible before wrapping. `inert` keeps focus off the page but does not close the cycle; the
+    dialog wraps Tab at its own edges now.
+  - **The rail floated.** `.view-inbox` was capped at 74rem and centred, so the shell sidebar
+    started 108px from the window edge at 1400 and 308px at 1800. The shell is full-bleed; the
+    MEASURE is what gets capped, which is where a measure belongs.
+  - **The notebook still read as a different product**, narrowed rather than closed: the reader's
+    own question wore the primary-action fill, a source was a bordered card where a node is a
+    hairline row, one button was in Literata and four in Public Sans, and two underline tab strips
+    90px apart measured 12.16 and 12.48px. One idiom, one typeface, two real levels — and the
+    Studio's Generate is demoted, because two primary actions with near-synonymous labels 500px
+    apart are one too many.
+
+  Plus: a tooltip that presented the server's 60-character cut as the full name (a tooltip that is
+  also truncated answers the question wrongly instead of not at all), a `document.title` that never
+  named the place, `#ask-submit` never disabled, Save below the fold at 375, the exception CLASS
+  name stripped at the display boundary the way invariant 62 strips markers, and `.node-actions`
+  wrapping raggedly because a flex spacer only spaces while everything fits on one line.
+
+  **My own tripwires caught me twice more here**: a 2px accent border on the question bubble is
+  exactly the admin-UI stripe `test_no_accent_bar_wider_than_a_hairline` bans, and the tooltip
+  change broke an assertion that had pinned the behaviour being corrected — rewritten to the
+  stronger rule, then mutation-checked.
+
+  **A parallel function review found five more, and its blocking one is the sharpest thing either
+  reviewer found about this codebase's own habits.**
+
+  - **Stop reported success and stopped nothing.** Every run is announced before its pre-work
+    (invariant 46), and `_resolve_language` is a real model round trip that always happens on a
+    notebook whose language is unresolved — every new one. Press Stop in that window and
+    `cancel_run` found the `None` placeholder, honestly reported "not spawned yet", and signalled
+    NOTHING: the page declared the run over, the pre-work carried on under a derived id the Stop
+    never named, and twenty-four seconds later the main worker spawned and burned a full model call
+    with no indicator and no control anywhere. Honest reporting of a no-op is still a no-op.
+    `_CANCELLED_BEFORE_SPAWN` records the stop, `_run_isolated` refuses to spawn an id in it, and
+    the cancel reaches `{base}-lang` too. The client stopped calling `finish()` unconditionally:
+    a Stop that could not reach its run now says so instead of claiming one.
+  - **The AUTOMATIC summary pass was invisible, unstoppable and silent.** It called
+    `distil_pending` directly, touching none of `_DISTIL`, so thirteen measured model calls ran
+    behind `{running: false, done: 0, total: 0}` with the strip hidden. The one batch that runs
+    WITHOUT a press was the one with no progress, no Stop and no failure channel — invariant 47
+    inverted — and the 409 guard could not see it either, so a second pass could start on top of it.
+  - **A page reload lost a run that kept spending.** The worker is a subprocess and survives the
+    page; the run id lived only in the tab that started it. After F5 there was no indicator, no
+    Stop, and no way to find either — asking again simply started a SECOND run on the same notebook.
+    `GET /notebooks/{id}/runs` lists what is in flight and the page re-mounts a status on it.
+  - **Stopping intake stranded every waiting node at `queued` forever.** "Nothing was parsed, so
+    `resume_interrupted` can pick them up later" was true only across a RESTART. Meanwhile they were
+    drawn identically to a node being read, the page polled at 2.2 requests a second because
+    `queued` counts as busy, no Try again was offered (that is `failed`-only), and opening one
+    answered `404: node '...' has no stored text yet`. Invariant 79's own sentence is that a
+    permanent `queued` "looks exactly like still working". A dropped item lands `failed` with
+    "stopped before it was read" — terminal, visible, and retryable through the reset `submit`
+    already has.
+  - **The failed-chat-turn state was unreachable**, and this one is a process lesson rather than a
+    design one. The branch, its two CSS rules and its translation key all shipped; the single line
+    that SET the flag did not, because the reviewer restored `app.js` from a backup during its own
+    mutation testing and my edit was inside the window. Dead code is silent by construction. Worse
+    while it lasted: the failure rendered as an ordinary answer with "save as note" attached, and a
+    note promotes into a citable `Source` (invariant 32) — the exception text could have become a
+    SOURCE.
+
+  **And the review mutated eight seams to see which the suite would catch.** Six were caught. The
+  two that were not are now the point:
+
+  - Deleting the IME guard from the capture field's Enter handler left the whole suite green.
+    `grep -rn "isComposing" tests/` returned nothing, on a product whose own interface language is
+    zh-Hant. The rule is written as a rule: every `keydown` handler that acts on Enter carries the
+    guard, with handlers that treat SPACE as activation excluded — a text field can never activate
+    on Space, so an element that does is a button being operated by keyboard and cannot be composing.
+  - Neutering `intake.submit`'s failed-to-queued reset left 52 tests green. That one line IS the
+    retry path behind the UI's "Try again", which deliberately has no endpoint of its own.
+
+  **Documentation drift, again, and one entry contradicted itself inside its own block**: invariant
+  80 still said the web UI had no `auto_distil` control in the same `[Unreleased]` that records it
+  shipping; invariant 79 said `parse_web` "hardcodes `kind="web"`" after sniffing landed; invariant
+  30's correction blurred which endpoint got batch upload (it is `/inbox/upload`, not the notebook
+  one); invariant 41 called `auto_distil` the API's first global mutation when Tier 0 added five;
+  invariant 47's "one at a time" was false of the auto path; `README.md` described search as reading
+  titles/summaries/tags when it also reads entities and origin; and `DESIGN.md` — which claims to be
+  pinned to the code — was stale in about twenty-five places. It now carries a standing note saying
+  that prose about code rots and that a disagreement means THIS file is wrong.
+
+  **A third round, and the two headline findings are both about how this work was verified rather
+  than about the code.**
+
+  - **The Stop fix from the previous round was dead on arrival, and two tests said it worked.**
+    `_announced`'s `finally` discarded the cancel flag when the `with` block exited — and every
+    handler is `with _announced(id): await pre_work()` followed by `_run_isolated(..., id)`, so the
+    flag was erased one line before the only code that reads it. A reviewer pressed Stop at t=2s,
+    the UI said stopped, and a full chat turn was persisted and billed 27 seconds later. One test
+    hand-built `_RUN_PROCESSES` and asserted the id lands in the set; another pre-seeded the set and
+    called `_run_isolated` directly. **Each half green, the seam untested** — and mutating the check
+    to `if False` DID fail two tests, so the line was "covered". That is the illusion. The new test
+    composes the two, which is the only shape production has, and fails on the shipped code.
+  - **Most of the previous round's web edits were reverted by my own backup file**, which is the
+    footgun I had warned two reviewers about that same hour. `cp /tmp/app7.bak` during a mutation
+    check restored a snapshot taken before them. The CSS half had landed and the JS half had not, so
+    `.node-open` became an empty button with no `position` — **13.59 × 0 px: no Inbox row could be
+    opened with a mouse at all**, on the default screen. Every lost edit is re-applied and verified
+    by name; mutation checks now restore with `git checkout --`, never from `/tmp`.
+
+  **What the round found in the product:**
+
+  - A pasted CHINESE thought was cut at sixty characters with no ellipsis. The mark had been made to
+    depend on an English word-boundary trim, and `lastIndexOf(" ")` returns -1 for a script with no
+    interword spaces — so the interface's DEFAULT language was the one that lost the signal.
+  - The stretched overlay that fixed the nested-button problem made **the prose unselectable**: a
+    195px drag returned an empty selection and toggled the row. A reading surface whose one
+    distilled sentence cannot be copied is not a reading surface. Third shape: the left gutter's
+    state dot IS the button, and the head's click yields to a selection.
+  - An undistilled web capture was identified by HOSTNAME, though `preview.title` was in the payload
+    and the notebook's source list already used it. Distillation is opt-in, so undistilled is the
+    river's default state: ten articles from one site were ten identical rows.
+  - Datelines dropped the year, so a stream older than twelve months stopped being monotonic.
+  - An auto-summary pass triggered by an UPLOAD was invisible for all twenty calls — the paste half
+    was fixed last round and the drop half was not, and the test's own docstring named both while
+    asserting one. Visibility now comes from asking the server, not from guessing at the page.
+  - Adding a source did not mark the on-screen overview stale (the remove path did); the file-into
+    picker was offered on nodes with no text, whose only possible outcome was a 400 contradicting
+    what the reader could see; a file could only enter the Inbox by MOUSE DRAG, which excludes
+    keyboard, touch and every phone, on the screen whose promise is "throw anything in"; the
+    wordmark emptied the notebook you were looking at and left its id in the address bar; and a
+    failed promotion left an empty notebook behind in the facet rail.
+  - **The pivot broke `playground/`**, whose README claims it "cannot rot into a mock-up of a UI we
+    no longer ship". The shim intercepted `/notebooks*` and `/settings*` only, and the byte-copied
+    `app.js` now boots into the Inbox — so the public demo's first screen was
+    "（錯誤）404: File not found" under a tour pointing at a button that was not there. CI runs
+    neither `build.py` nor `smoke.mjs`. The shim serves a read-only Inbox built from the same real
+    notebooks, and writes answer honestly rather than 404ing.
+
+  **A fourth round, measured from painted pixels, and its two blocking items are both mine.**
+
+  - **The file button I added in round three had NO CSS RULE AT ALL.** `grep -c capture-pick
+    style.css` → 0, so it wore the UA's `buttonface`: rgb(239,239,239) with rgb(163,157,150) text is
+    **2.34:1** in Study, on a page whose background is rgb(28,20,16) — the single native-chrome
+    element in the product, on the default screen and on the public playground page. The `select`
+    one row away carries a comment recording this exact lesson. It is an inline accent LINK now,
+    4.97:1 light and 7.8:1 dark.
+  - **On a phone you could not reach a notebook from the Inbox.** `.facets` is hidden below 860px
+    and I had hidden `.notebook-picker` in the Inbox view; together that left no control that opens
+    a notebook, creates a facet, or reveals that notebooks exist — half the two-tier model,
+    unreachable. It was a one-way door, too: inside a notebook the picker IS shown at 375, so you
+    could switch until you pressed the Inbox crumb once. One navigation surface at a time, never
+    none.
+
+  **`test_every_class_the_inbox_creates_has_a_rule` did not catch the first of those, and now
+  does.** It scanned only classes `app.js` creates with `elt()`; a class written in `index.html` was
+  invisible to it. Widening it to the markup immediately found two more (`.facet-list`,
+  `.stream-more`) that styled nothing and never had.
+
+  The rest, each with a measurement behind it: the source viewer's heading was the raw 60-character
+  cut with the un-cut sentence visible four lines below it (one marker helper, two call sites, one
+  wired up); `pastedExcerpt`'s `<` should have been `<=`, because `text[:60].strip()` can land on 59
+  and the seeded data ships one; `.node-error-head` was checked against the PAGE (4.94/5.15) and
+  sits on the tinted block (4.27/4.37, under AA); the hidden file input was a phantom tab stop; a
+  row's focus ring was a 14px circle round the dot while the row it opens showed nothing; a file
+  dropped on the header or in a notebook **navigated the browser away**, taking any unsent capture
+  text with it; the summary error collapsed into a 112px twelve-line ribbon at 375; a row had no
+  hover state at all, so the signature gesture rested entirely on a cursor shape; "1 sources · 0
+  turns"; and the playground overflowed at 375.
+
+  **One rule is a synthesis of two reviewers disagreeing.** Round three banned a tooltip built from
+  `derived_title`, because a hovered label produced a tooltip that was itself cut. Round four
+  measured the cost: rail labels ellipsise at 154px against a 238px natural width with no way to
+  read them, in the one place a notebook's label IS its identity. Neither "show a fragment as if
+  complete" nor "show nothing" is right — show it, and MARK it, which is what `pastedExcerpt`
+  already does. The tripwire now requires the mark instead of banning the value.
+
+  **And `git checkout -- <path>` bit me the same way `/tmp` did.** It restores the INDEX, so running
+  it to undo a mutation wiped five unstaged CSS blocks. Stage first, then mutate.
+
+  **And the function half of the same round found three seams this changeset shipped that a
+  one-line mutation breaks with the whole suite green.** All three are now driven end to end:
+
+  - **`?q=` had no HTTP-level test at all** — the product's stated promise. `query=q` → `query=None`
+    left 894 passing while every search in the UI returned the unfiltered listing.
+    `inbox._search_clause` has six unit tests and `?state=`/`?offset=` are driven over HTTP, which
+    is exactly what made the parameter look covered.
+  - **Stop did not have to reach the summary pass.** `_DISTIL["cancel"] = True` → `False`: green,
+    while every remaining model call in a batch ran on after the reader pressed Stop. The one test
+    that looked like it covered this asserted `distil.running is False` with nothing running —
+    vacuously true, and true of a no-op endpoint.
+  - **"One pass at a time" lived in a comment.** Deleting the 409 guard: green.
+  - And the `failed`/`error` channel added earlier in this same block had never once been observed
+    NON-ZERO. Its test had to patch `DistillNode.arun` rather than `distil_source`, because patching
+    `distil_source` bypasses the mechanism under test — the same trap, one level down.
+
+  **Plus a Stop that still left a model run burning.** `ensureTitle()` fired at the START of ask,
+  overview, guide and podcast, on the reasoning that the reader had committed to a call anyway.
+  They had committed to THAT call: stopping a question 1.8s in correctly prevented it and left the
+  title's language pre-work and its main worker to spawn six seconds later, two round trips with no
+  indicator and no Stop, under a different run id no Stop names. It fires on SUCCESS now, which
+  keeps the original reasoning and makes Stop mean what it says.
+
+  **Two raw internal strings reaching the reader**, both in the same family the CHANGELOG had
+  already recorded twice: opening the same notebook in two tabs — which `reattachInFlightRuns`
+  invites — and stopping from one showed the other `499: run 'reading-4d2662ef-…' was stopped before
+  it started`, or `502: worker … produced no output (exit -9)`. Neither is an error; the reader
+  asked for it. And opening a row while it was still being PARSED showed "Could not read this" over
+  a 404 naming an internal node id — both the cause and the claim wrong, fixed for `failed` only.
+
+  **And a correction in this same changeset was itself wrong.** It said `--mono` is a plain system
+  stack and JetBrains Mono "was never in the repo". The token was right and ten live rules bypassed
+  it, putting `"JetBrains Mono"` first in their own family lists — so the face rendered for any
+  reader who happened to have it installed and for nobody else, which is invisible on a developer's
+  machine. Every rule reads `var(--mono)` now, and
+  `test_no_rule_names_a_typeface_this_repo_does_not_ship` makes the rule mechanical: a quoted family
+  in `style.css` either has a file under `web/fonts/` or is a system stack.
+
+  **A fifth round. The blocking item loses data and is reproducible with curl.**
+
+  - **A malformed `.pdf` 500'd both upload endpoints.** `pypdfium2.PdfiumError` subclasses
+    `RuntimeError`, and both caught `(ValueError, OSError)` — so the exception escaped, the request
+    became `500: Internal Server Error`, and every file ALREADY STORED in that batch was never
+    reported, because the response that would have named them never happened. `note.txt` +
+    `broken.pdf` together: 500, and the reader told nothing about the file that worked. That is the
+    exact failure the batch loop was written to fix, arriving through a different exception type,
+    and it contradicts invariant 79. `intake.py`'s worker already catches `Exception` with the
+    reason written down ("a parser may raise anything; the node records it") — the queue path had
+    it, both upload paths did not.
+
+  Measured, not argued: **there was no `::selection` rule anywhere**, so selecting a summary — the
+  gesture this product exists for — painted Chrome's default, 1.82:1 in Study and a cobalt blue in
+  Paper. **Four contrast failures** measured against the surface each element actually sits on
+  rather than against the page: the ask hint (2.31/2.66, legible only ON focus, which is after you
+  need it), the send glyph (2.12/2.59, the sole send affordance, under the 3:1 floor for a UI
+  component), the remove ✕ (3.80/3.63, destructive) and the confirm's Delete button (4.17/4.14).
+  **The notebook picker overflowed the viewport at 375** and put each row's Rename control entirely
+  off-screen — on the width where the rail is hidden and that menu is the only route to a notebook.
+
+  **Three rules this codebase had already written down and applied in exactly one place:**
+  "reveal on hover is a hiding place" was applied to the rename pencil and not to `.src-remove`
+  (destructive) or `.save-as-note` (the only route into Notes), so on a phone a source could not be
+  removed at all; the Inbox's hidden-input-plus-real-button was not carried to the Sources pane,
+  which still rendered the browser's own control with an OS-locale button reading 選擇檔案 inside an
+  English interface; and the public playground printed the internal notebook HANDLE as a tag on
+  every row (`nb-en-security`), on the first screen a stranger sees, two functions above
+  `anonymise_models`, which scrubs the same fixture for exactly this reason.
+
+  **The two halves still read as different products, and the gap was measurable**: 0.02% of Inbox
+  pixels are saturated accent against 1.29% of the notebook's, with three copper CTAs at equal
+  weight — "Add source" (free, instant) beside "Generate podcast" (the most expensive action in the
+  product), while the CHEAP "Generate summary" was the quiet one. Cost and prominence ran opposite.
+  The podcast offer is `.btn-offer` now, and the tripwire that had required `btn-primary` there was
+  rewritten to pin the DISTINCTION it cares about rather than the class. The two "type here" fields
+  — one per tier — were Literata 17px and Public Sans 14.4px; what a person WRITES is content on
+  both surfaces, so both take the reading face.
+
+  **And `readableError` grew from three shapes to seven.** A dead link put four lines of
+  Python/OpenSSL in the reading column (`<urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] …
+  (_ssl.c:1028)>`); a failed question put an HTTP status code and a **shell command**
+  (`set -a; . ./.env; set +a`) in the most-read surface in the product. The rule is not "make it
+  friendly" — this is a BYOK tool and a specific cause beats a soothing one — it is that nothing
+  reaches the reader which they cannot act on: a status code, an exception class, an OpenSSL source
+  line, a run UUID, a signal number, a shell incantation. `RN_MAIN_MODEL` stays, because that half
+  IS the action.
+
+  Plus: one object had three names in adjacent controls ("New facet" → "＋ New notebook" → "Untitled
+  notebook"), and two measure words for one noun; Settings listed 32 vendor SKUs where the select
+  one row above correctly reads "Arabic"; the send button stayed enabled over an empty field for the
+  whole session after the first capture; a Stopped capture was drawn identically to a broken one;
+  and `⌁` rendered as an illegible 7px squiggle.
+
+  **The function half of the same round left three items, and two of them were the playground.**
+
+  - **An undistilled web or PDF capture never showed its URL, anywhere.** Distillation is manual by
+    default (invariant 80), so this was the DEFAULT state of a captured page: three links from one
+    host rendered as three identical rows reading `localtest.me`, with `.node-meta` empty and no
+    `title=`. The condition guarding the origin line was `&& node.title`, which is only true AFTER
+    distillation; an earlier fix reached HTML pages through `preview.title` and left PDFs, text URLs
+    and any page without `og:title` exactly as they were. The origin is the one thing every capture
+    has, so the headline falls back to the HOST and the meta line carries the PATH — the part that
+    tells two captures apart — with the whole URL on the element's `title`. Verified against a real
+    server: three `rfc-editor.org` captures come back `ready_undistilled` as `/rfc/rfc1149.txt`,
+    `/rfc/rfc2324.txt`, `/rfc/rfc8890.txt`, and an arXiv PDF as `arxiv.org` + `/pdf/1706.03762v7`.
+  - **The playground's guided tour never left the Inbox — fifteen steps, every one of them a control
+    in the three-column notebook.** `openInitial` opened a notebook before the reader had seen
+    anything, so the entire Tier 0 half of the product — the screen it now BOOTS to, and the reason
+    the redesign happened — had no step at all. The script opens on the Inbox now and the notebook is
+    reached the way a reader reaches it, by pressing a facet, which is step 4 of 19. Three of the
+    four new steps describe controls this page cannot let anyone use (capture, distillation and
+    promotion all write, and there is no server), so those ask for the one thing a recorded page can
+    honestly offer and say plainly which part needs the real app; Find and opening a row are NOT in
+    that set, because both are reads answered from the recorded index and both do exactly what they
+    do in the product.
+  - **The playground header overflowed at 375 and three controls were unreachable** — ★ GitHub, ⚙ and
+    ◐ at x = 341…480 against a 375 viewport, two of them the APP's own, inside a scroller with
+    `scrollbar-width: none` and therefore no affordance saying they were out there. The earlier fix
+    was that scroller, argued on "hiding a button whose label is its only meaning is worse than a
+    scroll a thumb can do" — true of the word, and the glyph beside it was already the icon, so
+    splitting the two keeps the control and drops only the word. Measured at every width from 375 to
+    1440: nothing clipped, nothing unreachable.
+  - **And on a phone the page carried no "this is simulated" marker at all**, which is the one thing
+    `playground/README.md` calls non-negotiable. `.pg-sim` is hidden below 900px to buy the row its
+    width and the app hides `.wordmark` below 640, which took the PLAYGROUND tag with it; between
+    them the entire phone layout was unlabelled, on the surface most likely to be opened from a link.
+    A strip under the header costs the row nothing.
+
+  **Two findings about the instruments rather than the product, both of which had produced a wrong
+  answer.** `tests/test_distil_live.py` runs its scenario as `sys.executable -c`, and `rlm_notebook`
+  resolves there through the EDITABLE INSTALL, not the subprocess's cwd — so a mutation applied to a
+  copied tree is invisible and the test passes, which looks exactly like a test that does not catch
+  the mutation. Reported as an untested seam; it is not, and mutating the real tree with the change
+  staged catches it. And the tour's "open a row" step completed itself the instant it armed, because
+  **driver.js writes `aria-expanded="true"` onto whatever it spotlights** as part of its own stage
+  bookkeeping, so a `done` predicate reading that attribute was satisfied by the act of asking the
+  question. It reads the app's own `is-open` class now. The smoke suite gained the anchors for the
+  four new targets, a recursive `textContent` (a split label read as empty and fell through to the
+  className, which would have passed for a button whose copy had gone missing), and a fake DOM whose
+  header has a parent — a detached one made the strip's insertion a no-op the check could not see.
+
+  **Verified:** `uvx ruff@0.16.0 check .` clean; `uv run python -m pytest -q` → **905 passed**;
+  `playground/build.py` + `smoke.mjs` run and the page loads with real Inbox rows at a clean 375
+  (the remaining smoke failures are all "0 recorded runs" — this checkout's `traces/` is pruned, not
+  a defect in the page).
+
+- **The Inbox gets a face, and the typefaces this project has described since Phase 1 are loaded for
+  the first time.**
+
+  **The largest gap was not the missing surface, it was that the identity was never delivered.**
+  `index.html` pulled in one stylesheet and nothing else: Literata, Public Sans and JetBrains Mono
+  were named throughout `style.css` and `DESIGN.md` and **no font file existed anywhere in the
+  repo**, so every machine without them installed rendered the whole product in its system sans. In
+  an ink-on-paper direction the typeface IS the identity.
+
+  Self-hosted, not from a CDN, for the reason invariant 51 refuses `og:image`: a remote font makes
+  the READER's browser call a third party on every page load, and this app binds loopback and ships
+  in a container verified with no network at all. One VARIABLE file per family and style — Google
+  serves the same woff2 for every weight, so the naive download was the identical 26 KB three times
+  (176 KB shipped instead of 316 KB). Latin `unicode-range` only, so a Han run never waits on a
+  download it cannot use, with the CJK faces paired explicitly and Traditional first, because this
+  interface's own language is zh-Hant and an SC face draws Simplified forms for it.
+
+  **The aesthetic direction did not change, and that is the finding.** The direction locked in
+  Phase 1 is the same one the Inbox needed; repainting it would have been motion without a reason.
+  What was missing was structural, plus the delivery above. `DESIGN.md` says so rather than
+  implying a redesign happened.
+
+  **The design brief came from an invariant.** Invariant 51 makes mymind's masonry-of-thumbnails
+  structurally unavailable, so recall here cannot be visual: it has to be TYPOGRAPHIC. Titles and
+  summaries are set in the reading face at a real measure, there are no cards, and a hairline
+  between rows is the only separation. Literata's optical-size axis does real work — one file, a
+  display cut at heading sizes and a reading cut at body sizes.
+
+  **Six defects the screenshots found, each fixed and re-shot:**
+
+  - The home control inherited `.header-btn`, a 32px square built for one glyph, and folded a
+    two-character label into three stacked lines. It was the first thing on screen.
+  - Pasted nodes used `ingest_pasted_text`'s 60-character origin as a TITLE, so rows read
+    "Less, but bette" and "the reason I cannot". A pasted node has no title now; its fragment is
+    prose and goes in the prose slot, trimmed at a word boundary with no ellipsis.
+  - The facet rail showed `derived_title`, a whole sentence in a 13rem slot, ellipsised to
+    "Christopher Alexander, A …". A rail label has to be short by construction. Getting there took
+    three drafts, and the two wrong ones are the interesting part. Falling back to a person-chosen
+    id (`reading`, `work`) reads beautifully and is the one thing invariant 37 forbids: the id is a
+    HANDLE. `test_the_notebook_id_never_appears_in_the_picker` caught it, and the tripwire was then
+    deepened to follow `facetLabel` itself, because a tripwire a helper can hide behind is not one.
+    Slicing the first three WORDS passed every test and was worse on screen: "A note to" and
+    "Christopher Alexander, A" fit, so they carried no ellipsis, so they read as complete names that
+    happened to be gibberish. An unsignalled cut is worse than a signalled one. The shipped rule
+    cuts at a boundary the sentence already had — the first clause — and only when the value does
+    not fit, measured in COLUMNS rather than `.length` so that 24 Han characters are not mistaken
+    for 24 Latin ones. "Less, but better" therefore survives whole, "Christopher Alexander, A
+    Pattern Language" becomes "Christopher Alexander", and a long clause with no boundary in it
+    falls back to the CSS ellipsis — honest, on a label that is openly a fragment — with the full
+    value on the row's native `title`.
+  - The rail's count `float: right` after a full-width name wrapped to a second line.
+  - The header read "還沒有筆記本" (there are no notebooks yet) beside a rail listing two. It meant
+    "no notebook open"; two different sentences, only one ever true.
+  - The rail sat on `--surface-1`, 2.5% of lightness from `--bg` in Paper against the 4% an app
+    shell needs. **My own read of the screenshots had this backwards** — I thought dark was the weak
+    one — which is why it is a measurement and not an opinion.
+
+  **And one bug I nearly invented.** A 375px screenshot showed the capture field clipped, so I began
+  fixing a mobile overflow; a measurement probe reported `SW=500 IW=500`. Headless Chrome on macOS
+  has a 500px minimum window and had been rendering at 500 and cropping the PNG to 390. There was no
+  overflow. Rendering in an iframe at a true 375px confirmed the surface is clean. The header
+  media query written during that detour is kept: it is right for genuinely narrow windows, it just
+  was not what the screenshot showed.
+
+  **Verification without a browser, where it is stronger than looking:** all 18 text/surface pairs
+  computed for WCAG AA in both themes (tightest 5.48:1); the fonts served with the right MIME and
+  `wOF2` magic bytes; and a new source assertion that every class the Inbox creates has a rule,
+  which found three gaps on its first run — `.sr-only` did not exist so a visually-hidden label was
+  VISIBLE, `.intake-dot` did not exist so the running indicator rendered as an empty span, and
+  `.node-col` had no `min-width: 0` so every `text-overflow: ellipsis` inside a grid child silently
+  did nothing. None of those throw.
+
+  Also: a favicon, which the product never had (`GET /favicon.ico` was a 401 on every load), drawn
+  as the state dot on paper and theme-aware. And invariant 77 gains one sentence: `PUBLIC_PATHS` is
+  computed AT IMPORT, so a file added to `web/` while a server runs is not public until it restarts.
+
+  **An independent design review then returned NOT YET with fourteen items, and the split it drew is
+  the useful part: "the look is done and it is good; what is missing is everything that happens
+  after the first glance."**
+
+  - **The capture field submitted mid-IME-composition.** Enter is how you COMMIT a candidate in 注音
+    or 拼音, so typing a thought in this interface's own language and pressing Enter posted a
+    half-formed node. The identical guard, with the identical comment, had been sitting 1,700 lines
+    away on the chat box since Phase 1. An audit of every `Enter` handler found the same hole in the
+    notebook rename and the trace search; the other two act on a span and a separator, where there
+    is no composition to interrupt.
+  - **There was no search.** Distillation produces a title, a summary, tags and entities precisely
+    so a node can be found by DESCRIPTION months later, and nothing could read any of it back: the
+    product's stated promise was unimplemented. `GET /inbox` takes `q` now, matching over those four
+    plus the origin, in the index and never in the block files (invariant 78). Tags are buttons.
+  - **A repaint destroyed what the reader was doing.** The 900ms poll called
+    `refreshInbox({reset: true})`, which emptied the stream and rebuilt every row: open rows snapped
+    shut about once a second, selections died, and "Older" was undone. It patches only the rows
+    whose serialisation changed now, and `inboxState.open` — which was written and never read — is
+    read.
+  - **A failed capture was a dead row.** The catch path returned before the actions, so there was no
+    Forget, no File into and no retry; and it showed a raw `404 … has no stored text yet`, naming an
+    internal id and the wrong cause, while the node's own stored error said what actually happened.
+  - **Invariant 47 did not cover the one action that costs money.** `POST /inbox/distil` ran up to
+    fifty sequential model calls inside the request with a disabled button as the only feedback. It
+    starts a pass now; `GET /inbox/status` carries `done / total` and Stop reaches it.
+  - **Focus was Chrome's cobalt ring**, on the most-used control on the surface, in a blue that
+    exists nowhere in the palette and tight enough to cut the descenders of a node title.
+  - **Faux-italic Han on the first text every reader sees.** No CJK face has an italic, so
+    `font-style: italic` makes the browser SHEAR the glyphs, and the capture placeholder and the
+    empty state are the whole first-run screen. There was not one `:lang()` rule in 4,800 lines.
+    Fixed once, for the script rather than per component, and the three pre-existing sites are
+    included because invariant 39 makes model prose follow the reader's language.
+  - **Nine `border-left` accents of 2 to 3px**, including one on the first element you see entering
+    a notebook — while the Inbox's own stylesheet carried a comment citing that exact ban. Two were
+    carrying an accent and became background swatches; the rest are blockquote-shaped and keep the
+    hairline the ban allows. Pinned by a tripwire.
+  - Smaller: `約 20 千字` (Chinese counts in 萬); the notebook header and source list still showing
+    `pasted:… #8fe0a5cd`; Forget styled as a label rather than a control; the reading face never
+    reaching the chat answer or the guide body, which DESIGN.md §4 had listed as an open gap since
+    Phase 2; the shell sprawling at 1680px; and no first-run explanation at all.
+
+  **And one thing I tried and had to reverse.** The summary action was made sticky at the foot so it
+  would not sit a scroll away from its rows. A sticky bar over a reading column permanently covers a
+  line of prose, and softening its edge only made the cut look deliberate. It is one quiet line
+  above the stream now.
+
+  **And one piece of drift the docs carried for a whole stage.** `AGENTS.md`'s Scope note was
+  written when the Inbox was library-plus-HTTP and said, twice, that **there is no UI for any of
+  it** — once in the paragraph and once in the "Still unbuilt" list. It stayed false for the whole
+  stage that built the UI, and nothing in the suite can catch a prose claim about what exists. Found
+  by re-reading the file rather than by a test, which is the honest account. Both sentences now say
+  the Inbox is the DEFAULT screen; `cli.py` still cannot reach it, which was the true half.
+
+  Then the obvious follow-up: **"the Scope note has no tripwire under it" was a claim, not a fact**,
+  and it turned out to be wrong for the parts of the note that name a symbol. `tests/test_docs.py`
+  pins them BOTH WAYS, which is the part worth copying. A test that only fires when a claim becomes
+  too MODEST would have caught this drift and nothing else; the mirror case - `cli.py` growing an
+  `inbox` subcommand while the note still says the command line cannot reach it - is the same defect
+  running the other direction, and it is now the same failing test. A third checks that every
+  `([why](docs/invariants/...))` link resolves and that no argument file is orphaned, which the
+  rename of 25 in this changeset would have needed. What is deliberately NOT asserted is the prose:
+  "Word/Slides/Docs native-format parsing ... undone" is a claim about the ABSENCE of code and has
+  no symbol to look for, so the file's own rule is to assert a claim only where a concrete symbol,
+  route or filename decides it.
+
+  **Verified:** `uvx ruff@0.16.0 check .` clean; `uv run python -m pytest -q` → **869 passed**;
+  screenshots at 1280px, 1400px and a true 375px, in Paper and Study, plus the expanded row.
+
+- **The Inbox reaches HTTP: `/inbox/*` (10 endpoints), the opt-in auto-summary setting, and startup
+  recovery.** Four slices of library work become usable; the UI is the next one.
+
+  **Invariant 26 is the reason this endpoint is shaped the way it is, and the check is written here
+  rather than inherited.** `intake.submit` accepts a local path perfectly happily, because
+  `ingest_one` does — correct for `cli.py`, whose operator already trusts their own machine, and an
+  arbitrary-file-read vector the moment the same function sits behind HTTP. That attack was
+  reproduced end to end once (`POST {"sources": ["/etc/passwd"]}` read the file and echoed it back
+  through a citation that PASSED verification), and **a second capture endpoint is exactly where it
+  comes back**. `POST /inbox` takes http(s) and pasted text; files arrive at `/inbox/upload` as
+  opaque bytes under invariant 30's pre-parse `Content-Length` cap.
+
+  **`auto_distil` is a settings-page setting and its BOUND is not, which is invariant 41's rule and
+  took a moment to get right.** (No control on the page yet at THIS point in the history; it lands
+  later in this same `[Unreleased]` block, after an independent review found that a key with no row
+  is a key the next Save erases.) A spend lever is exactly what
+  that invariant keeps off a page every
+  token holder can write. This is not one: `POST /inbox/distil` is already a spend endpoint any
+  token holder can call, so the toggle changes WHEN summaries happen, not whether someone can cause
+  them — a behaviour preference, which invariant 41 admits. `RN_AUTO_DISTIL_MAX_PER_BATCH` stays
+  environment-only, beside trace retention and the upload cap.
+
+  **Invariant 80's headline was rewritten, not stretched.** It read "Capture makes NO model call",
+  and an opt-in auto path makes that false. Three earlier slices in this same body of work each
+  shipped a doc asserting something the code contradicted, every one caught by review rather than by
+  a reader — so the quantifier moved and the argument stayed.
+
+  **The auto path lives in `api.py`, never in `intake.py`.** The queue gained an idle hook and knows
+  nothing about what it does; `intake.py` still imports nothing model-related. That is what keeps
+  invariant 80's default structural — capture cannot be made to spend money by editing the queue.
+
+  **A bug found while wiring the lifespan, and it was the failure mode invariant 79 is named
+  after.** `stop()` is terminal by design and the ASGI shutdown calls it — but `intake.shared()` is
+  a PROCESS singleton, so a second server lifecycle in the same process (every
+  `with TestClient(app)`, and any embedder starting the app twice) got a queue whose worker refuses
+  to start. A URL captured after that sat at `queued` forever while the request returned 200.
+  Measured, then fixed by having `shared()` rebuild a stopped queue, then measured again.
+
+  **Two smaller things the tests forced out.** `_node_or_404` had to validate the id SHAPE
+  explicitly: `get_node` is a SQL lookup, so a malformed id simply misses and is indistinguishable
+  from a missing one — `DELETE /inbox/../../x` and `DELETE /inbox/<absent>` would have given the same
+  answer for very different reasons (invariant 27's distinction, one tier down). And
+  `inbox.is_node_id` is public now, so the HTTP layer can make that call without reaching for a
+  private regex.
+
+  Startup runs `resume_interrupted` — the only place that can, since a state naming a live owner is
+  a lie only once the process that owned it is gone — and shutdown stops the queue with a SHORT
+  timeout and reads the boolean, because blocking an ASGI shutdown for two minutes on an
+  uninterruptible OCR pass is worse than abandoning a parse the next startup recovers.
+
+  **An independent review drove a real server with ~60 curl probes and found two hard problems, five
+  medium ones, and two surviving mutants.**
+
+  - **A promotion losing a race with a deletion returned a raw 500 AND left the notebook holding a
+    source nothing recorded.** `memberships.node_id` has a foreign key, so a node removed
+    mid-promotion made the INSERT fail — by which time `mutate_notebook` had already written the
+    source. Measured at **two of twelve** concurrent pairs. The two writes cannot be one transaction
+    (one is a JSON file under a `flock`, the other is SQLite), so the repair is a COMPENSATING
+    write: undo the append, and only the append — a promotion that merely FOUND an existing source
+    must not remove someone else's.
+  - **`auto_distil` was half-wired, and five files said otherwise.** It reached
+    `config._SETTING_PATTERNS` and `settings_state` but not `SettingsRequest`, whose
+    `extra="forbid"` then refused it with a 422 — so `GET /settings` reported a setting `PUT`
+    rejected, and because the body is a FULL replacement, hand-editing `.settings` was wiped by the
+    next legitimate save. A setting one half of the pair knows about is worse than one neither does.
+  - **Three raw 500s from unbounded integers**, each from one ordinary request:
+    `?offset=10**20` and `{"limit": 10**20}` reached `sqlite3` as `OverflowError`, and a malformed
+    multipart body escaped `request.form()` as plain text — that last one **pre-existing on
+    `/notebooks/{id}/sources/upload`**, which the Inbox's uploader had copied, so both are fixed.
+  - **`?limit=-1` returned all 303 rows.** `min(limit, 200)` has no floor and SQLite reads a
+    negative `LIMIT` as "no limit" — from the handler whose own docstring says it must stay cheap at
+    thousands. Both bounds are in the signature now, and an out-of-range value is REFUSED rather
+    than silently clamped (invariant 9's reasoning: a caller that asked for 500 believes something
+    about what it got).
+  - **A malformed `RN_AUTO_DISTIL_MAX_PER_BATCH` silently killed the intake worker**, while two
+    files claimed it refused startup. `_env_int` raises `SystemExit` — a `BaseException` — which
+    escaped the idle hook's `except Exception`, unwound the worker and ended the thread;
+    `threading` swallows `SystemExit` without a traceback, so captures simply stopped being parsed
+    with no signal at all. Both halves fixed: the bound is read at startup where the docs said it
+    was, and the hook catches `BaseException`, because "anything it raises is logged and swallowed"
+    has to be true for every exception or it is worth less than no promise.
+  - **The auto-summary batch blocked the next capture and could not be stopped.** It runs on the
+    queue's own worker thread, so a capture arriving mid-batch sat at `queued` for the whole batch —
+    measured at 2.6s with one stand-in call and a minute or more at the default of 20 real ones.
+    `should_stop`, which **had no caller anywhere in the repo**, now gets two reasons to fire: a new
+    capture is waiting, or somebody pressed Stop.
+  - **A multi-file upload silently kept only the last file.** `form.get` returns the last value for
+    a repeated key, under a response shape (`{"nodes": [...]}`) that specifically reads as "several
+    are fine". Dropping a file the reader chose is the one thing a capture surface must not do
+    quietly.
+
+  **Two surviving mutants, and the more important one was a promise this CHANGELOG had already
+  made.** Removing the `shared()` rebuild left the whole suite green — the very fix the entry above
+  describes as "measured, then fixed, then measured again" was pinned by nothing, because
+  `test_api_inbox.py`'s fixture resets the singleton BETWEEN tests and the scenario is two
+  lifecycles in ONE. Removing the 200-row listing cap also survived, which is why the negative-limit
+  hole went unnoticed. Both are pinned now, and all six mutations the review ran are caught.
+
+  **And one race was in a test I wrote**: it read the node's state and the call counter as two
+  separate actions, with the next idle hook running in between — the same behaviour reported 6 and
+  8 on different runs. The counter is recorded from inside the parse now.
+
+  **Verified:** `uvx ruff@0.16.0 check .` clean; `uv run python -m pytest -q` → **857 passed** (28
+  new), three consecutive full runs, nothing reaching the network or a model.
+
+- **Distillation (`distill.py`, invariant 80) — the summary that makes a capture findable again,
+  and the cost rule that keeps it from being charged for silently.**
+
+  **Why it matters most.** `docs/design/inbox-pivot.md` §8 ranks this FIRST of the three things that
+  address the problem the whole pivot exists for, above surfacing and above any graph: *recall by
+  DESCRIPTION instead of by the exact words you have forgotten.* The forgotten-keyword problem is
+  the failure the user actually described — a hundred tabs they cannot close because the thing that
+  would let them find it again is gone with the tab.
+
+  **Capture makes NO model call, and that is a product rule.** BYOK is locked, so the reader's own
+  key pays; the interface's whole message is "just throw everything in". Together those mean
+  distilling at intake would spend **200 calls on a 200-bookmark import** the reader never asked
+  for. So `intake.py` stops at `ready_undistilled` and `distil_pending` is a separate entry point
+  with a `limit`, a `should_stop`, and a count that is knowable before it runs — invariant 47's "no
+  action starts without an explicit press", applied to money instead of to time.
+
+  **`ready_undistilled` is a real state, not a degraded `ready`.** A node whose summary failed still
+  has its origin, its blocks, its flags, and can be promoted and cited like anything else. A failed
+  or cancelled pass puts it back there and moves on; it never becomes `failed`, and one node failing
+  never stops the others. Losing a capture because a summariser was unreachable would break the only
+  promise this feature makes.
+
+  **Two inherited rules meet here from opposite directions.** It reads `Corpus.excerpt`, never
+  `blob()[:n]` (invariant 61 — a node built from a folder is several sources, which is exactly where
+  a prefix is source ONE), and it strips `[[SRC:...]]` from what comes back (invariant 62 — the
+  excerpt deliberately carries them and a summary is displayed prose).
+
+  **The language ladder is SHORTER here, stated rather than discovered.** `distil_pending` runs with
+  no request, so invariant 69's interface-language signal is out of reach. The ladder is
+  `output_language()` → what the CALLER passes (a future HTTP handler has the request) → nothing, in
+  which case the model follows the document. That last rung is **a known narrowing of invariant 39
+  for Tier 0**, and the way out is a caller that passes the signal, not a resolver in a function
+  with no request to resolve from.
+
+  **Not an `RLMTask` and not in a subprocess.** `naming.py` already argues the first half; the second
+  is new — `SuggestTitle` reaches the API's subprocess only because `api.py` routes it through
+  `worker.py`, and spawning one per captured node would cost more than the call it isolates.
+  `DistillNode` keeps `worker.py`'s `arun(**kwargs)` shape so that can change without touching
+  callers. **`import dspy` lives inside `arun`**, because a top-level import would make every
+  `cli.py` command pay for it — pinned by a subprocess blocker rather than by a comment.
+
+  **An independent review ran a mutation ledger and two of the five mutants survived — both of them
+  on claims invariant 80 makes about itself.**
+
+  - **Deleting the sanitisation left 16/16 green.** The marker test hand-assembled the result by
+    calling `_clean*` directly and never touched the shipped path. Worse than the test: the cleaning
+    lived only inside `DistillNode.arun`, so every caller that injects its own `run=` — every test,
+    and any future caller that swaps the model — wrote raw values straight into `inbox.update_node`.
+    Measured: `distil_source` returned `title='T [[SRC:s1|whole]]'`. `_sanitize` is now applied in
+    `distil_source` too (idempotent, so neither path can be the one that forgot), and the test runs
+    through `distil_pending` and reads the result back out of the index.
+  - **Swapping `Corpus.excerpt` for `blob()[:n]` left 16/16 green**, because the test asserted only
+    that the text starts with `[[SRC:` and fits the cap — both true of either. The property that
+    actually separates them here is marker COUNT: `excerpt` emits one per SOURCE, `blob` one per
+    BLOCK. The test now uses a three-page PDF. Invariant 80 also said too much: `distil_source`
+    takes ONE `Source`, so invariant 61's own incident is not reachable through this signature, and
+    the rule is defensive rather than live — now stated that way.
+
+  **A false claim, and it was the one about recovery.** Invariant 80 said a cancelled distillation
+  returns the node to `ready_undistilled`. True for `should_stop`; **false for process death.**
+  `distilling` was written in one place and reset nowhere, so a crash or a failing write-back
+  stranded a node in a state nothing selects — with the call already paid for. Both owned states now
+  live in one map (`inbox._OWNED_STATES`) recovered by `inbox.reset_interrupted_states`, with
+  different fallbacks for a real reason: a `parsing` node has no blocks file, a `distilling` one
+  does.
+
+  **Three more, each measured.** Two concurrent passes over three nodes made **five model calls**,
+  each overwriting the other's summary, because `state="distilling"` was a label — `inbox.claim_node`
+  is a compare-and-set now. The "empty document costs nothing" guard read the EXCERPT, and
+  `Corpus.excerpt` unconditionally prepends `[[SRC:...]]`, so a page trafilatura extracted nothing
+  from still cost a call. And tags were lowercased AFTER deduplication, turning `["ML","ml","Ml"]`
+  into three entries in what `schema.Distillation` calls "the join key a later slice needs".
+
+  **Two smaller ones:** the caller's language rung never passed `clean_language`, while the docs
+  point that rung at `X-RLM-Interface-Language` and `Accept-Language` — attacker-controlled headers
+  spliced into the prompt; and `asyncio.run` inside a running event loop was swallowed by the bare
+  `except`, so a FastAPI handler calling this would see every node bounce back with a log line
+  indistinguishable from an unreachable model. It raises now, outside the `try`.
+
+  All five mutations from the review's ledger are now caught, re-run to confirm.
+
+  **Still no caller:** no API endpoints, no UI. `AGENTS.md`'s unbuilt list says so.
+
+  **Verified:** `uvx ruff@0.16.0 check .` clean; `uv run python -m pytest -q` → **829 passed** (31 new),
+  none behind an `importorskip` and none needing credentials — every test injects the model call, so
+  the module's own logic (the excerpt, the stripping, the ladder, the state machine) is what is
+  exercised.
+
+- **The Inbox's capture queue (`intake.py`, invariant 79) — and the process-wide PDF lock it closes
+  a bug with that exists TODAY (invariant 3).**
+
+  **The bug first, because it is not new code.** Invariant 3's argument is written about
+  `ingest_new`'s internal loop and never considers two concurrent HTTP REQUESTS — but
+  `api.add_sources` and `api.upload_source` both reach ingestion through `asyncio.to_thread`, which
+  hands the work to the default `ThreadPoolExecutor`. **Measured, to this invariant's own standard:**
+  two `POST .../sources/upload` fired with `asyncio.gather` against the real ASGI app overlapped
+  inside the parser by **0.405s on two distinct threads**, and both returned 200. PDFium is not
+  thread-safe — invariant 3's own `rc=134` — and ingestion runs in the API PROCESS rather than a
+  `worker.py` subprocess (invariant 21 is about `RLMTask` EXECUTION, and parsing is not a task), so
+  the SIGABRT takes the whole server down rather than one request.
+
+  **The lock sits around `parse_pdf`, not around `ingest_one`, and that is the decision.** Invariant
+  3 already says the honest thing about the wider change: *"the waiting is the network FETCH and the
+  crashing is the PDF PARSE, but `ingest_one` fuses them, so separating them is a real refactor."* A
+  lock on `ingest_one` would serialise the fetch too, and `web._default_fetcher` has a 15-second
+  timeout — one slow page would block every capture for up to fifteen seconds. This is not that
+  refactor; it is a mutex on a library that documents itself as thread-unsafe, at that library's
+  door. Two tests, and the second is the point: one proves the lock, one drives the real ASGI app,
+  because of invariant 3's closing line — *a suite that is green on the path you did not change is
+  not evidence about the path you did.* Both confirmed to FAIL with the lock removed.
+
+  **The queue: one worker, and a capture that always lands.** Submitting creates a `queued` node
+  BEFORE anything is fetched, so the reader sees it immediately rather than watching a spinner with
+  nothing behind it. The cost is that `kind` must be decided from the origin alone —
+  `ingest.kind_for`, factored OUT of `ingest_one` rather than written beside it, because a second
+  dispatch is how a `.pdf` URL ends up filed as `web`. It is EXACT for every input `ingest_one`
+  handles (`parse_web` hardcodes `kind="web"` and does not sniff content type), so `store_blocks`
+  overwriting `kind` is defence rather than a correction that happens today — a first draft of the
+  invariant said otherwise, and a tripwire now drives the real `ingest_one` to keep them agreeing.
+
+  **A parse failure is a state, not an escaping exception.** `ingest_one` reaches trafilatura,
+  pypdfium2, yt-dlp and two OCR backends; any of them can raise anything. The worker catches broadly
+  and records `failed` WITH the message, because both halves matter: the capture is never lost, and
+  one bad link must not end intake for everything behind it. A worker that dies silently turns every
+  later capture into a permanent `queued`, which is the worst available failure — it looks exactly
+  like still working.
+
+  **Stopping says only what it can do.** `cancel_pending` drops what is waiting; the item being
+  parsed RUNS TO COMPLETION, because a native PDFium parse cannot be interrupted without taking the
+  process with it. Cancelled items stay `queued`, which remains true of them, and
+  `resume_interrupted` picks them up — resetting `parsing` rows (a state whose owning process is
+  gone is a lie) but deliberately NOT `failed` ones, since retrying a failure on every restart is
+  how a poisoned item becomes a loop. Invariant 60's rule about status lines applies here too.
+
+  `test_items_are_parsed_one_at_a_time` was confirmed to fail when a second worker thread is
+  started — the "the sources are independent, just parallelise it" regression that invariant 3
+  records as having been written, measured, and crashed.
+
+  **An independent review then found six concurrency defects in the queue, every one measured with
+  a runnable probe.** None had shipped — `intake.py` has no caller — but each is a shape that comes
+  back, and four of them broke the promise invariant 79 is named after.
+
+  - **A node left at `parsing`.** `get_node`, the `parsing` write and `store_blocks` all sat OUTSIDE
+    `_process`'s `try`. With a raising `store_blocks`: `state='parsing', error=None` — this
+    invariant's own "worst available failure", the one that looks exactly like still working, and
+    recoverable only by a restart.
+  - **An orphan blocks file adopted with stale content.** A node removed WHILE parsing still got its
+    blocks written, and `add_node` adopts an orphan. Measured: a re-capture with 10 characters of
+    fresh text reported `chars=4`. Fixed in `inbox.store_blocks` rather than in the worker — the
+    sink is the only place that knows whether the row survived.
+  - **A second worker, i.e. invariant 3's forbidden shape from inside the thing built to prevent
+    it.** `stop()` cleared `_thread`, released the lock, and only then enqueued the sentinel; a
+    `submit()` in that window started worker #2 — measured at **−0.155s between consecutive parse
+    windows**. The drain and the sentinel now happen under one hold of `_guard`; 300 racing
+    submit/stop pairs produce exactly one worker thread.
+  - **A relative `base_dir` re-resolved on the worker thread**, so a `chdir` split one node across
+    two directories: the row under the old cwd, the blocks under the new one. Resolving once in
+    `__init__` is the only reading that makes invariant 34 true for a thread.
+  - `resume_interrupted` re-enqueued nodes already waiting — **four parse calls for two origins**,
+    i.e. two network fetches each. And `status()` read `qsize()`, which counts the stop sentinel and
+    reads zero between the worker's `get()` and its first state write, so it reported
+    `{"running": False, "current": "nd-…", "pending": 1}` — denying and naming in one dict
+    (invariant 60).
+
+  **Three surviving mutants, and a claim that was too strong.** The review mutation-tested what I
+  had not: replacing the removed-node guard with a `raise` left the suite green (the blanket handler
+  swallowed it — a `caplog` assertion closes it); deleting the `state="parsing"` write left it green
+  (nothing observed the state `resume_interrupted` exists to recover); and deleting `error=None`
+  from `store_blocks` left it green (the covering test was satisfied by `submit`'s own clear). It
+  also caught **five places, including invariant 79 itself, claiming `kind_for` is a guess because
+  "a URL can serve a PDF"** — `parse_web` hardcodes `kind="web"` and has no content-type branch, so
+  the two dispatches agree on every input and the overwrite is defence, not correction. All five now
+  say so, and `test_kind_for_agrees_with_ingest_ones_own_dispatch` drives the REAL `ingest_one` with
+  recording parsers — invariant 28's tripwire shape — rather than asserting the agreement in prose.
+
+  **The lock's own cost is now named too**, because invariant 3's standard is to name the trade: OCR
+  runs under it and `_try_rapidocr` builds a fresh `RapidOCR()` per page, so a long scanned PDF holds
+  a process-wide mutex for minutes. Accepted — the alternative is SIGABRT — and it is also why
+  captures through the queue, which are serial by design, never contend for it.
+
+  **Still no caller:** no distillation, no API endpoints, no UI. `AGENTS.md`'s unbuilt list says so.
+
+  **An intermittent warning, chased to its actual cause and left alone.** A full run reported
+  `802 passed, 1 warning` about one time in five. It survived 18 consecutive clean runs (8 with
+  thread-exception and unraisable warnings escalated to errors, 10 with `-rw`), and there is no
+  order-randomising plugin, so it was not ordering. `-W error` named it: `zhconv/zhconv.py:36`
+  loads its 1MB character table with a bare `open()` it never closes, and garbage collection
+  decides which test the resulting unraisable `ResourceWarning` lands on — which is the whole of the
+  intermittency. **Pre-existing and upstream**, reproducible alone with
+  `pytest tests/test_instructions.py::test_the_wrong_script_table_never_flags_a_correct_traditional_character -W error`,
+  a test that predates all of this work. Recorded against the dependency in `pyproject.toml` rather
+  than silenced: a filter that hides the whole `ResourceWarning` class to quiet one third-party leak
+  costs more than the leak does.
+
+  **Verified:** `uvx ruff@0.16.0 check .` clean; `uv run python -m pytest -q` → **804 passed** (29
+  new), none behind an `importorskip`. Every fix re-checked against the probe that found the
+  defect, and every new tripwire mutation-checked — including the two the review flagged as
+  uncovered (`cancel_pending`'s sentinel branch and `submit`'s return type), each confirmed to fail
+  against the behaviour it replaced.
+
+- **Tier 0: the Inbox (`inbox.py`, invariant 78) — a global capture index that coexists with the
+  corpus cap by never building a corpus.** Storage layer only; nothing calls it yet.
+
+  **Why a second tier rather than a bigger notebook.** `config._DEFAULT_MAX_CORPUS_CHARS` is
+  8,000,000 and its own comment says it is a memory-safety cap on the pyodide/deno sandbox, not a
+  tuning knob — the whole corpus becomes ONE variable in the sandboxed REPL. One source measured in
+  this project was **69,859 characters** (invariant 61's incident), so a notebook tops out near a
+  hundred sources. A capture inbox is aimed at thousands. The two coexist because **nothing at Tier
+  0 ever assembles a blob**: invariant 8 governs Tier 1 and is simply not in play here.
+
+  **A node is a parsed `Source` that is not bound to a notebook yet.** That framing came out of
+  reading the code rather than designing something new, and it is what made the tier cheap:
+  `ingest.ingest_one` already produces a fully-parsed citable `Source` host-side (invariant 3), and
+  `Source.marker()` COMPUTES `[[SRC:<id>|<locator>]]` from the id at blob time rather than storing
+  it in the block text (invariant 4). So blocks can be stored with no id assigned, and **promotion
+  is re-id + append, not re-fetch** — no new parsing, no new marker scheme, citations unchanged.
+  The id comes from `append_sources`' max-in-use rule (invariant 50) inside `mutate_notebook`
+  (invariant 34). Promotion does NOT consume the node, and removing a node does NOT reach a source
+  already promoted from it — the source was copied, and a notebook silently losing a cited source
+  because someone tidied their inbox would break invariant 12's promise.
+
+  **Invariant 34's delta rule, carried to a global write surface, and enforced by the signature.**
+  `update_node(node_id, **fields)` emits `UPDATE nodes SET <only those> WHERE id = ?`, and **there
+  is deliberately no `save_node(node)`** — a whole-object write is the fault invariant 34 records,
+  and distillation is exactly its slow step (a model call between reading a node and writing its
+  summary). An unknown field raises rather than being ignored, which also puts `id` and
+  `created_at` out of reach. Transactions answer the interleaving half and do it ACROSS PROCESSES,
+  which is stronger than notebooks have: invariant 23 records that the API's in-memory maps have no
+  multi-process story, and `notebook._THREAD_LOCKS` is single-process too.
+
+  **A real bug, found by a new test, in the line that looked most harmless.** The first draft ran
+  `PRAGMA journal_mode=WAL` on every connection, reasoned about as a no-op because WAL is a property
+  of the FILE. It is a no-op only once the mode is ALREADY WAL: **changing it needs an exclusive
+  lock, and SQLite does not invoke the busy handler for that change**, so the 15-second
+  `busy_timeout` protects every statement in the module except that one.
+  `test_concurrent_writers_all_land` failed about **one run in six**; a probe looping over fresh
+  directories reproduced it on attempt 5 and put the traceback on that exact pragma. Moved into
+  `_initialize` (once per process, in-process lock plus a retry for two processes creating the same
+  new database) — the same probe then ran **60/60 clean**. Pinned by a SOURCE assertion,
+  `test_connect_never_sets_the_journal_mode`, because the symptom is a flake that would pass five
+  runs in six after a regression: invariants 36 and 54's reasoning, applied to a pragma.
+
+  **A docstring claim caught by its own test.** `tests/test_inbox.py` asserts its no-`importorskip`
+  claim with a meta-path blocker **in a subprocess** — an in-process blocker cannot see an import
+  another test already cached in `sys.modules`, so it would pass by doing nothing on almost every
+  full run. The subprocess immediately disproved the draft docstring: `inbox.py` DOES reach
+  `rlm_harness`, through `notebook.py` -> `ingest.py` -> `parsers/web.py`'s SSRF guard. The claim
+  that matters is about the EXTRAS (`api`, `chatterbox`), and it holds; both docstrings now say the
+  true thing instead.
+
+  **An independent review then found three data-loss paths, all reproduced with runnable probes
+  rather than reasoned about — and two of them were things invariant 78 itself asserted were safe.**
+
+  - **A node id became an arbitrary path.** `node_blocks_path` interpolated a caller-supplied id
+    straight in, and `remove_node`'s `unlink` sat outside the `if changed` guard. So
+    `remove_node("../../notebooks/mynb")` **deleted a live notebook file and returned `False`**, and
+    an absolute id discarded the directory entirely, because `Path("inbox/nodes") / "/etc/x"` IS
+    `/etc/x`. Worse than the bug: invariant 78 SAID this could not happen — *"the id is hex, so it
+    is filename-safe by construction and invariant 10's traversal problem cannot arise"* — which is
+    true of ids the module MINTS and false of ids it RECEIVES, the exact distinction invariant 10
+    exists to draw, and which would have told whoever writes `DELETE /inbox/{node_id}` that no guard
+    was needed. Now validated against the minting pattern AND contained by a resolved-path check.
+  - **Capture was not idempotent under concurrency.** SELECT-then-INSERT is a check-then-act and
+    `isolation_level=None` means nothing spans the two. Eight threads on one origin, released from a
+    barrier: **seven `IntegrityError`**, against a docstring promising "rather than raising" — and
+    `IntegrityError` is not an `OperationalError`, so `busy_timeout` never sees it and nothing
+    retries. The surviving row said 80 characters against 40 on disk, because every losing thread
+    still wrote the blocks file. Fixed with a capture lock, `ON CONFLICT(id) DO NOTHING`, and
+    adopting an existing blocks file instead of overwriting it. **This was invariant 78's second
+    false claim**: it said transactions answered the interleaving "across processes, which is
+    strictly stronger than what notebooks have". There are no multi-statement transactions in the
+    module at all, and against `mutate_notebook`'s real cross-process `flock` the Inbox is WEAKER
+    here. The invariant now says so.
+  - **Two nodes sharing an origin silently shadowed each other.** `append_sources` dedupes by
+    ORIGIN; promotion read "appended nothing" as "this same node is already here". It means *some*
+    source shares the origin. Both nodes recorded a membership pointing at the FIRST node's source,
+    the second's text never reached the notebook, and `promote_node` returned success. Identity now
+    comes from the node's own membership row, and an origin collision is a loud error.
+
+  **Two smaller ones, and a hollow test.** A bad VALUE (`state="bogus"`, `tags=None`) committed and
+  then broke every later `list_nodes()` — the whole page, not just its row — so deltas are now
+  validated per field before the write. The initialization cache went stale if `inbox/` was deleted
+  under a running process, permanently. And `test_update_node_writes_only_the_fields_it_was_given`
+  **passed against a deliberately whole-row implementation**: two sequential `update_node` calls
+  cannot see the difference, because each re-reads inside itself. It now reads the SQL that was
+  actually emitted and asserts it names the caller's columns and nothing else.
+
+  Thirteen regression tests came with the fixes, each named after the failure it reproduces.
+  `inbox.py`'s module docstring was also cut from 61 lines to 42: it had grown a full copy of the
+  argument that belongs in `docs/invariants/78` and the incidents that belong here, which is the
+  drift AGENTS.md's three-way split exists to prevent, one level below the index it protects.
+
+  **Deliberately not built here:** no intake queue, no distillation, no API endpoints, no UI, no
+  new parsers, no embeddings and no graph (`docs/design/inbox-pivot.md` §8 argues the graph is
+  decorative and the edges that matter — citations — already exist). `AGENTS.md`'s unbuilt list
+  says so rather than leaving it to be discovered. `/inbox/` is gitignored: it holds a user's whole
+  capture history.
+
+  **Verified:** `uvx ruff@0.16.0 check .` clean; `uv run python -m pytest -q` → **775 passed** (38
+  new, none behind an `importorskip`); `test_concurrent_writers_all_land` 15/15 against a recorded
+  ~1-in-6 baseline.
+
+- **Every API request now needs a token (invariant 77), because "reachable only from this machine"
+  was never the same property as "reachable only by this app".**
+
+  **What changed and why now.** Invariant 25 said this API has no authentication, and that `serve`
+  binding `127.0.0.1` is therefore the entire access-control story. That was true, and it was
+  adequate for as long as the only thing that ever talked to this server was a page the same server
+  had just handed the user. The Inbox pivot (`docs/design/inbox-pivot.md`) adds a desktop shell and
+  a browser extension, and the moment a SECOND client exists the assumption breaks — every browser
+  the user runs is also on this machine. Any page in any tab can POST to `127.0.0.1` and ignore the
+  response, which is enough for all three live `DELETE`s and for the global `PUT /settings`. DNS
+  rebinding goes further and reaches READS, where `GET /notebooks/{id}/sources/{id}` returns a
+  source's FULL TEXT (invariant 31) and a trace can hold full ingested source text (invariant 29).
+
+  **Two defences, answering two different attacks.** The token is the real one: a cross-origin page
+  cannot read the URL the token arrived in. The `Host` check answers rebinding specifically, and the
+  rule is *a literal IP address, or `localhost`* — which needs to know nothing about what the server
+  actually bound, because rebinding is a thing you do to a NAME. `192.168.1.5:8000` is unaffected;
+  `RN_ALLOWED_HOSTS` is the carve-out for a name that is genuinely the operator's, the same shape and
+  the same reasoning as invariant 76's `RN_FETCH_ALLOW_CIDRS`.
+
+  **Deny by default, which is why it is a middleware and not 25 dependencies.** `auth.PUBLIC_PATHS`
+  is the static mount's own files, computed from the DIRECTORY rather than listed, so a route added
+  later is protected because nobody did anything and an asset added later keeps working. Twenty-five
+  routes existed when this was written; `dependencies=[Depends(...)]` on each is twenty-five chances
+  to forget, with a failure that is silent and invisible in the response. This is invariant 24's
+  "the RULE is the invariant, NOT the current list of places it applies", and
+  `test_every_registered_api_route_is_protected` walks the actual route table so it is enforced
+  rather than stated.
+
+  **The query-string form is forced, not lazy.** `EventSource` cannot set request headers at all,
+  and neither can `<audio src>` or a download `href` — the live trace stream and the persisted
+  episode are reached by exactly those. A header-only token would make both unreachable, and the
+  ticker's failure mode is SILENT (the answer still arrives; the ticker just never ticks). The cost
+  is accepted with its eyes open — `app.js` strips the token from the address bar the instant it
+  reads it, and `serve`'s non-loopback warning now names the query-string exposure explicitly.
+
+  **Invariant 25's file was RENAMED, not just edited.** It was
+  `25-the-api-has-no-authentication.md`, and that name had become false. Its authorization half is
+  untouched and is the half that still matters: the token authenticates THE APPLICATION, not a
+  person, so every holder remains fully privileged over every notebook and over global settings.
+
+  **Deliberately not built:** accounts, sessions, per-user authorization, and any way to turn the
+  token off. A `--no-token` flag re-creates the exact hole this closes and would be reached the
+  first time anything looked inconvenient; an operator fronting this with their own auth sets
+  `RN_API_TOKEN` to something their proxy injects, which is the same escape hatch without a switch
+  labelled "off". `RN_API_TOKEN="   "` falls back to the minted token rather than reading as
+  "authentication off" — pinned by a test.
+
+  **Five defects the repo's own tripwires caught while this was being built**, which is most of the
+  argument for having them:
+
+  - **`test_no_translated_string_carries_an_english_dash`** caught a `——` in the new `zh-Hant`
+    error string on the first full run. The dash is already full-width; the English habit is not.
+  - **`TestClient`'s default `base_url` is `http://testserver`, a DNS NAME**, which the new Host
+    check refuses — so nine clients went red at once. The fix was to point the tests at a literal
+    address, NOT to allow `testserver` in the guard: putting a test hostname inside a security
+    control is how the control quietly stops being one.
+  - **`serve`'s non-loopback warning said "NO AUTHENTICATION", and that became false.** Its test
+    asserted the WORDING, so it failed loudly — and the fix was to assert the CLAIM instead (the
+    token is the only protection, there is no authorization behind it, it travels in cleartext).
+    Asserting phrasing is what would have let the warning quietly become a lie.
+  - **`playground/smoke.mjs` caught `rlmnb-api-token`** against its rule that every key the
+    workspace persists is either cleared on load or deliberately exempt. It is cleared: the
+    playground has no backend at all, so a token there can only sit in a public demo page's
+    storage. It is workspace state, not a reader preference.
+  - **`URL` is not a global in a Node `vm` context** (it is a WHATWG addition, not an ECMAScript
+    intrinsic), and `captureApiToken` runs at TOP LEVEL — where anything it throws takes every
+    `init*()` below it down and renders a blank page. The whole body is now guarded. Failing soft
+    costs the reader one re-opened URL; failing hard costs them the application.
+
+  **An independent review found the real gap, and it was not in the code.** The implementation had
+  no reachable path without a token — the review probed framework routes (`/docs`, `/openapi.json`,
+  `/redoc`), `HEAD`/`OPTIONS`, `root_path`, and path confusion through raw ASGI scopes (`//app.js`,
+  `/./app.js`, `/app.js/`, `/%61pp.js`, `/APP.JS`), and every divergence between `request.url.path`
+  and the static mount fails CLOSED. What it found instead was **36 places across 31 files still
+  asserting in the present tense that this API has no authentication**, five of them user-facing or
+  self-contradictory: `AGENTS.md`'s "Still unbuilt" list taught the opposite of `AGENTS.md`'s own
+  invariants 25 and 77 three hundred lines later; `--host`'s argparse help printed the old claim to
+  anyone running `serve --help`; and `_cmd_serve`'s docstring said "Until this grows auth" forty
+  lines above where it grew auth.
+
+  **The sweep distinguishes three cases, and only one of them changed.** Historical narration ("this
+  WAS an unauthenticated 500, found by an independent review") is still true and was left alone, as
+  was every dated `CHANGELOG` entry. Still-true AUTHORIZATION claims were kept. What was rewritten
+  is the present-tense assertions — including in `docs/invariants/` itself, where the ARGUMENT for
+  41, 42, 52 and 53 genuinely changed: each rested on "anyone who can reach this server", which is
+  now false. An independent enumeration caught a spelling the review's own list had partly missed,
+  the hyphenated `no-auth`, in seven more places.
+
+  **One corollary is now written down rather than merely true:** `PUBLIC_PATHS` is the WHOLE `web/`
+  directory, so `GET /DESIGN.md` answers 200 ungated. `StaticFiles` already served it, but this
+  change codifies "anything in `web/` is public" as a security rule, which makes dropping a file
+  there a decision about publishing.
+
+  **Verified:** `uv run python -m pytest -q` → 737 passed (29 new: 21 in `tests/test_auth.py`, which
+  deliberately carries NO `importorskip` so it runs on a bare `uv sync`, and 8 in `test_api.py`
+  driving the middleware). `uvx ruff@0.16.0 check .` clean. A REAL server was exercised end to end
+  with curl, not only `TestClient`: no token → 401, bearer → 200, `?token=` → 200, static asset with
+  no token → 200, `Host: evil.example` with a VALID token → 403, `audio/file?v=1&token=` → past auth.
+  `playground/smoke.mjs` → 13 failures, identical to the pre-change baseline measured by stashing
+  (all of them "0 recorded runs", which is `traces/` being gitignored on this machine).
+
 - **The OCR backend moves from `rapidocr-onnxruntime` to `rapidocr`, which unblocks Python 3.13
   and 3.14 and reads better while it is there.**
 

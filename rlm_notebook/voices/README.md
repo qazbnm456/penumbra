@@ -28,7 +28,7 @@ so the chain is written down rather than left for someone to discover.
 If that chain is not acceptable for your deployment, `RN_TTS_VOICE_HOST_A` / `RN_TTS_VOICE_HOST_B`
 accept an **absolute path** to your own reference `.wav` and these files are then never read. That
 override is environment-only and deliberately unreachable from the settings page — a path arriving
-through an unauthenticated HTTP endpoint would be an arbitrary-file-read surface (AGENTS.md
+through an HTTP endpoint any token holder can reach would be an arbitrary-file-read surface (AGENTS.md
 invariants 26 and 41).
 
 Setting either to `built-in` uses Chatterbox's own voice instead.

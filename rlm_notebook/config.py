@@ -12,12 +12,19 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from .atomic import atomic_write_text
+
+_log = logging.getLogger(__name__)
+
+#: Said ONCE per model per process. `setup()` runs in every worker subprocess
+#: (invariant 21), so an un-deduplicated warning would print on every single run.
+_CLAMPED: set[str] = set()
 
 #: The one sandbox `AnswerQuestion` ever runs in (see AGENTS.md invariant 9 — `from_env` below
 #: refuses any other `RN_INTERPRETER` rather than silently overriding it).
@@ -48,7 +55,8 @@ _DEFAULT_MAX_UPLOAD_BYTES = 50_000_000
 
 #: Trace-file retention (`traces.prune_traces`). A week of history is enough for the one affordance
 #: a trace actually serves after its run finishes — a citation's "view reasoning" link — without
-#: keeping full ingested source text on disk indefinitely behind an API with no auth (invariant 25).
+#: keeping full ingested source text on disk indefinitely behind an API whose every token holder
+#: is fully privileged (invariant 25).
 _DEFAULT_TRACE_RETENTION_DAYS = 7
 _DEFAULT_MAX_TRACE_FILES = 500
 
@@ -285,6 +293,19 @@ def max_upload_bytes() -> int:
     return _env_int("RN_MAX_UPLOAD_BYTES", _DEFAULT_MAX_UPLOAD_BYTES)
 
 
+def max_corpus_chars() -> int:
+    """`RN_MAX_CORPUS_CHARS`, read the same way `max_upload_bytes` is and for the same reason: the
+    Inbox has to report it on a server with no model configured.
+
+    **The same number `NotebookConfig.max_corpus_chars` carries, exposed without the config.** The
+    two caps are six times apart — 50MB of bytes may be uploaded, 8M characters may be assembled
+    into a corpus — so a 30MB text file is a node that captures fine, promotes fine, and then makes
+    the notebook it was promoted into unusable at the first question (invariant 8, failing loudly,
+    a long way from the decision that caused it). Reporting the cap is what lets the Inbox say so
+    BEFORE the promotion instead of after it."""
+    return _env_int("RN_MAX_CORPUS_CHARS", _DEFAULT_MAX_CORPUS_CHARS)
+
+
 #: Ranges `RN_FETCH_ALLOW_CIDRS` may never overlap. Listing one of these does not widen the
 #: carve-out — it turns the DNS-rebinding defence off for that range, which is the whole attack
 #: `resolved_host_is_safe` exists to stop. Deliberately NOT derived from `ipaddress`'s own
@@ -339,7 +360,8 @@ def fetch_allow_cidrs() -> tuple[str, ...]:
     entirely. `is_safe_url` is NOT a backstop for that: it refuses a URL whose host is a LITERAL
     blocked IP, and returns True for `http://evil.example.com/` however that name resolves. So under
     `0.0.0.0/0` a public-looking hostname resolving to `127.0.0.1` or `169.254.169.254` was fetchable,
-    on an API with no authentication (invariant 25), and both the docs and the test that "pinned" it
+    on an API with no authorization behind its token (invariant 25), and both the docs and the test
+    that "pinned" it
     said otherwise — the test used literal-IP URLs, which never reach this code path at all.
 
     **Validating only "does it parse" caught the harmless typo and not the dangerous one**: a dropped
@@ -519,12 +541,12 @@ def tts_voice_map(config: NotebookConfig, language: str | None, provider=None) -
 # the upload cap and every model/credential variable stay OPERATOR-ONLY and are not readable or
 # writable here — see AGENTS.md's settings invariant. "Non-secret" was the wrong filter: lowering
 # `RN_TRACE_RETENTION_DAYS` DELETES trace files that can hold ingested source text, and raising
-# `RN_MAX_UPLOAD_BYTES` is a straight DoS lever. Moving a safety bound onto an unauthenticated page
-# (invariant 25) is the same mistake as moving a key there, just quieter.
+# `RN_MAX_UPLOAD_BYTES` is a straight DoS lever. Moving a safety bound onto a page every token
+# holder can write (invariant 25) is the same mistake as moving a key there, just quieter.
 
 #: Lives inside the notebooks directory, WITHOUT a `.json` suffix, both deliberately: that directory
 #: is already gitignored (a repo-root `settings.json` is not, and one `git add -A` would commit
-#: whatever an unauthenticated caller last wrote), and `list_notebook_summaries` globs `*.json` —
+#: whatever a caller last wrote through the API), and `list_notebook_summaries` globs `*.json` —
 #: which `pathlib` matches against dotfiles too, so `.settings.json` would be parsed as a corrupt
 #: notebook and reported in `GET /notebooks`'s `unreadable` list. Verified, not assumed.
 _SETTINGS_FILENAME = ".settings"
@@ -554,16 +576,29 @@ _LANGUAGE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z ()\-]{0,39}$")
 #: CHARACTERS.
 #:
 #: **A PATH is deliberately unreachable here.** `chatterbox` can take an absolute path to a custom
-#: reference clip, but only from the ENVIRONMENT: a path arriving through the unauthenticated
-#: settings file would be a brand-new arbitrary-file-read surface, which is precisely what
+#: reference clip, but only from the ENVIRONMENT: a path arriving through the settings file — which
+#: any token holder can write — would be a brand-new arbitrary-file-read surface, which is what
 #: invariant 26 spent a slice closing on the ingestion side. `.` and `/` are outside both classes,
 #: so this pattern is what enforces that.
 _VOICE_PATTERN = re.compile(r"^(?:[a-z]{2,}-[A-Z]{2,}-[A-Za-z]+Neural|[a-z][a-z0-9-]{1,30})$")
+
+#: `on` / `off` and nothing else. A closed set, unlike `_LANGUAGE_PATTERN` — there is an enumerable
+#: answer here, so this refuses an unknown value rather than bounding it.
+_TOGGLE_PATTERN = re.compile(r"^(?:on|off)$")
 
 _SETTING_PATTERNS = {
     "output_language": _LANGUAGE_PATTERN,
     "tts_voice_host_a": _VOICE_PATTERN,
     "tts_voice_host_b": _VOICE_PATTERN,
+    #: Whether a finished capture is summarised without being asked (invariant 80). A BEHAVIOUR
+    #: preference, which is what invariant 41 admits — and the question it raises is worth answering
+    #: here rather than leaving to be re-asked: this looks like a spend lever, and spend levers are
+    #: exactly what that invariant keeps off this page. It is not one. `POST /inbox/distil` is
+    #: already a spend endpoint any token holder can call, so the toggle changes WHEN calls happen,
+    #: not whether a token holder can cause them. The BOUND stays off the page —
+    #: `RN_AUTO_DISTIL_MAX_PER_BATCH` is environment-only, the same placement invariant 41 gives
+    #: trace retention and the upload cap.
+    "auto_distil": _TOGGLE_PATTERN,
 }
 
 
@@ -629,6 +664,36 @@ def _env_wins(name: str) -> str | None:
     return (os.getenv(name) or "").strip() or None
 
 
+def auto_distil_enabled(base_dir: str | Path = _DEFAULT_NOTEBOOKS_DIR) -> bool:
+    """Whether a finished capture is summarised without being asked (invariant 80).
+
+    **Default OFF, and that default is the invariant.** BYOK means every summary is the reader's
+    money, and the interface's whole message is "just throw everything in" — so a 200-bookmark
+    import must cost nothing until somebody says otherwise. Turning it on is an explicit, persisted
+    act; `auto_distil_max_per_batch` is what bounds it once it is on.
+
+    Same env-over-file ladder as every other setting, and an unparseable value reads as OFF rather
+    than raising: this is consulted after a capture has already succeeded, and refusing to finish
+    an intake because a settings string is malformed would be the tail wagging the dog.
+    """
+    raw = (_env_wins("RN_AUTO_DISTIL") or read_settings(base_dir)[0].get("auto_distil") or "").strip()
+    return raw.lower() == "on"
+
+
+def auto_distil_max_per_batch() -> int:
+    """How many nodes the AUTO path may summarise in one sweep. Environment-only, deliberately.
+
+    Invariant 41's placement rule: the behaviour toggle may live on the settings page, the BOUND may
+    not. This is the number that keeps a flipped toggle from turning one dropped folder into an
+    unbounded bill, so it sits where `RN_TRACE_RETENTION_DAYS` and `RN_MAX_UPLOAD_BYTES` sit.
+
+    Read standalone rather than as a `NotebookConfig` field, for invariant 30's reason: it is
+    consulted on a path that has nothing to do with whether a model is configured. A malformed value
+    refuses startup, the same as those two.
+    """
+    return _env_int("RN_AUTO_DISTIL_MAX_PER_BATCH", 20)
+
+
 def settings_state(base_dir: str | Path = _DEFAULT_NOTEBOOKS_DIR) -> dict[str, object]:
     """Per setting: its effective value and WHERE it came from (`env` / `file` / `default`).
 
@@ -640,6 +705,7 @@ def settings_state(base_dir: str | Path = _DEFAULT_NOTEBOOKS_DIR) -> dict[str, o
         "output_language": "RN_OUTPUT_LANGUAGE",
         "tts_voice_host_a": "RN_TTS_VOICE_HOST_A",
         "tts_voice_host_b": "RN_TTS_VOICE_HOST_B",
+        "auto_distil": "RN_AUTO_DISTIL",
     }
     out: dict[str, object] = {"error": error}
     for key, env_name in env_names.items():
@@ -652,6 +718,69 @@ def settings_state(base_dir: str | Path = _DEFAULT_NOTEBOOKS_DIR) -> dict[str, o
         else:
             out[key] = {"value": None, "source": "default", "env_var": env_name}
     return out
+
+
+def _max_tokens_for(model: str, wanted: int) -> int:
+    """`wanted`, or the model's own output ceiling when that is lower — and it SAYS SO when it cuts.
+
+    **The shipped default refused every call for the model this project's own `.env.example`
+    names.** `RN_MAX_TOKENS` defaults to 32768 for the reason invariant 59 gives: dspy reads
+    `content` and discards `reasoning_content`, so a reasoning model's chain of thought is billed
+    against a cap it never appears in, and a smaller number returns a reply cut mid-JSON. That
+    argument is about the DISTRIBUTION of replies and says nothing about the provider's own limit,
+    which is lower for most models people actually run:
+
+        openai/gpt-4o 16384 · openai/gpt-4o-mini 16384 · gpt-4-turbo 4096
+        anthropic/claude-3-opus 4096 · gemini-2.0-flash 8192 · deepseek-chat 8192
+
+    OpenAI refuses `max_tokens` larger than the model's completion cap BEFORE it checks the key, so
+    the request never left the machine: ask, guide, overview, title and podcast all answered 502
+    with `max_tokens is too large: 32768`. An operator following `.env.example` got a product where
+    nothing worked, and a valid key changed nothing. It was invisible to anyone whose own model
+    happens to have a ≥32k output cap.
+
+    **Clamped rather than refused, and LOGGED rather than silent.** Invariant 9's rule is that a
+    silent correction makes an operator's belief false — so this says both numbers, once per
+    process, and the operator can set a smaller `RN_MAX_TOKENS` themselves if they disagree. The
+    alternative, lowering the default, would give every large-context model a cap chosen for the
+    smallest one.
+
+    Unknown models (a proxy, a local server, a name litellm has never heard of) keep `wanted`
+    untouched: the metadata is a convenience, not an authority, and refusing to run because a table
+    has no entry would break every self-hosted setup.
+    """
+    if not model or wanted <= 0:
+        return wanted
+    try:
+        import contextlib
+        import io
+
+        import litellm
+
+        # **litellm prints to STDOUT on a miss**, not stderr and not via logging: an unknown model
+        # makes it write a red "Provider List: https://docs.litellm.ai/docs/providers" banner
+        # before it raises. An unknown model is the ORDINARY case here (any proxy, any local
+        # server), and `cli.py` prints the answer to stdout — so without this, asking a question
+        # through a proxy interleaved two ANSI banners with the answer.
+        noise = io.StringIO()
+        with contextlib.redirect_stdout(noise), contextlib.redirect_stderr(noise):
+            ceiling = litellm.get_model_info(model).get("max_output_tokens")
+    except Exception:  # noqa: BLE001 - a missing entry is the common case, not an error
+        return wanted
+    if not isinstance(ceiling, int) or ceiling <= 0 or ceiling >= wanted:
+        return wanted
+    if model not in _CLAMPED:
+        _CLAMPED.add(model)
+        _log.warning(
+            "RN_MAX_TOKENS=%d is larger than %s accepts (%d); using %d instead. "
+            "A provider refuses the request outright above its own limit, before it even checks "
+            "the key.",
+            wanted,
+            model,
+            ceiling,
+            ceiling,
+        )
+    return ceiling
 
 
 def setup(config: NotebookConfig) -> NotebookConfig:
@@ -687,6 +816,18 @@ def setup(config: NotebookConfig) -> NotebookConfig:
     main_lm = _maybe_subscription_lm(config.main_model)
     sub_lm = _maybe_subscription_lm(config.sub_model)
 
+    # **BOTH SEATS, and the lower of the two wins.** `RLMConfig` carries ONE `max_tokens`, and
+    # `rlm_harness.configure` builds `main_lm` and `sub_lm` from the same `lm_kwargs` — so clamping
+    # against the main model alone handed the sub LM a value its own provider refuses outright,
+    # which is the exact failure the clamp exists to prevent, on the seat nobody looked at. Invisible
+    # by default (`RN_SUB_MODEL` inherits `RN_MAIN_MODEL`) and reachable the moment anyone follows
+    # `README.md`'s split-role example with a smaller sub model. Same shape as the bug itself: a
+    # rule applied to one of the two places it applies.
+    max_tokens = min(
+        _max_tokens_for(config.main_model, config.max_tokens),
+        _max_tokens_for(config.sub_model or config.main_model, config.max_tokens),
+    )
+
     rlm_harness.configure(
         RLMConfig(
             # Inert for a seat whose LM is injected below (`configure` builds from config ONLY for
@@ -699,7 +840,7 @@ def setup(config: NotebookConfig) -> NotebookConfig:
             interpreter=config.interpreter,
             max_iterations=config.max_iterations,
             max_llm_calls=config.max_llm_calls,
-            max_tokens=config.max_tokens,
+            max_tokens=max_tokens,
             max_output_chars=config.max_output_chars,
             adapter=config.adapter,
             max_retries=config.max_retries,

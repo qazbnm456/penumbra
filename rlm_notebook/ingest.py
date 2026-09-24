@@ -34,13 +34,52 @@ def with_injection_flags(source: Source) -> Source:
     return source.model_copy(update={"flags": flags}) if flags else source
 
 
-def ingest_one(value: str, source_id: str) -> Source:
+def kind_for(value: str) -> str:
+    """Which `SourceKind` `ingest_one` WILL produce for `value`, decided without touching it.
+
+    Exists because the Inbox (`inbox.py`) records a node the moment it is captured, before anything
+    has been parsed — `Node.kind` is required, and the reader should see their capture land
+    immediately rather than after a fetch. Factored out of `ingest_one` rather than written beside
+    it: a second dispatch is how a `.pdf` URL ends up filed as `web`, and invariant 20 already draws
+    this conclusion for the module as a whole.
+
+    Called a guess because it decides without reading anything, and it is now a guess that can be
+    WRONG — by design. `parse_web` sniffs content type, so a URL serving a PDF is filed `web` here
+    (nothing has been fetched yet; the reader is watching for their capture to land) and comes back
+    `pdf` from the parse. `store_blocks` applies the parsed `kind` as part of its delta, which is
+    what makes the guess safe to be provisional: the row shows something immediately and corrects
+    itself the moment there is something to correct it with. That correction used to be described
+    here as defence against a hypothetical future; the future arrived, because refusing an arXiv
+    link was not a defensible answer for a research inbox.
+    """
     if is_youtube_url(value):
-        return parse_youtube(value, source_id)
+        return "youtube"
     if is_url(value):
+        return "web"
+    if Path(value).suffix.lower() == ".pdf":
+        return "pdf"
+    return "text"
+
+
+def ingest_one(value: str, source_id: str) -> Source:
+    """Parse `value` into a `Source`, taking the branch `kind_for` already named.
+
+    **The dispatch is asked for, not repeated.** `kind_for`'s docstring says it was "factored out of
+    `ingest_one`", and this function said the same thing back — while both held their own copy of
+    the same four-branch chain. Two copies that agree today are the second dispatch that docstring
+    warns about, one edit away from a `.pdf` URL being filed as `web`; the comment was true about
+    the intent and false about the code. Now there is one chain and this reads its answer.
+
+    `parse_web`'s content sniffing can still make the guess wrong AFTER the fetch, which is the
+    deliberate part (invariant 79): `store_blocks` applies the parsed kind as a delta.
+    """
+    kind = kind_for(value)
+    if kind == "youtube":
+        return parse_youtube(value, source_id)
+    if kind == "web":
         return parse_web(value, source_id)
     path = Path(value)
-    if path.suffix.lower() == ".pdf":
+    if kind == "pdf":
         return parse_pdf(str(path), source_id)
     return parse_text(path.read_text(encoding="utf-8"), source_id, origin=str(path))
 

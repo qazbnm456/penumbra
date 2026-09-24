@@ -777,9 +777,9 @@ def test_a_model_failure_is_not_reported_as_a_bad_trace_path(monkeypatch, tmp_pa
 def test_serve_recognises_which_hosts_stay_on_this_machine(host, loopback):
     """`serve` binds loopback by default, and says so loudly when told not to.
 
-    This API has no authentication of any kind (AGENTS.md invariant 25), so until it grows some,
-    which interface it binds IS the access-control story. That belongs in code rather than only in
-    a warning in `README.md`.
+    The token (invariant 77) and the binding are the two layers of access control, and there is no
+    authorization behind the token (invariant 25). That belongs in code rather than only in a
+    warning in `README.md`.
 
     The empty string is the case worth a test of its own: `bind("")` is `INADDR_ANY`, so `--host ""`
     is the most exposed value there is. A first draft listed it beside "localhost" as obviously
@@ -824,11 +824,19 @@ def test_serve_starts_and_serves_with_no_model_configured(monkeypatch, tmp_path)
     monkeypatch.delenv("RN_API_KEY", raising=False)
     monkeypatch.chdir(tmp_path)
 
-    from rlm_notebook import api
+    from rlm_notebook import api, auth
 
-    with fastapi_testclient.TestClient(api.app) as client:
+    # Loopback base URL and the token, for the reason `test_api.py::_authed_client` records:
+    # `TestClient` defaults to the DNS name `testserver`, which invariant 77's Host check refuses.
+    with fastapi_testclient.TestClient(
+        api.app,
+        base_url="http://127.0.0.1",
+        headers={"Authorization": f"Bearer {auth.api_token()}"},
+    ) as client:
         assert client.get("/settings").status_code == 200
         assert client.get("/notebooks").status_code == 200
+        # The static page stays reachable WITHOUT the token (invariant 77) — it is the page that
+        # reads the token, so gating it would make the server unusable.
         assert client.get("/").status_code == 200
 
 
@@ -852,8 +860,8 @@ def _serve_with_stub_uvicorn(monkeypatch, argv):
 
 
 def test_serve_binds_loopback_by_default(monkeypatch, capsys):
-    """The DEFAULT, not just the predicate. With no authentication (invariant 25), which interface
-    this binds is the entire access-control story."""
+    """The DEFAULT, not just the predicate. With no authorization behind the token (invariant 25),
+    which interface this binds is the other half of the access-control story."""
     rc, calls = _serve_with_stub_uvicorn(monkeypatch, ["serve"])
     assert rc == 0
     assert calls["host"] == "127.0.0.1", "the default bind must stay loopback"
@@ -868,13 +876,22 @@ def test_serve_warns_on_stderr_when_it_binds_beyond_this_machine(monkeypatch, ca
 
     On stderr specifically: the warning has to survive `rlm-notebook serve > log`, and it has to
     reach `docker logs` from a container whose stdout is block-buffered.
+
+    This used to assert the words "NO AUTHENTICATION", which invariant 77 made FALSE — there is a
+    token now. The claim that has to survive is the one that is still true and still dangerous:
+    the token is the only thing in the way, there is no authorization behind it (invariant 25's
+    surviving half), and it travels in cleartext over plain HTTP. Asserting the phrasing rather
+    than the claim is what would have let this warning quietly become a lie.
     """
     rc, calls = _serve_with_stub_uvicorn(monkeypatch, ["serve", "--host", host])
     assert rc == 0
     assert calls["host"] == host, "the host the operator asked for is the host uvicorn gets"
     captured = capsys.readouterr()
     assert "WARNING" in captured.err
-    assert "NO AUTHENTICATION" in captured.err
+    lowered = captured.err.lower()
+    assert "token" in lowered, "the warning must say what the only protection is"
+    assert "no authorization" in lowered, "invariant 25's surviving half must still be stated"
+    assert "cleartext" in lowered, "plain HTTP carries the token in the clear; say so"
     assert "WARNING" not in captured.out, "the warning must not go to stdout"
 
 
@@ -899,3 +916,54 @@ def test_serve_refuses_an_out_of_range_port_instead_of_raising(bad):
     with pytest.raises(SystemExit) as exc:
         build_parser().parse_args(["serve", "--port", bad])
     assert exc.value.code == 2
+
+
+def test_serve_bounds_its_graceful_shutdown_and_handles_a_hangup(monkeypatch):
+    """**Without a timeout, this server cannot be quit while a run is in flight.**
+
+    `Server.shutdown()` ends in `await server.wait_closed()`, which since Python 3.12 waits for
+    every active connection handler — and `force_exit` does not break out of it, so a second Ctrl-C
+    does not help. An independent review reproduced it against the shipped binary: SIGTERM, then
+    four SIGINTs, listener already closed, process still up. The only exit left was SIGKILL, which
+    reparents the worker and its Deno grandchild to init, still billing to their own backstop.
+
+    It also made the previous round's `_lifespan` cancel loop unreachable: uvicorn guards
+    `lifespan.shutdown()` with `if not force_exit`, and every entry in `_ACTIVE_RUNS` belongs to an
+    in-flight request whose `finally` clears it — so the map is empty by construction by the time
+    that loop can run. The test written for that fix put `FakeRun`s in the map by hand and could see
+    neither fact. The first version of THIS test was a source assertion (`"SIGHUP" in src`), which a
+    comment satisfies; it now runs the real `_cmd_serve` and fires the handler it installed.
+    """
+    import signal
+
+    import uvicorn
+
+    from rlm_notebook import cli
+
+    passed: dict = {}
+    installed: dict = {}
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: passed.update(kwargs))
+    monkeypatch.setattr(cli.signal, "signal", lambda sig, fn: installed.__setitem__(sig, fn))
+    # `_cmd_serve` writes the minted token into the environment; registering it here makes
+    # monkeypatch put the environment back afterwards.
+    monkeypatch.setenv("RN_API_TOKEN", "")
+    monkeypatch.delenv("RN_API_TOKEN")
+
+    cli._cmd_serve(build_parser().parse_args(["serve"]))
+
+    # Bounded, and short: this is how long a Ctrl-C waits for open requests before cancelling them,
+    # and cancelling is what makes `_run_isolated` kill the worker's whole process group.
+    assert 0 < passed.get("timeout_graceful_shutdown", 0) <= 10, (
+        "serve does not bound its shutdown, so Ctrl-C cannot quit it while a run is in flight"
+    )
+    # uvicorn installs no SIGHUP handler, so closing the terminal took the default action and tore
+    # the process down with no shutdown at all. Routed into the same path as Ctrl-C.
+    # Routed as SIGTERM, which uvicorn captures while serving. Raising `KeyboardInterrupt` from the
+    # handler (the first version) passed a test shaped like this one and, run live, crashed the event
+    # loop with a traceback and no lifespan teardown — so what is pinned is the SIGNAL it hands on.
+    hangup = installed.get(signal.SIGHUP)
+    assert hangup is not None, "closing the terminal still kills the server without a teardown"
+    raised: list = []
+    monkeypatch.setattr(cli.signal, "raise_signal", raised.append)
+    hangup(signal.SIGHUP, None)
+    assert raised == [signal.SIGTERM], f"a hangup was handed on as {raised}, not SIGTERM"

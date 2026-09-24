@@ -11,6 +11,7 @@ the pymupdf-replacement design record for the full account of why that had to go
 from __future__ import annotations
 
 import logging
+import threading
 from typing import NamedTuple
 
 import pypdfium2 as pdfium
@@ -97,10 +98,49 @@ def _page_text(page) -> _PageText:
     return _PageText(ocr_text, True, True)
 
 
+#: Serialises every PDF parse in this PROCESS. AGENTS.md invariant 3 says ingestion is serial and
+#: measured the cost of ignoring it — four PDFs parsed concurrently died with `rc=134` (SIGABRT),
+#: because `pypdfium2`'s own metadata says "PDFium is inherently not thread-safe".
+#:
+#: **That invariant's argument is written about `ingest_new`'s internal loop, and the API reaches
+#: this function by a path it does not consider.** `api.add_sources` and `api.upload_source` both
+#: call ingestion through `asyncio.to_thread`, which hands the work to the default
+#: `ThreadPoolExecutor` — so two concurrent requests parse two PDFs at the same time. MEASURED:
+#: two `POST .../sources/upload` fired with `asyncio.gather` against the real ASGI app overlapped
+#: inside the parser by 0.405s on two distinct threads, and both returned 200. It is worse here
+#: than in the loop the invariant was written about, because ingestion runs in the API PROCESS and
+#: not in a `worker.py` subprocess (invariant 21 is about RLMTask EXECUTION, and parsing is not a
+#: task), so the SIGABRT takes the server down rather than one request.
+#:
+#: **Here rather than around `ingest_one`, deliberately.** Invariant 3 already says the honest
+#: thing about the wider change: "the waiting is the network FETCH and the crashing is the PDF
+#: PARSE, but `ingest_one` fuses them, so separating them is a real refactor." A lock around
+#: `ingest_one` would serialise the fetch too, and `web._default_fetcher` has a 15-second timeout —
+#: one slow page would block every other capture for up to fifteen seconds. This is not that
+#: refactor; it is a mutex on a library that documents itself as thread-unsafe, at that library's
+#: door. It covers the OCR dispatch too, which is inside `_page_text`.
+#:
+#: **The cost it DOES pay, named because invariant 3's own standard is to name the trade.** OCR runs
+#: under this lock, and `_ocr._try_rapidocr` constructs a fresh `RapidOCR()` per page. A long scanned
+#: PDF therefore holds a process-wide mutex for minutes while every other upload's `to_thread`
+#: worker waits behind it. That is accepted: the alternative measured in invariant 3 is SIGABRT, and
+#: a slow upload is a better outcome than a dead server. It is also why `intake.py`'s queue exists —
+#: captures that go through it are serial by design and never contend for this at all.
+_PDFIUM_LOCK = threading.Lock()
+
+
 def parse_pdf(path: str, source_id: str) -> Source:
     """Ingest a PDF. Each page becomes one citable `SourceBlock` at locator `"page:<n>"`
     (1-indexed). A page with no extractable text (OCR included) is skipped, not emitted as an
-    empty block; the whole source is refused only if EVERY page comes back empty."""
+    empty block; the whole source is refused only if EVERY page comes back empty.
+
+    Serialised process-wide by `_PDFIUM_LOCK` — see its comment for the measurement and for why the
+    lock is here and not around `ingest_one`."""
+    with _PDFIUM_LOCK:
+        return _parse_pdf_locked(path, source_id)
+
+
+def _parse_pdf_locked(path: str, source_id: str) -> Source:
     pdf = pdfium.PdfDocument(path)
     try:
         blocks: list[SourceBlock] = []

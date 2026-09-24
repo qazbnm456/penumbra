@@ -89,7 +89,8 @@ def normalize_title(raw: str) -> str:
     """
     # Control characters are STRIPPED, not just collapsed: `str.split()` drops ASCII whitespace but
     # keeps `\x1b`, `\x00` and the bidi overrides, and this is the only guard on a value an
-    # UNAUTHENTICATED `PUT /notebooks/{id}/title` writes (invariants 25 and 53). It is the same
+    # any token holder can write through `PUT /notebooks/{id}/title` (invariants 25 and 53). It is
+    # the same
     # thing invariant 41 already requires of `clean_language`, for a value with a smaller blast
     # radius. Not exploitable through today's sinks — every one renders with `textContent` — which
     # is exactly why it should not be left to depend on that staying true.

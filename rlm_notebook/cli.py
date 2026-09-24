@@ -23,6 +23,8 @@ from __future__ import annotations
 import argparse
 import contextlib
 import ipaddress
+import os
+import signal
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -31,7 +33,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from . import __version__
+from . import __version__, auth
 from .audio import GeneratePodcastScript
 from .citations import verify_citations
 from .config import NotebookConfig, output_language, setup, tts_voice_map
@@ -453,10 +455,10 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("serve", help="run the HTTP API and the web UI (needs the `api` extra)")
     s.add_argument(
         "--host", default="127.0.0.1",
-        help="interface to bind (default: 127.0.0.1, loopback only). This API has NO "
-             "AUTHENTICATION of any kind (AGENTS.md invariant 25), so any other value is a "
-             "deliberate decision to let everyone who can reach that interface read, rewrite and "
-             "delete every notebook on this machine",
+        help="interface to bind (default: 127.0.0.1, loopback only). Requests need the API "
+             "token (AGENTS.md invariant 77) but there is no authorization behind it (25), so any "
+             "other value is a deliberate decision to let everyone who obtains that token read, "
+             "rewrite and delete every notebook on this machine",
     )
     s.add_argument(
         "--port", type=_port, default=8000,
@@ -516,12 +518,12 @@ def _is_loopback(host: str) -> bool:
 def _cmd_serve(args: argparse.Namespace) -> int:
     """Run the API and the web UI it serves.
 
-    The API is reachable ONLY from this machine by default, and that default is the point. It has
-    no authentication of any kind (invariant 25): any caller can create, rename, query, cancel,
-    irreversibly delete a source from, and read the FULL TEXT and reasoning traces of any notebook,
-    and can change global settings for notebooks they never named. Until this grows auth, "which
-    interface it binds" is the whole access-control story, so it belongs in the code rather than
-    only in a warning in `README.md`.
+    The API is reachable ONLY from this machine by default, and that default is the point. Every
+    request needs the token minted below (invariant 77), but there is no authorization behind it
+    (invariant 25): any caller HOLDING IT can create, rename, query, cancel, irreversibly delete a
+    source from, and read the FULL TEXT and reasoning traces of any notebook, and can change global
+    settings for notebooks they never named. The token and the binding are the two layers of access
+    control, so both belong in the code rather than only in a warning in `README.md`.
 
     A non-loopback `--host` is allowed, because a genuinely trusted network is a use the README
     already sanctions, and refusing it would be this command deciding something the operator knows
@@ -545,16 +547,30 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         )
         return 2
 
+    # Minted BEFORE uvicorn starts and put into the environment, not passed as an argument, for a
+    # specific reason: `uvicorn.run` is given the app as an IMPORT STRING, so under `--reload` the
+    # app is constructed in a child process. The environment is what both processes share, and it
+    # is also the channel the desktop shell will use to inject a token it minted itself
+    # (`auth.api_token`). Setting it here means `api._announce_minted_token` stays quiet and this
+    # function owns the one, better-worded announcement.
+    minted = auth.token_is_minted()
+    if minted:
+        os.environ["RN_API_TOKEN"] = auth.api_token()
+
     if not _is_loopback(args.host):
         print(
-            f"WARNING: binding {args.host}, not loopback. This API has NO AUTHENTICATION: anyone "
-            f"who can reach {args.host}:{args.port} can read every notebook's full source text and "
-            "reasoning traces, delete sources, and change settings for notebooks they never named. "
+            f"WARNING: binding {args.host}, not loopback. Every request needs the API token below, "
+            "but that token is the ONLY thing protecting this server: there is no authorization of "
+            "any kind (invariant 25), so anyone who obtains it can read every notebook's full "
+            "source text and reasoning traces, delete sources, and change settings for notebooks "
+            "they never named. It also travels in cleartext over plain HTTP, and in a query string "
+            "for the stream and audio endpoints, where proxies and access logs can record it. "
             "Only do this on a network you fully trust.",
             file=sys.stderr,
         )
-    # `notebooks/`, `traces/` and `audio/` are relative paths resolved against the working
-    # directory (invariant 34), so where you START this decides where your notebooks live. That is
+    # `notebooks/`, `traces/` and `inbox/` are relative paths resolved against the working
+    # directory (invariant 34), so where you START this decides where your notebooks live. (A
+    # generated episode lives at `notebooks/audio/`, inside the first of them, not beside it.) That is
     # the one fact worth printing, and it is printed to STDERR: stdout is block-buffered off a TTY,
     # so on the containerised path this line never reached `docker logs` at all — the path a
     # reader most needs when their notebooks are inside a container that is about to be removed.
@@ -562,8 +578,64 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     # The URL is NOT printed here. It used to be, one line BEFORE the bind, so an occupied port
     # announced an address it then failed to serve. uvicorn prints it after binding, which is the
     # only point at which it is true.
-    print(f"rlm-notebook: notebooks, traces and audio under {Path.cwd()}", file=sys.stderr)
-    uvicorn.run("rlm_notebook.api:app", host=args.host, port=args.port, reload=args.reload)
+    print(
+        f"rlm-notebook: notebooks, traces, audio and the Inbox under {Path.cwd()}", file=sys.stderr
+    )
+    # The TOKEN is printed here; the URL still is not. That split is deliberate and keeps the
+    # reasoning above intact — a token is not an address, so printing it before the bind cannot
+    # announce something this process then fails to serve. uvicorn prints the address once it is
+    # true, and the two are combined by whoever reads them.
+    if minted:
+        print(
+            f"rlm-notebook: API token (every request needs it): {auth.api_token()}\n"
+            f"  in a browser, open the address uvicorn prints below with "
+            f"`?{auth.QUERY_PARAM}={auth.api_token()}` appended — the page stores it and strips it "
+            "from the address bar.\n"
+            "  elsewhere, send `Authorization: Bearer <token>`.\n"
+            "  set RN_API_TOKEN to choose the token yourself instead.",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "rlm-notebook: using the API token from RN_API_TOKEN; every request needs it.",
+            file=sys.stderr,
+        )
+    #: **Without a graceful-shutdown timeout, this server cannot be quit while a run is in flight.**
+    #: `Server.shutdown()` ends in `await server.wait_closed()`, and since Python 3.12 that waits for
+    #: every active connection handler — `force_exit` does not break out of it, so a second Ctrl-C
+    #: does not help either. An independent review reproduced it against the shipped binary:
+    #: SIGTERM, then SIGINT twice, then a third and fourth, all with the listener already closed and
+    #: the process still up; the only remaining exit was SIGKILL, which reparents the worker and its
+    #: Deno grandchild to init, still billing to their own backstop (1500s on the API path, 9000s on
+    #: the subscription one).
+    #:
+    #: It also made the previous round's fix DEAD CODE on this path: `uvicorn` guards
+    #: `lifespan.shutdown()` with `if not self.force_exit`, so a forced quit skips `_lifespan`'s
+    #: cancel loop — and every entry in `_ACTIVE_RUNS` belongs to an in-flight request whose
+    #: `finally` clears it, so by the time that loop can run the map is empty by construction. The
+    #: test written for it put `FakeRun`s into the map by hand and could see neither fact.
+    #:
+    #: Three seconds: long enough for a request that is genuinely about to finish, short enough that
+    #: Ctrl-C feels like quitting. Verified with the same probe — one SIGINT, server gone, worker and
+    #: grandchild gone with it.
+    #: SIGHUP gets its own handler because uvicorn installs none, so closing the terminal took the
+    #: default action and tore the process down with no shutdown at all. It RE-RAISES AS SIGTERM,
+    #: which uvicorn does capture while serving: the first version raised `KeyboardInterrupt` from
+    #: the handler, which passed its unit test and, run live, blew up the event loop mid-`await` —
+    #: a traceback, no "Shutting down", no lifespan teardown. SIGTERM takes the same bounded,
+    #: graceful path as Ctrl-C.
+    def _hangup(_signum, _frame):
+        signal.raise_signal(signal.SIGTERM)
+
+    with contextlib.suppress(ValueError):  # not the main thread (a test, an embedded host)
+        signal.signal(signal.SIGHUP, _hangup)
+    uvicorn.run(
+        "rlm_notebook.api:app",
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+        timeout_graceful_shutdown=3,
+    )
     return 0
 
 

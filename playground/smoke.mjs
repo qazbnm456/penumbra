@@ -11,7 +11,7 @@
  * `app.js`, not hand-written, so a new call site in the product fails this rather than 404ing in
  * front of a reader.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
@@ -970,11 +970,18 @@ console.log("\nheader chrome actually mounts:");
       prepend(c) { c.parentElement = this; this.children.unshift(c); },
       insertBefore(c, ref) {
         // The real contract. Getting this wrong is the bug this block exists to catch.
+        // A NULL reference APPENDS, which is also the real contract and is how a node is put
+        // after the last child - `header.nextSibling` is null whenever the header is last.
+        if (ref == null) return this.appendChild(c);
         const at = this.children.indexOf(ref);
         if (at < 0) throw new Error("NotFoundError: reference node is not a child of this node");
         c.parentElement = this;
         this.children.splice(at, 0, c);
         return c;
+      },
+      get nextSibling() {
+        const sibs = (this.parentElement || {}).children || [];
+        return sibs[sibs.indexOf(this) + 1] || null;
       },
       addEventListener() {}, remove() {}, replaceChildren() { this.children = []; },
       querySelector() { return null; }, querySelectorAll() { return []; },
@@ -984,11 +991,17 @@ console.log("\nheader chrome actually mounts:");
     nodes.push(n);
     return n;
   }
-  // The real nesting from index.html: header > .header-actions > #settings-open
+  // The real nesting from index.html: body > .layout > header > .header-actions > #settings-open.
+  // The header has a PARENT here because the chrome mounts a sibling beside it, and a detached
+  // header made that insertion a no-op the check could not see.
+  const body = makeEl("body");
+  const layout = makeEl("div");
   const header = makeEl("header");
   const actions = makeEl("div");
   const settingsBtn = makeEl("button");
   const wordmark = makeEl("button");
+  body.appendChild(layout);
+  layout.appendChild(header);
   header.appendChild(wordmark);
   header.appendChild(actions);
   actions.appendChild(settingsBtn);
@@ -1000,7 +1013,7 @@ console.log("\nheader chrome actually mounts:");
     location: { href: "http://x/", hash: "", reload() {} },
     sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     document: {
-      readyState: "complete", body: makeEl("body"),
+      readyState: "complete", body,
       currentScript: { src: "http://x/chrome.js" },
       createElement: makeEl,
       getElementById: (id) => byId[id] || null,
@@ -1032,9 +1045,24 @@ console.log("\nheader chrome actually mounts:");
   ok(added.length >= 4, `${added.length} chrome controls inserted into .header-actions`);
   // Expected labels come from the copy table, not from strings pinned here: this asserts that the
   // chrome MOUNTED, and rewording a button should not fail a DOM test.
-  const labels = added.map((n) => n.textContent || n.className).join(" ");
-  const wanted = ["notebooks", "restart", "install", "github"].map((k) => c.rlmPlayground.ui(k));
-  ok(labels.includes("pg-sim"), "header has the SIMULATED badge");
+  // Whitespace-insensitive: each button's label is now a `.pg-ico` span and a `.pg-label` span, so
+  // the word can be dropped at phone width without losing the control, and the single space that
+  // used to sit between them is a CSS `gap`. This still asserts the chrome MOUNTED with that copy.
+  // RECURSIVE, like the real `textContent`: a chrome button's label is now two child spans, so
+  // reading only the button's own property saw an empty string and the assertion fell through to
+  // the className - which would have passed for a button whose copy had gone missing entirely.
+  const deep = (n) => (n.textContent || "") + (n.children || []).map(deep).join("");
+  const flat = (x) => String(x).replace(/\s+/g, "");
+  const labels = flat(added.map((n) => deep(n) || n.className).join(" "));
+  const wanted = ["notebooks", "restart", "install", "github"].map((k) => flat(c.rlmPlayground.ui(k)));
+  // By CLASS. `labels` reads the deep text now, and the badge's text is its copy, not its class.
+  ok(added.some((n) => (n.className || "") === "pg-sim"), "header has the SIMULATED badge");
+  // The demo marker has to survive a phone, where BOTH in-header markers are gone: `.pg-sim` below
+  // 900px and `.wordmark` (which carries the PLAYGROUND tag) below 640. The strip is what is left.
+  ok(
+    layout.children.some((n) => (n.className || "") === "pg-strip"),
+    "a SIMULATED strip is mounted beside the header, for the widths where its markers are hidden"
+  );
   for (const want of wanted) ok(labels.includes(want), `header has: ${want}`);
   ok(
     wordmark.children.some((n) => n.className === "pg-wordmark-tag"),
@@ -1121,10 +1149,32 @@ console.log("\ndirector selectors still match the shipped UI:");
     "run-log": '"run-log"',
     "chat-history": 'id="chat-history"',
     "data-view-body": "data-view-body",
-    ".pg-btn": '"header-btn pg-btn',
+    // Tier 0. The script opens on the Inbox now, and these are the controls its first four steps
+    // point at - the same rename hazard as every product token above.
+    "#capture-form": 'id="capture-form"',
+    ".find": 'class="find"',
+    "#stream": 'id="stream"',
+    "node-open": '"node-open"',
+    "#facet-list": 'id="facet-list"',
+    // Named by a `done` predicate rather than a target, and just as breakable by a rename: the
+    // search field the Find step waits on, and the class an opened row carries.
+    "stream-search": 'id="stream-search"',
+    "is-open": '"is-open"',
+    // A BACKTICK: both chrome builders compose the class with `${cls}`, so the double-quoted
+    // literal this used to look for no longer exists anywhere in the file.
+    ".pg-btn": "`header-btn pg-btn",
     ".header-btn": '"header-btn',
   };
-  const targets = [...TOUR.matchAll(/target:\s*['"](.+?)['"],/g)].map((m) => m[1]);
+  // `target` is a STRING on most steps and a FUNCTION on the one that has to compute a position in
+  // the facet rail, so take every quoted or backticked run out of the value rather than assuming
+  // the value is itself a string. A function target naming an unanchored selector passed this
+  // check by not being seen at all.
+  const targets = [
+    ...[...TOUR.matchAll(/target:\s*['"](.+?)['"],/g)].map((m) => m[1]),
+    ...[...TOUR.matchAll(/target:\s*\(\)\s*=>([\s\S]*?),\n/g)].flatMap((m) =>
+      [...m[1].matchAll(/['"`]([^'"`]+)['"`]/g)].map((x) => x[1])
+    ),
+  ];
   ok(targets.length >= 8, `${targets.length} director targets found in tour.js`);
   for (const [token, anchor] of Object.entries(ANCHORS)) {
     ok(hay.includes(anchor), `${token} -> ${anchor}`);
@@ -1135,6 +1185,34 @@ console.log("\ndirector selectors still match the shipped UI:");
   const unanchored = targets.filter((sel) => !known.some((k) => sel.includes(k)));
   ok(unanchored.length === 0,
      `every target is anchored${unanchored.length ? ` — unanchored: ${unanchored.join(" | ")}` : ""}`);
+}
+
+console.log("\nevery asset the page references is actually in dist:");
+{
+  // **Nothing here asserted a file EXISTS**, so the build shipped for a whole slice referencing a
+  // favicon and four woff2 that were never copied: the page 404'd five assets and fell back to
+  // system faces, on a page whose entire premise is that it IS the shipped UI. Derived from what
+  // the built files REFERENCE, not from a list here, or a sixth asset is the same bug again.
+  const html = readFileSync(join(DIST, "index.html"), "utf8");
+  const css = readFileSync(join(DIST, "style.css"), "utf8");
+  const referenced = new Set();
+  for (const m of html.matchAll(/(?:href|src)="\.?\/?([\w./-]+\.(?:svg|css|js|png|woff2))"/g)) {
+    referenced.add(m[1]);
+  }
+  for (const m of css.matchAll(/url\("\.?\/?([\w./-]+\.woff2)"\)/g)) referenced.add(m[1]);
+  ok(referenced.size >= 6, `${referenced.size} local assets referenced by the built page`);
+
+  const missing = [...referenced].filter((rel) => !existsSync(join(DIST, rel)));
+  ok(missing.length === 0, `every referenced asset is in dist${missing.length ? ` — missing: ${missing.join(", ")}` : ""}`);
+
+  // **And none of them may be absolute.** `/fonts/…` is right for a server rooted at `/` and wrong
+  // for the sub-path this actually deploys to (`www.boik.tw/rlm-notebook/`), so it would 404 there
+  // while passing every check run from a local root.
+  const absolute = [
+    ...[...html.matchAll(/(?:href|src)="(\/[\w./-]+)"/g)].map((m) => m[1]),
+    ...[...css.matchAll(/url\("(\/[^"]+)"\)/g)].map((m) => m[1]),
+  ];
+  ok(absolute.length === 0, `no absolute asset path${absolute.length ? ` — ${absolute.join(", ")}` : ""}`);
 }
 
 console.log("\naudio rewrite:");

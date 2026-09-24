@@ -25,7 +25,7 @@ TERMINAL and `app.js`'s `TERMINAL_KINDS` would close the live log while the run 
 `reasoning` falls back to the step's CODE, and a `result` event carries its output dict's KEY NAMES.
 **`detail` CAN therefore quote ingested source text** — the model's prose and the step's code both
 routinely repeat what they just read — which is the same materially-different exposure invariant 29
-records for the trace endpoints, on an API with no authentication (invariant 25). Do not read the
+records for the trace endpoints, on an API with no authorization (invariant 25). Do not read the
 next sentence as a promise that no source text reaches this stream; it is narrower than that.
 The step's `output` is where whole corpus spans land and is deliberately NOT streamed; its SIZE is
 reported instead, which is the part that tells a reader whether a step did much. `_DETAIL_CHARS`

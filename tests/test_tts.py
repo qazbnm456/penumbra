@@ -704,8 +704,8 @@ def test_the_settings_voice_pattern_accepts_both_providers_naming_schemes():
         "host-a<script>",
         "",
         # A PATH must be unreachable from the settings file even though chatterbox accepts one from
-        # the ENVIRONMENT — otherwise this becomes an arbitrary-file-read surface on an
-        # unauthenticated endpoint (invariants 26 and 41).
+        # the ENVIRONMENT — otherwise this becomes an arbitrary-file-read surface on an endpoint
+        # any token holder can reach (invariants 26 and 41).
         "/etc/passwd",
         "../../etc/passwd",
         "ref.wav",

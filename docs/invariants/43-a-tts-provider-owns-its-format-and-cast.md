@@ -59,7 +59,8 @@ call sites, because neither has a seam to observe it through.
 
 **A PATH is reachable from the ENVIRONMENT only, never the settings file.** `_VOICE_PATTERN`
 accepts edge-tts ids and short lowercase names and excludes `.` and `/`, so a path arriving
-through the unauthenticated settings page — a brand-new arbitrary-file-read surface — cannot
+through the settings page, which any token holder can write — a brand-new arbitrary-file-read
+surface — cannot
 happen. Invariant 26's reasoning applied to a second input channel.
 
 **The extra is marked `python_full_version >= '3.13'`, and that marker is not tidiness.**

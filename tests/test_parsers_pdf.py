@@ -349,3 +349,80 @@ def test_reading_order_does_not_damage_a_real_single_column_render(tmp_path):
         f"a single-column page must cross the centre on most lines: {crossing}/{len(spans)}"
     )
     assert ordered == raw
+
+
+# --- PDFium is serialised process-wide (AGENTS.md invariant 3) -------------------------------------
+
+
+def test_two_threads_cannot_parse_two_pdfs_at_once(monkeypatch):
+    """Invariant 3 measured the cost of concurrent PDF parsing — four at once died with `rc=134`
+    (SIGABRT), because `pypdfium2`'s own metadata says PDFium is not thread-safe. `parse_pdf` now
+    takes a process-wide lock, so this asserts the property the crash was the symptom of: the two
+    parse windows must not overlap.
+
+    Patched at `_parse_pdf_locked`, which is the seam the lock wraps — the point under test is that
+    `parse_pdf` serialises whatever it calls, not what PDFium itself does with two threads (that is
+    already measured, in the invariant).
+    """
+    import threading
+    import time
+
+    from rlm_notebook.schema import Source, SourceBlock
+
+    windows: list[tuple[float, float]] = []
+    recorder_lock = threading.Lock()
+
+    def slow(path, source_id):
+        start = time.monotonic()
+        time.sleep(0.15)
+        with recorder_lock:
+            windows.append((start, time.monotonic()))
+        return Source(
+            id=source_id, kind="pdf", origin=path, blocks=[SourceBlock(locator="page:1", text="x")]
+        )
+
+    monkeypatch.setattr(pdf_module, "_parse_pdf_locked", slow)
+
+    threads = [
+        threading.Thread(target=pdf_module.parse_pdf, args=(f"/tmp/{n}.pdf", "s1")) for n in range(2)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(windows) == 2
+    (_, end_a), (start_b, _) = sorted(windows)
+    assert start_b >= end_a, (
+        f"two PDF parses overlapped by {end_a - start_b:.3f}s — the lock is not holding"
+    )
+
+
+def test_pdfium_is_only_reached_from_inside_the_locked_function():
+    """A source assertion, and it is needed because both lock tests patch `_parse_pdf_locked` —
+    neither would notice a new `pdfium.PdfDocument(...)` added somewhere the lock does not cover.
+
+    Same class of hazard as invariants 36 and 54: nothing else in this project can see it, and the
+    symptom would be an intermittent SIGABRT rather than a failing assertion. Page-level PDFium
+    calls (`page.render`) are not scanned separately because a page can only exist where a document
+    does, and creating a document is what this catches.
+    """
+    import inspect
+
+    source = inspect.getsource(pdf_module)
+    lines = source.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("def _parse_pdf_locked"))
+    end = next(
+        (i for i, line in enumerate(lines[start + 1 :], start + 1) if line.startswith("def ")),
+        len(lines),
+    )
+    locked = set(range(start, end))
+
+    offenders = [
+        f"{i + 1}: {line.strip()}"
+        for i, line in enumerate(lines)
+        if "pdfium." in line and i not in locked and not line.startswith("import ")
+    ]
+    assert not offenders, (
+        f"PDFium is reached outside _parse_pdf_locked, so _PDFIUM_LOCK does not cover it: {offenders}"
+    )

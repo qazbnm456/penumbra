@@ -30,6 +30,37 @@ A sound version is NOT ten lines: the waiting is the network FETCH and the crash
 PARSE, but `ingest_one` fuses them, so separating them is a real refactor of the ingestion
 dispatch — a different proposal with a different cost, and not one a 2.94% measurement buys.
 
+## The HTTP API reached this by a path the argument above never considered
+
+Everything above is about `ingest_new`'s internal loop. Nothing in it considers two concurrent
+HTTP REQUESTS — and `api.add_sources` and `api.upload_source` both call ingestion through
+`asyncio.to_thread`, which hands the work to the default `ThreadPoolExecutor`. So two requests
+parse two PDFs at the same time, which is the forbidden shape arriving through the front door.
+
+**Measured, because this invariant's own standard is measurement:** two
+`POST /notebooks/{id}/sources/upload` fired with `asyncio.gather` against the real ASGI app
+overlapped inside the parser by **0.405s on two distinct threads**, and both returned 200.
+
+It is worse here than in the loop this invariant was written about. Ingestion runs in the API
+PROCESS, not in a `worker.py` subprocess — invariant 21 is about `RLMTask` EXECUTION, and parsing
+is not a task — so the SIGABRT takes the whole server down rather than one request. The comment
+beside that call site says ingestion sits outside the per-notebook write lock because "there's no
+reason for ANY ingestion to sit under the lock"; that is correct about the WRITE lock and does not
+address this, since two different notebooks take two different locks anyway.
+
+**The fix is `parsers/pdf.py`'s `_PDFIUM_LOCK`, and where it sits is the decision.** Around
+`parse_pdf`, not around `ingest_one`: a lock on `ingest_one` would serialise the FETCH too, and
+`web._default_fetcher` has a 15-second timeout, so one slow page would block every other capture
+for up to fifteen seconds. That is not the fetch/parse refactor declined above — it is a mutex on a
+library that documents itself as thread-unsafe, placed at that library's door. It covers the OCR
+dispatch too, which is inside `_page_text`.
+
+**Two tests, and the second one is the point.** `test_two_threads_cannot_parse_two_pdfs_at_once`
+proves the lock; `test_api.py::test_two_concurrent_uploads_never_parse_two_pdfs_at_once` drives the
+real ASGI app, because of this invariant's own closing line — *a suite that is green on the path
+you did not change is not evidence about the path you did.* Both were confirmed to FAIL with the
+lock removed.
+
 ---
 
 One-line index: [`AGENTS.md`](../../AGENTS.md) · Incidents, measurements and superseded drafts: [`CHANGELOG.md`](../../CHANGELOG.md)

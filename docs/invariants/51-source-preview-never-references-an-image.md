@@ -18,7 +18,7 @@ a cosmetic miss, never a hazard.
 **Every quantifier in those patterns is BOUNDED and the input is windowed to the `<head>`, and both
 are load-bearing.** With an unbounded `[^>]*?`, a page of UNCLOSED `<meta` tags backtracks
 catastrophically — cubic, and `re` does NOT release the GIL, so `asyncio.to_thread` buys the event
-loop nothing. On a no-auth API where any caller can paste any URL, that is a one-request freeze of
+loop nothing. On an API where any token holder can paste any URL, that is a one-request freeze of
 the whole server.
 
 ---

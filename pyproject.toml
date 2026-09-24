@@ -48,6 +48,15 @@ dependencies = [
     # rejected. What zhconv supplies is `对 -> 對` for the rejection message. Pure Python plus one
     # JSON table. The module import is cheap; its 1MB+ character table is what loads lazily, on
     # the first `getdict` — i.e. only for a run whose output language names a Chinese script.
+    #
+    # KNOWN, UPSTREAM, AND NOT WORTH HUNTING TWICE: `zhconv.zhconv:36` loads that table with a bare
+    # `open()` it never closes, so the suite emits a `ResourceWarning` for `zhcdict.json` — visible
+    # only under `-W error`, and INTERMITTENT in a full run because garbage collection decides which
+    # test the unraisable lands on. `pytest tests/test_instructions.py::
+    # test_the_wrong_script_table_never_flags_a_correct_traditional_character -W error` reproduces
+    # it alone, which is how it was pinned to this dependency rather than to anything here.
+    # Deliberately NOT silenced with a warning filter: hiding the whole ResourceWarning class to
+    # quiet one third-party leak costs more than the leak does.
     "zhconv>=1.4",
     # Ingestion (host-side only — see AGENTS.md invariant 3): web extraction and PDF-to-text.
     "trafilatura>=1.12",

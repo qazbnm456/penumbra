@@ -1,18 +1,39 @@
 # Invariant 41 — Settings expose presentation only
 
 **The settings page exposes PRESENTATION settings only, and "non-secret" was the wrong filter.**
-`GET`/`PUT /settings` carry the output language and the two podcast voices. Trace retention, the
+`GET`/`PUT /settings` carry the output language, the two podcast voices and `auto_distil` — FOUR
+keys, not the three this line used to name while the paragraph below it already explained the
+fourth. Trace retention, the
 upload cap and every model/credential variable are deliberately absent: lowering
 `RN_TRACE_RETENTION_DAYS` DELETES trace files that can hold ingested source text, and raising
-`RN_MAX_UPLOAD_BYTES` is a straight DoS lever. **Moving a safety BOUND onto an unauthenticated
-page is the same mistake as moving a key there, just quieter.** `RN_BASE_URL` is the sharpest
+`RN_MAX_UPLOAD_BYTES` is a straight DoS lever. **Moving a safety BOUND onto a page every token
+holder can write is the same mistake as moving a key there, just quieter.** `RN_BASE_URL` is the sharpest
 case: `config.setup` hands it to `configure` alongside `api_key`, so a writable base_url
 exfiltrates the key on the next run without anyone ever reading it — **it is not "just a URL",
 and a later reader must not relax it on that basis.**
 
-**This is the API's first GLOBAL mutation** — every other mutator is scoped to a `notebook_id`;
-this one changes behaviour for notebooks the caller never named and persists it across restarts,
-with no authentication. That is exactly why the surface is this narrow.
+**`auto_distil` is a BEHAVIOUR preference on a presentation page, and the exception is argued
+rather than assumed.** It is the fourth key `settings_state` carries and the only one that is not
+about how something LOOKS or READS: it decides whether a finished capture is summarised without
+being asked. The rule this invariant states is not "presentation only" as a taxonomy — it is that a
+safety BOUND may not move onto a page every token holder can write. `auto_distil` is not a bound. It
+turns on an action any token holder can already take by hand (`POST /inbox/distil` is a spend
+endpoint with no ceremony), so putting the toggle here grants nothing that was not already granted.
+Its BOUND, `RN_AUTO_DISTIL_MAX_PER_BATCH`, stays environment-only, which is the line this invariant
+is actually drawing — and invariant 80 records the same split from the other side.
+
+This paragraph exists because the reconciliation lived ONLY in invariant 80's file for a whole
+slice. An independent review read this one, read `config.py`'s fourth key with its own comment
+calling it "a BEHAVIOUR preference", and correctly reported the two as contradicting each other. A
+rule whose exception is documented somewhere else is a rule the next reader will break.
+
+**This was the API's first GLOBAL mutation, and it is no longer the only one** — every mutator
+before it was scoped to a `notebook_id`, while this one changes behaviour for notebooks the caller
+never named and persists it across restarts, for any caller holding the token. Tier 0 added five
+more (`/inbox`, `/inbox/upload`, `/inbox/distil`, `/inbox/cancel` and the per-node verbs), which is
+not a relaxation of anything: the Inbox is global BY CONSTRUCTION, one index per installation
+(invariant 78). What stays true is the reason this surface is narrow — a page every token holder can
+write is not where a safety bound goes.
 
 **No settings endpoint may call `_config()`, and there are THREE of them.** `from_env()` raises
 `SystemExit` whenever `RN_MAIN_MODEL` is unset — and a settings page is what an operator opens WHEN
@@ -40,7 +61,8 @@ come from the env instead. The SECOND alternation is chatterbox's shipped-clip n
 43), added when that provider landed; this file quoted the single-branch original long after.
 
 **Neither branch admits `.` or `/`, and that is the load-bearing part.** A reference clip can be
-an absolute PATH when it comes from the environment, and the settings file is unauthenticated —
+an absolute PATH when it comes from the environment, and any token holder can write the settings
+file —
 so the character class is what keeps invariant 26's arbitrary-file-read closed on this second
 input channel.
 
@@ -65,8 +87,8 @@ that lies. `source` is also what keeps this file from becoming a second source o
 `.env.example`: a reader can always see which is in force.
 
 The file is `notebooks/.settings` — inside an already-gitignored directory (a repo-root
-`settings.json` is not, and one `git add -A` would commit whatever an unauthenticated caller last
-wrote), and deliberately NOT a `.json` file, because `list_notebook_summaries` globs
+`settings.json` is not, and one `git add -A` would commit whatever a caller last wrote through the
+API), and deliberately NOT a `.json` file, because `list_notebook_summaries` globs
 `notebooks/*.json` and `pathlib` matches that against dotfiles too. Written through
 `atomic.atomic_write_text` — only the ATOMIC half of invariant 34's discipline, not its
 lock-and-re-read half, which a full-replacement write does not need.
