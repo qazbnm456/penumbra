@@ -337,6 +337,7 @@ fn island_menu(app: &AppHandle) {
     let items = (|| -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
         MenuBuilder::new(app)
             .item(&MenuItemBuilder::with_id("open", word("Open Penumbra", "打開 Penumbra")).build(app)?)
+            .item(&MenuItemBuilder::with_id("note", word("Write a Thought…", "寫一句…")).build(app)?)
             .separator()
             .item(&MenuItemBuilder::with_id("config", word("Open Configuration File…", "開啟設定檔…")).build(app)?)
             .item(&MenuItemBuilder::with_id("restart", word("Restart Server", "重新啟動伺服器")).build(app)?)
@@ -349,8 +350,9 @@ fn island_menu(app: &AppHandle) {
     }
 }
 
-/// The island page's navigations. Its own page stays; `/__shell/open`, the one thing it may ask
-/// for, opens the workspace and is refused as a navigation; everything else is refused.
+/// The island page's navigations. Its own page stays; the four fixed `/__shell/` paths (open, menu,
+/// rest, note) are acted on and refused as navigations; everything else is refused. None of them
+/// carries anything: a note's text goes to the server over HTTP with the token, never through here.
 fn island_navigation(app: &AppHandle, url: &url::Url) -> bool {
     let ours = url.host_str() == Some("127.0.0.1") && url.port() == current_port(app);
     // Acted on from the event loop, not inside this callback: it runs within WebKit's navigation
@@ -365,6 +367,7 @@ fn island_navigation(app: &AppHandle, url: &url::Url) -> bool {
             "open" => open_workspace(&app),
             "menu" => island_menu(&app),
             "rest" => island::request_rest(),
+            "note" => island::request_note(),
             _ => {}
         });
         return false;
@@ -845,6 +848,7 @@ fn on_menu(app: &AppHandle, id: &str) {
     let window = app.get_webview_window(WINDOW);
     match id {
         "open" => open_workspace(app),
+        "note" => island::request_note(),
         "quit" => app.exit(0),
         "config" => open_as_text(&ensure_config(app)),
         "data" => {

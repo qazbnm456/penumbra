@@ -40,7 +40,11 @@
 
 <div class="layout">
   <header class="header">
-    <button type="button" id="new-orbit" class="wordmark" aria-label="Go to the Horizon" data-i18n-label="app.home" data-i18n-title="app.home" title="Go to the Horizon">Penumbra</button>
+    <!-- The brand is the mascot, the half-lit moon. A press goes home; a right click (or the
+         context-menu key) lets her introduce herself. -->
+    <button type="button" id="new-orbit" class="wordmark" aria-label="Go to the Horizon" data-i18n-label="app.home"
+            data-i18n-title="app.homeHint" title="Go to the Horizon. Right-click to meet Penny."
+            aria-haspopup="dialog"><img class="wordmark-moon" src="/favicon.svg" alt="" width="30" height="30" /></button>
 
     <!-- The place you are. TEXT, not a 32px icon chip: `.header-btn` is sized for a glyph and a
          two-or-three character label folded into three stacked lines inside it. -->
@@ -103,8 +107,6 @@
          were the point. It also uses the width a single reading column leaves empty on a desktop,
          which is the other half of why it is here. -->
     <nav class="facets" id="facets" aria-label="Orbits" data-i18n-label="app.orbits">
-      <button type="button" class="facet is-current" id="facet-horizon" data-i18n="horizon.home">Horizon</button>
-      <div class="facet-rule" role="presentation"></div>
       <div id="facet-list"></div>
       <button type="button" class="facet facet-new" id="facet-new" data-i18n="horizon.newFacet">+ New orbit</button>
       <!-- Drag to size, drag narrow to put away, double-click to toggle, arrows from the keyboard. -->
@@ -531,6 +533,20 @@
           <button type="button" class="btn" id="confirm-no" data-i18n="app.cancel">Cancel</button>
           <button type="button" class="btn btn-danger" id="confirm-yes" data-i18n="app.confirm">Delete</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- The mascot introducing herself, as a game character would: a portrait, a name plate and a
+       few lines that appear as she says them. Not a modal: a click outside or Escape ends it. -->
+  <div class="npc" id="npc" role="dialog" aria-labelledby="npc-name" aria-describedby="npc-full" hidden>
+    <img class="npc-portrait" src="/mascot.svg" alt="" width="96" height="96" />
+    <div class="npc-box">
+      <div class="npc-name" id="npc-name" data-i18n="mascot.name">Penny, the half-lit moon</div>
+      <p class="npc-line"><span class="npc-text" id="npc-text" aria-hidden="true"></span><span class="sr-only" id="npc-full" aria-live="polite"></span></p>
+      <div class="npc-foot">
+        <span class="npc-step" id="npc-step" aria-hidden="true"></span>
+        <button type="button" class="npc-next" id="npc-next">Next</button>
       </div>
     </div>
   </div>

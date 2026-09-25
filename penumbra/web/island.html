@@ -32,6 +32,17 @@
         <circle class="duo-dot" cx="42" cy="58" r="2.3"></circle>
       </svg>
     </div>
+    <!-- The pen, on the hover shape only: it opens the island as a one-line field. -->
+    <button type="button" class="pen" id="pen" tabindex="-1" aria-label="Write a thought" data-i18n-label="island.pen">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13l.6-2.6L10.8 3.2a1.4 1.4 0 0 1 2 0l0 0a1.4 1.4 0 0 1 0 2L5.6 12.4z M9.6 4.4l2 2"/></svg>
+    </button>
+    <!-- The note state: one line to write a thought into, sent to the Horizon with Return. Icons
+         only, like everything else here: the field is its own label once the reader asked for it. -->
+    <form class="note" id="note" autocomplete="off">
+      <input class="note-input" id="note-input" type="text" tabindex="-1" spellcheck="false"
+             aria-label="Write a thought for the Horizon" data-i18n-label="island.noteLabel" maxlength="4000" />
+      <svg class="note-send" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 3v5.5a1.5 1.5 0 0 1-1.5 1.5H3.5 M6.5 7L3.5 10l3 3"/></svg>
+    </form>
   </main>
   <div class="motes" id="motes" aria-hidden="true"></div>
   <p class="sr-only" id="live" role="status" aria-live="polite"></p>

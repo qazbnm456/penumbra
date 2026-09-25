@@ -75,13 +75,13 @@ def test_the_island_draws_no_words():
     assert "setLine(" not in JS and "textContent = name" not in JS
 
 
-def test_the_island_asks_the_shell_for_only_the_three_fixed_paths():
-    """Invariant 81: the island's only channel to the shell is a navigation to one of three fixed,
+def test_the_island_asks_the_shell_for_only_the_four_fixed_paths():
+    """Invariant 81: the island's only channel to the shell is a navigation to one of four fixed,
     dataless paths. Anything else it navigates to would be a new, unreviewed request."""
     asked = set(re.findall(r'location\.href = "([^"]+)"', JS))
-    assert asked == {"/__shell/open", "/__shell/menu", "/__shell/rest"}, asked
+    assert asked == {"/__shell/open", "/__shell/menu", "/__shell/rest", "/__shell/note"}, asked
     shell = (Path(__file__).resolve().parents[1] / "desktop" / "src-tauri" / "src" / "lib.rs").read_text(
         encoding="utf-8"
     )
-    for verb in ("open", "menu", "rest"):
+    for verb in ("open", "menu", "rest", "note"):
         assert f'"{verb}" =>' in shell, f"the shell does not handle /__shell/{verb}"
