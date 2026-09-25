@@ -38,16 +38,62 @@ Printing your growing result back to yourself puts the whole thing into the next
 which spends the same budget a second time and brings the ceiling above that much closer. Print its
 LENGTH to check progress (`len(utterances)`), never its contents.
 
-## A printed span is truncated, and a truncated span costs a whole turn
+## Read a lot before you write; reading too little is the measured failure
 
-REPL output is head+tail truncated before it reaches the next prompt (this project sets that cap
-deliberately high — 40,000 characters — precisely because these tasks explore by printing spans).
-A span that overflows it is a span you have to locate and print AGAIN, which is one more turn
-against the step budget for no new information.
+**Measured, in a sibling project on the same harness.** Across six real runs over one corpus, the run
+that stopped after ten turns had read 2.2% of what it was given and wrote the thinnest result of the
+six; the best one had simply looked at the most. Finishing early is not efficiency, it is an answer
+with nothing behind it.
 
-So: print the SMALLEST window that answers the question you are asking. Locate first with `.find()`,
-then slice a few hundred characters around the hit, rather than printing a whole block to see what
-is in it.
+Print in LARGE slices, not cautious peeks. Across 253 real turns there, the median turn brought back
+about 1,080 characters and only 7% came near the output cap, while whole runs used 5% to 18% of the
+model's context window. Here the cap is 40,000 characters a turn: a few thousand characters of a
+source costs nothing worth saving, and a peek of two hundred costs a turn to go back for the rest.
+
+What is expensive is re-printing your own growing DRAFT (see above), not reading more of `sources`.
+
+## Know how much you have covered
+
+Nothing tells you what fraction you have read unless you measure it:
+
+```python
+import re
+
+MARKER = re.compile(r"^\[\[SRC:([^|\]]+)\|([^\]]+)\]\]$", re.M)
+blocks = [(m.group(1), m.group(2), m.start()) for m in MARKER.finditer(sources)]
+print(len(sources), len(blocks))   # how much there is, and how many blocks
+```
+
+Keep the offsets you have printed and compare them with `len(sources)`. About to write after reading a
+small fraction of a large corpus is the signal to spend more turns, not a sign you are ready. A marker
+always occupies a whole line, which is why the pattern anchors on `^...$`: a source that mentions the
+marker format in its own text would otherwise cut a block short.
+
+## Slice a quote out of `sources`; never retype it
+
+A `Citation`'s `quote` has to be the block's own words. You hold the exact text in a variable, so
+take the quote by SLICING it; retyping what you read a few turns ago is where quotes drift, and the
+drift is invisible to you at the time. Measured in the same sibling project: nine of nine citations
+on one run failed because the model re-wrapped whitespace while transcribing text that was really
+there.
+
+```python
+def block_text(sources, source_id, locator):
+    """The exact text of one block, found by its marker."""
+    for m in MARKER.finditer(sources):
+        if (m.group(1), m.group(2)) == (source_id, locator):
+            start = m.end() + 1                  # past the marker's own newline
+            nxt = MARKER.search(sources, start)
+            return sources[start:nxt.start() if nxt else len(sources)].rstrip("\n")
+    return None
+
+text = block_text(sources, "s1", "page:3")      # COPY both values from a marker
+i = text.find("words from the claim")
+quote = text[i:i + 200]                          # as much as the claim needs
+```
+
+The `source_id` and `locator` are copied from a marker, never typed: a citation whose coordinate is
+this snippet's placeholder resolves to nothing.
 
 ## The step budget is generous but not unlimited
 

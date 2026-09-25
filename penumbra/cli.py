@@ -39,7 +39,7 @@ from pydantic import ValidationError
 from . import __version__, auth
 from .audio import GeneratePodcastScript
 from .citations import verify_citations
-from .config import PenumbraConfig, output_language, setup, tts_voice_map
+from .config import PenumbraConfig, applied_lms, output_language, setup, tts_voice_map
 from .corpus import Corpus, CorpusTooLargeError
 from .guide import GenerateFAQ, GenerateKeyInsight, GenerateSummary, GenerateTimeline
 from .orbit import (
@@ -230,7 +230,9 @@ def _traced(args, task: Any, config: Any, kwargs: dict) -> Iterator[None]:
 
     dotted = f"{type(task).__module__}:{type(task).__name__}"
     run_id = f"cli-{uuid4().hex[:12]}"
-    recorder = TraceRecorder(args.trace, run_id=run_id, meta=run_meta(dotted, config, kwargs))
+    meta = run_meta(dotted, config, kwargs)
+    meta["lms"] = applied_lms()
+    recorder = TraceRecorder(args.trace, run_id=run_id, meta=meta)
     # ONLY `__enter__` is wrapped. A `try:` around the `yield` also catches an `OSError` raised by
     # the MODEL RUN — and `TimeoutError`, `BrokenPipeError` and `ConnectionResetError` are all
     # `OSError` subclasses, so a dying sandbox pipe or a timed-out call was reported as

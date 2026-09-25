@@ -15,7 +15,13 @@ from typing import Any
 
 from rlm_harness import RLMTask
 
-from .instructions import SKILLS_DIR, apply_skills, make_grounded_validator, validate_before_submit_rule
+from .instructions import (
+    SKILLS_DIR,
+    apply_skills,
+    make_grounded_validator,
+    validate_before_submit_rule,
+    with_step_budget,
+)
 from .schema import ConceptMerges
 
 __all__ = ["AlignConcepts"]
@@ -40,7 +46,7 @@ or the more common spelling), each copied EXACTLY as written in `known` or `new_
 nothing should be merged, that is still an answer given from code, like any other:
 `SUBMIT(merges={{"merges": []}})`.
 
-{validate_before_submit_rule("validate_conceptmerges")}
+{validate_before_submit_rule("validate_conceptmerges", cites=False)}
 """
 
 
@@ -55,4 +61,6 @@ class AlignConcepts(RLMTask):
     def __init__(self, *, skills_dir: str | None = SKILLS_DIR, **kw: Any) -> None:
         self.tools = [make_grounded_validator(ConceptMerges, field=self.output_field)]
         apply_skills(self, skills_dir)
-        super().__init__(**kw)
+        # A lookup, a decision and a validated SUBMIT on a later turn: three turns when it goes
+        # well, eight leaves room for a correction.
+        super().__init__(**with_step_budget(kw, 8))

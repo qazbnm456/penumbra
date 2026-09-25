@@ -25,7 +25,7 @@ import sys
 # diagnostics, which a slice gets wrong.
 from rlm_harness import short_error
 
-from .config import PenumbraConfig, setup
+from .config import PenumbraConfig, applied_lms, setup
 from .traces import run_meta
 
 
@@ -165,6 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     # the most exposed artifact this project writes (invariant 29), so what goes in it is a decision
     # rather than a convenience.
     meta = run_meta(dotted, config, kwargs)
+    meta["lms"] = applied_lms()
 
     try:
         with TraceRecorder(trace_path, run_id=run_id, meta=meta):

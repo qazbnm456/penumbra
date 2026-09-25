@@ -851,6 +851,30 @@ def _max_tokens_for(model: str, wanted: int) -> int:
     return ceiling
 
 
+def applied_lms() -> dict:
+    """What each role's LM actually carries, read off the LMs `setup` configured: the generation cap
+    and the thinking budget. Stamped into `run_start`, because `run_end` (which carries budgets too)
+    is never written for a run killed at its time limit, and a runaway is exactly that run. Empty
+    when nothing is configured; best-effort, since a trace must never fail a run.
+    """
+    try:
+        import dspy
+        from rlm_harness import applied_lm_budget, applied_thinking_budget, get_sub_lm
+
+        out = {}
+        for role, lm in (("main", dspy.settings.lm), ("sub", get_sub_lm())):
+            if lm is None:
+                continue
+            out[role] = {
+                "model": getattr(lm, "model", None),
+                "cap": applied_lm_budget(lm),
+                "thinking": applied_thinking_budget(lm),
+            }
+        return out
+    except Exception:  # noqa: BLE001 - see the docstring
+        return {}
+
+
 def setup(config: PenumbraConfig) -> PenumbraConfig:
     """Configure rlm-harness (main + sub LM) for this process, and return `config` unchanged.
 

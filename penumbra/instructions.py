@@ -35,10 +35,13 @@ SKILLS_DIR = str(Path(__file__).resolve().parent / "skills")
 
 #: The catalog header every task shares. ONE copy, like `CITATION_RULES` — six tasks each wording
 #: their own invitation is exactly the drift invariant 13 exists to prevent.
+#: It says "whichever are relevant" and that nothing essential lives here: invariant 65 keeps every
+#: rule a run cannot survive without in the prompt, and the old header ("consult BEFORE working...
+#: ways a run has been lost outright") told a concept alignment to read about podcast craft.
 _SKILLS_HEADER = (
-    "<available_skills> — this project's own recorded craft and measured failure modes. "
-    "`read_skill(name)` loads one in full. Consult the relevant skill BEFORE working: they record "
-    "what was actually measured here, including several ways a run has been lost outright:"
+    "<available_skills> — this project's recorded craft and measured technique. "
+    "`read_skill(name)` loads one in full. Consult whichever are relevant to this task; every rule "
+    "a run cannot do without is already in these instructions:"
 )
 
 
@@ -557,6 +560,22 @@ def make_grounded_validator(
     return validate
 
 
+def with_step_budget(kw: dict, steps: int) -> dict:
+    """`kw` with a config capping this task at `steps` REPL turns, or at the configured budget when
+    that is lower. One budget for every task gave a concept alignment the 25 turns an orbit-wide
+    guide needs, so a model looping on a small decision could spend 25 capped replies. A caller that
+    passes its own `config` keeps it.
+    """
+    if "config" in kw:
+        return kw
+    from dataclasses import replace
+
+    from rlm_harness import get_config
+
+    base = get_config()
+    return {**kw, "config": replace(base, max_iterations=min(base.max_iterations, steps))}
+
+
 def apply_skills(task: Any, skills_dir: str | None) -> None:
     """Wire `skills_dir` onto `task` using `discovery="inject"`, the shape four sibling projects
     already use.
@@ -796,9 +815,13 @@ def artifact_language_rule(language: str) -> str:
     )
 
 
-def validate_before_submit_rule(tool_name: str) -> str:
+def validate_before_submit_rule(tool_name: str, *, cites: bool = True) -> str:
     """The "validate before SUBMIT" paragraph, parameterized by the schema-validator tool's name
     (`make_schema_validator` derives it from the output model as `validate_<model name, lowered>`).
+
+    `cites=False` is for a task with no `sources` and no citations (concept alignment): its
+    validator checks the shape and markers only, and describing checks it does not run was a
+    paragraph of instructions about inputs that task does not have.
     """
     return (
         # The first sentence is for a model that skips the REPL when the answer looks obvious: a
@@ -807,6 +830,13 @@ def validate_before_submit_rule(tool_name: str) -> str:
         f"You answer only through code. Every reply is your `reasoning` and the `code` to run,\n"
         f"and the result is what that code passes to `SUBMIT(...)`, even when it is empty or\n"
         f"obvious. A reply that is the output JSON itself cannot be read, and the run fails.\n"
+        # dspy looks for the first triple backtick ANYWHERE in a cell, strings included, and throws
+        # the turn away when the tag after it is not Python. An answer is Markdown and a source can
+        # be about code, so a cell quoting a fenced block lost a turn with nothing wrong in it.
+        f"The REPL runs Python. The interpreter treats the first triple backtick anywhere in your\n"
+        f"cell, even inside a string, as a code fence, and discards the whole turn if the tag\n"
+        f"after it is not `python`. When text you build contains a fence, write it as\n"
+        f"`chr(96) * 3` instead of typing the three backticks.\n"
         f"Before you SUBMIT, validate your draft JSON with the `{tool_name}` tool, and only\n"
         f"submit after it reports success. **Put the SUBMIT in a LATER REPL turn than the call\n"
         f"that validated.** A cell that reads\n"
@@ -815,11 +845,15 @@ def validate_before_submit_rule(tool_name: str) -> str:
         f"read what it says, and submit on the turn after — or branch on the result and only\n"
         f"submit in the success arm. A real run wrote exactly that pair, was told which character\n"
         f"was in the wrong script, and shipped it anyway.\n"
-        f"It checks four things: the JSON shape, that no\n"
-        f"`[[SRC:...]]` marker leaked into your own prose, that every citation's\n"
-        f"`source_id`/`locator` pair actually occurs as a marker in `sources`, and — when you were\n"
-        f"asked to write in a Chinese variety — that no character belongs to the other script.\n"
-        f"The coordinate one is the common mistake: a locator is COPIED from a marker, never\n"
-        f"composed from the passage's own wording. It still cannot confirm your prose faithfully\n"
-        f"represents the passage you cited; that remains yours to get right."
+        + (
+            "It checks four things: the JSON shape, that no\n"
+            "`[[SRC:...]]` marker leaked into your own prose, that every citation's\n"
+            "`source_id`/`locator` pair actually occurs as a marker in `sources`, and — when you were\n"
+            "asked to write in a Chinese variety — that no character belongs to the other script.\n"
+            "The coordinate one is the common mistake: a locator is COPIED from a marker, never\n"
+            "composed from the passage's own wording. It still cannot confirm your prose faithfully\n"
+            "represents the passage you cited; that remains yours to get right."
+            if cites
+            else "It checks the JSON shape, and that no `[[SRC:...]]` marker appears in your answer."
+        )
     )

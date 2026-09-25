@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import signal
 import subprocess
 import sys
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 
 def kill_tree(pid: int) -> None:
@@ -98,9 +101,17 @@ async def wait_result(run: Run, *, timeout: float | None = None) -> dict:
         # force.
         raise RunError(
             f"run {run.run_id!r} timed out after {timeout}s and was cancelled "
-            f"(the wall-clock backstop; raise PN_RUN_TIMEOUT_SECONDS if the model is simply slow)"
+            f"(the wall-clock backstop: either the model is slow, and PN_RUN_TIMEOUT_SECONDS can be "
+            f"raised, or a reasoning model ran away, which a bigger limit only makes longer; the "
+            f"trace's reasoning tokens tell which, and PN_MAIN_LM_KWARGS can cap the thinking)"
         ) from None
 
+    # The worker's stderr is where dspy warns that a reply was cut off at max_tokens, and it was
+    # dropped whenever the run succeeded. Its tail goes to the server log either way.
+    if stderr:
+        tail = stderr.decode("utf-8", errors="replace").strip()[-4000:]
+        if tail:
+            _log.info("worker %s stderr:\n%s", run.run_id, tail)
     text = stdout.decode("utf-8", errors="replace")
     lines = [line for line in text.strip().splitlines() if line]
     if not lines:
