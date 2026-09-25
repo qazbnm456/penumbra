@@ -10423,16 +10423,22 @@ function drawStarMap() {
       t("map.planetLabel", `${orbit.title}, ${orbit.sources} sources`, { name: orbit.title, n: orbit.sources }) },
     `map-planet${starMap.selected === orbit.slug ? " is-selected" : ""}${dimmed ? " is-dim" : ""}`);
     group.appendChild(svgEl("circle", { r: p.r + 14, fill: "url(#pn-halo)" }, "map-planet-halo"));
-    // Moons: the captures filed here, copper once summarised, turning around their planet.
-    const moons = Math.min(orbit.captures, 12);
-    const doneMoons = orbit.captures ? Math.round(((orbit.captures - orbit.undistilled) / orbit.captures) * moons) : 0;
+    // Moons: one per source, so they agree with the "N sources" under the planet. A capture filed
+    // from the Horizon is copper once summarised and grey before; a source added inside the orbit
+    // is hollow, because no summary pass reads it. Drawing captures alone left an orbit built in
+    // place with "1 source" and no moon at all, which read as a bug.
+    const sources = Math.max(orbit.sources || 0, orbit.captures);
+    const moons = Math.min(sources, 12);
+    const share = (n) => (sources ? Math.round((n / sources) * moons) : 0);
+    const doneMoons = share(orbit.captures - orbit.undistilled);
+    const capturedMoons = Math.max(doneMoons, share(orbit.captures));
     const moonRing = svgEl("g", {}, "map-moons");
     moonRing.style.animationDuration = `${16 + (index % 5) * 3}s`;
     for (let i = 0; i < moons; i += 1) {
       const angle = (i / moons) * Math.PI * 2;
       const d = p.r + 8 + (i % 2) * 5;
-      moonRing.appendChild(svgEl("circle", { cx: d * Math.cos(angle), cy: d * Math.sin(angle), r: 2.2 },
-        i < doneMoons ? "map-dot is-done" : "map-dot"));
+      const kind = i < doneMoons ? "map-dot is-done" : i < capturedMoons ? "map-dot" : "map-dot is-local";
+      moonRing.appendChild(svgEl("circle", { cx: d * Math.cos(angle), cy: d * Math.sin(angle), r: 2.2 }, kind));
     }
     group.appendChild(moonRing);
     // The planet: a lit sphere whose surface bands turn under a fixed shade, so it reads as spinning.
