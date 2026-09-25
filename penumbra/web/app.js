@@ -10168,8 +10168,26 @@ function renderLenses(lensRow, tags, active, onPick) {
 const starMap = { data: null, orbits: [], selected: null, lens: null, generation: 0, focus: null, world: null };
 
 const MAP_CENTRE = { x: 500, y: 330 };
-const MAP_RINGS = [[230, 138], [330, 198], [430, 258]];
-const MAP_RING_SIZES = [3, 5, Infinity];
+//: Rings grow outward as orbits need them. Orbits are placed by how recently each gained something,
+//: newest innermost, and ring `i` holds 3 + 3i of them, so an outer ring (which is longer) holds
+//: more. Three fixed rings with the last one unbounded crowded every orbit past the eighth onto one
+//: line. At least three rings are drawn, so a young map still reads as a system.
+function mapRings() {
+  const rings = [];
+  let left = starMap.orbits.length;
+  for (let i = 0; left > 0 || rings.length < 3; i += 1) {
+    const cap = 3 + 3 * i;
+    rings.push({ rx: 230 + 100 * i, ry: 138 + 60 * i, cap, period: 240 + 140 * i });
+    left -= cap;
+  }
+  return rings;
+}
+
+//: The whole map in view: zoomed out just enough for the outermost ring.
+function mapHome() {
+  const outer = mapRings().at(-1);
+  return { x: 500, y: 320, k: Math.min(1, 480 / (outer.rx + 50), 300 / (outer.ry + 50)) };
+}
 
 async function renderStarMap() {
   const generation = ++starMap.generation;
@@ -10234,7 +10252,6 @@ function paintStarMapLenses() {
 //: the periods are long enough that a planet can still be clicked while it moves. The clock only
 //: advances while the map is on screen and no planet is under the pointer, and a reader who asks for
 //: reduced motion gets the same map standing still.
-const MAP_PERIODS = [240, 360, 520]; // seconds per revolution, per ring
 //: `paused` is the pointer or focus resting on something; `held` is the camera focused on a planet,
 //: which must stay where the camera went until the reader goes back to the whole map.
 const mapMotion = { clock: 0, last: 0, paused: false, held: false, frame: 0 };
@@ -10246,8 +10263,8 @@ function motionAllowed() {
 function planetLayout() {
   const placed = [];
   let index = 0;
-  MAP_RINGS.forEach(([rx, ry], ring) => {
-    const count = Math.min(MAP_RING_SIZES[ring], starMap.orbits.length - index);
+  mapRings().forEach(({ rx, ry, cap, period }, ring) => {
+    const count = Math.min(cap, starMap.orbits.length - index);
     for (let i = 0; i < count; i += 1) {
       const orbit = starMap.orbits[index];
       index += 1;
@@ -10256,7 +10273,7 @@ function planetLayout() {
       const size = Math.max(orbit.sources, orbit.captures);
       placed.push({
         orbit, rx, ry, base,
-        omega: (Math.PI * 2) / MAP_PERIODS[ring],
+        omega: (Math.PI * 2) / period,
         r: Math.min(30, 11 + Math.sqrt(size) * 2.6),
       });
     }
@@ -10401,7 +10418,7 @@ function drawStarMap() {
   }
   world.appendChild(field);
 
-  MAP_RINGS.forEach(([rx, ry], ring) => {
+  mapRings().forEach(({ rx, ry }, ring) => {
     world.appendChild(svgEl("ellipse", { cx: MAP_CENTRE.x, cy: MAP_CENTRE.y, rx, ry }, `map-ring ring-${ring}`));
   });
 
@@ -10550,6 +10567,7 @@ function drawStarMap() {
   });
   starMap.scene = scene;
   placeStarMap();
+  if (mapCamera.home && !mapCamera.anim) Object.assign(mapCamera, mapHome());
   applyCamera();
   startMapMotion();
   restoreFocus(svg, keepFocus);
@@ -10768,9 +10786,10 @@ function closeMapFocus() {
 // reduced motion it is a jump.
 
 const MAP_VIEW_CENTRE = { x: 500, y: 320 };
-const MAP_HOME = { x: 500, y: 320, k: 1 };
-const MAP_ZOOM = { min: 0.6, max: 4, planet: 1.8 };
-const mapCamera = { x: 500, y: 320, k: 1, anim: 0 };
+const MAP_ZOOM = { min: 0.3, max: 4, planet: 1.8 };
+//: `home` is true while the camera shows the whole map and nobody has moved it; a map that grows a
+//: ring then stays wholly in view without taking a camera the reader placed.
+const mapCamera = { x: 500, y: 320, k: 1, anim: 0, home: true };
 
 function applyCamera() {
   const world = starMap.world;
@@ -10778,7 +10797,8 @@ function applyCamera() {
   const { x, y, k } = mapCamera;
   world.setAttribute("transform",
     `translate(${MAP_VIEW_CENTRE.x} ${MAP_VIEW_CENTRE.y}) scale(${k.toFixed(4)}) translate(${(-x).toFixed(2)} ${(-y).toFixed(2)})`);
-  const home = Math.abs(k - 1) < 0.01 && Math.abs(x - MAP_HOME.x) < 1 && Math.abs(y - MAP_HOME.y) < 1;
+  const h = mapHome();
+  const home = Math.abs(k - h.k) < 0.01 && Math.abs(x - h.x) < 1 && Math.abs(y - h.y) < 1;
   const reset = horizonEl("map-zoom-home");
   if (reset) reset.disabled = home;
 }
@@ -10821,7 +10841,8 @@ function animateCamera(target, ms = 620) {
 
 function cameraHome() {
   mapMotion.held = false;
-  animateCamera(MAP_HOME);
+  mapCamera.home = true;
+  animateCamera(mapHome());
 }
 
 //: The planet stops where it is while the camera is on it (`held`), and sits left of centre so the
@@ -10830,11 +10851,13 @@ function focusCameraOn(slug) {
   const entry = starMap.scene && starMap.scene.planets.find(({ p }) => p.orbit.slug === slug);
   if (!entry) return;
   mapMotion.held = true;
+  mapCamera.home = false;
   const pos = planetAt(entry.p);
   animateCamera({ x: pos.x + 110 / MAP_ZOOM.planet, y: pos.y, k: MAP_ZOOM.planet });
 }
 
 function zoomBy(factor, around) {
+  mapCamera.home = false;
   const k = Math.min(MAP_ZOOM.max, Math.max(MAP_ZOOM.min, mapCamera.k * factor));
   const v = around || MAP_VIEW_CENTRE;
   // Keep the world point under `around` where it is on screen.
@@ -10852,6 +10875,19 @@ function clientToView(svg, clientX, clientY) {
 }
 
 const mapPan = { id: null, start: null, moved: false };
+
+//: In the desktop app the webview's own context menu offered Reload and Back, which belong to a
+//: browser: Back landed on the shell's splash page. It is kept where it does something for the
+//: reader (a text field, selected text, a link) and dropped everywhere else. A browser tab keeps it.
+function initDesktopContextMenu() {
+  document.addEventListener("contextmenu", (event) => {
+    if (!isDesktopShell()) return;
+    if (event.target.closest("input, textarea, [contenteditable], a[href]")) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return;
+    event.preventDefault();
+  });
+}
 
 function initStarMapCamera() {
   const svg = horizonEl("starmap-svg");
@@ -10875,6 +10911,7 @@ function initStarMapCamera() {
     if (!mapPan.moved && Math.hypot(dx, dy) < 4) return;
     if (!mapPan.moved) {
       mapPan.moved = true;
+      mapCamera.home = false;
       svg.setPointerCapture(event.pointerId);
       svg.classList.add("is-panning");
     }
@@ -11118,7 +11155,11 @@ function paintStarMapCard(mapCard) {
     ? t("map.cardCounts", `${orbit.sources} sources, ${orbit.captures} filed from the Horizon`,
       { n: orbit.sources, m: orbit.captures })
     : t("map.planetCount", `${orbit.sources} sources`, { n: orbit.sources })));
+  // Two sections with headings. Without them the entity names (styled as chips) and the captures
+  // (a list) read as one undifferentiated column of things to click, and a reader could not tell
+  // what either was.
   if (orbit.entities.length) {
+    mapCard.appendChild(elt("h3", "card-section", t("map.sectionNames", "What it talks about")));
     const chips = elt("div", "card-chips");
     orbit.entities.forEach((name) => chips.appendChild(elt("span", "card-chip", name)));
     mapCard.appendChild(chips);
@@ -11139,6 +11180,7 @@ function paintStarMapCard(mapCard) {
   }
   // Its captures by name, the keyboard's way to what pointing at a moon does.
   if ((orbit.moons || []).length) {
+    mapCard.appendChild(elt("h3", "card-section", t("map.sectionCaptures", "Filed from the Horizon")));
     const list = elt("ul", "card-list");
     orbit.moons.forEach((item) => {
       const row = elt("li", "card-row");
@@ -11150,6 +11192,15 @@ function paintStarMapCard(mapCard) {
       list.appendChild(row);
     });
     mapCard.appendChild(list);
+  }
+  // A source added inside the orbit is a hollow moon. What that is, and why it has no summary, is
+  // said here rather than left to a legend entry nobody could decode.
+  const local = Math.max(0, (orbit.sources || 0) - orbit.captures);
+  if (local) {
+    mapCard.appendChild(elt("h3", "card-section", t("map.sectionLocal", "Added inside the orbit")));
+    mapCard.appendChild(elt("p", "card-note", t("map.localHelp",
+      `${local} added from inside the orbit rather than through the Horizon. They are drawn hollow, and the Horizon's summaries do not read them. Open the orbit to see them.`,
+      { n: local })));
   }
   const enter = elt("button", "btn btn-primary card-enter", t("map.enter", "Open orbit"));
   enter.type = "button";
@@ -11880,6 +11931,7 @@ function initAskH() {
 initAskH();
 initDock();
 initStarMapCamera();
+initDesktopContextMenu();
 initViewModes();
 initSuggestions();
 

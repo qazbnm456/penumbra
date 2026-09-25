@@ -8229,3 +8229,18 @@ button.card-chip:hover {
   cursor: pointer;
   padding: 0 var(--space-2);
 }
+
+.card-section {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* A planet with many captures made the card taller than the map; it scrolls inside instead. */
+.starmap-card {
+  max-height: calc(100% - var(--space-11) - var(--space-5));
+  overflow-y: auto;
+}
