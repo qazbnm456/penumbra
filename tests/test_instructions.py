@@ -715,3 +715,20 @@ def test_nothing_the_validator_says_tells_the_model_to_reply_with_the_json():
     import inspect
 
     assert "field=self.output_field" in inspect.getsource(AlignConcepts.__init__)
+
+
+def test_a_small_task_gets_a_small_step_budget_and_never_a_larger_one():
+    """One budget for every task let a concept alignment spend an orbit-wide guide's 25 turns."""
+    from dataclasses import replace
+
+    import rlm_harness
+    from rlm_harness.config import RLMConfig
+
+    from penumbra.instructions import with_step_budget
+
+    rlm_harness.configure(RLMConfig(main_model="openai/x", sub_model="openai/x", max_iterations=25))
+    assert with_step_budget({}, 8)["config"].max_iterations == 8
+    rlm_harness.configure(RLMConfig(main_model="openai/x", sub_model="openai/x", max_iterations=5))
+    assert with_step_budget({}, 8)["config"].max_iterations == 5, "a lower configured budget still wins"
+    own = replace(rlm_harness.get_config(), max_iterations=40)
+    assert with_step_budget({"config": own}, 8)["config"] is own

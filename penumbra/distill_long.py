@@ -15,7 +15,7 @@ drops a mention whose coordinate is not a real block.
 
 from __future__ import annotations
 
-from .instructions import GroundedTask, artifact_language_rule, validate_before_submit_rule
+from .instructions import GroundedTask, artifact_language_rule, validate_before_submit_rule, with_step_budget
 from .schema import LongDistillation
 
 __all__ = ["DistillLongDocument"]
@@ -51,6 +51,13 @@ Rules:
 
 class DistillLongDocument(GroundedTask):
     """Summarise one long document from a section map plus the whole text in the REPL."""
+
+    #: A real run on a 230,000-character document took 9 turns; 15 leaves room without handing a
+    #: one-document summary the budget of an orbit-wide guide.
+    STEPS = 15
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**with_step_budget(kw, self.STEPS))
 
     signature = "sources: str, section_map: str, output_language: str -> distillation: LongDistillation"
     output_field = "distillation"
