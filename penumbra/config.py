@@ -87,6 +87,22 @@ def _env_float(name: str, default: float) -> float:
     return value
 
 
+def _env_json_object(name: str) -> dict | None:
+    """A JSON object from the environment, or None when unset. Malformed JSON refuses to start
+    rather than being ignored: a thinking budget silently dropped is the runaway it was set to stop.
+    """
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        raise SystemExit(f"{name} is not valid JSON: {raw!r}") from None
+    if not isinstance(value, dict):
+        raise SystemExit(f"{name} must be a JSON object, e.g. {{\"extra_body\": {{...}}}}: {raw!r}")
+    return value
+
+
 def _env_int_allowing_zero(name: str, default: int) -> int:
     """Like `_env_int`, but accepts `0`. `_env_int` refuses it deliberately — every value it reads
     is a BUDGET (iterations, tokens, bytes), where zero means "do nothing" and is far more likely a
@@ -229,6 +245,19 @@ class PenumbraConfig:
     #: its first step ever returned. The API-key path stays at 300s, where a step measures in
     #: single-digit seconds. See `_default_run_timeout`.
     run_timeout_seconds: float = 300.0
+    #: Extra `dspy.LM` kwargs for one role, merged over what `rlm_harness.configure` builds for it
+    #: (rlm-harness 1.12+). The reason it exists is a THINKING BUDGET: a reasoning model left alone
+    #: spends the whole `max_tokens` thinking, and raising the cap only buys a longer runaway. A
+    #: concept alignment on a self-hosted Qwen did exactly that on its retry, 32768 of 32768 tokens
+    #: of reasoning. On vLLM, `{"extra_body": {"thinking_token_budget": 16384}}` (about half the cap)
+    #: is the measured fix; `reasoning_effort` was measured to move reasoning the WRONG way. Unset,
+    #: nothing is sent. A `claude-agent-sdk/` role ignores them.
+    main_lm_kwargs: dict | None = None
+    sub_lm_kwargs: dict | None = None
+    #: Seconds one model request may take before litellm gives up on it. Unset, litellm's own 600s
+    #: applies, retried several times, which is how a hung endpoint outlives everything but the
+    #: run's wall-clock backstop.
+    request_timeout_s: float | None = None
 
     @classmethod
     def from_env(cls) -> PenumbraConfig:
@@ -266,6 +295,9 @@ class PenumbraConfig:
             tts_voice_host_a=(os.getenv("PN_TTS_VOICE_HOST_A") or _DEFAULT_TTS_VOICE_HOST_A).strip(),
             tts_voice_host_b=(os.getenv("PN_TTS_VOICE_HOST_B") or _DEFAULT_TTS_VOICE_HOST_B).strip(),
             run_timeout_seconds=_env_float("PN_RUN_TIMEOUT_SECONDS", _default_run_timeout(main)),
+            main_lm_kwargs=_env_json_object("PN_MAIN_LM_KWARGS"),
+            sub_lm_kwargs=_env_json_object("PN_SUB_LM_KWARGS"),
+            request_timeout_s=_env_float("PN_REQUEST_TIMEOUT", 0.0) or None,
         )
 
 
@@ -845,8 +877,16 @@ def setup(config: PenumbraConfig) -> PenumbraConfig:
     `worker.py` calls it inside the API's isolated subprocess, so both get the subscription path
     from this single change.
     """
+    import dspy
     import rlm_harness
     from rlm_harness.config import RLMConfig
+
+    # **No response cache, ever.** dspy caches every LM call on disk by default, so a run that
+    # failed on the model's reply and was tried again got the SAME reply back in seconds: a
+    # summary pass, a concept alignment given up after two identical failures, a first overview
+    # retried, a question asked again. Only Regenerate used to switch it off. A cache hit is never
+    # what a second press means here, so it is off for every run, in the CLI and the worker alike.
+    dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=False)
 
     # None → configure builds a dspy.LM from the PN_* proxy config (the pre-existing behavior).
     main_lm = _maybe_subscription_lm(config.main_model)
@@ -880,6 +920,9 @@ def setup(config: PenumbraConfig) -> PenumbraConfig:
             max_output_chars=config.max_output_chars,
             adapter=config.adapter,
             max_retries=config.max_retries,
+            main_lm_kwargs=config.main_lm_kwargs,
+            sub_lm_kwargs=config.sub_lm_kwargs,
+            request_timeout_s=config.request_timeout_s,
         ),
         main_lm=main_lm,
         sub_lm=sub_lm,

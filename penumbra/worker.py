@@ -136,6 +136,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     config = PenumbraConfig.from_env()
+    # `config.setup` now turns the cache off for every run; `fresh` stays accepted so an older
+    # caller's request still parses, and the switch below is kept as the explicit record of why.
     if fresh:
         # A REGENERATE must actually re-run. `dspy.LM` defaults to `cache=True`, so pressing
         # Regenerate on an unchanged corpus replayed the previous run byte-identically: same turns,
