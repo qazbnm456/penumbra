@@ -9633,9 +9633,23 @@ function renderAskHChips() {
   const does = chosen.orbit ? t("askH.askOrbit", "Ask in this orbit") : t("askH.check", "See what it reads");
   check.setAttribute("aria-label", does);
   check.title = does;
-  horizonEl("ask-h-hint").textContent = chosen.orbit
-    ? t("askH.hintOrbit", "Enter asks in this orbit's conversation, one paid run.")
-    : t("askH.hint", "Enter shows what the question would read, free. It is asked only after you confirm.");
+  paintAskHHint(chosen.orbit
+    ? [["\u23ce", t("askH.keyOrbit", "ask in this orbit (one paid run)")], ["\u21e7\u23ce", t("chat.newlineHint", "for a new line")]]
+    : [["\u23ce", t("askH.keyPreview", "see what it reads, free")], ["\u21e7\u23ce", t("chat.newlineHint", "for a new line")],
+      ["/", t("askH.keyScope", "choose what it reads")]]);
+}
+
+//: The row under the box, in the composer's own keycap language: what each key does HERE. It is
+//: where the dock says what Enter costs, since that differs by scope, and where the picker says
+//: its keys while it is open.
+function paintAskHHint(pairs) {
+  const hint = horizonEl("ask-h-hint");
+  hint.textContent = "";
+  pairs.forEach(([key, label], i) => {
+    if (i) hint.appendChild(elt("span", "ask-hint-sep", "\u00b7"));
+    hint.appendChild(elt("kbd", "keycap", key));
+    hint.appendChild(elt("span", "", label));
+  });
 }
 
 function askHScopeLabel(scope) {
@@ -9664,6 +9678,8 @@ function orbitLabelForSlug(slug) {
 // Escape goes back up one level. Typing searches every kind at once. The highlight moves without
 // rebuilding the list, because rebuilding under a still pointer replaced the row between mousedown
 // and mouseup, and the click never landed.
+
+let syncAskHComposer = () => {};
 
 const askPick = { open: false, fromSlash: false, drill: null, items: [], index: 0, data: { tags: [], entities: [] } };
 
@@ -9775,8 +9791,9 @@ function openAskPicker({ fromSlash = false } = {}) {
   askPick.index = 0;
   horizonEl("ask-h-picker").hidden = false;
   horizonEl("ask-h-add").setAttribute("aria-expanded", "true");
-  // While it is open, Enter chooses a row rather than checking the question; the line says so.
-  horizonEl("ask-h-hint").textContent = t("askH.pickHint", "\u2191 \u2193 to move, Enter to choose, Esc to go back or close.");
+  // While it is open, Enter chooses a row rather than checking the question; the row says so.
+  paintAskHHint([["\u2191\u2193", t("askH.keyMove", "move")], ["\u23ce", t("askH.keyChoose", "choose")],
+    ["Esc", t("askH.keyBack", "back")]]);
   refreshAskPicker();
   void loadAskHScopes(); // summaries land in the background; what is on offer follows them
   syncDock();
@@ -9799,6 +9816,7 @@ function chooseAskPick(i) {
     askPick.drill = row.drill;
     askPick.index = 0;
     if (askPick.fromSlash) input.value = "/";
+    syncAskHComposer();
     refreshAskPicker();
     input.focus();
     return;
@@ -9810,6 +9828,7 @@ function chooseAskPick(i) {
   askH.chips.push(askH.custom);
   askH.chosen = "custom";
   if (askPick.fromSlash) input.value = "";
+  syncAskHComposer();
   closeAskPicker();
   renderAskHChips();
   dismissAskHPlan();
@@ -9834,7 +9853,7 @@ function askPickerKeys(event) {
     if (askPick.drill) {
       askPick.drill = null;
       askPick.index = 0;
-      if (askPick.fromSlash) horizonEl("ask-h-input").value = "/";
+      if (askPick.fromSlash) horizonEl("ask-h-input").value = "/"; syncAskHComposer();
       refreshAskPicker();
     } else {
       closeAskPicker();
@@ -10007,7 +10026,7 @@ function renderAskHAnswer(ask) {
       const chip = elt("button", "starter-question", question);
       chip.type = "button";
       chip.addEventListener("click", () => {
-        horizonEl("ask-h-input").value = question;
+        horizonEl("ask-h-input").value = question; syncAskHComposer();
         void previewAskH();
       });
       next.appendChild(chip);
@@ -10214,14 +10233,14 @@ async function askInOrbit(orbit, question) {
       composer.value = question;
       composer.focus();
     }
-    horizonEl("ask-h-input").value = "";
+    horizonEl("ask-h-input").value = ""; syncAskHComposer();
     notify((state.sources || []).length
       ? t("askH.orbitBusy", "This orbit is still answering. Your question is in its composer for when it is done.")
       : t("askH.orbitEmpty", "This orbit has no sources yet. Your question is in its composer."),
     { tone: "info", timeout: 6000 });
     return;
   }
-  horizonEl("ask-h-input").value = "";
+  horizonEl("ask-h-input").value = ""; syncAskHComposer();
   store.emit("chat:ask", { question });
 }
 
@@ -11592,6 +11611,7 @@ function askAcrossBridge(focus, name, titleA, titleB) {
   const input = horizonEl("ask-h-input");
   input.value = t("map.bridgeQuestion", `How do ${titleA} and ${titleB} each talk about ${name}, and where do they differ?`,
     { a: titleA, b: titleB, name });
+  syncAskHComposer();
   openDock();
 }
 
@@ -12478,6 +12498,15 @@ function initAskH() {
   });
   // A preview is for ONE question in ONE scope; changing either means it no longer describes Ask.
   input.addEventListener("input", dismissAskHPlan);
+  // The same send state and growth as the orbit composer: the round button fills once there is text.
+  const form = horizonEl("ask-h-form");
+  const grow = () => {
+    input.style.height = "auto";
+    input.style.height = `${input.scrollHeight}px`;
+    form.classList.toggle("has-text", input.value.trim().length > 0 && askSlashQuery() === null);
+  };
+  input.addEventListener("input", grow);
+  syncAskHComposer = grow;
   input.addEventListener("keydown", askPickerKeys, true);
   input.addEventListener("input", () => {
     const q = askSlashQuery();
