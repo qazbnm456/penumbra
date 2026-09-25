@@ -6,7 +6,7 @@ Every other role is still built from the `PN_*` config.
 
 ## The injection decides which LM wins
 
-`rlm-harness==1.10.0`, the version `pyproject.toml` pins, routes the same prefix itself: `runtime.configure` calls its own `_maybe_subscription_lm(cfg.main_model)` for any role left unsupplied. An explicit `main_lm=` is used as is and never reaches that branch, so the injection now decides whose construction is used rather than making the subscription path work at all. Do not bring back the older statement that `configure` ignores the prefix; it was true of an earlier harness and is false now.
+`rlm-harness` has routed the same prefix itself since 1.10.0 (the pin is now 1.13.0): `runtime.configure` calls its own `_maybe_subscription_lm(cfg.main_model)` for any role left unsupplied. An explicit `main_lm=` is used as is and never reaches that branch, so the injection now decides whose construction is used rather than making the subscription path work at all. Do not bring back the older statement that `configure` ignores the prefix; it was true of an earlier harness and is false now.
 
 Two consequences follow. This project's `_maybe_subscription_lm` duplicates upstream's, and `SUBSCRIPTION_PREFIX` is a second copy of `claude_agent_lm.SUBSCRIPTION_PREFIX`. Both are kept because `config.py` stays free of `dspy` and `rlm_harness` at import time and cannot read upstream's constant. Deleting ours would appear to work, which is the trap: every subscription run would silently move to upstream's construction, whose timeout and error behaviour this project has never tested. Removing it needs a measurement, not a cleanup.
 
