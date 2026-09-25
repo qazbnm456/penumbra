@@ -663,6 +663,12 @@ class GroundedTask(RLMTask):
         guard that silently stops checking is the failure mode invariant 66 already records.
         """
         self._coordinates = coordinates_in(inputs.get("sources", "") or "")
+        # The table of contents, built here from the blob the run is handed rather than by each
+        # caller, so the API, the CLI and a Horizon ask cannot disagree about it (invariant 20).
+        if "source_index" in self.signature and "source_index" not in inputs:
+            from .corpus import source_index
+
+            inputs = {**inputs, "source_index": source_index(inputs.get("sources", "") or "")}
         # The RESOLVED language, which only exists per run — the prompt beside it can only ever
         # hold the placeholder (see `_SCRIPT_NEEDLES`). `None` for any language that does not pin a
         # Chinese script, which is what makes the check inert for every other run.
@@ -676,6 +682,11 @@ preceded by a marker line of the EXACT form `[[SRC:<source_id>|<locator>]]`, imm
 by that block's text. Explore `sources` with Python — `.find()`, slicing, splitting on the literal
 substring "[[SRC:" — to locate the passages relevant to your task; you have not already been shown
 its contents above, so read before you answer.
+
+`source_index` is its table of contents: each source's size, then its blocks in order, each with
+its marker, its size and its opening words. Print it on your first turn, decide from it where to
+read, then read those passages of `sources` in full by finding their markers. The opening words are
+for finding a passage, never for citing it: read the block itself before relying on it.
 
 Markers are OPAQUE identifiers, not something you compute. When a claim relies on a block, copy
 that block's marker's `source_id` and `locator` VERBATIM into a `Citation` — never invent, alter,

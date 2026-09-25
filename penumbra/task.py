@@ -65,7 +65,9 @@ a claim.
 class AnswerQuestion(GroundedTask):
     """Answer one question grounded in an orbit's corpus blob, with citations."""
 
-    signature = "sources: str, history: str, question: str, output_language: str -> answer: Answer"
+    signature = (
+        "sources: str, source_index: str, history: str, question: str, output_language: str -> answer: Answer"
+    )
     output_field = "answer"
     output_model = Answer
     instructions = _INSTRUCTIONS

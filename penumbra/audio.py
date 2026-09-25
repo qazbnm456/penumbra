@@ -146,7 +146,7 @@ class GeneratePodcastScript(GroundedTask):
     """Generate a two-host podcast script grounded in an orbit's sources, with citations."""
 
     signature = (
-        "sources: str, output_language: str, target_length: str -> script: PodcastScript"
+        "sources: str, source_index: str, output_language: str, target_length: str -> script: PodcastScript"
     )
     output_field = "script"
     output_model = PodcastScript
