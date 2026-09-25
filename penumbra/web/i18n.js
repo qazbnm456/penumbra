@@ -617,6 +617,7 @@ const STRINGS = {
     "map.loading": "載入中…",
     "map.filedIn": "在「{where}」裡",
     "map.readInList": "閱讀全文",
+    "horizon.capture.open": "收錄一樣東西（N）",
     "map.bridgeLabel": "「{a}」和「{b}」都提到 {names}",
     "map.bridgeKicker": "兩個軌道共同的主題",
     "map.bridgeNone": "它們已經沒有共同提到的東西了。",

@@ -8081,12 +8081,10 @@ function showHorizon({ push = true } = {}) {
   if (push) syncAddressBar("");
   syncDocumentTitle("");
   refreshHorizon({ reset: true });
-  //: **The capture field takes focus on the screen built for capture.** It was the sixteenth tab
-  //: stop and `document.activeElement` after load was `<body>`, so the Horizon opened with the cursor
-  //: nowhere — on a surface whose whole premise is "throw something in". Not on an orbit: there
-  //: the composer is one action among several and stealing focus would fight the reader.
-  const capture = document.getElementById("capture-input");
-  if (capture) capture.focus();
+  //: The capture field is a drawer now, so it is NOT focused on arrival: focus would hold it open
+  //: over the map for good. N opens it and puts the cursor in it from anywhere on the Horizon, and
+  //: its grip is among the first tab stops, so capturing is still one key away.
+  syncCaptureDock();
   syncSkipLink();
   syncFacetCurrent();
   applyViewMode();
@@ -10286,6 +10284,79 @@ function syncDock() {
 function openDock() {
   horizonEl("ask-h-input").focus();
   syncDock();
+}
+
+// --- the capture drawer ----------------------------------------------------------------------------
+//
+// The ask dock's mirror at the top: open while the pointer is near the top edge or over it, while
+// the field has focus or text, while it shows an error, and while a file is dragged over the page
+// (a drop still lands anywhere). N opens it from anywhere that is not a text field; Escape in it
+// closes it. The same on the map and the list, so capturing looks the same wherever it happens.
+
+const captureDock = { near: false };
+
+function syncCaptureDock() {
+  const dockEl = horizonEl("capture-dock");
+  if (!dockEl) return;
+  const input = horizonEl("capture-input");
+  const holding = dockEl.contains(document.activeElement)
+    || input.value.trim().length > 0
+    || !horizonEl("capture-note").hidden
+    || document.getElementById("view-horizon").classList.contains("is-dropping");
+  const open = captureDock.near || holding;
+  dockEl.classList.toggle("is-open", open);
+  horizonEl("capture-dock-handle").setAttribute("aria-expanded", String(open));
+}
+
+function openCaptureDock() {
+  horizonEl("capture-input").focus();
+  syncCaptureDock();
+}
+
+function initCaptureDock() {
+  const root = horizonEl("capture-dock");
+  document.addEventListener("mousemove", (event) => {
+    if (document.body.dataset.view !== "horizon") return;
+    const box = root.getBoundingClientRect();
+    const top = 56;
+    const near = (event.clientY - top < 48 && event.clientY >= top)
+      || (root.classList.contains("is-open") && event.clientY <= box.bottom + 16
+        && event.clientX >= box.left - 24 && event.clientX <= box.right + 24);
+    if (near !== captureDock.near) {
+      captureDock.near = near;
+      syncCaptureDock();
+    }
+  });
+  root.addEventListener("focusin", syncCaptureDock);
+  root.addEventListener("focusout", () => queueMicrotask(syncCaptureDock));
+  horizonEl("capture-input").addEventListener("input", syncCaptureDock);
+  horizonEl("capture-input").addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    captureDock.near = false;
+    event.target.blur();
+    syncCaptureDock();
+  });
+  horizonEl("capture-dock-handle").addEventListener("click", () => {
+    if (root.classList.contains("is-open")) {
+      captureDock.near = false;
+      document.activeElement?.blur?.();
+      syncCaptureDock();
+    } else {
+      openCaptureDock();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "n" && event.key !== "N") return;
+    if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return;
+    if (document.body.dataset.view !== "horizon") return;
+    if (event.target.closest("input, textarea, select, [contenteditable]")) return;
+    event.preventDefault();
+    openCaptureDock();
+  });
+  // A drag over the page and an error under the field both keep it open.
+  new MutationObserver(syncCaptureDock).observe(document.getElementById("view-horizon"), { attributes: true, attributeFilter: ["class"] });
+  new MutationObserver(syncCaptureDock).observe(horizonEl("capture-note"), { attributes: true, attributeFilter: ["hidden"] });
+  syncCaptureDock();
 }
 
 function initDock() {
@@ -12541,6 +12612,7 @@ function initAskH() {
 
 initAskH();
 initDock();
+initCaptureDock();
 initPanels();
 initStarMapCamera();
 initDesktopContextMenu();
