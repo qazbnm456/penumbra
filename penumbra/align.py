@@ -36,8 +36,9 @@ its whole, or a person and their work. When unsure, do not merge; an unmerged pa
 a wrong merge hides a real distinction.
 
 For each merge give `alias` (the new name) and `canonical` (the name to keep, usually the known one,
-or the more common spelling), each copied EXACTLY as written in `known` or `new_names`. Return an
-empty list when nothing should be merged.
+or the more common spelling), each copied EXACTLY as written in `known` or `new_names`. When
+nothing should be merged, that is still an answer given from code, like any other:
+`SUBMIT(merges={{"merges": []}})`.
 
 {validate_before_submit_rule("validate_conceptmerges")}
 """
