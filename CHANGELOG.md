@@ -12,6 +12,7 @@ Each entry states what the product does now and why. The reasoning behind each r
 
 #### Capture: the Horizon (Tier 0)
 
+- Capturing is a drawer at the top edge, the mirror of the ask dock at the bottom: at rest a breathing grip under the header, sliding down when the pointer nears the top, when N is pressed, or while the field holds text, focus, an error or a dragged file. It looks the same on the map and the list, and a drop still lands anywhere on the page. The field is no longer focused on arrival, since that would hold the drawer open.
 - The Horizon is the default screen. You paste a link or text, drop files, or upload them, and each capture lands at once as a node you can find again later. An orbit is a place you go into, and a node is filed into one or more orbits by copying it (invariant 78).
 - The Horizon is an index, not a corpus. Nodes live in a SQLite index plus one JSON file each, every write is a SQL delta, and nothing at Tier 0 assembles a blob, so the Horizon can hold thousands of items without touching the orbit size cap (invariants 8 and 78).
 - A capture always lands. Submitting creates a `queued` node before anything is fetched, intake runs one item at a time, and a failed parse becomes a `failed` node that keeps its reason, so a bad link can never stall the queue behind it (invariant 79).

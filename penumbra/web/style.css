@@ -8634,3 +8634,95 @@ body.is-resizing .cols {
   flex-direction: column;
   gap: var(--space-2);
 }
+
+/* --- The capture drawer ------------------------------------------------------------------------
+   The ask dock's mirror at the top edge: the field sits above the edge at rest and only its grip,
+   hanging below it, shows and breathes. Near the top edge, on N, or while it holds text, focus,
+   an error or a dragged file, it slides down. */
+.capture-dock {
+  position: fixed;
+  left: 50%;
+  top: 56px;
+  z-index: 890;
+  width: min(720px, calc(100vw - 32px));
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-7) var(--space-5);
+  background: var(--surface-1);
+  border: 1px solid var(--border-strong);
+  border-top: 0;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  box-shadow: 0 12px 36px -20px rgb(0 0 0 / 0.55);
+  transform: translate(-50%, -100%);
+  /* Pulled up out of view it would lie over the header (it is the higher layer), so at rest it is
+     also clipped to nothing but the grip hanging below its bottom edge. */
+  clip-path: inset(100% -120px -40px -120px);
+  transition: transform 260ms cubic-bezier(0.2, 0.9, 0.25, 1.05), clip-path 260ms cubic-bezier(0.2, 0.9, 0.25, 1.05);
+}
+
+.capture-dock.is-open {
+  transform: translate(-50%, 0);
+  clip-path: inset(0 -120px -60px -120px);
+}
+
+body:not([data-view="horizon"]) .capture-dock {
+  display: none;
+}
+
+.view-horizon .capture-dock .capture,
+.view-horizon .capture-dock .capture-hint,
+.view-horizon .capture-dock .capture-note {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+.capture-dock-handle {
+  position: absolute;
+  left: 50%;
+  bottom: -30px;
+  transform: translateX(-50%);
+  width: 120px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.capture-dock-grip {
+  width: 44px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  transition: width 200ms var(--ib-ease), background-color 200ms var(--ib-ease);
+}
+
+.capture-dock:not(.is-open) .capture-dock-grip {
+  animation: grip-breathe 2.8s ease-in-out infinite;
+}
+
+.capture-dock-handle:hover .capture-dock-grip,
+.capture-dock-handle:focus-visible .capture-dock-grip,
+.capture-dock.is-open .capture-dock-grip {
+  width: 60px;
+  background: var(--accent);
+  animation: none;
+}
+
+.capture-dock-handle:focus-visible {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .capture-dock {
+    transition: none;
+  }
+
+  .capture-dock:not(.is-open) .capture-dock-grip {
+    animation: none;
+  }
+}

@@ -116,6 +116,10 @@
     <div class="horizon-scroll">
     <div class="horizon-inner">
 
+      <!-- The capture field is a drawer at the top edge, the mirror of the ask dock at the bottom:
+           a breathing grip at rest, sliding down when the pointer nears the top, when N is pressed,
+           or while it holds text, focus, an error or a drag. The same on the map and the list. -->
+      <div class="capture-dock" id="capture-dock">
       <!-- The 吸入口. ONE field, not three tabs: what you paste decides what it is. The orbit's
            own source panel keeps its tabs, because "add a source to THIS orbit" is a deliberate
            act; this is "throw it in". -->
@@ -155,6 +159,10 @@
            rendered below the FIND field, two elements past the thing whose failures it reports, so
            a failed drop announced itself under a search box. -->
       <p class="capture-note" id="capture-note" role="status" hidden></p>
+        <button type="button" class="capture-dock-handle" id="capture-dock-handle" aria-expanded="false"
+                aria-controls="capture-dock" aria-label="Capture something (N)" data-i18n-label="horizon.capture.open"
+                title="Capture something (N)" data-i18n-title="horizon.capture.open"><span class="capture-dock-grip" aria-hidden="true"></span></button>
+      </div>
 
       <!-- The other half of the product's promise. Capture is worthless if you cannot get it back,
            and "find it by description, not by the words you have forgotten" is what the distilled
