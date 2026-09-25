@@ -1614,7 +1614,33 @@ def _derive_run_id(orbit_id: str, client_token: str | None) -> str:
     # The orbit_id half is slugged too. It becomes `traces/{run_id}.jsonl`, and a raw id long
     # enough (or containing a separator the route did admit) produced `OSError: File name too long`
     # at the exclusive-create below — an unauthenticated 500. Found by an independent review.
-    return f"{slug(orbit_id)}-{token}"
+    run_id = f"{slug(orbit_id)}-{token}"
+    _RUN_OWNER[run_id] = slug(orbit_id)
+    while len(_RUN_OWNER) > _RUN_OWNER_MAX:
+        _RUN_OWNER.popitem(last=False)
+    return run_id
+
+
+#: Which orbit each run id was derived for. The id alone cannot say: `slug` keeps `-` and `.`, so
+#: orbit `a`'s prefix `a-` also matches every run of orbit `a-b`, and orbit `horizon`'s matched
+#: every Horizon ask (`horizon-ask-…`). A prefix test listed and stopped the other orbit's runs.
+#: Bounded and in memory like `_RUN_PROCESSES` (invariant 23); an id it no longer holds, such as
+#: an old trace after a restart, falls back to the prefix, which only ever reads a trace.
+_RUN_OWNER: collections.OrderedDict[str, str] = collections.OrderedDict()
+_RUN_OWNER_MAX = 4096
+
+
+def _run_belongs(run_id: str, orbit_id: str) -> bool:
+    """Whether `run_id`, or a derived id under it (`{base}-lang`, `{base}-summary`), was started
+    for `orbit_id`. The longest recorded base wins, so `a-b-x1` belongs to `a-b` even though it
+    also starts with `a-`."""
+    candidate = run_id
+    while candidate:
+        owner = _RUN_OWNER.get(candidate)
+        if owner is not None:
+            return owner == slug(orbit_id)
+        candidate = candidate.rpartition("-")[0]
+    return run_id.startswith(f"{slug(orbit_id)}-")
 
 
 #: What every task is told when nothing better is known — a literal, never an empty string. A
@@ -2398,11 +2424,10 @@ async def list_in_flight_runs(orbit_id: str) -> dict:
     The DERIVED ids are filtered out: `{base}-lang` is pre-work belonging to `{base}`, and offering
     it as a separate run to stop would be offering the same action twice.
     """
-    prefix = f"{slug(orbit_id)}-"
     runs = sorted(
         run_id
         for run_id in list(_RUN_PROCESSES)
-        if run_id.startswith(prefix) and not run_id.endswith("-lang")
+        if _run_belongs(run_id, orbit_id) and not run_id.endswith("-lang")
     )
     return {"runs": runs}
 
@@ -2423,7 +2448,7 @@ async def cancel_run(orbit_id: str, run_id: str) -> dict:
     An id still at the `None` placeholder is RESERVED but not yet spawned (`_announced`), so there
     is nothing to signal; reporting that honestly beats a 404 that reads as "already finished".
     """
-    if not run_id.startswith(f"{slug(orbit_id)}-"):
+    if not _run_belongs(run_id, orbit_id):
         raise HTTPException(404, f"run {run_id!r} does not belong to orbit {orbit_id!r}")
     if run_id not in _RUN_PROCESSES:
         raise HTTPException(404, f"no in-flight run {run_id!r}")
@@ -2700,7 +2725,7 @@ async def stream_run(orbit_id: str, run_id: str) -> StreamingResponse:
         # form made every trace link dead for any id the slug changes (e.g. "my orbit", or any
         # non-Latin id, which invariant 10 explicitly supports). Found by an audit of the
         # persistent-overview design, which would have made a dead link the orbit's front page.
-        if not run_id.startswith(f"{slug(orbit_id)}-"):
+        if not _run_belongs(run_id, orbit_id):
             frame = {
                 "step": None,
                 "kind": "not_found",
@@ -2737,7 +2762,7 @@ async def citation_turn(orbit_id: str, run_id: str, source_id: str, locator: str
     when the citation list became the References panel; the endpoint is kept because
     `ChatTurn.run_id` still persists the coordinate it needs (invariant 29). A missing trace
     degrades this ONE affordance, not the rest of the page."""
-    if not run_id.startswith(f"{slug(orbit_id)}-"):  # slugged, same reason as `stream_run`
+    if not _run_belongs(run_id, orbit_id):  # slugged, same reason as `stream_run`
         raise HTTPException(404, f"run {run_id!r} does not belong to orbit {orbit_id!r}")
     trace_path = _TRACE_DIR / f"{run_id}.jsonl"
     if not trace_path.exists():
@@ -2773,7 +2798,7 @@ async def run_trajectory(orbit_id: str, run_id: str) -> dict:
     Reads in a THREAD: a long run's trace is megabytes and this is a blocking read on the event
     loop otherwise — the same reasoning `_mutate_or_http` uses for a blocking `flock`.
     """
-    if not run_id.startswith(f"{slug(orbit_id)}-"):
+    if not _run_belongs(run_id, orbit_id):
         raise HTTPException(404, f"run {run_id!r} does not belong to orbit {orbit_id!r}")
     trace_path = _TRACE_DIR / f"{run_id}.jsonl"
     if not trace_path.exists():

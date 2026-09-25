@@ -4583,3 +4583,25 @@ def test_the_server_reads_the_interface_language_header_the_page_sends():
     server = Path(api.__file__).read_text(encoding="utf-8")
     for name in sent:
         assert f'"{name.lower()}"' in server, f"the page sends {name} and the server never reads it"
+
+
+def test_a_run_belongs_to_the_orbit_it_was_derived_for_not_to_every_orbit_it_prefixes(client):
+    """`slug` keeps `-`, so orbit `a`'s prefix `a-` also matched every run of orbit `a-b`, and
+    orbit `horizon`'s matched every Horizon ask: a prefix test listed, and let Stop kill, the
+    other orbit's runs."""
+    theirs = api._derive_run_id("a-b", "x1")
+    ask = api._derive_run_id(api.HORIZON_ASK_KEY, "q1")
+    ours = api._derive_run_id("a", "y1")
+    for run_id in (theirs, f"{theirs}-lang", ask, ours):
+        api._RUN_PROCESSES[run_id] = None
+    try:
+        assert client.get("/orbits/a/runs").json()["runs"] == [ours]
+        assert client.get("/orbits/a-b/runs").json()["runs"] == [theirs]
+        assert client.get("/orbits/horizon/runs").json()["runs"] == []
+        assert client.post(f"/orbits/a/runs/{theirs}/cancel").status_code == 404
+        assert theirs not in api._CANCELLED_BEFORE_SPAWN
+        # An id no longer recorded, such as an old trace after a restart, still reads by prefix.
+        assert api._run_belongs("a-zz-old", "a")
+    finally:
+        for run_id in (theirs, f"{theirs}-lang", ask, ours):
+            api._RUN_PROCESSES.pop(run_id, None)
