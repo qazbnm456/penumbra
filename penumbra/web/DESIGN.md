@@ -10,7 +10,7 @@ This is the web frontend's design contract, and `index.html`, `style.css` and `a
 
 Warm editorial calm: ink on paper in the light theme (Paper, the default) and a reading lamp at night in the dark one (Study). It is focused, legible and unhurried; not playful, not corporate, not a terminal, and never the cool blue-slate of a security console.
 
-**There are two surfaces, and the Horizon is the one you land on.** `index.html` switches between `#view-horizon`, the default (an orbit rail, a capture field and a dated stream of nodes, §10), and `#view-orbit`, the three-pane workspace you reach by opening an orbit. The address bar follows the view, so an orbit can be bookmarked and Back returns to the Horizon.
+**There are two surfaces, and the Horizon is the one you land on.** `index.html` switches between `#view-horizon`, the default, and `#view-orbit`, which you reach by opening an orbit. Each has two modes behind a header toggle, remembered per surface in the browser: the Horizon opens as a star map (§12) and its list mode is an orbit rail, a capture field and a dated stream of nodes (§10); an orbit opens as its knowledge graph (§12) and its other mode is the three-pane workspace (§5), which is also what an empty orbit shows. The ask dock (§12) rests at the foot of the star map, the list and the graph. The address bar follows the view, so an orbit can be bookmarked and Back returns to the Horizon.
 
 The direction did not change when the Horizon arrived. Ink on paper, Literata for reading, Public Sans for the interface and one copper accent were already what the Horizon needed. What it lacked was structure, and a typeface this file described but the page never loaded (§4).
 
@@ -231,3 +231,18 @@ Everything follows from it. The title and the distilled summary are set in the r
 **The shape grows out of the hardware.** Its size is set per state and transitioned, anchored at the top centre, so it grows out of the notch and shrinks back into it; the window around it is enlarged first and made small last, so nothing is clipped. Concave shoulders (`.hole::before`, `::after`) join it to the top of the screen the way the notch meets the bezel, the lower corners are deep (a capsule when hovering, a 46px bowl when open), and a soft shadow appears only once it is open. Content stays below `--inset`, the notch's height, because the display has no pixels there.
 
 **Motion is transform and opacity only.** A blurred spinning ring and blurred falling motes stuttered in the transparent window, because a filter re-rasterises every frame. The ring's soft edge is a static mask and every moving layer has `will-change`, so each frame is a composited transform.
+
+## 12. The star map, the knowledge graph and the ask dock
+
+**The star map should feel as finished as the island.** The Horizon is a black hole at the centre with two blurred copper arcs (`.map-disk`) turning around it, each orbit is a shaded sphere (`.map-planet`, with clipped bands and a rim) travelling its ring, and its captures are moons (`.map-moons`) circling it, copper once summarised and grey before. Planets move on `requestAnimationFrame`; the disk, the moons and the bands turn in CSS. All of it holds still while the pointer or keyboard focus is on the map, so a planet can be clicked, and under `prefers-reduced-motion` the same map is drawn standing still. The faint star field (`.map-star`) is placed by a well-mixed hash so it never lines up into dots that read like the legend's dashed bridges (`.map-bridge`). Gradients and filters are SVG attributes set in `app.js`, because `tests/test_web_assets.py` forbids `url(#…)` in CSS. The legend (`.starmap-legend`) says what copper, grey, a dashed line and distance from the centre mean.
+
+**The knowledge graph draws entities only.** Every node is an entity in one copper style (`.graph-entity`), joined when the same capture names both. Tags are lenses (`.lenses`) along the top that light up their members and set the dock's scope; they are never nodes, because a tag is a broad topic and would pull every node towards it. With local relations on, captures of similar content are joined by a fainter line that ranks below any relation a summary names (invariant 82).
+
+**The ask dock is a grip until you reach for it.** At rest it shows only `.ask-dock-grip`, a short bar that breathes, with no label, and it slides up when the pointer nears the bottom edge. Open, it reads like the capture field: scope chips, a `.ask-h-more` menu for any other tag or entity, one field (`.ask-h-box`) with a single round send button (`.ask-h-go`), and one line under it saying what Enter will do and whether it costs anything. While it is open, the map's legend and summary note fade out beneath it. It stays up while it holds a running ask or an answer not yet read, because that run's Stop lives only there (invariant 47).
+
+### Acceptance, the star map and the dock
+
+- Planets travel their rings and moons circle them; resting the pointer on the map stops everything, and moving away starts it again.
+- With reduced motion on, nothing on the map moves.
+- The dock is a breathing grip at rest and opens when the pointer nears the bottom edge; with it open, no legend text shows through beside it.
+- A scope chip names what the question will read, and Enter on a Horizon scope previews the captures for free before anything is spent.

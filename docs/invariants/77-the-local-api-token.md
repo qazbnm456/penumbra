@@ -2,11 +2,11 @@
 
 **Every request needs the API token (`auth.py`), the static web assets are the only exception, and a `Host` header that is a DNS name is refused.**
 
-`api._require_api_token` is the single middleware that applies the rules. `penumbra serve` mints a token per launch and prints it; `PN_API_TOKEN` supplies one instead, which is how the desktop shell will pass it.
+`api._require_api_token` is the single middleware that applies the rules. `penumbra serve` mints a token per launch and prints it; `PN_API_TOKEN` supplies one instead, which is how the desktop shell passes the token it mints at every launch.
 
 ## Why loopback alone stopped being enough
 
-Binding `127.0.0.1` was adequate while the only client was a page the same server had just handed the user. The planned desktop shell and browser extension make a second client normal, and "reachable only from this machine" is not the same as "reachable only by this app": every browser the user runs is on this machine too.
+Binding `127.0.0.1` was adequate while the only client was a page the same server had just handed the user. The desktop shell, and the browser extension still planned, make a second client normal, and "reachable only from this machine" is not the same as "reachable only by this app": every browser the user runs is on this machine too.
 
 - Writes need no response. Any page in any tab can send a request to `127.0.0.1:<port>` and ignore the reply: deleting a source, a note or the whole conversation, or rewriting global settings.
 - DNS rebinding reaches reads. A page served from an attacker's name that re-resolves to `127.0.0.1` keeps its origin, so the browser treats the requests as same-origin and lets it read every response, including a source's full text (invariant 31) and traces that can contain source text (invariant 29).

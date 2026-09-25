@@ -1,6 +1,6 @@
 # Penumbra: agent guide
 
-Penumbra builds on [`rlm-harness`](https://github.com/qazbnm456/rlm-harness). You paste in sources of any kind (text, web pages, PDFs including scanned ones), ask questions grounded in them with citations you can verify, and take a distilled research artifact away. See `README.md` for the overview.
+Penumbra builds on [`rlm-harness`](https://github.com/qazbnm456/rlm-harness). It is a personal knowledge hub whose main surface is a desktop app: you throw anything into the Horizon (text, web pages, PDFs including scanned ones, YouTube captions), see how it connects on a star map and in per-orbit knowledge graphs, ask questions grounded in it with citations you can verify, and take a distilled artifact away. `penumbra serve` and the CLI remain for source installs. See `README.md` for the overview.
 
 `rlm-harness` comes from PyPI, pinned to an exact version in `pyproject.toml`. To develop against a local checkout, install it editable over the top:
 
@@ -37,7 +37,7 @@ What exists:
 
 The API is the only place a run is isolated in a subprocess (`runner.py` and `worker.py`); `cli.py` runs in-process.
 
-`desktop/` is a Tauri 2 shell for macOS, Windows and Linux that bundles a Python with Penumbra installed plus deno, starts `serve` on loopback and runs as a background app: its only presence at rest is the island in the notch (`penumbra/web/island.*`, `desktop/src-tauri/src/island.rs`), which swallows drops and opens the workspace window (invariant 81). `desktop/scripts/build_runtime.py` assembles the runtime on each platform, and `.github/workflows/desktop.yml` checks the shell and builds the installers on all three, run by hand only.
+`desktop/` is a Tauri 2 shell for macOS, Windows and Linux (only the macOS build has been run) that bundles a Python with Penumbra installed plus deno, starts `serve` on loopback and runs as a background app: its only presence at rest is the island in the notch (`penumbra/web/island.*`, `desktop/src-tauri/src/island.rs`), which swallows drops and opens the workspace window (invariant 81). `desktop/scripts/build_runtime.py` assembles the runtime on each platform, and `.github/workflows/desktop.yml` checks the shell and builds the installers on all three, run by hand only.
 
 `penumbra serve` starts the API and the web UI on loopback by default (invariant 25). The `Dockerfile` carries the two system binaries no Python manifest can express: `deno`, which every live run needs (invariant 9), and `tesseract`, the OCR fallback (invariant 7).
 
@@ -228,6 +228,6 @@ This index does not grow. An entry that has gained a second paragraph has taken 
 
 80. **Capture makes no model call unless the operator turns it on: distillation (`distill.py`) is a separate pass, off by default and bounded by an environment-only cap, a failed summary leaves the node at `ready_undistilled` instead of costing the capture, and concept alignment runs only at the end of a pass the reader pressed.** With your own API key and a habit of throwing everything in, distilling at intake by default would silently spend 200 calls on a 200-bookmark import. ([why](docs/invariants/80-capture-never-pays-for-a-summary.md))
 
-81. **The desktop shell (`desktop/src-tauri/src/lib.rs`) gives the workspace no IPC and the island only three fixed, dataless navigations (`/__shell/open`, `/menu`, `/rest`), and the server it starts cannot outlive it: `serve` reads the stdin pipe the shell holds and shuts down when it closes (`PN_EXIT_WITH_PARENT`).** A bridge would be the first path from rendered page text to the file system, and a killed shell runs no teardown; measured, the server stayed up and could keep billing a run nobody could stop. ([why](docs/invariants/81-the-desktop-shell-owns-the-server-and-nothing-else.md))
+81. **The desktop shell (`desktop/src-tauri/src/lib.rs`) gives the workspace no IPC and the island only three fixed, dataless navigations (`/__shell/open`, `/__shell/menu`, `/__shell/rest`), and the server it starts cannot outlive it: `serve` reads the stdin pipe the shell holds and shuts down when it closes (`PN_EXIT_WITH_PARENT`).** A bridge would be the first path from rendered page text to the file system, and a killed shell runs no teardown; measured, the server stayed up and could keep billing a run nobody could stop. ([why](docs/invariants/81-the-desktop-shell-owns-the-server-and-nothing-else.md))
 
 82. **The embedding model behind local relations (`vectors.py`) is downloaded only when the reader presses Download, from one pinned revision checked against its SHA-256, and similarity is drawn only above a high threshold between mutual near neighbours.** Cosine similarity on this model sits in a narrow band and leans towards same-language text, so a missing link means nothing and a present one ranks below any relation a summary names. ([why](docs/invariants/82-local-relations-download-once-and-stay-weak.md))

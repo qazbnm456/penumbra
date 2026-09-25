@@ -1,7 +1,7 @@
 [project]
 name = "penumbra"
 version = "0.1.0"
-description = "A personal knowledge hub: capture sources of any kind, ask grounded questions with verifiable citations, and take a distilled research artifact away."
+description = "A personal knowledge hub with a desktop app: capture anything into the Horizon, see how it connects, and ask grounded questions with verifiable citations."
 readme = "README.md"
 # NO UPPER BOUND, and it is now honest rather than aspirational. It was: `rapidocr-onnxruntime`
 # declared `Requires-Python <3.13`, so `pip install` could not resolve this project on 3.13 at all
@@ -108,10 +108,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The HTTP API (api.py) is an ADDITIONAL surface, not the core CLI use case every `penumbra
-# ask` user needs — unlike OCR/TTS (invariants 7/15: those ship in `dependencies` because they're
-# needed for the CORE product to work at all), running a web server is opt-in. Mirrors
-# ctx-distillery's own precedent (its `cli` extra) for a usage-mode-specific dependency.
+# The HTTP API (api.py) and the web UI it serves are the product's main surface: the desktop
+# runtime installs this extra, and so does anyone running `penumbra serve`. It is still an extra,
+# not a dependency, because the bare CLI does not serve anything and can skip a web server. OCR
+# and TTS ship in `dependencies` instead (invariants 7/15), because every surface needs them.
 api = [
     "fastapi>=0.115",
     "uvicorn>=0.30",

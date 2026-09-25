@@ -1,12 +1,12 @@
 # The desktop app
 
-`desktop/` wraps the web UI in a native window with [Tauri 2](https://tauri.app) and ships everything it needs inside the app: a Python with Penumbra installed and the deno binary every live run uses. Nobody has to install Python, uv or deno to use it. One codebase produces all three platforms:
+`desktop/` is Penumbra's main surface: a background app built with [Tauri 2](https://tauri.app) whose only presence at rest is the island in the notch, and whose workspace window shows the web UI. It ships everything it needs inside the app, a Python with Penumbra installed and the deno binary every live run uses, so nobody has to install Python, uv or deno to run it. There is no published installer yet: you build it yourself (see **Building**). One codebase targets all three platforms, and only the macOS build has been run so far:
 
 | Platform | Webview | Installer |
 |---|---|---|
 | macOS 13 or later (Apple silicon and Intel) | WKWebView | `.dmg` |
-| Windows 10 and 11 (x64) | WebView2 | `.msi` and `.exe` |
-| Linux (x64, glibc) | WebKitGTK 4.1 | `.AppImage` and `.deb` |
+| Windows 10 and 11 (x64), not yet built | WebView2 | `.msi` and `.exe` |
+| Linux (x64, glibc), not yet built | WebKitGTK 4.1 | `.AppImage` and `.deb` |
 
 macOS 13 is the floor because the stylesheet uses `color-mix()`, which WKWebView gained with Safari 16.2.
 
@@ -21,7 +21,9 @@ macOS 13 is the floor because the stylesheet uses `color-mix()`, which WKWebView
 
 ## Configuration and data
 
-Model settings live in `penumbra.env` in the app's data folder, one `KEY=VALUE` per line, the same names as `.env.example`. **File > Open Configuration File…** creates it from a template and opens it; **File > Restart Server** applies a change. Keys never go on the settings page (invariant 41).
+Model settings live in `penumbra.env` in the app's data folder, one `KEY=VALUE` per line. **File > Open Configuration File…** (or right-clicking the island) creates it from a template that lists every setting an error message can name, with its default, and opens it; **File > Restart Server** applies a change. The full list is [`.env.example`](../.env.example), which uses the same names. Keys never go on the settings page (invariant 41). A configuration file created before the template changed keeps its old contents; delete it and open it again to get the current template.
+
+The bundled runtime installs Penumbra with the `api` extra only, so the Claude subscription path (`claude-agent-sdk/` models) and the Chatterbox voice (`PN_TTS_PROVIDER=chatterbox`) do not work in the app. Both need a source install.
 
 An install from before the rename (rlm-notebook, `tw.boik.rlm-notebook`) is moved here on first launch, and its `rlm-notebook.env` becomes `penumbra.env` with every `RN_` setting spelled `PN_`.
 
