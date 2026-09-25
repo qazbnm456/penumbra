@@ -479,6 +479,14 @@ def _dotted(cls: type) -> str:
     return f"{cls.__module__}:{cls.__qualname__}"
 
 
+def _misconfigured(exc: BaseException) -> HTTPException:
+    """A `PN_*` value the server cannot run with. The reason goes to the page, which shows it with
+    where the setting lives, and to the log: the page used to say "its log has the detail" over a
+    log that had none, because nothing here wrote an `HTTPException` down."""
+    _log.warning("server misconfigured: %s", exc)
+    return HTTPException(500, f"server misconfigured: {exc}")
+
+
 def _config() -> PenumbraConfig:
     """`PenumbraConfig.from_env()` raises `SystemExit` on a missing/invalid `PN_*` var — correct
     for a CLI invocation (`cli.py` lets it propagate and exit the process) but wrong for a request
@@ -487,7 +495,7 @@ def _config() -> PenumbraConfig:
     try:
         return PenumbraConfig.from_env()
     except SystemExit as exc:
-        raise HTTPException(500, f"server misconfigured: {exc}") from exc
+        raise _misconfigured(exc) from exc
 
 
 def _tts_provider(config: PenumbraConfig):
@@ -499,7 +507,7 @@ def _tts_provider(config: PenumbraConfig):
     try:
         return get_tts_provider(config.tts_provider)
     except TTSError as exc:
-        raise HTTPException(500, f"server misconfigured: {exc}") from exc
+        raise _misconfigured(exc) from exc
 
 
 def _invalid_orbit_id(orbit_id: str, exc: ValueError) -> HTTPException:
@@ -1108,7 +1116,7 @@ async def add_sources(orbit_id: str, body: SourcesRequest) -> OrbitResponse:
         raise HTTPException(
             422,
             f"the API only accepts http(s) URLs as sources, not local file paths — rejected: "
-            f"{non_urls!r}. Use the CLI (`penumbra ask --source <path>`) to add a local file.",
+            f"{non_urls!r}. Upload the file instead, or drop it on the window.",
         )
     blank_texts = [i for i, t in enumerate(body.texts) if not t.strip()]
     if blank_texts:
@@ -1131,7 +1139,7 @@ async def add_sources(orbit_id: str, body: SourcesRequest) -> OrbitResponse:
     try:
         ingested = await _abandonable(ingest_sources_for, snapshot, body.sources)
     except SystemExit as exc:  # a malformed PN_FETCH_ALLOW_CIDRS, same shape as `_config()`'s
-        raise HTTPException(500, f"server misconfigured: {exc}") from exc
+        raise _misconfigured(exc) from exc
     except (FetchError, ValueError, OSError) as exc:
         raise HTTPException(422, f"could not ingest a source: {type(exc).__name__}: {exc}") from exc
 
@@ -1353,7 +1361,7 @@ async def upload_source(orbit_id: str, request: Request) -> OrbitResponse:
     try:
         cap = max_upload_bytes()
     except SystemExit as exc:  # a malformed PN_MAX_UPLOAD_BYTES, same shape as `_config()`'s
-        raise HTTPException(500, f"server misconfigured: {exc}") from exc
+        raise _misconfigured(exc) from exc
     content_length = request.headers.get("content-length")
     if content_length is None:
         raise HTTPException(411, "Content-Length header is required for file uploads")
@@ -3638,7 +3646,7 @@ async def list_horizon(
         # then ENDS THE SERVER PROCESS — one authenticated GET, on a typo in an env var that
         # startup did not reject. Every other reader of a `_env_int` cap on a request path is
         # already wrapped like this; this one was reached last and got missed.
-        raise HTTPException(500, f"server misconfigured: {exc}") from exc
+        raise _misconfigured(exc) from exc
     return {
         "nodes": [node.model_dump() for node in nodes],
         "total": total,
@@ -3844,7 +3852,7 @@ async def upload_into_horizon(request: Request) -> dict:
     try:
         cap = max_upload_bytes()
     except SystemExit as exc:
-        raise HTTPException(500, f"server misconfigured: {exc}") from exc
+        raise _misconfigured(exc) from exc
     # The first orbit is titled in the reader's language, and it is often created by an upload.
     _CAPTURE_LANGUAGE["name"] = request.headers.get("x-penumbra-interface-language", "")
     content_length = request.headers.get("content-length")
@@ -4043,7 +4051,7 @@ def _ask_bounds() -> tuple[int, int]:
     try:
         return horizon_ask_chars(), horizon_ask_items()
     except SystemExit as exc:
-        raise HTTPException(500, f"server misconfigured: {exc}") from exc
+        raise _misconfigured(exc) from exc
 
 
 def _question_or_422(text: str) -> str:

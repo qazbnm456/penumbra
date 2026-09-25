@@ -7,7 +7,7 @@
 //: sentence, which is the failure mode this project keeps a tripwire for elsewhere (invariant 28).
 //: A shared module rather than a tripwire, because here the duplication can simply be removed.
 export const CONSTANTS = [
-  "NO_SERVER", "CANCELLED_RUN", "CANCELLED_STATUS", "SIZE_REFUSED", "NO_MODEL", "REFUSED_TARGET", "FAKE_IP_HINT",
+  "NO_SERVER", "CANCELLED_RUN", "CANCELLED_STATUS", "SIZE_REFUSED", "NO_MODEL", "MISCONFIGURED", "CORPUS_CAP", "REFUSED_TARGET", "FAKE_IP_HINT",
   "UNREACHABLE", "RUN_TIMED_OUT", "PROVIDER_DOWN", "HTML_BODY",
   "FROM_PROVIDER", "FROM_FETCH", "HTTP_STATUS", "URL_ANYWHERE",
   "BAD_KEY", "OVER_QUOTA", "NO_SUCH_MODEL", "REPLY_TOO_LONG", "CONTEXT_TOO_LONG",

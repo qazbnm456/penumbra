@@ -98,9 +98,9 @@ uv run penumbra ask "what does the source say about X?" \
 
 ```bash
 # a continuing conversation: --orbit saves sources and history to orbits/<id>.json
-uv run penumbra ask "what does the source say about X?" --source ./paper.pdf --orbit mynb
-uv run penumbra ask "and what about Y?" --orbit mynb   # no --source needed to continue
-uv run penumbra ask "add this too" --source ./more.txt --orbit mynb   # extends it
+uv run penumbra ask "what does the source say about X?" --source ./paper.pdf --orbit research
+uv run penumbra ask "and what about Y?" --orbit research   # no --source needed to continue
+uv run penumbra ask "add this too" --source ./more.txt --orbit research   # extends it
 ```
 
 Every answer carries citations made of a `source_id` and a `locator` (a page number, or the whole document, depending on the source type). Each one is checked to resolve to real text in the orbit, and one that does not resolve is marked unverified rather than dropped or trusted. Verification proves the coordinate exists, not that the quote supports the claim (invariant 5). Earlier turns help the model understand a follow-up question but are never a source of facts, so every citation in every answer is re-verified against the current sources.
@@ -112,9 +112,9 @@ A YouTube URL ingests that video's captions, official ones if they exist and aut
 ```bash
 # generate a whole-orbit artifact instead of asking a question
 uv run penumbra guide summary --source ./paper.pdf
-uv run penumbra guide faq --orbit mynb
-uv run penumbra guide timeline --orbit mynb
-uv run penumbra guide insight --orbit mynb   # the single most important takeaway, in one sentence
+uv run penumbra guide faq --orbit research
+uv run penumbra guide timeline --orbit research
+uv run penumbra guide insight --orbit research   # the single most important takeaway, in one sentence
 ```
 
 Guide artifacts are verified the same way answers are. They are not cached, so each `guide` call regenerates from the orbit's current sources.
@@ -122,7 +122,7 @@ Guide artifacts are verified the same way answers are. They are not cached, so e
 ```bash
 # a two-host, podcast-style Audio Overview: a grounded script plus an MP3
 uv run penumbra audio --source ./paper.pdf --out episode.mp3
-uv run penumbra audio --orbit mynb
+uv run penumbra audio --orbit research
 ```
 
 The transcript prints first, with citations, so a TTS failure never loses the script. Each provider owns its format and its cast: the default, `edge-tts`, needs no API key and writes MP3, while `PN_TTS_PROVIDER=chatterbox` (`uv sync --extra chatterbox`) runs fully local with no network, is multilingual, and writes WAV. Set `PN_TTS_VOICE_HOST_A` and `PN_TTS_VOICE_HOST_B` to override the cast (see `.env.example`).
@@ -165,49 +165,49 @@ curl -X POST localhost:8000/horizon/distil -H "Content-Type: application/json" \
 curl -X POST localhost:8000/horizon/cancel                  # stop both at the next item boundary
 curl -X GET  localhost:8000/horizon/nd-0123456789abcdef     # one node, plus the orbits it is filed in
 curl -X POST localhost:8000/horizon/nd-0123456789abcdef/promote -H "Content-Type: application/json" \
-    -d '{"orbit_id": "mynb"}'                          # Tier 0 -> Tier 1
+    -d '{"orbit_id": "research"}'                          # Tier 0 -> Tier 1
 curl -X DELETE localhost:8000/horizon/nd-0123456789abcdef
 
 # TIER 1: orbits. "sources" takes URLs only here, never local paths (invariant 26); use the CLI
 # for a local file. The Content-Type header is required: a POST body without it is rejected with
 # a 422. The Authorization header is left out from here on for readability; add it to every call.
-curl -X POST localhost:8000/orbits/mynb/sources -H "Content-Type: application/json" \
+curl -X POST localhost:8000/orbits/research/sources -H "Content-Type: application/json" \
     -d '{"sources": ["https://example.com/article"]}'
-curl -X POST localhost:8000/orbits/mynb/ask -H "Content-Type: application/json" \
+curl -X POST localhost:8000/orbits/research/ask -H "Content-Type: application/json" \
     -d '{"question": "what does it say about X?"}'
-curl -X POST localhost:8000/orbits/mynb/guide/summary
-curl -X POST localhost:8000/orbits/mynb/audio         # podcast script plus base64-encoded audio
-curl -X GET  localhost:8000/orbits/mynb/audio/file    # the persisted episode as a file
-curl -X POST localhost:8000/orbits/mynb/overview      # the chat overview, persisted on the orbit
-curl -X POST localhost:8000/orbits/mynb/title         # let the model name the orbit
+curl -X POST localhost:8000/orbits/research/guide/summary
+curl -X POST localhost:8000/orbits/research/audio         # podcast script plus base64-encoded audio
+curl -X GET  localhost:8000/orbits/research/audio/file    # the persisted episode as a file
+curl -X POST localhost:8000/orbits/research/overview      # the chat overview, persisted on the orbit
+curl -X POST localhost:8000/orbits/research/title         # let the model name the orbit
 curl -X GET  localhost:8000/settings                     # language, podcast voices, auto-summary
 curl -X PUT  localhost:8000/settings -H "Content-Type: application/json" \
     -d '{"output_language": "Traditional Chinese"}'      # replaces ALL settings; env still wins
-curl -X POST localhost:8000/orbits/mynb/cancel        # cancel that orbit's in-flight run
+curl -X POST localhost:8000/orbits/research/cancel        # cancel that orbit's in-flight run
 
 # Optional on ask/guide/audio: {"run_id": "my-token"} picks your OWN run id (sanitized, then
 # prefixed with the orbit id), so you can open the trace stream below before or while firing
 # the request that fills it. Leave it out and the server picks one.
-curl -X POST localhost:8000/orbits/mynb/audio -H "Content-Type: application/json" \
+curl -X POST localhost:8000/orbits/research/audio -H "Content-Type: application/json" \
     -d '{"run_id": "my-token"}'
-curl -X GET  "localhost:8000/orbits/mynb/runs/mynb-my-token/stream"           # live or replayed SSE
-curl -X GET  "localhost:8000/orbits/mynb/runs/mynb-my-token/citation-turn?source_id=s1&locator=whole"
+curl -X GET  "localhost:8000/orbits/research/runs/research-my-token/stream"           # live or replayed SSE
+curl -X GET  "localhost:8000/orbits/research/runs/research-my-token/citation-turn?source_id=s1&locator=whole"
 
 # Pasted text (the "texts" field) and file upload (a separate multipart endpoint):
-curl -X POST localhost:8000/orbits/mynb/sources -H "Content-Type: application/json" \
+curl -X POST localhost:8000/orbits/research/sources -H "Content-Type: application/json" \
     -d '{"texts": ["some text pasted straight in, no URL or path needed"]}'
-curl -X POST localhost:8000/orbits/mynb/sources/upload -F "file=@./paper.pdf"
+curl -X POST localhost:8000/orbits/research/sources/upload -F "file=@./paper.pdf"
 
 # A source's full text, every block, as the web UI's source viewer shows it. This exposes far
 # more than a citation's short quote (invariant 31).
-curl -X GET localhost:8000/orbits/mynb/sources/s1
+curl -X GET localhost:8000/orbits/research/sources/s1
 
 # Notes: free, uncited text. Write one directly or save a chat answer as one. A note is grounded
 # only once promoted into a real source (invariant 32).
-curl -X POST localhost:8000/orbits/mynb/notes -H "Content-Type: application/json" \
+curl -X POST localhost:8000/orbits/research/notes -H "Content-Type: application/json" \
     -d '{"text": "a thought worth keeping around"}'
-curl -X DELETE localhost:8000/orbits/mynb/notes/n1
-curl -X POST localhost:8000/orbits/mynb/notes/n1/promote   # turns it into a real source
+curl -X DELETE localhost:8000/orbits/research/notes/n1
+curl -X POST localhost:8000/orbits/research/notes/n1/promote   # turns it into a real source
 ```
 
 Every `ask` and `guide` request runs its `RLMTask` in its own isolated, killable subprocess, unlike the CLI, which runs in-process. One slow or stuck request therefore cannot block another, and any of them can be cancelled outright. `/audio` has two host-side steps: script generation runs in a subprocess the same way and is the half you can cancel, then TTS synthesis runs in-process. The episode is persisted as one file per orbit, replaced on regenerate and served by `GET .../audio/file`, so reopening an orbit plays it back without synthesising again. The POST response also carries the audio, base64-encoded.

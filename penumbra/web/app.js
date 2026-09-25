@@ -124,6 +124,14 @@ function showTokenGate(message) {
   if (!gate || tokenGateOpen) return;
   tokenGateOpen = true;
   gate.hidden = false;
+  // The desktop app hands the window its token and prints it nowhere, so "paste the token the
+  // server printed" asks for something its reader has never seen. Restarting from the menu mints
+  // a new one and reloads the window with it.
+  const desktop = isDesktopShell();
+  gate.classList.toggle("is-desktop", desktop);
+  if (desktop) {
+    message = t("token.desktop", "This window lost its connection to the server. Choose File > Restart Server to reconnect.");
+  }
   const error = document.getElementById("token-gate-error");
   if (error) {
     error.hidden = !message;
@@ -1805,7 +1813,7 @@ function settingRows() {
       placeholder: t("settings.outputLanguagePlaceholder", "e.g. Traditional Chinese"),
       help: t(
         "settings.outputLanguageHelp",
-        "Leave empty to let each orbit resolve its own from your browser, its sources and your questions."
+        "Leave empty to let each orbit work out its own from your interface and system language, its sources and your questions."
       ),
     },
     // Provider-aware on purpose: with chatterbox `default_voices` returns null for EVERY language,
@@ -2032,10 +2040,19 @@ function renderSettings(state_) {
     warn.className = "setting-source";
     warn.textContent = t(
       "settings.readError",
-      `Settings file could not be read (${state_.error}); showing defaults.`,
+      `The saved settings could not be read (${state_.error}); showing defaults.`,
       { error: state_.error },
     );
     body.appendChild(warn);
+  }
+
+  // The first thing a desktop reader looks for here is the model and its key, which this page
+  // must never hold (invariant 41). It says where they are instead.
+  if (isDesktopShell()) {
+    body.appendChild(elt("p", "setting-source settings-where", t(
+      "settings.modelWhere",
+      "The model and its API key are set in File > Open Configuration File…, not here.",
+    )));
   }
 
   const inputs = new Map();
@@ -2109,7 +2126,7 @@ function renderSettings(state_) {
     note.className = "setting-source";
     note.textContent =
       entry.source === "env"
-        ? t("settings.pinnedBy", `Pinned by ${entry.env_var}. Unset it to edit here.`, { env: entry.env_var })
+        ? withShellHint(t("settings.pinnedBy", `Pinned by ${entry.env_var}. Unset it to edit here.`, { env: entry.env_var }))
         : row.help;
     wrap.appendChild(note);
 
@@ -2216,6 +2233,8 @@ const CANCELLED_RUN = /was stopped before it started|exit -9|SIGKILL/;
 const CANCELLED_STATUS = /\b499\b/;
 const SIZE_REFUSED = /\b413\b.*exceeding the (\d+)-byte limit/;
 const NO_MODEL = /PN_MAIN_MODEL is not set|No LM is loaded/;
+const MISCONFIGURED = /server misconfigured:\s*(.+)$/;
+const CORPUS_CAP = /over the \d+ cap \(PN_MAX_CORPUS_CHARS\)/;
 const REFUSED_TARGET = /is not a permitted external|resolves to a disallowed address/;
 const FAKE_IP_HINT = /fake-IP proxy|PN_FETCH_ALLOW_CIDRS/;
 //: Everything a fetch can fail with that the reader cannot act on: DNS, TLS, resets, timeouts. The
@@ -2371,7 +2390,7 @@ function readableError(text) {
   if (NO_SERVER.test(raw.trim())) {
     return withShellHint(t(
       "err.noServer",
-      "Lost contact with the penumbra server. Check that it is still running, then try again."
+      "Lost contact with the Penumbra server. Check that it is still running, then try again."
     ), "restart");
   }
   if (CANCELLED_RUN.test(raw)) return t("run.wasStopped", "You stopped this one.");
@@ -2383,6 +2402,22 @@ function readableError(text) {
     // The `set -a; . ./.env; set +a` incantation does not: a shell command in a chat bubble is the
     // product speaking in the terminal's voice.
     return withShellHint(t("err.noModel", "No model is configured. Set PN_MAIN_MODEL and restart the server."));
+  }
+  //: **A setting the server cannot run with keeps its reason.** This fell to the generic 500 line
+  //: below, "its log has the detail", over a log that had none: a typo in PN_FETCH_ALLOW_CIDRS, a
+  //: provider the desktop app does not include or a malformed model id all read the same. The
+  //: reason is the server's own sentence, in English, because it names the setting and the value.
+  const misconfigured = raw.match(MISCONFIGURED);
+  if (misconfigured) {
+    return withShellHint(t("err.misconfigured", `A setting stops the server from running this: ${misconfigured[1]}`, {
+      why: misconfigured[1],
+    }));
+  }
+  if (CORPUS_CAP.test(raw)) {
+    return withShellHint(t(
+      "err.corpusCap",
+      "This is more text than one run reads at once. Remove a source, or raise PN_MAX_CORPUS_CHARS and restart the server."
+    ));
   }
   //: **A refusal that names its own fix must keep it.** Behind a fake-IP proxy (Clash, Surge,
   //: Mihomo) every public hostname resolves into a reserved range, so the guard refuses EVERY link,
@@ -2400,7 +2435,7 @@ function readableError(text) {
   if (RUN_TIMED_OUT.test(raw)) {
     return withShellHint(t(
       "err.runTimedOut",
-      "This run hit the time limit and was stopped. A long Audio Overview can need more time: raise PN_RUN_TIMEOUT_SECONDS and try again."
+      "This run hit the time limit and was stopped. A long podcast can need more time: raise PN_RUN_TIMEOUT_SECONDS and restart the server."
     ));
   }
   if (HTML_BODY.test(raw)) {
@@ -2410,10 +2445,10 @@ function readableError(text) {
     );
   }
   if (PROVIDER_DOWN.test(raw) || (fromProviderNotAUrl(raw) && UNREACHABLE.test(raw))) {
-    return t(
+    return withShellHint(t(
       "err.providerDown",
       "The model server did not answer. Check it is running and that PN_BASE_URL points at it."
-    );
+    ));
   }
   //: Only once it is NOT about a run and NOT about the provider: this sentence is about a source
   //: URL, and saying it about anything else sends the reader to check their network for a fault
@@ -2462,7 +2497,7 @@ function readableError(text) {
   const model = (raw.match(MODEL_TAG) || [])[1] || "";
   const fromProvider = fromProviderNotAUrl(raw);
   if (fromProvider && REPLY_TOO_LONG.test(raw)) {
-    return withShellHint(t("err.replyTooLong", "This model will not produce a reply as long as this build asks for. Lower PN_MAX_TOKENS and restart the server."));
+    return withShellHint(t("err.replyTooLong", "This model will not produce a reply as long as Penumbra asks for. Lower PN_MAX_TOKENS and restart the server."));
   }
   if (fromProvider && CONTEXT_TOO_LONG.test(raw)) {
     return t("err.contextTooLong", "The sources are longer than this model can read at once. Remove one, or use a model with a larger context.");

@@ -110,7 +110,7 @@ def _ocr_provider_from_env() -> str:
     if raw not in _KNOWN_OCR_PROVIDERS:
         raise SystemExit(
             f"PN_OCR_PROVIDER={raw!r} is not a known provider; expected one of "
-            f"{', '.join(_KNOWN_OCR_PROVIDERS)} (see .env.example)."
+            f"{', '.join(_KNOWN_OCR_PROVIDERS)}."
         )
     return raw
 
@@ -236,9 +236,10 @@ class PenumbraConfig:
         main = (os.getenv("PN_MAIN_MODEL") or "").strip()
         if not main:
             raise SystemExit(
-                "PN_MAIN_MODEL is not set — a live run needs a model. Copy .env.example to .env, "
-                "fill it in, and export it (`set -a; . ./.env; set +a`); nothing here auto-loads "
-                "a .env file."
+                "PN_MAIN_MODEL is not set — a live run needs a model. In the desktop app, set it in "
+                "File > Open Configuration File… and restart the server. From a source checkout, copy "
+                ".env.example to .env, fill it in, and export it (`set -a; . ./.env; set +a`); nothing "
+                "here auto-loads a .env file."
             )
         interpreter = (os.getenv("PN_INTERPRETER") or PINNED_INTERPRETER).strip()
         if interpreter != PINNED_INTERPRETER:
@@ -399,7 +400,7 @@ def fetch_allow_cidrs() -> tuple[str, ...]:
         except ValueError:
             raise SystemExit(
                 f"PN_FETCH_ALLOW_CIDRS={raw!r} contains {entry!r}, which is not a CIDR "
-                "(e.g. 198.18.0.0/16)"
+                "(e.g. 198.18.0.0/15)"
             ) from None
         overlapping = [
             str(n) for n in _NEVER_ALLOWED if n.version == net.version and net.overlaps(n)
@@ -409,7 +410,7 @@ def fetch_allow_cidrs() -> tuple[str, ...]:
                 f"PN_FETCH_ALLOW_CIDRS={raw!r} contains {entry!r}, which covers "
                 f"{', '.join(overlapping)}. Allowing those would disable the SSRF guard's "
                 "DNS-rebinding check for loopback, cloud-metadata and private targets. Narrow it "
-                "to the range your resolver actually hands out (a fake-IP proxy uses 198.18.0.0/16)."
+                "to the range your resolver actually hands out (a fake-IP proxy uses part of 198.18.0.0/15)."
             )
     return entries
 
@@ -457,7 +458,7 @@ def _maybe_subscription_lm(model: str):
         # the identical gap, so this is a lesson the sibling had not learned either, not a mis-copy.
         raise SystemExit(
             f"{model!r} names no model — expected {SUBSCRIPTION_PREFIX}<id>, e.g. "
-            f"{SUBSCRIPTION_PREFIX}claude-sonnet-5 (see .env.example)."
+            f"{SUBSCRIPTION_PREFIX}claude-sonnet-5."
         )
     from rlm_harness import ClaudeAgentLM
 

@@ -402,3 +402,13 @@ def test_a_fake_ip_refusal_keeps_the_setting_that_fixes_it():
     assert "PN_FETCH_ALLOW_CIDRS" in cleaned and "198.18.0.0/15" in cleaned, cleaned
     (plain,) = _clean("refused: 'file:///etc' is not a permitted external http(s) URL")
     assert plain == "That address is not one this can fetch."
+
+
+def test_a_setting_the_server_cannot_run_with_keeps_its_reason():
+    """Every `server misconfigured` 500 read "its log has the detail", over a log that had none,
+    so a typo in the configuration file was invisible from the page."""
+    reason = "PN_FETCH_ALLOW_CIDRS entry '198.18.0.0/1' is too broad"
+    (cleaned,) = _clean(f"500: server misconfigured: {reason}")
+    assert reason in cleaned and "log" not in cleaned, cleaned
+    (cap,) = _clean("413: assembled corpus is 9000001 chars, over the 8000000 cap (PN_MAX_CORPUS_CHARS) — x")
+    assert "PN_MAX_CORPUS_CHARS" in cap and "Remove a source" in cap, cap

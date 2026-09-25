@@ -553,7 +553,8 @@ class ChatterboxProvider:
             importlib.import_module("chatterbox.mtl_tts")
         except ImportError as exc:  # pragma: no cover — exercised only with the extra absent
             raise TTSError(
-                "the 'chatterbox' provider needs the optional extra: uv sync --extra chatterbox"
+                "the 'chatterbox' provider needs the optional chatterbox extra "
+                "(uv sync --extra chatterbox), which the desktop app does not include; use edge-tts there"
             ) from exc
 
         language_id = self._language_id(language)

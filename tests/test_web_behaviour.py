@@ -476,7 +476,7 @@ def test_the_call_that_starts_a_run_is_what_takes_the_guard():
     [
         ("404-known", "That orbit is not here any more."),
         ("corrupt", "orbits/x.json exists but is not a valid orbit file"),
-        ("offline", "Lost contact with the penumbra server"),
+        ("offline", "Lost contact with the Penumbra server"),
         ("server", "Something went wrong on the server"),
     ],
 )

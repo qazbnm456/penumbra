@@ -858,7 +858,7 @@ const SCENARIOS = {
     const run = new Function(
       "document", "t",
       `${constant("ALWAYS_LIVE")}\n${extract("inertEverythingExcept")}\n` +
-        "let tokenGateOpen = false;\n" +
+        "let tokenGateOpen = false;\nconst isDesktopShell = () => false;\n" +
         `${extract("showTokenGate")}\n` +
         "return { show: showTokenGate, twice: () => tokenGateOpen };"
     )(doc, (key, fallback) => fallback);
