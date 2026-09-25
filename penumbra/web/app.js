@@ -9727,7 +9727,10 @@ async function sendAskH() {
       }),
     });
     status.finish();
-    if (cancelled) return;
+    // A Stop pressed as the run finished reports success (a process already gone is stopped), yet
+    // the server went on to keep the answer. Saying "Nothing was kept" over an answer that is now
+    // in the history would be a status line claiming what did not happen (invariant 60).
+    if (cancelled) askHShowError("");
     renderAskHAnswer(ask);
     askH.plan = null;
     void refreshAskHHistory();
@@ -10259,6 +10262,7 @@ function restoreFocus(svg, key) {
   if (!key) return;
   const again = [...svg.querySelectorAll("[data-key]")].find((el) => el.dataset.key === key);
   if (again) again.focus();
+  return Boolean(again);
 }
 
 function drawStarMap() {
@@ -10462,7 +10466,12 @@ function renderStarMapCard() {
 //: redraw of the map or the graph, and a running pass's progress and Stop used to live inside one:
 //: selecting an entity mid-pass put the spend button back with no Stop while the pass kept billing.
 //: Every control paints from this, and one poll keeps it current.
-const distilWatch = { status: null, polling: false, failures: 0, stopping: false, slug: null, aligning: false };
+//: `gen` counts presses of Summarise. A status poll already in flight when the reader presses can
+//: answer `running: false` from before the pass began, and taking it cleared `slug`, so the orbit's
+//: own count gave way to the generic line. A reply from an earlier `gen` is dropped and re-asked.
+const distilWatch = {
+  status: null, polling: false, failures: 0, stopping: false, slug: null, aligning: false, gen: 0,
+};
 
 function watchDistil() {
   if (distilWatch.polling) return;
@@ -10472,8 +10481,13 @@ function watchDistil() {
 
 async function pollDistilWatch() {
   let reply;
+  const gen = distilWatch.gen;
   try {
     reply = await api("/horizon/status");
+    if (gen !== distilWatch.gen) {
+      setTimeout(pollDistilWatch, 300);
+      return;
+    }
     distilWatch.failures = 0;
   } catch {
     // One failed poll is not the end of the pass; keep asking, and say so only if it persists.
@@ -10586,6 +10600,7 @@ function distilOrbitControl(slug, count) {
         refreshTopologyViews();
         return;
       }
+      distilWatch.gen += 1;
       distilWatch.slug = slug;
       distilWatch.status = { running: true, done: 0, total: n };
       paintDistilControls();
@@ -11102,8 +11117,11 @@ function renderGraphPanel(litCaptures) {
     panel.appendChild(ask);
   }
   // A chip rebuilds this panel; the entity it names is where focus belongs next.
-  if (keepFocus && keepFocus.startsWith("chip:")) {
-    restoreFocus(horizonEl("graph-svg"), `entity:${keepFocus.slice(5)}`);
+  // The graph may not draw it (`omitted`, or dimmed out by a lens), and focus then fell to <body>;
+  // the rebuilt chip itself is the next best place.
+  if (keepFocus && keepFocus.startsWith("chip:")
+      && !restoreFocus(horizonEl("graph-svg"), `entity:${keepFocus.slice(5)}`)) {
+    restoreFocus(panel, keepFocus);
   }
 }
 
