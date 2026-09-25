@@ -6245,7 +6245,7 @@ function initPanels() {
   const sources = document.getElementById("col-sources");
   makePanelGrip({
     panel: facets, handle: document.getElementById("facets-grip"), side: "right",
-    cssVar: "--facets-w", railVar: "--facets-rail", min: 180, max: 360, collapseAt: 110, railPx: 14, initial: 208,
+    cssVar: "--facets-w", railVar: "--facets-rail", min: 180, max: 360, collapseAt: 110, railPx: 0, initial: 208,
     key: "penumbra-facets", others: () => [mapPanel],
   });
   mapPanelGrip = makePanelGrip({
@@ -6256,7 +6256,7 @@ function initPanels() {
   document.getElementById("map-panel-open").addEventListener("click", () => mapPanelGrip.setCollapsed(false));
   makePanelGrip({
     panel: sources, handle: document.getElementById("sources-grip"), side: "right",
-    cssVar: "--sources-w", railVar: "--sources-rail", min: 220, max: 480, collapseAt: 150, railPx: 14, initial: 280,
+    cssVar: "--sources-w", railVar: "--sources-rail", min: 220, max: 480, collapseAt: 150, railPx: 0, initial: 280,
     key: "penumbra-sources", others: () => [document.getElementById("col-studio")],
   });
 }
@@ -9633,10 +9633,14 @@ function renderAskHChips() {
   const does = chosen.orbit ? t("askH.askOrbit", "Ask in this orbit") : t("askH.check", "See what it reads");
   check.setAttribute("aria-label", does);
   check.title = does;
-  paintAskHHint(chosen.orbit
-    ? [["\u23ce", t("askH.keyOrbit", "ask in this orbit (one paid run)")], ["\u21e7\u23ce", t("chat.newlineHint", "for a new line")]]
-    : [["\u23ce", t("askH.keyPreview", "see what it reads, free")], ["\u21e7\u23ce", t("chat.newlineHint", "for a new line")],
-      ["/", t("askH.keyScope", "choose what it reads")]]);
+  // One word per key. What a preview is and what asking costs are said where they happen (the
+  // preview itself names the spend), not repeated under every question. `/` is "commands": today it
+  // only chooses what a question reads, and it is where more commands will live.
+  paintAskHHint([
+    ["\u23ce", chosen.orbit ? t("askH.keyAsk", "ask") : t("askH.keyPreview", "preview")],
+    ["\u21e7\u23ce", t("askH.keyNewline", "new line")],
+    ["/", t("askH.keyCommands", "commands")],
+  ]);
 }
 
 //: The row under the box, in the composer's own keycap language: what each key does HERE. It is

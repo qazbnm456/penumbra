@@ -8460,11 +8460,11 @@ body.is-resizing .panel-grip::before {
   }
 
   .view-horizon:has(.facets.is-collapsed) {
-    grid-template-columns: var(--facets-rail, 14px) minmax(0, 1fr);
+    grid-template-columns: var(--facets-rail, 0px) minmax(0, 1fr);
   }
 
   .view-horizon.is-map:has(.facets.is-collapsed) {
-    grid-template-columns: var(--facets-rail, 14px) minmax(0, 1fr) var(--map-panel-w, 320px);
+    grid-template-columns: var(--facets-rail, 0px) minmax(0, 1fr) var(--map-panel-w, 320px);
   }
 
   .view-horizon.is-map:has(.map-panel.is-collapsed) {
@@ -8472,7 +8472,7 @@ body.is-resizing .panel-grip::before {
   }
 
   .view-horizon.is-map:has(.facets.is-collapsed):has(.map-panel.is-collapsed) {
-    grid-template-columns: var(--facets-rail, 14px) minmax(0, 1fr) var(--map-panel-rail, 2.9rem);
+    grid-template-columns: var(--facets-rail, 0px) minmax(0, 1fr) var(--map-panel-rail, 2.9rem);
   }
 }
 
@@ -8485,9 +8485,23 @@ body.is-resizing .cols {
   display: none;
 }
 
-.facets.is-collapsed {
+/* Put away means gone: the track is 0 and the grip rides the edge of the column beside it, visible
+   only under the pointer. A 14px strip was left before, and it read as a stray margin. */
+.facets.is-collapsed,
+.col-sources.is-collapsed {
   padding: 0;
   overflow: visible;
+  border: 0;
+}
+
+.facets.is-collapsed > .panel-grip-right,
+.col-sources.is-collapsed > .panel-grip-right {
+  right: -9px;
+}
+
+/* The accent line marks a grip being used, not one that merely kept focus after a double-click. */
+.panel-grip:focus-visible:not(:hover)::before {
+  background: transparent;
 }
 
 .map-panel {
@@ -8548,11 +8562,11 @@ body.is-resizing .cols {
   }
 
   .cols:has(.col-sources.is-collapsed) {
-    grid-template-columns: var(--sources-rail, 14px) minmax(0, 1fr) var(--studio-width, 340px);
+    grid-template-columns: var(--sources-rail, 0px) minmax(0, 1fr) var(--studio-width, 340px);
   }
 
   .cols:has(.col-sources.is-collapsed):has(.col-studio.is-collapsed) {
-    grid-template-columns: var(--sources-rail, 14px) minmax(0, 1fr) var(--studio-rail, 2.9rem);
+    grid-template-columns: var(--sources-rail, 0px) minmax(0, 1fr) var(--studio-rail, 2.9rem);
   }
 }
 
@@ -8560,10 +8574,7 @@ body.is-resizing .cols {
   display: none;
 }
 
-.col-sources.is-collapsed {
-  padding: 0;
-  overflow: visible;
-}
+
 
 @media (prefers-reduced-motion: reduce) {
   .view-horizon {
