@@ -615,8 +615,7 @@ fn boot(app: AppHandle) {
         // wrote the token into `server.log`, the file "Show Server Log" invites people to share.
         // `menu` is the language the menu bar is written in, which follows the OS, not the page's
         // interface language, so the page can quote a menu item the way the reader will see it.
-        let menu = if chinese() { "zh" } else { "en" };
-        let target = format!("http://127.0.0.1:{port}/#token={token}&shell=desktop&menu={menu}");
+        let target = workspace_url(port, &token);
         if let Ok(url) = url::Url::parse(&target) {
             let _ = window.navigate(url);
         }
@@ -645,6 +644,14 @@ fn splash_failure(window: &WebviewWindow, detail: &str) {
     }
 }
 
+/// Where the workspace window lives: the server, with the launch's token and the shell's flags in
+/// the fragment. `menu` is the language the menu bar is written in, which follows the OS, not the
+/// page's interface language, so the page can quote a menu item the way the reader will see it.
+fn workspace_url(port: u16, token: &str) -> String {
+    let menu = if chinese() { "zh" } else { "en" };
+    format!("http://127.0.0.1:{port}/#token={token}&shell=desktop&menu={menu}")
+}
+
 fn splash_url() -> url::Url {
     let base = if cfg!(windows) { "http://tauri.localhost/index.html" } else { "tauri://localhost/index.html" };
     url::Url::parse(base).expect("static URL")
@@ -660,6 +667,32 @@ fn current_port(app: &AppHandle) -> Option<u16> {
 /// http(s) link opens in the system browser: a webview with no address bar is the wrong place to
 /// read a third-party page, and the reader could not get back.
 fn allow_navigation(app: &AppHandle, url: &url::Url) -> bool {
+    // **Never back to the splash page while the server is up.** Back from the workspace (the
+    // webview's context menu offered it) landed on the splash, which waits for a boot that already
+    // happened, and the app sat on "starting" for good. Only a boot, which holds BOOTING, may show
+    // it; any other visit is turned around to the workspace.
+    let splash = splash_url();
+    if url.scheme() == splash.scheme() && url.host_str() == splash.host_str() && url.path() == splash.path() {
+        let booting = BOOTING.try_lock().is_err();
+        let running = app
+            .state::<ServerState>()
+            .0
+            .lock()
+            .ok()
+            .and_then(|s| s.as_ref().map(|s| (s.port, s.token.clone())));
+        if let (false, Some((port, token))) = (booting, running) {
+            let app = app.clone();
+            thread::spawn(move || {
+                if let (Some(window), Ok(target)) =
+                    (app.get_webview_window(WINDOW), url::Url::parse(&workspace_url(port, &token)))
+                {
+                    let _ = window.navigate(target);
+                }
+            });
+            return false;
+        }
+        return true;
+    }
     match url.scheme() {
         "tauri" | "about" | "blob" | "data" => true,
         "http" | "https" => {
