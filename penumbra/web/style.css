@@ -4294,6 +4294,13 @@ body.is-resizing .studio-grip {
   display: none;
 }
 
+/* A put-away Studio shows only its tab icons. The podcast view's own `display: flex` above ties the
+   collapsed rule's specificity and comes later, so with Podcast chosen the whole podcast panel was
+   squeezed into the 46px rail, one character per line. One more token wins regardless of order. */
+.col-studio.is-collapsed .studio-view[data-view-body] {
+  display: none;
+}
+
 .podcast-section {
   display: flex;
   flex-direction: column;
@@ -8418,4 +8425,197 @@ button.card-chip:hover {
 
 .legend-item[hidden] {
   display: none;
+}
+
+/* --- Resizable panels --------------------------------------------------------------------------
+   Every side panel sizes the same way: drag its grip, drag it narrow to put it away, double-click
+   to toggle, arrows from the keyboard (`initPanelGrip`). Widths are CSS variables on the root, so
+   a grid track reads them directly. A put-away left panel keeps a strip wide enough to grab; the
+   map's right panel keeps a rail with a button, like the Studio. */
+.panel-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+/* Inside the panel's own edge: a panel that scrolls clips anything hanging past it, and a grip
+   that stuck out 5px could not be grabbed on the orbit list at all. */
+.panel-grip-right {
+  right: 0;
+}
+
+.panel-grip-left {
+  left: 0;
+}
+
+.panel-grip::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.panel-grip-right::before {
+  right: 0;
+}
+
+.panel-grip-left::before {
+  left: 0;
+}
+
+.panel-grip:hover::before,
+.panel-grip:focus-visible::before,
+body.is-resizing .panel-grip::before {
+  background: var(--accent);
+}
+
+.panel-grip .studio-grip {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.panel-grip:hover .studio-grip,
+.panel-grip:focus-visible .studio-grip {
+  opacity: 1;
+}
+
+.panel-grip:focus-visible {
+  outline: none;
+}
+
+.facets,
+.col-sources {
+  position: relative;
+}
+
+@media (min-width: 861px) {
+  .view-horizon {
+    grid-template-columns: var(--facets-w, 13rem) minmax(0, 1fr);
+    transition: grid-template-columns 180ms ease;
+  }
+
+  .view-horizon.is-map {
+    grid-template-columns: var(--facets-w, 13rem) minmax(0, 1fr) var(--map-panel-w, 320px);
+  }
+
+  .view-horizon:has(.facets.is-collapsed) {
+    grid-template-columns: var(--facets-rail, 14px) minmax(0, 1fr);
+  }
+
+  .view-horizon.is-map:has(.facets.is-collapsed) {
+    grid-template-columns: var(--facets-rail, 14px) minmax(0, 1fr) var(--map-panel-w, 320px);
+  }
+
+  .view-horizon.is-map:has(.map-panel.is-collapsed) {
+    grid-template-columns: var(--facets-w, 13rem) minmax(0, 1fr) var(--map-panel-rail, 2.9rem);
+  }
+
+  .view-horizon.is-map:has(.facets.is-collapsed):has(.map-panel.is-collapsed) {
+    grid-template-columns: var(--facets-rail, 14px) minmax(0, 1fr) var(--map-panel-rail, 2.9rem);
+  }
+}
+
+body.is-resizing .view-horizon,
+body.is-resizing .cols {
+  transition: none;
+}
+
+.facets.is-collapsed > :not(.panel-grip) {
+  display: none;
+}
+
+.facets.is-collapsed {
+  padding: 0;
+  overflow: visible;
+}
+
+.map-panel {
+  position: relative;
+  min-height: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+  background: var(--surface-1);
+}
+
+.view-horizon:not(.is-map) > .map-panel {
+  display: none;
+}
+
+/* The card used to float over the map; in its own column it is the panel's content. */
+.map-panel .starmap-card {
+  position: static;
+  width: auto;
+  max-height: none;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
+}
+
+.map-panel-open {
+  display: none;
+}
+
+.map-panel.is-collapsed .starmap-card {
+  display: none;
+}
+
+.map-panel.is-collapsed .map-panel-open {
+  display: block;
+  width: 100%;
+  padding: var(--space-5) 0;
+  font: inherit;
+  font-size: var(--text-xl);
+  color: var(--text-dim);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.map-panel.is-collapsed .map-panel-open:hover {
+  color: var(--accent-text);
+}
+
+@media (min-width: 1025px) {
+  .cols {
+    grid-template-columns: var(--sources-w, 280px) minmax(0, 1fr) var(--studio-width, 340px);
+  }
+
+  .cols:has(.col-studio.is-collapsed) {
+    grid-template-columns: var(--sources-w, 280px) minmax(0, 1fr) var(--studio-rail, 2.9rem);
+  }
+
+  .cols:has(.col-sources.is-collapsed) {
+    grid-template-columns: var(--sources-rail, 14px) minmax(0, 1fr) var(--studio-width, 340px);
+  }
+
+  .cols:has(.col-sources.is-collapsed):has(.col-studio.is-collapsed) {
+    grid-template-columns: var(--sources-rail, 14px) minmax(0, 1fr) var(--studio-rail, 2.9rem);
+  }
+}
+
+.col-sources.is-collapsed > :not(.panel-grip) {
+  display: none;
+}
+
+.col-sources.is-collapsed {
+  padding: 0;
+  overflow: visible;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view-horizon {
+    transition: none;
+  }
 }

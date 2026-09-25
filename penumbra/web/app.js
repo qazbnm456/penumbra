@@ -6119,6 +6119,148 @@ const STUDIO_EXPAND_AT = STUDIO_MIN_WIDTH;
 //: 2.9rem, the collapsed track in `style.css`. Repeated here because JS has to clamp against it.
 const STUDIO_RAIL_WIDTH = 46;
 
+// --- resizable side panels ----------------------------------------------------------------------
+//
+// One behaviour for every side panel, the same the Studio's grip already had: drag the grip to size
+// it, drag it narrower than it can be to put it away (to a strip, or a rail), double-click to
+// toggle, arrow keys to size, Enter to toggle. The width follows the pointer during a drag and is
+// only remembered when the drag ends open, so putting a panel away never overwrites the width the
+// reader chose. The column between the panels keeps at least `PANEL_MIDDLE_MIN`: a panel stops
+// growing there rather than squeezing the map or the conversation to nothing.
+
+const PANEL_MIDDLE_MIN = 360;
+
+function readStored(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStored(key, value) {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, String(value));
+  } catch {
+    // blocked storage: the width lasts for this page only
+  }
+}
+
+//: `side` is the edge the grip sits on: "right" for a left-hand panel (it grows as the pointer
+//: moves right), "left" for a right-hand one. `others` lists the other panels in the same view, so
+//: the middle column's floor can be kept. Collapse hysteresis as the Studio's: put away below
+//: `collapseAt`, open again only at `min`, so no pointer position flips it back and forth.
+function makePanelGrip({
+  panel, handle, side, cssVar, railVar, min, max, collapseAt, railPx, key, initial = min, others = () => [],
+}) {
+  let applied = min;
+  const isCollapsed = () => panel.classList.contains("is-collapsed");
+  const setCollapsed = (value, { persist = true } = {}) => {
+    if (isCollapsed() === value) return;
+    panel.classList.toggle("is-collapsed", value);
+    handle.setAttribute("aria-expanded", String(!value));
+    if (persist) writeStored(`${key}-collapsed`, value ? "1" : null);
+    window.dispatchEvent(new Event("panels-changed"));
+  };
+  const cap = () => {
+    const taken = others().reduce((sum, el) => sum + (el && el.offsetParent ? el.getBoundingClientRect().width : 0), 0);
+    return Math.max(min, Math.min(max, window.innerWidth - taken - PANEL_MIDDLE_MIN));
+  };
+  const applyWidth = (px) => {
+    applied = Math.min(cap(), Math.max(min, px));
+    document.documentElement.style.setProperty(cssVar, `${Math.round(applied)}px`);
+    const span = max - min;
+    handle.setAttribute("aria-valuenow", String(span ? Math.round(((applied - min) / span) * 100) : 0));
+    return applied;
+  };
+  const edge = () => {
+    const box = panel.getBoundingClientRect();
+    return side === "right" ? box.left : box.right;
+  };
+  let dragging = false;
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    dragging = true;
+    handle.setPointerCapture(event.pointerId);
+    document.body.classList.add("is-resizing");
+    event.preventDefault();
+  });
+  handle.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    const width = side === "right" ? event.clientX - edge() : edge() - event.clientX;
+    if (width < (isCollapsed() ? min : collapseAt)) {
+      setCollapsed(true);
+      // The strip follows the pointer through the dead band, so pulling always shows something.
+      document.documentElement.style.setProperty(railVar, `${Math.round(Math.min(min, Math.max(railPx, width)))}px`);
+      return;
+    }
+    setCollapsed(false);
+    document.documentElement.style.removeProperty(railVar);
+    applyWidth(width);
+  });
+  const endDrag = (event) => {
+    if (!dragging) return;
+    dragging = false;
+    try {
+      handle.releasePointerCapture(event.pointerId);
+    } catch {
+      // the pointer was already gone
+    }
+    document.body.classList.remove("is-resizing");
+    document.documentElement.style.removeProperty(railVar);
+    if (!isCollapsed()) writeStored(`${key}-width`, Math.round(applied));
+    window.dispatchEvent(new Event("panels-changed"));
+  };
+  handle.addEventListener("pointerup", endDrag);
+  handle.addEventListener("pointercancel", endDrag);
+  handle.addEventListener("dblclick", () => setCollapsed(!isCollapsed()));
+  handle.addEventListener("keydown", (event) => {
+    const grow = side === "right" ? "ArrowRight" : "ArrowLeft";
+    const shrink = side === "right" ? "ArrowLeft" : "ArrowRight";
+    if (event.key === "Enter" || event.key === " ") {
+      setCollapsed(!isCollapsed());
+    } else if (event.key === grow || event.key === shrink) {
+      if (isCollapsed()) setCollapsed(false);
+      else applyWidth(applied + (event.key === grow ? 1 : -1) * (event.shiftKey ? 48 : 16));
+      writeStored(`${key}-width`, Math.round(applied));
+    } else {
+      return;
+    }
+    event.preventDefault();
+  });
+  const saved = Number(readStored(`${key}-width`));
+  applyWidth(Number.isFinite(saved) && saved > 0 ? saved : initial);
+  setCollapsed(readStored(`${key}-collapsed`) === "1", { persist: false });
+  // A window that shrank can leave a remembered width wider than there is room for.
+  window.addEventListener("resize", () => applyWidth(applied));
+  return { setCollapsed, isCollapsed };
+}
+
+let mapPanelGrip = null;
+
+function initPanels() {
+  const facets = document.getElementById("facets");
+  const mapPanel = document.getElementById("map-panel");
+  const sources = document.getElementById("col-sources");
+  makePanelGrip({
+    panel: facets, handle: document.getElementById("facets-grip"), side: "right",
+    cssVar: "--facets-w", railVar: "--facets-rail", min: 180, max: 360, collapseAt: 110, railPx: 14, initial: 208,
+    key: "penumbra-facets", others: () => [mapPanel],
+  });
+  mapPanelGrip = makePanelGrip({
+    panel: mapPanel, handle: document.getElementById("map-panel-grip"), side: "left",
+    cssVar: "--map-panel-w", railVar: "--map-panel-rail", min: 280, max: 640, collapseAt: 200, railPx: 46, initial: 320,
+    key: "penumbra-map-panel", others: () => [facets],
+  });
+  document.getElementById("map-panel-open").addEventListener("click", () => mapPanelGrip.setCollapsed(false));
+  makePanelGrip({
+    panel: sources, handle: document.getElementById("sources-grip"), side: "right",
+    cssVar: "--sources-w", railVar: "--sources-rail", min: 220, max: 480, collapseAt: 150, railPx: 14, initial: 280,
+    key: "penumbra-sources", others: () => [document.getElementById("col-studio")],
+  });
+}
+
 function initStudioRail() {
   const col = document.getElementById("col-studio");
   const tabs = [...document.querySelectorAll(".studio-view-tab")];
@@ -11124,15 +11266,15 @@ function cameraHome() {
   animateCamera(mapHome());
 }
 
-//: The planet stops where it is while the camera is on it (`held`), and sits left of centre so the
-//: card on the right does not cover it.
+//: The planet stops where it is while the camera is on it (`held`), centred: the details are in a
+//: column of their own now, so nothing covers the middle of the map.
 function focusCameraOn(slug) {
   const entry = starMap.scene && starMap.scene.planets.find(({ p }) => p.orbit.slug === slug);
   if (!entry) return;
   mapMotion.held = true;
   mapCamera.home = false;
   const pos = planetAt(entry.p);
-  animateCamera({ x: pos.x + 110 / MAP_ZOOM.planet, y: pos.y, k: MAP_ZOOM.planet });
+  animateCamera({ x: pos.x, y: pos.y, k: MAP_ZOOM.planet });
 }
 
 function zoomBy(factor, around) {
@@ -11294,9 +11436,10 @@ async function fileCapture(nodeId, orbitId, control) {
   return true;
 }
 
-function renderHorizonCard(card) {
+function renderHorizonCard(card, { standing = false } = {}) {
   const loose = (starMap.data && starMap.data.loose) || { count: 0, items: [] };
-  mapCardClose(card);
+  // The standing summary has nothing to close back to.
+  if (!standing) mapCardClose(card);
   card.appendChild(elt("p", "card-kicker", t("horizon.home", "Horizon")));
   card.appendChild(elt("h2", "card-title", t("map.loose", `${loose.count} not in an orbit`, { n: loose.count })));
   if (!loose.count) {
@@ -11425,9 +11568,13 @@ function paintStarMapCard(mapCard) {
   }
   const orbit = starMap.orbits.find((o) => o.slug === starMap.selected);
   if (!orbit) {
-    mapCard.hidden = true;
+    // Nothing chosen: the panel shows the Horizon itself, which is where filing starts.
+    renderHorizonCard(mapCard, { standing: true });
+    mapCard.hidden = false;
     return;
   }
+  // Choosing something opens a panel the reader had put away: that is what the click asked to see.
+  if (mapPanelGrip && mapPanelGrip.isCollapsed()) mapPanelGrip.setCollapsed(false, { persist: false });
   mapCardClose(mapCard);
   mapCard.appendChild(elt("p", "card-kicker", relativeTime(orbit.recency)));
   mapCard.appendChild(elt("h2", "card-title", orbit.title));
@@ -12225,6 +12372,7 @@ function initAskH() {
 
 initAskH();
 initDock();
+initPanels();
 initStarMapCamera();
 initDesktopContextMenu();
 initViewModes();
