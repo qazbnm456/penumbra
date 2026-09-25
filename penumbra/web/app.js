@@ -2247,6 +2247,7 @@ const CANCELLED_RUN = /was stopped before it started|exit -9|SIGKILL/;
 const CANCELLED_STATUS = /\b499\b/;
 const SIZE_REFUSED = /\b413\b.*exceeding the (\d+)-byte limit/;
 const NO_MODEL = /PN_MAIN_MODEL is not set|No LM is loaded/;
+const NO_CLAUDE_CODE = /Claude Code not found/;
 const MISCONFIGURED = /server misconfigured:\s*(.+)$/;
 const CORPUS_CAP = /over the \d+ cap \(PN_MAX_CORPUS_CHARS\)/;
 const REFUSED_TARGET = /is not a permitted external|resolves to a disallowed address/;
@@ -2438,6 +2439,14 @@ function readableError(text) {
     // The `set -a; . ./.env; set +a` incantation does not: a shell command in a chat bubble is the
     // product speaking in the terminal's voice.
     return withShellHint(t("err.noModel", "No model is configured. Set PN_MAIN_MODEL and restart the server."));
+  }
+  //: The subscription path runs the Claude Code on this computer, and the SDK's own message tells a
+  //: developer to `npm install` it and edit PATH, which is not something to say in a chat bubble.
+  if (NO_CLAUDE_CODE.test(raw)) {
+    return withShellHint(t(
+      "err.noClaudeCode",
+      "A claude-agent-sdk model runs on your Claude subscription through Claude Code, which is not installed on this computer. Install Claude Code, run claude once in a terminal to log in, then restart the server."
+    ), "restart");
   }
   //: **A setting the server cannot run with keeps its reason.** This fell to the generic 500 line
   //: below, "its log has the detail", over a log that had none: a typo in PN_FETCH_ALLOW_CIDRS, a

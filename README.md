@@ -33,7 +33,7 @@ cd desktop/src-tauri && cargo tauri build        # Penumbra.app and a .dmg in ta
 
 The app carries an ad-hoc signature, not a developer identity, so it runs on the Mac that built it, and another Mac asks once in System Settings > Privacy & Security. The same code builds for Windows and Linux, but those builds have not been run yet. `desktop/README.md` covers where data lives, signing and developing the shell.
 
-**To configure a model**, choose File > Open Configuration File… in the workspace, or right-click the island. It opens `penumbra.env` in the app's data folder, a template that lists every setting an error message can name. Set `PN_MAIN_MODEL` and `PN_API_KEY`, then choose File > Restart Server. Capturing, the star map, search and local relations work without a model; asking, summaries, the Guide and the podcast need one. The app does not include the Claude subscription path or the Chatterbox voice, which need extras only a source install has.
+**To configure a model**, choose File > Open Configuration File… in the workspace, or right-click the island. It opens `penumbra.env` in the app's data folder, a template that lists every setting an error message can name. Set `PN_MAIN_MODEL` and `PN_API_KEY`, then choose File > Restart Server. To use your Claude Pro or Max subscription instead of a key, install Claude Code, run `claude` once in a terminal to log in, and set `PN_MAIN_MODEL=claude-agent-sdk/claude-sonnet-5`; the app recognises the prefix and needs nothing else. Capturing, the star map, search and local relations work without a model; asking, summaries, the Guide and the podcast need one. The Chatterbox voice needs an extra only a source install has.
 
 ## Running from source
 
@@ -87,7 +87,7 @@ brew install deno             # the sandbox a live run executes in
 
 ### On a Claude subscription
 
-From a source install, a role can run on your **Claude Pro/Max subscription** instead of an API key. Prefix its model with `claude-agent-sdk/`:
+A role can run on your **Claude Pro/Max subscription** instead of an API key. Prefix its model with `claude-agent-sdk/`. The desktop app needs only Claude Code installed and logged in (above); a source install also needs the `subscription` extra:
 
 ```bash
 uv sync --extra api --extra subscription   # plus the Claude Code CLI, installed and logged in

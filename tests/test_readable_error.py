@@ -426,3 +426,13 @@ def test_a_desktop_hint_quotes_the_menu_in_the_language_the_menu_bar_uses():
     assert "檔案 > 開啟設定檔…" in unknown, "without the shell's word, the interface language is the guess"
     (browser,) = _clean(raw)
     assert "File >" not in browser and "檔案" not in browser, "a browser tab has no menu to point at"
+
+
+def test_a_missing_claude_code_says_what_to_install_not_how_to_edit_path():
+    raw = (
+        "Failed to produce a valid 'answer' after 1 attempts — caused by Claude Code not found. "
+        "Install with: npm install -g @anthropic-ai/claude-code If already installed locally, try: "
+        'export PATH="$HOME/node_modules/.bin:$PATH"'
+    )
+    (cleaned,) = _clean(raw)
+    assert "Install Claude Code" in cleaned and "npm" not in cleaned and "PATH" not in cleaned, cleaned
