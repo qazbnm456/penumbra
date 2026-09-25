@@ -10,6 +10,7 @@ this module assembles) happens entirely before any of this runs.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from .schema import Source
@@ -89,3 +90,53 @@ class Corpus:
         if missing:
             raise ValueError(f"unknown source id(s): {sorted(missing)}")
         return Corpus(sources=[s for s in self.sources if s.id in wanted])
+
+
+#: A marker line exactly as `Corpus.blob` writes it: the whole line, so a source that quotes the
+#: marker format in its own text cannot start a block of its own.
+_MARKER_LINE = re.compile(r"^\[\[SRC:([^|\]\n]+)\|([^\]\n]+)\]\]$", re.MULTILINE)
+
+#: How much of the corpus the index may name one block at a time, and how many characters the whole
+#: index may take. Past the first, a source's blocks are listed in runs, like `distill.section_map`.
+_INDEX_LINES_PER_SOURCE = 40
+_INDEX_MAX_CHARS = 16_000
+
+
+def source_index(blob: str) -> str:
+    """A table of contents for `blob`: each source's size, then its blocks in order with their
+    marker coordinates, sizes and opening words.
+
+    Derived from the blob alone, so every task that reads a blob can be handed one and no caller
+    has to build it. The point is the first turn: without it a run spends its opening turns finding
+    out what the corpus holds (a sibling project measured an answer going from 8 turns to 3 once it
+    had one), and the model reads the passages themselves in the REPL before relying on them.
+    Bounded, because it is read in full every time.
+    """
+    blocks: list[tuple[str, str, str]] = []
+    marks = list(_MARKER_LINE.finditer(blob))
+    for i, mark in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(blob)
+        blocks.append((mark.group(1), mark.group(2), blob[mark.end():end].strip()))
+    if not blocks:
+        return ""
+    by_source: dict[str, list[tuple[str, str]]] = {}
+    for source_id, locator, text in blocks:
+        by_source.setdefault(source_id, []).append((locator, text))
+    lines = [f"{len(by_source)} sources, {len(blocks)} blocks, {len(blob)} characters."]
+    for source_id, items in by_source.items():
+        size = sum(len(text) for _, text in items)
+        lines.append(f"\n{source_id}: {len(items)} blocks, {size} characters")
+        per_line = max(1, -(-len(items) // _INDEX_LINES_PER_SOURCE))
+        for start in range(0, len(items), per_line):
+            group = items[start:start + per_line]
+            opening = " ".join(group[0][1].split())[:80]
+            first, last = group[0][0], group[-1][0]
+            where = f"[[SRC:{source_id}|{first}]]"
+            if len(group) > 1:
+                where += f" .. {last}"
+            lines.append(f"  {where} ({sum(len(t) for _, t in group)} chars): {opening}")
+    text = "\n".join(lines)
+    if len(text) > _INDEX_MAX_CHARS:
+        cut = text.rfind("\n", 0, _INDEX_MAX_CHARS)
+        text = text[:cut] + "\n  ... (the index stops here; find later blocks by their markers in `sources`)"
+    return text

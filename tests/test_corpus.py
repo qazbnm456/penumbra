@@ -111,3 +111,42 @@ def test_an_excerpt_of_an_empty_corpus_is_empty():
     from penumbra.corpus import Corpus
 
     assert Corpus([]).excerpt(4000) == ""
+
+
+def test_the_source_index_lists_every_block_by_marker_and_stays_bounded():
+    from penumbra.corpus import source_index
+
+    pages = [SourceBlock(locator=f"page:{i}", text=f"Page {i} is about item {i}.") for i in range(1, 201)]
+    web = Source(id="s2", kind="web", origin="https://x.example", blocks=[
+        SourceBlock(locator="whole", text="Quoting the format [[SRC:s9|page:9]] inside prose.")
+    ])
+    blob = Corpus(sources=[Source(id="s1", kind="pdf", origin="a.pdf", blocks=pages), web]).blob()
+    index = source_index(blob)
+    assert index.startswith("2 sources, 201 blocks")
+    assert "[[SRC:s1|page:1]] .. page:5" in index, "a long source is listed in runs"
+    assert "[[SRC:s2|whole]]" in index and "s9" not in index.split("s2:")[1].split("(")[0]
+    assert len(index) <= 16_200
+    assert source_index("no markers at all") == ""
+
+
+def test_a_grounded_task_is_handed_the_index_without_any_caller_building_it(monkeypatch):
+    import asyncio
+
+    from rlm_harness import RLMTask
+
+    from penumbra.guide import GenerateSummary
+
+    seen = {}
+
+    async def fake_arun(self, **inputs):
+        seen.update(inputs)
+
+    monkeypatch.setattr(RLMTask, "arun", fake_arun)
+    monkeypatch.setattr(RLMTask, "__init__", lambda self, **kw: None)
+    task = GenerateSummary.__new__(GenerateSummary)
+    task._coordinates, task._script = set(), None
+    blob = Corpus(sources=[Source(id="s1", kind="text", origin="t", blocks=[
+        SourceBlock(locator="whole", text="hello")
+    ])]).blob()
+    asyncio.run(task.arun(sources=blob, output_language="English"))
+    assert "[[SRC:s1|whole]]" in seen["source_index"]

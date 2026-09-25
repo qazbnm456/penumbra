@@ -6,7 +6,9 @@ description: How to read a multi-megabyte corpus blob and build a large answer i
 # Working the corpus blob in the REPL
 
 `sources` is ONE string holding every source in the collection, each block preceded by a
-`[[SRC:<id>|<locator>]]` marker. There is no index and no search API: you read it with ordinary
+`[[SRC:<id>|<locator>]]` marker. When you are answering, guiding or scripting you also get
+`source_index`, a table of contents with every block's marker, size and opening words, so the first
+`.find()` is a lookup rather than a hunt. There is no search API: you read `sources` with ordinary
 Python — `.find()`, slicing, `enumerate`, a regex when it earns its keep. That is the point of this
 architecture, and it is why a step per probe is the NORMAL shape of a run here, not a sign of
 floundering.

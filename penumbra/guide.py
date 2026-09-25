@@ -47,7 +47,7 @@ than filling the gap from what you already know.
 class GenerateSummary(GroundedTask):
     """A concise summary of an orbit's sources, with citations."""
 
-    signature = "sources: str, output_language: str -> summary: Summary"
+    signature = "sources: str, source_index: str, output_language: str -> summary: Summary"
     output_field = "summary"
     output_model = Summary
     instructions = _grounded_instructions(
@@ -61,7 +61,7 @@ class GenerateSummary(GroundedTask):
 class GenerateFAQ(GroundedTask):
     """A set of frequently-asked questions and answers derived from an orbit's sources."""
 
-    signature = "sources: str, output_language: str -> faq: FAQ"
+    signature = "sources: str, source_index: str, output_language: str -> faq: FAQ"
     output_field = "faq"
     output_model = FAQ
     instructions = _grounded_instructions(
@@ -77,7 +77,7 @@ class GenerateTimeline(GroundedTask):
     """A chronological (or otherwise ordered) timeline of events described across an orbit's
     sources."""
 
-    signature = "sources: str, output_language: str -> timeline: Timeline"
+    signature = "sources: str, source_index: str, output_language: str -> timeline: Timeline"
     output_field = "timeline"
     output_model = Timeline
     instructions = _grounded_instructions(
@@ -94,7 +94,7 @@ class GenerateTimeline(GroundedTask):
 class GenerateKeyInsight(GroundedTask):
     """The single most important, non-obvious takeaway from an orbit's sources, in one sentence."""
 
-    signature = "sources: str, output_language: str -> insight: KeyInsight"
+    signature = "sources: str, source_index: str, output_language: str -> insight: KeyInsight"
     output_field = "insight"
     output_model = KeyInsight
     instructions = _grounded_instructions(
