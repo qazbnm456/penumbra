@@ -32,7 +32,14 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "rlm-harness==1.10.0",
+    "rlm-harness==1.13.0",
+    # BELOW 3.4, and the bound is load-bearing: dspy 3.4.0 made `RLM.aforward` keyword-only, and
+    # rlm-harness (through 1.13.0) hands it the sandbox as the first POSITIONAL argument, so every
+    # RLM run fails with "aforward() takes 1 positional argument but 2 were given". rlm-harness
+    # itself only asks for `dspy>=3.3.1`, so without this an unlocked install (the desktop runtime,
+    # `uv tool install`) resolves 3.4 and every ask, guide, podcast and long summary breaks.
+    # `tests/test_task.py` drives a real `aforward` and fails the moment this bound is lifted early.
+    "dspy>=3.3.1,<3.4",
     # numpy>=2 is REQUIRED, not preferred: dspy 3.3.1 installs a lazy-import proxy for numpy
     # (`dspy/utils/lazy_import.py`), and against numpy 1.x that proxy re-executes numpy's
     # `__init__` while it is already partially imported the moment another extension module
