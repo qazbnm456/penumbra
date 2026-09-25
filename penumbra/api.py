@@ -249,6 +249,9 @@ async def _lifespan(_app: FastAPI):
     # `resume_interrupted` resets both owned states through `horizon.reset_interrupted_states` and
     # re-queues whatever was still waiting (invariants 78/79/80).
     await asyncio.to_thread(_horizon_queue().resume_interrupted)
+    recorded = await asyncio.to_thread(_backfill_horizon)
+    if recorded:
+        _log.info("horizon: recorded %d source(s) added inside orbits", recorded)
     _forget_suggestions()
     # Local relations catch up on whatever landed while the server was down: free, local, and only
     # when the reader already turned them on by downloading the model.
@@ -1167,7 +1170,31 @@ async def add_sources(orbit_id: str, body: SourcesRequest) -> OrbitResponse:
     orbit = await _mutate_or_http(
         orbit_id, lambda nb: append_sources(nb, ingested + pasted), create=not existed
     )
+    await asyncio.to_thread(_record_in_horizon, orbit)
     return _orbit_response(orbit)
+
+
+def _record_in_horizon(orbit: Orbit) -> int:
+    """A source added from inside an orbit becomes a Horizon node filed into it
+    (`horizon.record_orbit_sources`). Best-effort, AFTER the orbit write succeeded: the Horizon is a
+    separate store and an orbit edit must not fail because of it, the same rule a source removal
+    follows. Returns how many were recorded."""
+    try:
+        added = horizon.record_orbit_sources(orbit.id, orbit.sources)
+    except Exception:  # noqa: BLE001 - an index write must never undo a completed orbit write
+        _log.warning("could not record %s's sources in the Horizon", orbit.id)
+        return 0
+    if added:
+        _forget_suggestions()
+    return added
+
+
+def _backfill_horizon() -> int:
+    """Once at startup: every orbit's sources that were added before they reached the Horizon, or
+    by the CLI, which cannot reach it. Idempotent, so it costs one membership query per orbit once
+    everything is recorded."""
+    orbits, _unreadable = list_orbit_summaries()
+    return sum(_record_in_horizon(orbit) for orbit in orbits)
 
 
 class NoteRequest(BaseModel):
@@ -1337,6 +1364,7 @@ async def promote_note_endpoint(orbit_id: str, note_id: str) -> OrbitResponse:
         )
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
+    await asyncio.to_thread(_record_in_horizon, orbit)
     return _orbit_response(orbit)
 
 
@@ -1431,6 +1459,7 @@ async def upload_source(orbit_id: str, request: Request) -> OrbitResponse:
     orbit = await _mutate_or_http(
         orbit_id, lambda nb: append_sources(nb, parsed), create=not existed
     )
+    await asyncio.to_thread(_record_in_horizon, orbit)
     return _orbit_response(orbit)
 
 

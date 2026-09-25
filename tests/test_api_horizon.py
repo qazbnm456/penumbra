@@ -1834,3 +1834,30 @@ def test_a_promotion_says_whether_it_added_a_source_so_undo_never_removes_an_old
     assert first["appended"] is True
     assert again["appended"] is False
     assert again["membership"]["source_id"] == first["membership"]["source_id"]
+
+
+def test_a_source_added_inside_an_orbit_lands_in_the_horizon_filed_there(client):
+    """Everything crosses the Horizon, including a paste made from inside an orbit: it becomes a
+    node filed into that orbit, pointing at the source the orbit already holds, so a summary can
+    read it and the map draws it like any capture."""
+    orbit = client.post("/orbits/inside/sources", json={"texts": ["typed straight into the orbit"]}).json()
+    (source,) = orbit["sources"]
+    nodes = client.get("/horizon").json()["nodes"]
+    (node,) = [n for n in nodes if "typed straight" in (n.get("origin") or "")]
+    assert node["state"] == "ready_undistilled", "recording it must not start a summary (invariant 80)"
+    (membership,) = client.get(f"/horizon/{node['id']}").json()["orbits"]
+    assert membership["orbit_id"] == "inside" and membership["source_id"] == source["id"]
+    # The orbit is untouched: still one source, same id.
+    assert [s["id"] for s in client.get("/orbits/inside").json()["sources"]] == [source["id"]]
+
+
+def test_recording_orbit_sources_is_idempotent_and_is_the_backfill(client):
+    from penumbra import horizon
+    from penumbra import orbit as ob
+
+    client.post("/orbits/older/sources", json={"texts": ["written before the Horizon knew"]})
+    before = len(client.get("/horizon").json()["nodes"])
+    loaded = ob.load_orbit("older")
+    assert horizon.record_orbit_sources(loaded.id, loaded.sources) == 0, "already recorded"
+    assert len(client.get("/horizon").json()["nodes"]) == before
+    assert api._backfill_horizon() == 0

@@ -10424,6 +10424,9 @@ function drawStarMap() {
 
   const planets = planetLayout();
   const scene = { planets: [], bridges: [] };
+  // Every source reaches the Horizon now, so a hollow moon is rare (a CLI addition the server has
+  // not recorded yet); its legend entry shows only while one is drawn.
+  horizonEl("legend-local").hidden = !starMap.orbits.some((o) => (o.sources || 0) > o.captures);
 
   (topo.bridges || []).forEach((bridge) => {
     if (!planets.some((p) => p.orbit.slug === bridge.a) || !planets.some((p) => p.orbit.slug === bridge.b)) return;
@@ -10605,7 +10608,7 @@ function moonClass(item) {
 }
 
 function moonStateLabel(item) {
-  if (item.kind === "local") return t("map.moonLocal", "Added inside the orbit");
+  if (item.kind === "local") return t("map.moonLocal", "Not in the Horizon yet");
   if (item.state === "ready") return t("map.legendDone", "Summarised");
   if (item.state === "failed") return t("map.moonFailed", "Could not be read");
   if (item.state === "queued" || item.state === "parsing") return t("map.moonReading", "Being read");
@@ -11197,9 +11200,9 @@ function paintStarMapCard(mapCard) {
   // said here rather than left to a legend entry nobody could decode.
   const local = Math.max(0, (orbit.sources || 0) - orbit.captures);
   if (local) {
-    mapCard.appendChild(elt("h3", "card-section", t("map.sectionLocal", "Added inside the orbit")));
+    mapCard.appendChild(elt("h3", "card-section", t("map.sectionLocal", "Not in the Horizon yet")));
     mapCard.appendChild(elt("p", "card-note", t("map.localHelp",
-      `${local} added from inside the orbit rather than through the Horizon. They are drawn hollow, and the Horizon's summaries do not read them. Open the orbit to see them.`,
+      `${local} not recorded in the Horizon yet, usually because they were added from the command line. They are drawn hollow until the server next starts, which records them.`,
       { n: local })));
   }
   const enter = elt("button", "btn btn-primary card-enter", t("map.enter", "Open orbit"));
