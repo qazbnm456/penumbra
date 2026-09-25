@@ -1823,3 +1823,14 @@ def test_a_note_cannot_resurrect_a_orbit_deleted_while_it_was_in_flight(client, 
     # ...and a note can still START an orbit, which is the behaviour this endpoint promises.
     assert client.post("/orbits/fresh-by-note/notes", json={"text": "hello"}).status_code == 200
     assert orbit_path("fresh-by-note").exists()
+
+
+def test_a_promotion_says_whether_it_added_a_source_so_undo_never_removes_an_old_one(client):
+    """Promotion is idempotent: filing a node where it already is returns the source it already has.
+    The map's Undo deletes the returned source, so it must know whether this call created it."""
+    node = client.post("/horizon", json={"texts": ["file me twice"]}).json()["nodes"][0]
+    first = client.post(f"/horizon/{node['id']}/promote", json={"orbit_id": "twice", "create": True}).json()
+    again = client.post(f"/horizon/{node['id']}/promote", json={"orbit_id": "twice", "create": False}).json()
+    assert first["appended"] is True
+    assert again["appended"] is False
+    assert again["membership"]["source_id"] == first["membership"]["source_id"]
