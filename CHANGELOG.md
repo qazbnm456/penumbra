@@ -104,6 +104,7 @@ Each entry states what the product does now and why. The reasoning behind each r
 
 #### The desktop app
 
+- The app icon is a character: a round little moon rising from the corner of a night-plum tile, half in soft shadow, which is the penumbra the product is named after, with sleepy eyes and a tiny moon of its own. It replaced a highlighter-stroke glyph nobody could read as the product. The favicon is the same moon.
 - `desktop/` is a Tauri 2 app for macOS 13 or later, Windows and Linux. It bundles a relocatable Python with Penumbra installed and the deno binary, so nothing else needs installing. A relocatable interpreter was chosen over a freezer such as PyInstaller because dspy and litellm import by name at run time. The installers are about 800 MB unpacked, almost all of it the dependency set.
 - The shell starts `serve` on a remembered loopback port with a per-launch token (passed in the URL fragment, and blanked out of the access log wherever a URL must still carry it), shows the web UI in a native window, lets the page receive dropped files, saves downloads, prints with File > Print and opens other sites in the system browser. The web UI gets no IPC (invariant 81). Restarts are serialised and repeated presses fold into one, so a Restart pressed during a start can no longer pair an old token with a new server.
 - If the app is killed rather than quit, the server shuts itself down when its stdin pipe closes; measured before the fix, it stayed up and could keep billing a run nobody could stop.
