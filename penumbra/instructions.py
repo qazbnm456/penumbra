@@ -789,6 +789,12 @@ def validate_before_submit_rule(tool_name: str) -> str:
     (`make_schema_validator` derives it from the output model as `validate_<model name, lowered>`).
     """
     return (
+        # The first sentence is for a model that skips the REPL when the answer looks obvious: a
+        # concept alignment with nothing to merge replied `{"merges": []}` as its first message,
+        # which is the right answer in the wrong channel, and the run failed on the parse.
+        f"You answer only through code. Every reply is your `reasoning` and the `code` to run,\n"
+        f"and the result is what that code passes to `SUBMIT(...)`, even when it is empty or\n"
+        f"obvious. A reply that is the output JSON itself cannot be read, and the run fails.\n"
         f"Before you SUBMIT, validate your draft JSON with the `{tool_name}` tool, and only\n"
         f"submit after it reports success. **Put the SUBMIT in a LATER REPL turn than the call\n"
         f"that validated.** A cell that reads\n"
