@@ -6185,10 +6185,10 @@ textarea::placeholder {
    it without either shouting or hiding. It was tried as a sticky bar at the foot first; a sticky
    bar over a reading column covers a line of prose permanently, and a softened edge only made the
    cut look deliberate. */
+/* Prose with an action at its end, like the capture hint: the sentence wraps as text and the
+   button follows it on the same line. As a flex row the two columns squeezed each other, so the
+   sentence broke early and the button split into "摘要其中 3" over "則". */
 .pending-note {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
   margin: var(--ib-gap-lg) 0 0;
   font-size: var(--text-sm);
   color: var(--text-faint);
@@ -6299,6 +6299,8 @@ textarea::placeholder {
 }
 
 .pending-do {
+  margin-left: var(--space-3);
+  white-space: nowrap;
   border: 0;
   background: none;
   padding: 0;
@@ -6906,13 +6908,18 @@ body[data-view="horizon"] .orbit-picker {
 .view-horizon.is-map .capture-hint,
 .view-horizon.is-map .capture-note,
 .view-horizon.is-map .intake-strip,
-.view-horizon.is-map .pending-note,
 .view-horizon.is-map .distil-error {
   width: 100%;
   max-width: var(--ib-measure);
   margin-left: auto;
   margin-right: auto;
   box-sizing: border-box;
+}
+
+/* On the map the note sits under the legend, so it takes the legend's line and width rather than
+   the capture column's: in that column a three-sentence note broke with one character left over. */
+.view-horizon.is-map .pending-note {
+  margin-top: var(--space-3);
 }
 
 .view-horizon.is-map .find,
