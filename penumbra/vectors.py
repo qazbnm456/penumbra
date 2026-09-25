@@ -161,6 +161,12 @@ def _fetch(spec, part: Path, have: int, done_bytes: int, opener, on_progress, sh
     return have
 
 
+def compared(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> int:
+    """How many captures have a vector, for the settings line."""
+    with _vec_connect(base_dir) as conn:
+        return int(conn.execute("SELECT COUNT(*) FROM node_vectors").fetchone()[0])
+
+
 def remove(base_dir: str | Path = DEFAULT_HORIZON_DIR) -> None:
     """Delete the model and every stored vector. Turning the feature off."""
     folder = model_dir(base_dir)
