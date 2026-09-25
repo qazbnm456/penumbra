@@ -801,6 +801,24 @@ def memberships_for(node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR)
     return [NodeMembership.model_validate(dict(row)) for row in rows]
 
 
+def memberships_for_nodes(
+    node_ids: list[str], *, base_dir: str | Path = DEFAULT_HORIZON_DIR
+) -> dict[str, list[NodeMembership]]:
+    """Every membership of each node in `node_ids`, in one query: what a page of the history list
+    shows beside each capture (which orbits it is in, and since when)."""
+    out: dict[str, list[NodeMembership]] = {node_id: [] for node_id in node_ids}
+    if not node_ids:
+        return out
+    marks = ", ".join("?" for _ in node_ids)
+    with _connect(base_dir) as conn:
+        rows = conn.execute(
+            f"SELECT * FROM memberships WHERE node_id IN ({marks}) ORDER BY promoted_at ASC", node_ids
+        ).fetchall()
+    for row in rows:
+        out[row["node_id"]].append(NodeMembership.model_validate(dict(row)))
+    return out
+
+
 def forget_membership(
     orbit_id: str, source_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR
 ) -> int:

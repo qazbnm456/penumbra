@@ -3701,8 +3701,14 @@ async def list_horizon(
         # startup did not reject. Every other reader of a `_env_int` cap on a request path is
         # already wrapped like this; this one was reached last and got missed.
         raise _misconfigured(exc) from exc
+    filed = await asyncio.to_thread(horizon.memberships_for_nodes, [node.id for node in nodes])
     return {
-        "nodes": [node.model_dump() for node in nodes],
+        # Each node carries the orbits it is in and when it was filed there: the history list shows
+        # them beside every capture, and a query per row would be a request per row.
+        "nodes": [
+            {**node.model_dump(), "orbits": [m.model_dump() for m in filed.get(node.id, [])]}
+            for node in nodes
+        ],
         "total": total,
         #: Invariant 80: what a summary pass WOULD cost, before anyone asks for one.
         "undistilled": undistilled,

@@ -8303,18 +8303,7 @@ function nodeMetaLine(node) {
         });
     bits.push(elt("span", null, size));
   }
-  for (const tag of (node.tags || []).slice(0, 4)) {
-    // The distillation produces tags so a node can be found again; an inert `<span>` makes that a
-    // decoration. Clicking one is the shortest path from "I remember it was about design" to the
-    // three things that were.
-    const button = elt("button", "node-tag", tag);
-    button.type = "button";
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      setHorizonQuery(tag);
-    });
-    bits.push(button);
-  }
+  // Tags are on the chips row under the summary now (`nodeChips`), beside the orbits it is in.
   // Too big to ASK about. The capture is fine and the node is real; what it cannot do is be
   // promoted into an orbit and then answered from, because the assembled corpus has a hard
   // ceiling (invariant 8) six times below the upload cap. Said on the row, before the filing, as a
@@ -8354,6 +8343,12 @@ function renderNode(node, { isNew = false } = {}) {
   const wasOpen = horizonState.open.has(node.id);
   if (wasOpen) row.classList.add("is-open");
 
+  // The history: when, to the minute, in its own column beside a timeline rail.
+  const time = elt("time", "node-time", clockTime(node.created_at));
+  time.dateTime = new Date(node.created_at * 1000).toISOString();
+  time.title = new Date(node.created_at * 1000).toLocaleString(uiLang());
+  row.appendChild(time);
+
   const col = elt("div", "node-col");
 
   // **The disclosure is the DOT, and the prose is selectable.**
@@ -8383,6 +8378,8 @@ function renderNode(node, { isNew = false } = {}) {
   if (headline) head.appendChild(elt("h3", "node-title", headline));
   if (prose) head.appendChild(elt("p", "node-summary", prose));
   head.appendChild(nodeMetaLine(node));
+  const chips = nodeChips(node);
+  if (chips) head.appendChild(chips);
   head.addEventListener("click", (event) => {
     if (event.target.closest("button, a")) return;
     const selection = window.getSelection();
@@ -8410,22 +8407,111 @@ function renderNode(node, { isNew = false } = {}) {
 //: They are also what let the character count go. `189 字` on a three-sentence note was noise: it
 //: is not how anyone finds anything. A size only appears now when it is genuinely a fact about the
 //: thing rather than about the sentence, which is why the threshold is a document, not a note.
+//: "14:32", in the reader's own locale, for the history's time column.
+function clockTime(epochSeconds) {
+  // 24-hour: "上午 03:55" took two lines of a narrow column to say what "03:55" says in one.
+  return new Date(epochSeconds * 1000).toLocaleTimeString(uiLang(), { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+//: "9/25 14:32", for a step on a capture's trail.
+function stampTime(epochSeconds) {
+  const when = new Date(epochSeconds * 1000);
+  return `${when.toLocaleDateString(uiLang(), { month: "numeric", day: "numeric" })} ${clockTime(epochSeconds)}`;
+}
+
+//: Where it is and what it is about, under the summary: each orbit it is in, then up to three tags.
+//: A tag narrows the list to it; an orbit opens the orbit.
+function nodeChips(node) {
+  const orbits = node.orbits || [];
+  const tags = node.tags || [];
+  if (!orbits.length && !tags.length) return null;
+  const row = elt("div", "node-chips");
+  const orbitBySlug = new Map(starMap.orbits.map((o) => [o.slug, o]));
+  orbits.forEach((m) => {
+    const name = orbitTitles.get(m.orbit_id) || t("suggest.anOrbit", "an orbit");
+    const orbit = orbitBySlug.get(m.orbit_id);
+    const chip = elt("button", "node-orbit", name);
+    chip.type = "button";
+    chip.title = t("horizon.filedAt", `Filed ${stampTime(m.promoted_at)}`, { when: stampTime(m.promoted_at) });
+    chip.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (orbit) void enterOrbit(orbit);
+    });
+    row.appendChild(chip);
+  });
+  tags.slice(0, 3).forEach((tag) => {
+    const chip = elt("button", "node-tag", `#${tag}`);
+    chip.type = "button";
+    chip.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setHorizonQuery(tag);
+    });
+    row.appendChild(chip);
+  });
+  if (tags.length > 3) row.appendChild(elt("span", "node-more", `+${tags.length - 3}`));
+  return row;
+}
+
+//: A capture's journey, oldest first: captured, filed into each orbit, and summarised.
+function nodeTrail(node, detail) {
+  const steps = [[node.created_at, t("horizon.trailCaptured", "Captured")]];
+  (detail.orbits || []).forEach((m) => {
+    const name = orbitTitles.get(m.orbit_id) || t("suggest.anOrbit", "an orbit");
+    steps.push([m.promoted_at, t("horizon.trailFiled", `Filed into ${name}`, { name })]);
+  });
+  const current = detail.node || node;
+  if (current.state === "ready") steps.push([current.updated_at, t("horizon.trailSummarised", "Summarised")]);
+  steps.sort((a, b) => a[0] - b[0]);
+  const list = elt("ol", "node-trail");
+  steps.forEach(([when, what]) => {
+    const item = elt("li", "node-trail-step");
+    item.appendChild(elt("time", "node-trail-time", stampTime(when)));
+    item.appendChild(elt("span", "node-trail-what", what));
+    list.appendChild(item);
+  });
+  return list;
+}
+
+//: The full text in the reading window the orbit's sources use, rather than poured into the list.
+async function showNodeReader(node) {
+  const overlay = document.getElementById("source-viewer-overlay");
+  const title = document.getElementById("source-viewer-title");
+  const body = document.getElementById("source-viewer-body");
+  if (overlay.hidden) openModal(overlay);
+  title.textContent = nodeHeadline(node) || originLabel(node.origin);
+  body.textContent = t("cite.loading", "Loading…");
+  try {
+    const got = await api(`/horizon/${encodeURIComponent(node.id)}/source`);
+    body.textContent = "";
+    (got.source.blocks || []).forEach((block) => {
+      const section = elt("div", "source-block");
+      section.appendChild(elt("div", "source-block-locator", block.locator));
+      section.appendChild(renderTextWithOptionalHighlight(block.text, null));
+      body.appendChild(section);
+    });
+  } catch (err) {
+    body.textContent = "";
+    body.appendChild(failureBlock(t("sources.viewFailed", "Could not open this source"), err.message));
+  }
+}
+
 function dayLabel(epochSeconds) {
   const when = new Date(epochSeconds * 1000);
   const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const days = Math.round((midnight(new Date()) - midnight(when)) / 86400000);
-  if (days === 0) return t("horizon.today", "Today");
-  if (days === 1) return t("horizon.yesterday", "Yesterday");
-  if (days < 7) return t("horizon.daysAgo", `${days} days ago`, { n: days });
-  // The YEAR, once the date leaves the current one. Datelines are the only time marker here - they
-  // are what let the per-row timestamp go - and without a year the stream read 今天 / 3 天前 /
-  // 9月13日 / 8月13日, where the last is from the year before and appears out of order.
+  // The YEAR once the date leaves the current one, and the date itself always: a history is read
+  // by date, and "2 days ago" alone had to be counted back from today.
   const sameYear = when.getFullYear() === new Date().getFullYear();
-  return when.toLocaleDateString(uiLang(), {
+  const date = when.toLocaleDateString(uiLang(), {
     year: sameYear ? undefined : "numeric",
     month: "long",
     day: "numeric",
+    weekday: "short",
   });
+  if (days === 0) return `${t("horizon.today", "Today")} \u00b7 ${date}`;
+  if (days === 1) return `${t("horizon.yesterday", "Yesterday")} \u00b7 ${date}`;
+  if (days < 7) return `${t("horizon.daysAgo", `${days} days ago`, { n: days })} \u00b7 ${date}`;
+  return date;
 }
 
 function updateStreamFoot() {
@@ -8620,6 +8706,8 @@ function renderStream({ append = false, newIds = new Set() } = {}) {
 
 async function refreshHorizon({ reset = false, newIds = new Set() } = {}) {
   if (reset) horizonState.offset = 0;
+  // The list names the orbits each capture is in, and only the map used to load their titles.
+  await ensureOrbitTitles();
   // The list's refresh is also the map's: a capture landing, a node finishing its parse or a pass
   // summarising something all change what the map draws. At most every few seconds, because this
   // runs on the Horizon's busy poll.
@@ -8825,33 +8913,18 @@ async function fillNodeBody(node, row, inner) {
       nodeErrorBlock(node.error || t("horizon.failed", "could not read it"))
     );
   } else {
-    let source;
-    try {
-      source = await api(`/horizon/${encodeURIComponent(node.id)}/source`);
-    } catch (err) {
-      inner.appendChild(nodeErrorBlock(t("horizon.openFailed", `${err.message}`, {
-        message: err.message,
-      })));
-    }
-    if (source) {
-      const text = (source.source.blocks || []).map((block) => block.text).join("\n\n");
-      //: **The mono face is for a SCAN, not for everything.** The argument that put it here is real
-      //: — a two-column OCR capture loses its alignment in a proportional face — and it was applied
-      //: to every kind, so an ordinary captured article was served as a terminal dump: 13px
-      //: `ui-monospace` with `overflow-wrap: normal`, which on a page containing a 520-character URL
-      //: measured `scrollWidth 2560` against `clientWidth 468` and became a horizontal scroller.
-      //: Chrome makes that focusable by keyboard; **WKWebView does not**, so on the planned Tauri
-      //: macOS shell the text would be unreachable without a mouse.
-      //:
-      //: `DESIGN.md` §4 names "the Horizon's node titles, summaries AND full text" as reading-face
-      //: surfaces. So: the reading face and wrapping for what is prose, the mono `<pre>` kept for
-      //: the kind whose alignment is the point.
-      const scanned = node.kind === "pdf";
-      const block = elt(scanned ? "pre" : "div", "node-full", text);
-      if (!scanned) block.classList.add("is-prose");
-      inner.appendChild(block);
+    const entities = (detail.node && detail.node.entities) || node.entities || [];
+    if (entities.length) {
+      inner.appendChild(elt("h4", "node-section", t("map.sectionNames", "What it talks about")));
+      const names = elt("div", "node-entities");
+      entities.forEach((name) => names.appendChild(elt("span", "node-entity", name)));
+      inner.appendChild(names);
     }
   }
+  // Its journey, and the full text one press away in the reading window rather than poured into
+  // the row: a long document inside the list pushed every later capture off the screen.
+  inner.appendChild(elt("h4", "node-section", t("horizon.trail", "Trail")));
+  inner.appendChild(nodeTrail(node, detail));
   inner.appendChild(await nodeActions(node, detail));
 }
 
@@ -8906,6 +8979,10 @@ async function nodeActions(node, detail) {
     picker.appendChild(fresh);
     picker.addEventListener("change", () => promoteNode(node, picker));
     main.appendChild(picker);
+    const read = elt("button", "btn", t("map.readInList", "Read it"));
+    read.type = "button";
+    read.addEventListener("click", () => void showNodeReader(node));
+    main.appendChild(read);
   } else {
     // Say WHY, rather than leaving a gap where a control was. A failed node still offers Try again
     // and Forget; this is the one action that is genuinely unavailable.
@@ -8932,11 +9009,8 @@ async function nodeActions(node, detail) {
       bookLabels.get(m.orbit_id) ||
       t("horizon.filedInGone", "a deleted orbit")
   );
-  if (filed.length) {
-    main.appendChild(
-      elt("span", "node-filed", t("horizon.filedIn", `In ${filed.join(", ")}`, { where: filed.join(", ") }))
-    );
-  }
+  // Where it is filed shows on the card's chips and in the trail above, not a third time here.
+  void filed;
 
   actions.appendChild(main);
 
