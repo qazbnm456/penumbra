@@ -7863,33 +7863,8 @@ button.card-chip:hover {
   gap: var(--space-2);
 }
 
-/* The capture field's own box, so writing a question feels like writing a capture. */
-.ask-h-box {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: var(--ib-gap);
-  padding: var(--ib-gap);
-  background: var(--bg);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-}
-
-.ask-h-box:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--highlight-wash);
-}
-
+/* The dock's field is the composer's textarea; only its height ceiling is its own. */
 .ask-h-input {
-  font-family: var(--serif);
-  font-optical-sizing: auto;
-  font-size: var(--text-xl);
-  line-height: 1.6;
-  color: var(--text);
-  background: transparent;
-  border: 0;
-  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
-  resize: none;
   max-height: 30vh;
 }
 
@@ -7902,32 +7877,8 @@ button.card-chip:hover {
   box-shadow: none;
 }
 
-.ask-h-go {
-  display: grid;
-  place-items: center;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  background: var(--accent);
-  color: var(--bg);
-  font-size: var(--text-lg);
-  cursor: pointer;
-  transition-property: transform, background-color;
-  transition-duration: 120ms;
-  transition-timing-function: var(--ib-ease);
-}
 
-.ask-h-go:disabled {
-  background: var(--surface-2);
-  border-color: var(--border);
-  color: var(--text-dim);
-  cursor: default;
-}
 
-.ask-h-go:not(:disabled):active {
-  transform: scale(0.94);
-}
 
 .ask-h-hint {
   margin: 0;
