@@ -94,7 +94,23 @@ def install_app(python: Path, home: Path) -> None:
     # WITH uv's cache: every dependency is already there from the development environment, and a
     # `--no-cache` install re-downloaded all of them on every build, which on a flaky connection
     # stalled a build for 38 minutes at one package out of 33.
-    run("uv", "pip", "install", "--python", str(python), f"{ROOT}[api]")
+    #
+    # **The versions the tests ran against, and no others.** Installing `penumbra[api]` resolved the
+    # dependencies afresh, so the app shipped whatever was newest on build day rather than what
+    # `uv.lock` pins and CI tests: it picked up dspy 3.4.0, which rlm-harness could not drive, and
+    # every run in the app failed while the whole suite passed. The lock is exported and installed
+    # exactly (`pip sync`), with its hashes checked, then Penumbra itself goes in without letting
+    # it re-resolve anything. `--locked` refuses a lock that no longer matches `pyproject.toml`,
+    # rather than quietly shipping a stale set. `--no-default-groups`, not `--no-dev`: the dev venv
+    # also syncs a `subscription-sdk` group by default, and `--no-dev` left its 262 MB in the app.
+    with tempfile.TemporaryDirectory() as scratch:
+        pinned = Path(scratch) / "requirements.txt"
+        run(
+            "uv", "export", "--project", str(ROOT), "--locked", "--no-default-groups", "--extra", "api",
+            "--no-emit-project", "--format", "requirements-txt", "--output-file", str(pinned),
+        )
+        run("uv", "pip", "sync", "--python", str(python), str(pinned))
+    run("uv", "pip", "install", "--python", str(python), "--no-deps", str(ROOT))
     # Precompiled bytecode: the first launch imports numpy, onnxruntime and dspy, and compiling
     # them on that launch is seconds the reader spends watching a splash screen. UNCHECKED hashes,
     # not the default timestamps: a .deb, an AppImage or an MSI install does not keep source
