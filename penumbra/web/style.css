@@ -323,8 +323,7 @@ body {
    one place - the expanded node's full text - because the Horizon's own titles and summaries take the
    face directly from `.node-title` / `.node-summary` rather than through a shared hook. The comment
    here used to say the class was unused and waiting for "a dedicated long-form reading surface";
-   that surface is the river, and it arrived. */
-.reading-face {
+   that surface is the river {
   font-family: var(--serif);
   /* Literata's optical-size axis, driven from the rendered size: the same file draws a display cut
      at heading sizes and a text cut at reading sizes. It is the reason this face is worth its
@@ -6001,12 +6000,8 @@ textarea::placeholder {
 
 /* Whitespace-significant text in a PROPORTIONAL serif loses the alignment it was captured with:
    RFC 2324's two-column layout came apart in a row whose whole job is to hand back what was kept.
-   The reading face is right for extracted prose and wrong for a `<pre>`, which by definition is
-   text whose spacing carries meaning. */
-/* Mono only where alignment IS the content — a scanned two-column page. `.is-prose` is everything
-   else, which is most captures: see the comment at the call site for the horizontal scroller the
-   blanket rule produced on a page carrying a long URL, and why that is worse under WKWebView. */
-.node-full.is-prose {
+   The reading face is right for extracted prose and wrong for a `<pre>`, which is most captures: see the comment at the call site for the horizontal scroller the
+   blanket rule produced on a page carrying a long URL {
   font-family: var(--serif);
   font-optical-sizing: auto;
   /* A 520-character URL has no break opportunity of its own; without this it sets the block's
@@ -8725,4 +8720,179 @@ body:not([data-view="horizon"]) .capture-dock {
   .capture-dock:not(.is-open) .capture-dock-grip {
     animation: none;
   }
+}
+
+/* --- The history list ---------------------------------------------------------------------------
+   The list is a history now: each capture's time to the minute in a column of its own, a timeline
+   rail with its state dot, and a card with the title, two lines of summary, its source and size,
+   and the orbits it is in and its tags as chips. Open, the card shows what it talks about and its
+   trail; the full text opens in the reading window rather than inside the list. */
+.node {
+  position: relative;
+  grid-template-columns: 3.4rem 0.85rem minmax(0, 1fr);
+  gap: 0 var(--space-4);
+  padding: var(--space-3) 0;
+  border-top: 0;
+}
+
+.node:hover {
+  background: none;
+}
+
+.node::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(3.4rem + var(--space-4) + 0.425rem);
+  width: 1px;
+  background: var(--border);
+}
+
+.node-time {
+  padding-top: var(--space-5);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  text-align: right;
+}
+
+.node-open {
+  position: relative;
+  z-index: 1;
+}
+
+.node-dot {
+  margin-top: var(--space-6);
+  box-shadow: 0 0 0 3px var(--bg);
+}
+
+.node-col {
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.node:hover .node-col,
+.node.is-open .node-col {
+  background: var(--surface-1);
+  border-color: var(--border);
+}
+
+.node-title {
+  font-size: var(--text-xl);
+}
+
+.node:not(.is-open) .node-summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.node-summary {
+  font-size: var(--text-md);
+  line-height: 1.6;
+  margin: var(--space-2) 0 0;
+}
+
+.node-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.node-orbit,
+.node-chips .node-tag {
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  padding: 0 var(--space-3);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.node-orbit {
+  color: var(--accent-text);
+  background: color-mix(in oklch, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in oklch, var(--accent) 35%, transparent);
+}
+
+.node-orbit::before {
+  content: "\25D0\00a0";
+}
+
+.node-chips .node-tag {
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+}
+
+.node-orbit:hover,
+.node-chips .node-tag:hover {
+  border-color: var(--accent-dim);
+}
+
+.node-more {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  align-self: center;
+}
+
+.node-section {
+  margin: var(--space-5) 0 var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.node-entities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.node-entity {
+  font-size: var(--text-sm);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.node-trail {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 var(--space-4);
+  border-left: 1px dashed var(--border-strong);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.node-trail-step {
+  display: flex;
+  gap: var(--space-4);
+  align-items: baseline;
+  font-size: var(--text-sm);
+}
+
+.node-trail-time {
+  flex: none;
+  width: 6.5rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.node-trail-what {
+  color: var(--text-dim);
+}
+
+.node-actions .btn {
+  font-size: var(--text-sm);
+  padding: var(--space-2) var(--space-5);
 }

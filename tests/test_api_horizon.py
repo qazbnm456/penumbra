@@ -1895,3 +1895,11 @@ def test_a_move_that_would_orphan_citations_asks_first(client):
     assert len(client.get("/orbits/cited").json()["sources"]) == 1, "nothing moved before the answer"
     done = client.post(f"/horizon/{node['id']}/move", json={**body, "confirm": True})
     assert done.status_code == 200 and done.json()["removed"] == sid
+
+
+def test_the_listing_says_which_orbits_each_capture_is_in(client):
+    node = client.post("/horizon", json={"texts": ["listed with its orbit"]}).json()["nodes"][0]
+    client.post(f"/horizon/{node['id']}/promote", json={"orbit_id": "shown", "create": True})
+    (listed,) = [n for n in client.get("/horizon").json()["nodes"] if n["id"] == node["id"]]
+    assert [m["orbit_id"] for m in listed["orbits"]] == ["shown"]
+    assert listed["orbits"][0]["promoted_at"] > 0
