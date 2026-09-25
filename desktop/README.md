@@ -64,4 +64,4 @@ With an Apple Developer account, set `bundle.macOS.signingIdentity` to the Devel
 
 ## Regenerating the icon
 
-`desktop/icon.png` is drawn by `scripts/make_icon.py` with the standard library: the citation's highlighter stroke on a copper tile. After changing it, run `cargo tauri icon ../icon.png` in `desktop/src-tauri` and delete the `android` and `ios` folders it adds.
+`desktop/icon.png` is drawn by `scripts/make_icon.py` with the standard library: a round little moon rising from the lower right of a night-plum tile, half in soft shadow (the penumbra the product is named after), with sleepy eyes, a small smile and a tiny moon of its own. It follows the rules of a mascot mark: a few large rounded shapes, one silhouette emerging from a corner and filling most of the tile, three colours and nothing too thin for 32px. `penumbra/web/favicon.svg` is the same moon at tab size, with only its eyes. After changing it, run `cargo tauri icon ../icon.png` in `desktop/src-tauri` and delete the `android` and `ios` folders it adds.
