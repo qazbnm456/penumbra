@@ -1,6 +1,6 @@
-# penumbra in a container, which exists for ONE reason: two of its dependencies are system
-# binaries that no Python manifest can express, so `pip install penumbra` is never sufficient
-# on its own.
+# Penumbra in a container, for a machine with no desktop (the desktop app is the main surface). It
+# exists for ONE reason: two of its dependencies are system binaries that no Python manifest can
+# express, so installing the Python package is never sufficient on its own.
 #
 #   deno       every live run executes in a Deno-hosted pyodide sandbox (AGENTS.md invariant 9),
 #              and `PN_INTERPRETER` refuses any other value rather than silently falling back

@@ -2,24 +2,40 @@
 
 Penumbra is a personal knowledge hub that runs on your own machine. You throw things at it (links, text, PDFs including scanned ones, YouTube captions), it keeps them and reads them, and you ask questions grounded in them with citations you can check against the original text. The reading and answering is done by an RLM ([`rlm-harness`](https://github.com/qazbnm456/rlm-harness)).
 
-**Everything crosses the Horizon first.** Throw anything in, a link, a thought or a dropped file, without deciding where it goes. Each capture lands at once as a *node* in one reverse-chronological stream, whether or not it could be parsed. A separate, opt-in pass distils each node into a title, a summary and tags, so you can find it again months later by describing it. When a handful of nodes turn out to belong together, you gather them into an **Orbit**, and that is where the grounded chat, the Guide and the Audio Overview live. Two tiers: a Horizon you never have to tidy, and Orbits you shape on purpose.
+**Everything crosses the Horizon first.** Throw anything in, a link, a thought or a dropped file, without deciding where it goes. Each capture lands at once as a *node*, whether or not it could be parsed, and is also filed into a first orbit unless you turn that off in settings. The Horizon opens as a star map: the Horizon is the black hole at the centre, each orbit is a planet and its captures are its moons. A separate, opt-in pass distils each node into a title, a summary, tags and entities, so you can find it again months later by describing it. Nodes that belong together live in an **Orbit**, which opens as a knowledge graph of the entities its captures name, and is where the grounded chat, the Guide and the Audio Overview live.
 
 The project was called rlm-notebook. Existing data folders, the desktop app's data and its configuration move to the new names on the first start (see **Changed** in `CHANGELOG.md`).
 
 ## What it does
 
-- **Ingestion** of text, web pages, PDFs and YouTube captions, with local hybrid OCR for scanned pages. A URL is sniffed, so a link to a PDF is read as a PDF.
-- **Grounded chat** in a persistent, multi-turn orbit. Every citation is re-verified against the orbit's current sources.
-- **Notes** that stay uncited until you promote one into a real, citable source.
-- **An Orbit Guide**: summary, FAQ, timeline and key insight.
-- **An Audio Overview**: a two-host podcast script, synthesised speech and a subtitle-style transcript.
+- **Capture** into the Horizon by pasting, uploading, dropping a file anywhere on the window, or dropping it on the island in the notch. Text, web pages, PDFs (with local OCR for scanned pages) and YouTube captions are read. A capture always lands, and a failed one keeps its reason.
+- **See how it connects**: a star map of your orbits, a knowledge graph per orbit with tags as lenses, and, once you download the local model, lines between captures with similar content.
+- **Ask** from the dock at the bottom edge, over everything, a tag, an orbit or an entity. The first press shows for free what the question would read; only the second one runs the model. Inside an orbit, the chat is persistent and multi-turn, and every citation is re-verified against the orbit's current sources.
+- **Summaries, when you turn them on**: a title, summary, tags and entities per capture, a long document read in sections, entity names in two languages merged into one, and suggestions for which orbit a capture belongs in. Each summary is a model call on your key, so it is off by default.
+- **Notes** that stay uncited until you promote one into a real, citable source, **an Orbit Guide** (summary, FAQ, timeline and key insight) and **an Audio Overview** (a two-host podcast with a subtitle-style transcript).
 - **A way out**: Copy as Markdown, a whole-orbit Export, and a print layout that appends the reference list.
 
-The web UI reaches all of it, and the HTTP API runs each `ask`, `guide` and `audio` request in its own cancellable subprocess. The command line reaches everything except the Horizon and orbit management. An orbit names itself, the model writes in the reader's language rather than the documents', and a model role can run on a Claude Pro/Max subscription instead of an API key.
+The desktop app's workspace is a web UI, and `penumbra serve` serves the same UI from a source install. The HTTP API behind it runs each `ask`, `guide` and `audio` request in its own cancellable subprocess. The command line works on orbits only. An orbit names itself, and the model writes in the reader's language rather than the documents'.
 
 `AGENTS.md` indexes the invariants the project is built against, one line each, and `docs/invariants/<n>-<slug>.md` holds the argument and the traps behind each one. Those files are the authoritative record; this one is the tour.
 
-## Install and run
+## The desktop app
+
+The desktop app is how Penumbra is meant to be used. At rest it has no window and no Dock icon: its only presence is the island, a black shape in the MacBook notch that swallows whatever you drop on it into the Horizon. Clicking it opens the workspace. It bundles its own Python and deno, so nothing else needs installing to run it.
+
+There is no published installer yet, so you build it yourself on a Mac with macOS 13 or later. You need Rust, [uv](https://docs.astral.sh/uv/) and the Tauri CLI (`cargo install tauri-cli --version "^2" --locked`):
+
+```bash
+git clone https://github.com/qazbnm456/penumbra && cd penumbra
+uv run python desktop/scripts/build_runtime.py   # the bundled Python, about 800 MB
+cd desktop/src-tauri && cargo tauri build        # Penumbra.app and a .dmg in target/release/bundle/
+```
+
+The app carries an ad-hoc signature, not a developer identity, so it runs on the Mac that built it, and another Mac asks once in System Settings > Privacy & Security. The same code builds for Windows and Linux, but those builds have not been run yet. `desktop/README.md` covers where data lives, signing and developing the shell.
+
+**To configure a model**, choose File > Open Configuration File… in the workspace, or right-click the island. It opens `penumbra.env` in the app's data folder, a template that lists every setting an error message can name. Set `PN_MAIN_MODEL` and `PN_API_KEY`, then choose File > Restart Server. Capturing, the star map, search and local relations work without a model; asking, summaries, the Guide and the podcast need one. The app does not include the Claude subscription path or the Chatterbox voice, which need extras only a source install has.
+
+## Running from source
 
 Penumbra is an application, not a library. Nothing here is meant to be imported into your own code, and installing it into a shared environment would bring numpy, an ONNX runtime and a PDF engine along. Give it its own environment:
 
@@ -40,21 +56,17 @@ brew install tesseract    # optional. The OCR fallback for scanned PDFs. RapidOC
                           # ships as a normal dependency, so this only widens coverage
 ```
 
-Then configure a model in the environment. Nothing loads `.env` automatically:
+From a source install, the model is configured in the environment, and nothing loads `.env` automatically. `.env.example` lists every setting:
 
 ```bash
 export PN_MAIN_MODEL=...   # and PN_API_KEY, or use the subscription path below
-penumbra ask "what does it say about X?" --source ./paper.pdf
-penumbra serve         # the HTTP API and the web UI, on http://127.0.0.1:8000/
+penumbra serve             # the web UI and the HTTP API, on http://127.0.0.1:8000/
+penumbra ask "what does it say about X?" --source ./paper.pdf   # the CLI, orbits only
 ```
-
-### As a desktop app
-
-`desktop/` builds a native app for macOS, Windows and Linux that bundles its own Python and deno, so nothing else needs installing. Model settings go in a configuration file its File menu opens. See `desktop/README.md` for building, where data lives and the current state of signing.
 
 ### In a container
 
-The image carries deno and tesseract, so it is the one install that is complete on its own:
+For a machine with no desktop, the image carries deno and tesseract, so it is the one source install that is complete on its own:
 
 ```bash
 docker build -t penumbra .
@@ -67,7 +79,7 @@ docker run --rm -p 127.0.0.1:8000:8000 -v "$PWD/data:/data" --env-file .env penu
 
 ```bash
 git clone https://github.com/qazbnm456/penumbra && cd penumbra
-uv sync                       # includes the local OCR backends scanned PDFs need; no extra flag
+uv sync --extra api           # includes the local OCR backends scanned PDFs need
 cp .env.example .env          # then fill in PN_MAIN_MODEL / PN_API_KEY
 set -a; . ./.env; set +a      # nothing loads .env automatically
 brew install deno             # the sandbox a live run executes in
@@ -75,7 +87,7 @@ brew install deno             # the sandbox a live run executes in
 
 ### On a Claude subscription
 
-Instead of an API key, a role can run on your **Claude Pro/Max subscription**. Prefix its model with `claude-agent-sdk/`:
+From a source install, a role can run on your **Claude Pro/Max subscription** instead of an API key. Prefix its model with `claude-agent-sdk/`:
 
 ```bash
 uv sync --extra api --extra subscription   # plus the Claude Code CLI, installed and logged in
@@ -144,7 +156,7 @@ penumbra serve                      # binds 127.0.0.1:8000, loopback on purpose
 penumbra serve --host 0.0.0.0       # allowed, with a warning, for the reasons above
 ```
 
-`serve` binds loopback by default in code, not by convention: the token and the binding are the two layers of access control, and neither should depend on someone reading a paragraph. It starts without a model configured, on purpose, because the settings page exists for exactly that operator. From a source checkout, run `uv sync --extra api` and then `uv run penumbra serve`.
+`serve` binds loopback by default in code, not by convention: the token and the binding are the two layers of access control, and neither should depend on someone reading a paragraph. It starts without a model configured, on purpose: capture and browsing work without one, and a run that needs a model says which setting is missing and where it lives. From a source checkout, run `uv sync --extra api` and then `uv run penumbra serve`.
 
 ```bash
 # Every call below needs the token. Export it once to keep the examples readable.
@@ -168,8 +180,8 @@ curl -X POST localhost:8000/horizon/nd-0123456789abcdef/promote -H "Content-Type
     -d '{"orbit_id": "research"}'                          # Tier 0 -> Tier 1
 curl -X DELETE localhost:8000/horizon/nd-0123456789abcdef
 
-# TIER 1: orbits. "sources" takes URLs only here, never local paths (invariant 26); use the CLI
-# for a local file. The Content-Type header is required: a POST body without it is rejected with
+# TIER 1: orbits. "sources" takes URLs only here, never local paths (invariant 26); upload a
+# local file instead (below). The Content-Type header is required: a POST body without it is rejected with
 # a 422. The Authorization header is left out from here on for readability; add it to every call.
 curl -X POST localhost:8000/orbits/research/sources -H "Content-Type: application/json" \
     -d '{"sources": ["https://example.com/article"]}'
@@ -214,33 +226,35 @@ Every `ask` and `guide` request runs its `RLMTask` in its own isolated, killable
 
 Three endpoints return far more than metadata and deserve care: the trace stream, the citation-turn lookup and `GET .../sources/{source_id}` can all surface a source's full text. File upload (`.pdf`, `.txt`, `.md`, capped by `PN_MAX_UPLOAD_BYTES`, 50MB by default) accepts only bytes the caller already has and never a local path, so it keeps the path ban that `sources` enforces. See `api.py`'s module docstring, and invariants 20 to 47 and 70 to 72 in `AGENTS.md` for the API and web UI rules.
 
-**Behind a fake-IP proxy or split-DNS VPN?** Clash, Mihomo and Surge resolve every public hostname into a reserved range (by default `198.18.0.0/16`), so the SSRF guard refuses it and every web or YouTube ingestion fails with "resolves to a disallowed address". Set `PN_FETCH_ALLOW_CIDRS=198.18.0.0/16`, or whatever range your resolver actually hands out. A value that would cover loopback, cloud metadata or RFC 1918 addresses is refused outright (invariant 76).
+**Behind a fake-IP proxy or split-DNS VPN?** Clash, Mihomo and Surge resolve every public hostname into a reserved range (Clash defaults to `198.18.0.0/16`, Surge to `198.18.0.0/15`), so the SSRF guard refuses it and every web or YouTube ingestion fails with "resolves to a disallowed address". Set `PN_FETCH_ALLOW_CIDRS=198.18.0.0/15`, which covers both, or whatever range your resolver actually hands out. A value that would cover loopback, cloud metadata or RFC 1918 addresses is refused outright (invariant 76).
 
 Every write to an orbit (a source, a note, a chat turn) re-reads the orbit from disk under a per-orbit lock and applies only its own change, so a source added while a question is being answered survives when that answer is saved. Slow work such as ingestion and the model run happens outside the lock. Trace files under `traces/` are pruned by policy (`PN_TRACE_RETENTION_DAYS`, `PN_MAX_TRACE_FILES`), and an in-flight run's trace and anything written in the last hour are never touched.
 
 ## Web UI
 
-Once `penumbra serve` is running, open the address uvicorn prints with `?token=<the token penumbra printed>` appended. The page stores the token and removes it from the address bar. `serve` prints the token rather than a full URL on purpose: an address announced before the port is bound could be one an occupied port then fails to serve, so uvicorn prints the address once it is true.
+In the desktop app, the workspace window is the web UI, already signed in. From a source install, once `penumbra serve` is running, open the address uvicorn prints with `?token=<the token penumbra printed>` appended. The page stores the token and removes it from the address bar. `serve` prints the token rather than a full URL on purpose: an address announced before the port is bound could be one an occupied port then fails to serve, so uvicorn prints the address once it is true.
 
-The first screen is the **Horizon**: a capture field, one reverse-chronological stream of everything you have captured, your orbits in a rail on the left, and a search box. Search reads the distilled titles, summaries, tags and entities as well as the origin, since the URL is often the one word you remember. Several words must all match, and a query with no spaces (such as Chinese) is matched as one substring, which is the only correct behaviour for a script without word boundaries. A row opens in place.
+The first screen is the **Horizon**, shown as a star map: the Horizon at the centre with the captures filed nowhere circling it, each orbit a planet whose moons are its captures (copper once summarised, grey before), rings closer to the centre for more recent activity, and a dashed line between two orbits whose captures name the same entity. A toggle in the header switches to a list: one reverse-chronological stream with a search box. Search reads the distilled titles, summaries, tags and entities as well as the origin, since the URL is often the one word you remember. Several words must all match, and a query with no spaces (such as Chinese) is matched as one substring, which is the only correct behaviour for a script without word boundaries. Your orbits are in a rail on the left.
 
-Opening an orbit brings you to the second screen: sources (URL, pasted text or file upload), grounded chat, a Studio with the overview, Guide tabs and the podcast player, notes, and a live ticker showing what the model is doing. The address bar follows you, so an orbit can be bookmarked and Back returns to the Horizon. In a narrow window or at high zoom, the three areas become Sources, Chat and Studio tabs shown one at a time. There is no build step: FastAPI serves the files straight out of `penumbra/web/`.
+Opening an orbit shows its **knowledge graph**: the entities its captures name, joined when they appear together, with its tags as lenses along the top. The same toggle switches to three columns: sources (URL, pasted text or file upload), grounded chat, and a Studio with the overview, Guide tabs and the podcast player, plus notes and a live ticker showing what the model is doing. An empty orbit opens on the columns. The address bar follows you, so an orbit can be bookmarked and Back returns to the Horizon. There is no build step: FastAPI serves the files straight out of `penumbra/web/`.
+
+**The ask dock** rests as a grip at the bottom edge of the star map, the list and the graph, and slides up when the pointer nears it. Its scope follows what is on screen: everything, a tag lens, a planet, or an entity or tag inside the open orbit. An orbit scope asks in that orbit's conversation; every other scope is a Horizon ask, kept in its own history.
 
 Clicking a citation in an answer lights up its entry in the References panel, which shows the number, the source, a provenance chip, how often it is cited and the passage with the cited words marked. Clicking a row in Sources opens the full original text. This is a transparency mechanism and never claims more faithfulness than `citations.py` checks. Any answer can be saved as a note, and any note can later be promoted into a citable source, so an orbit deepens as you read, write notes and ask again. A generated podcast plays in the page and can be downloaded, with a subtitle-style transcript: each line has a timecode, clicking a line seeks to it, and the line being spoken is highlighted.
 
 Work leaves the product three ways, each carrying the same numbered references the panel shows, with an unverified citation labelled as such. **Copy** on any answer, the overview or a Guide tab puts Markdown on the clipboard. **Export** above the chat downloads the whole orbit (sources, overview, conversation and notes) as one `.md` file. Printing (Cmd/Ctrl+P) drops the application chrome and appends the reference list the printed numbers point to.
 
-The ⚙ settings page holds the interface language, the output language, the two podcast voices and whether new captures are summarised automatically. It holds no keys and no safety bounds, which is the line invariant 41 draws. Summarising is off by default and every summary is a model call on your own key, so importing two hundred bookmarks costs nothing until you turn it on.
+The ⚙ settings page holds the interface language, local relations (downloading or deleting the embedding model), the output language, the two podcast voices, whether new captures are summarised automatically, and where new captures land. It holds no keys and no safety bounds, which is the line invariant 41 draws; in the desktop app those are in the configuration file. Summarising is off by default and every summary is a model call on your own key, so importing two hundred bookmarks costs nothing until you turn it on.
 
 Every run shows that it is running, with elapsed time and a Stop, and the Trajectory drawer shows where its reasoning went: each planner turn in the model's own words, a tool timeline scaled to real time, the token budget, and what the validator rejected before accepting the answer. See `penumbra/web/DESIGN.md`, and invariants 29 to 58 and 70 to 72 in `AGENTS.md`.
 
 ## What this is not (yet)
 
-- There is no LLM configuration beyond what `rlm-harness`'s own environment variables provide.
+- There is no in-app place to enter a model or a key. Model settings are the `PN_*` variables, in the desktop app's configuration file or your environment; `rlm-harness`'s own `RLM_*` variables are not read.
 - There is no Video Overview, no ingestion of uploaded audio or video files, and no audio transcription. YouTube captions are supported, but only captions.
-- There is no rubric, eval or RL-export member, unlike this project's sibling tools.
+- There is no browser extension, so every capture is a paste, a drop or an upload.
 - There are no accounts and no authorization on the HTTP API. One shared token authenticates the app, and everyone who holds it has full access.
-- The desktop installers are not signed with a developer identity yet (see `desktop/README.md`).
+- There is no published installer, and the desktop app is not signed with a developer identity yet (see `desktop/README.md`).
 
 ## Licensing
 
