@@ -413,36 +413,38 @@ body[data-result="bad"] .accretion {
 
 /* --- the pen and the note field ---------------------------------------------------------------- */
 
-/* The pen sits at the hover shape's lower right, out of the glyph's way, and only while hovering. */
+/* The pen is drawn in the glyph's own language: no chip, a thin line in the arc track's grey, level
+   with the ring's centre on the right. A filled grey button in the corner read as a system control
+   pasted onto the shape. Pointed at, it turns copper and tilts as if about to write; its hit area
+   is larger than the line. */
 .pen {
   position: absolute;
-  right: 12px;
-  bottom: 10px;
-  width: 24px;
-  height: 24px;
+  right: 14px;
+  top: calc(var(--inset, 0px) + (100% - var(--inset, 0px)) / 2 - 16px);
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 50%;
-  background: oklch(22% 0.01 75);
-  color: oklch(70% 0.02 75);
+  background: none;
+  color: oklch(46% 0.012 75);
   cursor: pointer;
   opacity: 0;
-  transform: scale(0.6);
+  transform: translateX(-6px);
   pointer-events: none;
-  transition: opacity 180ms ease, transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1), background-color 160ms ease,
-    color 160ms ease;
+  transition: opacity 180ms ease, transform 260ms var(--grow), color 160ms ease;
 }
 
 .pen svg {
-  width: 13px;
-  height: 13px;
+  width: 17px;
+  height: 17px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.4;
+  stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
+  transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 body[data-state="hover"] .pen {
@@ -453,8 +455,11 @@ body[data-state="hover"] .pen {
 }
 
 .pen:hover {
-  background: var(--copper-deep);
-  color: #fff4e6;
+  color: var(--copper);
+}
+
+.pen:hover svg {
+  transform: rotate(-14deg) translate(-1px, 1px);
 }
 
 /* The field takes no room until the island is one. */
