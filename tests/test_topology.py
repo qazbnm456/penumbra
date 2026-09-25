@@ -131,7 +131,9 @@ def test_each_drawn_moon_and_loose_dot_carries_a_name_newest_first():
     found = topology.star_map(base_dir=BASE)
     (orbit,) = found["orbits"]
     assert [m["title"] for m in orbit["moons"]] == ["Newer", "Older"]
-    assert orbit["moons"][0] == {"id": second, "title": "Newer", "state": "ready_undistilled"}
+    assert orbit["moons"][0] == {
+        "id": second, "title": "Newer", "state": "ready_undistilled", "orbits": ["sleep"],
+    }
     assert [i["title"] for i in found["loose"]["items"]] == ["Loose one"]
 
 
@@ -141,3 +143,11 @@ def test_the_named_moons_are_capped_at_what_the_map_draws():
     (orbit,) = topology.star_map(base_dir=BASE)["orbits"]
     assert orbit["captures"] == topology.MAX_MOONS + 3
     assert len(orbit["moons"]) == topology.MAX_MOONS
+
+
+def test_a_pasted_capture_is_named_by_its_words_not_its_origin_key():
+    node_id = horizon.node_id_for("pasted:some thought worth keeping #1a2b3c4d")
+    horizon.add_pending_node("pasted:some thought worth keeping #1a2b3c4d", "text", base_dir=BASE)
+    horizon.update_node(node_id, base_dir=BASE, state="ready_undistilled")
+    (item,) = topology.star_map(base_dir=BASE)["loose"]["items"]
+    assert item["title"] == "some thought worth keeping"

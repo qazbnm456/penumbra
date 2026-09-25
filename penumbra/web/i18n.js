@@ -600,6 +600,7 @@ const STRINGS = {
     "map.loading": "載入中…",
     "map.filedIn": "在「{where}」裡",
     "map.readInList": "閱讀全文",
+    "map.notInList": "這則收錄在清單比較後面，一次顯示不到。請在那裡用名稱搜尋。",
     "map.zoom": "縮放",
     "map.zoomIn": "放大",
     "map.zoomOut": "縮小",

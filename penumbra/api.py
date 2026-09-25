@@ -4501,6 +4501,17 @@ async def promote_horizon_node(node_id: str, body: PromoteRequest) -> dict:
         #: when the reader picks "a new orbit" (invariant 37) and sends an existing id otherwise,
         #: so `create` is exactly "this id is new to me", defaulting False for an API caller that
         #: says nothing.
+        # Whether THIS call added a source, which only the ids before it can tell: promotion
+        # returns an existing source when the node is already filed there or the orbit already holds
+        # the same text, and an Undo that deleted that one would remove a source that may be cited.
+        def _ids_before() -> set[str]:
+            try:
+                existing = load_orbit(body.orbit_id)
+            except (ValueError, ValidationError):
+                return set()
+            return {s.id for s in existing.sources} if existing else set()
+
+        before = await asyncio.to_thread(_ids_before)
         membership = await asyncio.to_thread(
             horizon.promote_node, node_id, body.orbit_id, create=body.create
         )
@@ -4526,7 +4537,7 @@ async def promote_horizon_node(node_id: str, body: PromoteRequest) -> dict:
         # BOTH arms, per invariant 27: a bad orbit id and an origin collision are both 4xx, and
         # an unhandled `ValueError` here would escape as a raw 500.
         raise HTTPException(400, f"could not promote {node_id!r}: {exc}") from exc
-    return {"membership": membership.model_dump()}
+    return {"membership": membership.model_dump(), "appended": membership.source_id not in before}
 
 
 app.mount("/", _RevalidatingStatics(directory=Path(__file__).parent / "web", html=True), name="web")

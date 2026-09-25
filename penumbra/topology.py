@@ -54,7 +54,15 @@ def _label(row) -> str:
         preview = json.loads(row["preview"] or "{}")
     except ValueError:
         preview = {}
-    return (preview.get("title") if isinstance(preview, dict) else None) or row["origin"]
+    title = preview.get("title") if isinstance(preview, dict) else None
+    if title:
+        return title
+    origin = row["origin"] or ""
+    # A paste's origin is `pasted:<opening words> #<hash>`: the words are the label, the hash is an
+    # internal key that must not reach a tooltip (the list view shows the words the same way).
+    if origin.startswith("pasted:"):
+        return origin[len("pasted:"):].split(" #")[0].strip() or origin
+    return origin
 
 
 def _newest(stamped: list[tuple[float, dict]], limit: int) -> list[dict]:
@@ -91,6 +99,11 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
     loose = {"count": 0, "undistilled": 0, "busy": 0}
     loose_items: list[tuple[float, dict]] = []
     moons: dict[str, list[tuple[float, dict]]] = defaultdict(list)
+    # Every orbit each node is in, so a moon carried to another planet knows where it already is.
+    filed_in: dict[str, list[str]] = defaultdict(list)
+    for row in rows:
+        if row["orbit_id"] is not None:
+            filed_in[row["id"]].append(row["orbit_id"])
     total = {"count": 0, "distilled": 0}
     counted: set[str] = set()
     for row in rows:
@@ -100,7 +113,7 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
             total["count"] += 1
             if row["state"] == "ready":
                 total["distilled"] += 1
-        item = {"id": node_id, "title": _label(row), "state": row["state"]}
+        item = {"id": node_id, "title": _label(row), "state": row["state"], "orbits": filed_in[node_id]}
         if row["orbit_id"] is None:
             loose_items.append((float(row["created_at"] or 0), item))
             loose["count"] += 1

@@ -10214,6 +10214,9 @@ async function renderStarMap() {
   paintStarMapLenses();
   drawStarMap();
   syncStarMapContext({ follow: false });
+  // New data can reorder the planets (they are placed by recency), so a camera held on one follows
+  // it to wherever it now is instead of staying on empty space.
+  if (mapMotion.held && starMap.selected) focusCameraOn(starMap.selected);
 }
 
 //: The lens row is repainted with every pick, so `aria-pressed` and each button's idea of what
@@ -10360,6 +10363,12 @@ function restoreFocus(svg, key) {
 }
 
 function drawStarMap() {
+  // A repaint mid-drag would remove the element holding the pointer and strand the drag; it waits
+  // for the drop instead.
+  if (mapDrag.id !== null) {
+    mapDrag.redraw = true;
+    return;
+  }
   const svg = horizonEl("starmap-svg");
   const keepFocus = focusedKey(svg);
   clearSvg(svg);
@@ -10598,9 +10607,11 @@ function moonHit(x, y, item) {
     showMapTip(hit, item.title || "", moonStateLabel(item));
   });
   hit.addEventListener("pointerleave", () => {
-    mapMotion.paused = false;
     const held = owner();
-    if (held) held.classList.remove("is-holding");
+    // Moving from a moon onto its own planet stays inside the planet, which fires no new enter.
+    const stillOnPlanet = held && held.matches(".map-planet:hover");
+    if (!stillOnPlanet) mapMotion.paused = false;
+    if (held && !stillOnPlanet) held.classList.remove("is-holding");
     hit.classList.remove("is-pointed");
     hideMapTip();
   });
@@ -10621,7 +10632,7 @@ function moonHit(x, y, item) {
 //: Dragging a capture onto a planet files it there. Planets it can go to light up while it is
 //: carried, and everything holds still so the target stays put. A drag that ends anywhere else
 //: files nothing. A hollow moon is not a capture and cannot be carried.
-const mapDrag = { item: null, id: null, start: null, moved: false, ghost: null, over: null };
+const mapDrag = { item: null, id: null, start: null, moved: false, ghost: null, over: null, redraw: false };
 
 function worldAt(clientX, clientY) {
   const v = clientToView(horizonEl("starmap-svg"), clientX, clientY);
@@ -10631,12 +10642,12 @@ function worldAt(clientX, clientY) {
   };
 }
 
-function planetUnder(point, exclude) {
+function planetUnder(point, exclude = []) {
   const scene = starMap.scene;
   if (!scene) return null;
   let best = null;
   scene.planets.forEach((entry) => {
-    if (entry.p.orbit.slug === exclude) return;
+    if (exclude.includes(entry.p.orbit.slug)) return;
     const pos = planetAt(entry.p);
     const d = Math.hypot(point.x - pos.x, point.y - pos.y);
     if (d <= entry.p.r + 16 && (!best || d < best.d)) best = { entry, d };
@@ -10651,6 +10662,8 @@ function startMoonDrag(event, item, hit) {
   mapDrag.id = event.pointerId;
   mapDrag.start = { x: event.clientX, y: event.clientY };
   mapDrag.moved = false;
+  // Every orbit it is already in: none of them is somewhere to file it.
+  const already = [...(item.orbits || []), item.orbit].filter(Boolean);
   hit.setPointerCapture(event.pointerId);
   const move = (e) => {
     if (e.pointerId !== mapDrag.id) return;
@@ -10661,7 +10674,7 @@ function startMoonDrag(event, item, hit) {
       hideMapTip();
       horizonEl("starmap-svg").classList.add("is-carrying");
       starMap.scene.planets.forEach(({ p, group }) => {
-        if (p.orbit.slug !== item.orbit) group.classList.add("is-drop-target");
+        if (!already.includes(p.orbit.slug)) group.classList.add("is-drop-target");
       });
       mapDrag.ghost = svgEl("circle", { r: 5 }, "map-drag-ghost");
       starMap.world.appendChild(mapDrag.ghost);
@@ -10669,7 +10682,7 @@ function startMoonDrag(event, item, hit) {
     const at = worldAt(e.clientX, e.clientY);
     mapDrag.ghost.setAttribute("cx", at.x.toFixed(1));
     mapDrag.ghost.setAttribute("cy", at.y.toFixed(1));
-    const under = planetUnder(at, item.orbit);
+    const under = planetUnder(at, already);
     if (mapDrag.over && mapDrag.over !== under) mapDrag.over.group.classList.remove("is-drop-hover");
     mapDrag.over = under;
     if (under) under.group.classList.add("is-drop-hover");
@@ -10679,6 +10692,7 @@ function startMoonDrag(event, item, hit) {
     hit.removeEventListener("pointermove", move);
     hit.removeEventListener("pointerup", end);
     hit.removeEventListener("pointercancel", end);
+    hit.removeEventListener("lostpointercapture", end);
     const target = e.type === "pointerup" && mapDrag.over;
     if (mapDrag.ghost) mapDrag.ghost.remove();
     horizonEl("starmap-svg").classList.remove("is-carrying");
@@ -10691,11 +10705,17 @@ function startMoonDrag(event, item, hit) {
     mapDrag.over = null;
     // `moved` survives until after the click that follows a drag, so that click opens nothing.
     setTimeout(() => { mapDrag.moved = false; }, 0);
+    if (mapDrag.redraw) {
+      mapDrag.redraw = false;
+      drawStarMap();
+    }
     if (target) void fileCapture(item.id, target.p.orbit.id);
   };
   hit.addEventListener("pointermove", move);
   hit.addEventListener("pointerup", end);
   hit.addEventListener("pointercancel", end);
+  // Losing the pointer (the window lost focus, the element went away) ends the drag, filing nothing.
+  hit.addEventListener("lostpointercapture", end);
 }
 
 function showMapTip(target, title, sub) {
@@ -10769,6 +10789,7 @@ function clampCamera(c) {
 }
 
 function setCamera(c) {
+  hideMapTip();
   cancelAnimationFrame(mapCamera.anim);
   mapCamera.anim = 0;
   Object.assign(mapCamera, clampCamera(c));
@@ -10842,7 +10863,7 @@ function initStarMapCamera() {
     zoomBy(factor, clientToView(svg, event.clientX, event.clientY));
   }, { passive: false });
   svg.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || event.target.closest(".map-planet, .map-hit, .map-hole-hit")) return;
+    if (event.button !== 0 || event.target.closest(".map-planet, .map-hit, .map-hole-hit, .map-hole-sub")) return;
     mapPan.id = event.pointerId;
     mapPan.start = { cx: event.clientX, cy: event.clientY, x: mapCamera.x, y: mapCamera.y };
     mapPan.moved = false;
@@ -10867,13 +10888,7 @@ function initStarMapCamera() {
     mapPan.start = null;
     svg.classList.remove("is-panning");
     // A click on empty space, not the end of a pan, closes the card.
-    if (!wasPan && event.type === "pointerup" && (starMap.selected || starMap.focus)) {
-      starMap.selected = null;
-      starMap.focus = null;
-      mapMotion.held = false;
-      drawStarMap();
-      syncStarMapContext();
-    }
+    if (!wasPan && event.type === "pointerup" && (starMap.selected || starMap.focus)) closeMapFocus();
   };
   svg.addEventListener("pointerup", endPan);
   svg.addEventListener("pointercancel", endPan);
@@ -10931,7 +10946,11 @@ async function fileCapture(nodeId, orbitId, control) {
   }
   const orbit = starMap.orbits.find((o) => o.id === orbitId);
   const name = orbit ? orbit.title : t("suggest.anOrbit", "an orbit");
-  const sourceId = filed && filed.membership && filed.membership.source_id;
+  // Undo only for a source THIS filing added: promotion returns the one already there when the
+  // capture was filed in that orbit or the orbit holds the same text, and deleting that one would
+  // remove a source that may be cited.
+  const sourceId = filed && filed.appended && filed.membership && filed.membership.source_id;
+  renderCaptureCard.cache = null;
   notify(t("map.filed", `Filed into ${name}.`, { name }), {
     tone: "good",
     timeout: 8000,
@@ -10945,11 +10964,16 @@ async function fileCapture(nodeId, orbitId, control) {
         } catch (err) {
           notify(readableError(err.message));
         }
+        renderCaptureCard.cache = null;
         void refreshHorizon();
+        void renderStarMap();
       },
     } : null,
   });
+  // Straight to the map, not through `refreshHorizon`'s three-second throttle: a second filing or
+  // an Undo inside that window left the moon where it was and the capture still listed as loose.
   void refreshHorizon();
+  void renderStarMap();
   return true;
 }
 
@@ -10989,13 +11013,19 @@ function renderCaptureCard(card, focus) {
   detail.appendChild(elt("p", "card-note", t("map.loading", "Loading…")));
   card.appendChild(detail);
   const token = (renderCaptureCard.token = (renderCaptureCard.token || 0) + 1);
+  // The map redraws for many reasons; the capture it shows only changes when the focus does. Kept
+  // by id, so a redraw repaints from memory instead of flashing "Loading" over an open picker.
+  const cached = renderCaptureCard.cache && renderCaptureCard.cache.id === focus.id ? renderCaptureCard.cache.got : null;
   void (async () => {
-    let got;
-    try {
-      got = await api(`/horizon/${encodeURIComponent(focus.id)}`);
-    } catch (err) {
-      if (token === renderCaptureCard.token) detail.replaceChildren(elt("p", "card-note", readableError(err.message)));
-      return;
+    let got = cached;
+    if (!got) {
+      try {
+        got = await api(`/horizon/${encodeURIComponent(focus.id)}`);
+      } catch (err) {
+        if (token === renderCaptureCard.token) detail.replaceChildren(elt("p", "card-note", readableError(err.message)));
+        return;
+      }
+      renderCaptureCard.cache = { id: focus.id, got };
     }
     if (token !== renderCaptureCard.token || !detail.isConnected) return;
     const node = got.node || {};
@@ -11035,7 +11065,13 @@ function revealNode(nodeId) {
   const find = () => {
     const row = document.querySelector(`.node[data-node-id="${CSS.escape(nodeId)}"]`);
     if (!row) {
-      if ((tries += 1) < 40) setTimeout(find, 100);
+      if ((tries += 1) < 40) {
+        setTimeout(find, 100);
+      } else {
+        horizonState.open.delete(nodeId);
+        notify(t("map.notInList", "That capture is further down the list than it shows at once. Search for it by name there."),
+          { tone: "info" });
+      }
       return;
     }
     const open = row.querySelector(".node-open");
@@ -11048,6 +11084,17 @@ function revealNode(nodeId) {
 
 function renderStarMapCard() {
   const mapCard = horizonEl("starmap-card");
+  // A button in the card that rebuilt the card took keyboard focus with it to <body>, where the
+  // map's keys no longer reach. Focus goes back into the new card instead.
+  const hadFocus = mapCard.contains(document.activeElement);
+  paintStarMapCard(mapCard);
+  if (hadFocus && !mapCard.hidden) {
+    const into = mapCard.querySelector(".card-close");
+    if (into) into.focus();
+  }
+}
+
+function paintStarMapCard(mapCard) {
   mapCard.textContent = "";
   if (starMap.focus && starMap.focus.kind === "horizon") {
     renderHorizonCard(mapCard);
