@@ -1327,6 +1327,12 @@ async def delete_source_endpoint(orbit_id: str, source_id: str) -> OrbitResponse
         )
     except ValueError as exc:  # no such source — including one a concurrent request just removed
         raise HTTPException(404, str(exc)) from exc
+    _forget_removed_source(orbit_id, source_id)
+    return _orbit_response(orbit)
+
+
+def _forget_removed_source(orbit_id: str, source_id: str) -> None:
+    """The Horizon's half of removing a source from an orbit, after the orbit write succeeded."""
     # AFTER the orbit write succeeds, never before: a membership dropped for a removal that then
     # failed would be the inverse of the bug. Tier 0 is an index of where things ended up, and an
     # entry pointing at a source id invariant 50 guarantees will never come back is an index
@@ -1342,7 +1348,6 @@ async def delete_source_endpoint(orbit_id: str, source_id: str) -> OrbitResponse
         _forget_suggestions()
     except Exception:  # noqa: BLE001 - an index write must never undo a completed orbit write
         _log.warning("could not drop the horizon membership for %s/%s", orbit_id, source_id)
-    return _orbit_response(orbit)
 
 
 @app.post("/orbits/{orbit_id}/notes/{note_id}/promote", response_model=OrbitResponse)
@@ -4567,6 +4572,63 @@ async def promote_horizon_node(node_id: str, body: PromoteRequest) -> dict:
         # an unhandled `ValueError` here would escape as a raw 500.
         raise HTTPException(400, f"could not promote {node_id!r}: {exc}") from exc
     return {"membership": membership.model_dump(), "appended": membership.source_id not in before}
+
+
+class MoveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    from_orbit: str
+    to_orbit: str
+    #: Set after the reader was told how many citations in `from_orbit` point at this source.
+    confirm: bool = False
+
+
+def _citations_of(orbit: Orbit, source_id: str) -> int:
+    """How many saved citations in `orbit` (its conversation and its overview) point at `source_id`."""
+    count = sum(1 for turn in orbit.turns for c in turn.answer.citations if c.source_id == source_id)
+    if orbit.overview is not None:
+        count += sum(1 for c in orbit.overview.citations if c.source_id == source_id)
+    return count
+
+
+@app.post("/horizon/{node_id}/move")
+async def move_horizon_node(node_id: str, body: MoveRequest) -> dict:
+    """Move a capture from one orbit to another: file it into `to_orbit`, then take its source out
+    of `from_orbit`.
+
+    Filing alone copies (a capture may belong to several orbits, invariant 78), which is what
+    dragging a dot from the Horizon means; dragging a moon from one planet to another reads as a
+    move, and a copy left the capture on both. Taking a source out of an orbit leaves every saved
+    citation of it unverified (its id is never reused, invariant 50), so when there are any the
+    first call answers 409 with the count, and only a call with `confirm` removes it.
+    """
+    if not body.from_orbit.strip() or not body.to_orbit.strip():
+        raise HTTPException(400, "a move needs both orbits")
+    if slug(body.from_orbit) == slug(body.to_orbit):
+        raise HTTPException(400, "a capture cannot be moved to the orbit it is in")
+    memberships = await asyncio.to_thread(horizon.memberships_for, node_id)
+    held = next((m for m in memberships if m.orbit_id == slug(body.from_orbit)), None)
+    if held is None:
+        raise HTTPException(404, f"{node_id!r} is not in {body.from_orbit!r}")
+    source = await asyncio.to_thread(_load_orbit_or_404, body.from_orbit)
+    cited = _citations_of(source, held.source_id)
+    if cited and not body.confirm:
+        return JSONResponse(status_code=409, content={
+            "detail": f"{cited} saved citations in {body.from_orbit!r} point at this source",
+            "cited": cited,
+        })
+    filed = await promote_horizon_node(node_id, PromoteRequest(orbit_id=body.to_orbit, create=False))
+    try:
+        await _mutate_or_http(body.from_orbit, lambda nb: remove_source(nb, held.source_id), create=False)
+    except (HTTPException, ValueError):
+        # Filed into the new orbit but still in the old one: a copy, which is what this used to
+        # do anyway. Said rather than hidden, so the reader can take it out by hand.
+        _log.warning(
+            "moved %s into %s but could not take it out of %s", node_id, body.to_orbit, body.from_orbit
+        )
+        return {**filed, "removed": None, "from_orbit": body.from_orbit}
+    await asyncio.to_thread(_forget_removed_source, body.from_orbit, held.source_id)
+    return {**filed, "removed": held.source_id, "from_orbit": body.from_orbit}
 
 
 app.mount("/", _RevalidatingStatics(directory=Path(__file__).parent / "web", html=True), name="web")

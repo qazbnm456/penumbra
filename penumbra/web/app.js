@@ -9605,6 +9605,10 @@ function renderAskPicker() {
     if (row.kind === "open") opt.appendChild(elt("span", "ask-opt-more", "›"));
     opt.addEventListener("mousedown", (event) => {
       event.preventDefault(); // keep focus in the question
+      // Choosing a kind rebuilds the list, which detaches this row; the event then reached the
+      // document's close-on-outside-press handler, whose `closest` on a detached row found no
+      // picker and closed it. A mouse could not open a kind, while Enter could.
+      event.stopPropagation();
       chooseAskPick(i);
     });
     opt.addEventListener("mouseenter", () => highlightAskPick(i));
@@ -10528,7 +10532,7 @@ function restoreFocus(svg, key) {
 function drawStarMap() {
   // A repaint mid-drag would remove the element holding the pointer and strand the drag; it waits
   // for the drop instead.
-  if (mapDrag.id !== null) {
+  if (mapDrag.id !== null) { // carrying, or putting a carried capture down
     mapDrag.redraw = true;
     return;
   }
@@ -10682,9 +10686,8 @@ function drawStarMap() {
     group.appendChild(svgText(0, p.r + 30, shortLabel(orbit.title), "map-planet-label"));
     group.appendChild(svgText(0, p.r + 46, t("map.planetCount", `${orbit.sources} sources`, { n: orbit.sources }),
       "map-planet-sub"));
-    const title = svgEl("title");
-    title.textContent = orbit.title;
-    group.appendChild(title);
+    // No <title>: the planet's own label names it, and the native tooltip drew the same name a
+    // second time in a system box beside it.
     group.dataset.key = `orbit:${orbit.slug}`;
     const pick = () => {
       if (starMap.selected === orbit.slug && !starMap.focus) {
@@ -10822,6 +10825,31 @@ function planetUnder(point, exclude = []) {
   return best && best.entry;
 }
 
+//: A short tween on the animation frame, resolving when done; instant under reduced motion.
+function mapTween(ms, step, ease = (u) => u) {
+  if (!motionAllowed()) {
+    step(1);
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const start = performance.now();
+    const frame = (now) => {
+      const u = Math.min(1, (now - start) / ms);
+      step(ease(u));
+      if (u < 1) requestAnimationFrame(frame);
+      else resolve();
+    };
+    requestAnimationFrame(frame);
+  });
+}
+
+const easeIn = (u) => u * u * u;
+const easeOutBack = (u) => 1 + 2.2 * Math.pow(u - 1, 3) + 1.2 * Math.pow(u - 1, 2);
+
+//: Carrying a capture, drawn like a pin being pulled off a map: on pickup the dot lifts (it grows,
+//: and a shadow drops away beneath it), it trails the pointer with a little lag and stretches along
+//: the way it is moving, and it leans toward a planet it may land on. Dropped on one it falls in
+//: and the planet ripples; dropped anywhere else it springs back to where it was lifted from.
 function startMoonDrag(event, item, hit) {
   if (event.button !== 0 || item.kind !== "capture") return;
   event.stopPropagation();
@@ -10830,9 +10858,27 @@ function startMoonDrag(event, item, hit) {
   mapDrag.id = event.pointerId;
   mapDrag.start = { x: event.clientX, y: event.clientY };
   mapDrag.moved = false;
-  // Every orbit it is already in: none of them is somewhere to file it.
+  // Every orbit it is already in: none of them is somewhere to put it.
   const already = [...(item.orbits || []), item.orbit].filter(Boolean);
+  const dot = hit.previousElementSibling;
+  const box = hit.getBoundingClientRect();
+  const home = worldAt(box.left + box.width / 2, box.top + box.height / 2);
+  const carry = { pos: { ...home }, target: { ...home }, frame: 0, group: null, body: null };
   hit.setPointerCapture(event.pointerId);
+
+  const follow = () => {
+    const dx = carry.target.x - carry.pos.x;
+    const dy = carry.target.y - carry.pos.y;
+    carry.pos.x += dx * 0.35;
+    carry.pos.y += dy * 0.35;
+    const speed = Math.min(0.45, Math.hypot(dx, dy) / 40);
+    const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+    carry.group.setAttribute("transform", `translate(${carry.pos.x.toFixed(1)} ${carry.pos.y.toFixed(1)})`);
+    carry.body.setAttribute("transform",
+      `rotate(${angle.toFixed(1)}) scale(${(1 + speed).toFixed(3)} ${(1 - speed * 0.5).toFixed(3)})`);
+    carry.frame = requestAnimationFrame(follow);
+  };
+
   const move = (e) => {
     if (e.pointerId !== mapDrag.id) return;
     if (!mapDrag.moved) {
@@ -10841,49 +10887,132 @@ function startMoonDrag(event, item, hit) {
       mapMotion.paused = true;
       hideMapTip();
       horizonEl("starmap-svg").classList.add("is-carrying");
+      if (dot) dot.classList.add("is-lifted");
       starMap.scene.planets.forEach(({ p, group }) => {
         if (!already.includes(p.orbit.slug)) group.classList.add("is-drop-target");
       });
-      mapDrag.ghost = svgEl("circle", { r: 5 }, "map-drag-ghost");
-      starMap.world.appendChild(mapDrag.ghost);
+      carry.group = svgEl("g", {}, "map-carry");
+      carry.group.appendChild(svgEl("ellipse", { cx: 0, cy: 9, rx: 5, ry: 1.8 }, "map-carry-shadow"));
+      const lift = svgEl("g", {}, "map-carry-lift");
+      carry.body = svgEl("g", {});
+      carry.body.appendChild(svgEl("circle", { r: 4 }, `map-carry-body ${moonClass(item).replace("map-dot", "")}`));
+      lift.appendChild(carry.body);
+      carry.group.appendChild(lift);
+      starMap.world.appendChild(carry.group);
+      carry.frame = requestAnimationFrame(follow);
     }
     const at = worldAt(e.clientX, e.clientY);
-    mapDrag.ghost.setAttribute("cx", at.x.toFixed(1));
-    mapDrag.ghost.setAttribute("cy", at.y.toFixed(1));
     const under = planetUnder(at, already);
     if (mapDrag.over && mapDrag.over !== under) mapDrag.over.group.classList.remove("is-drop-hover");
     mapDrag.over = under;
-    if (under) under.group.classList.add("is-drop-hover");
+    if (under) {
+      under.group.classList.add("is-drop-hover");
+      // Lean toward the planet it would land on, a third of the way.
+      const c = planetAt(under.p);
+      carry.target = { x: at.x + (c.x - at.x) * 0.35, y: at.y + (c.y - at.y) * 0.35 };
+    } else {
+      carry.target = at;
+    }
   };
-  const end = (e) => {
-    if (e.pointerId !== mapDrag.id) return;
-    hit.removeEventListener("pointermove", move);
-    hit.removeEventListener("pointerup", end);
-    hit.removeEventListener("pointercancel", end);
-    hit.removeEventListener("lostpointercapture", end);
-    const target = e.type === "pointerup" && mapDrag.over;
-    if (mapDrag.ghost) mapDrag.ghost.remove();
+
+  const settle = () => {
     horizonEl("starmap-svg").classList.remove("is-carrying");
     if (starMap.scene) {
       starMap.scene.planets.forEach(({ group }) => group.classList.remove("is-drop-target", "is-drop-hover"));
     }
     mapMotion.paused = false;
     mapDrag.id = null;
-    mapDrag.ghost = null;
     mapDrag.over = null;
-    // `moved` survives until after the click that follows a drag, so that click opens nothing.
     setTimeout(() => { mapDrag.moved = false; }, 0);
     if (mapDrag.redraw) {
       mapDrag.redraw = false;
       drawStarMap();
     }
-    if (target) void fileCapture(item.id, target.p.orbit.id);
+  };
+
+  const end = async (e) => {
+    if (e.pointerId !== mapDrag.id) return;
+    hit.removeEventListener("pointermove", move);
+    hit.removeEventListener("pointerup", end);
+    hit.removeEventListener("pointercancel", end);
+    hit.removeEventListener("lostpointercapture", end);
+    const target = e.type === "pointerup" ? mapDrag.over : null;
+    mapDrag.id = -1; // still busy animating: a repaint waits until the carry is put down
+    cancelAnimationFrame(carry.frame);
+    if (carry.group) {
+      const from = { ...carry.pos };
+      if (target) {
+        const c = planetAt(target.p);
+        await mapTween(260, (u) => {
+          carry.group.setAttribute("transform",
+            `translate(${(from.x + (c.x - from.x) * u).toFixed(1)} ${(from.y + (c.y - from.y) * u).toFixed(1)}) scale(${(1 - 0.7 * u).toFixed(3)})`);
+        }, easeIn);
+        carry.group.remove();
+        const ripple = svgEl("circle", { cx: c.x, cy: c.y, r: target.p.r }, "map-ripple");
+        starMap.world.appendChild(ripple);
+        setTimeout(() => ripple.remove(), 700);
+      } else {
+        await mapTween(340, (u) => {
+          carry.group.setAttribute("transform",
+            `translate(${(from.x + (home.x - from.x) * u).toFixed(1)} ${(from.y + (home.y - from.y) * u).toFixed(1)})`);
+        }, easeOutBack);
+        carry.group.remove();
+      }
+    }
+    if (dot) dot.classList.remove("is-lifted");
+    settle();
+    if (!target) return;
+    // From a planet it is a move; from around the Horizon it is filing.
+    if (item.orbit) void moveCapture(item, target.p.orbit);
+    else void fileCapture(item.id, target.p.orbit.id);
   };
   hit.addEventListener("pointermove", move);
   hit.addEventListener("pointerup", end);
   hit.addEventListener("pointercancel", end);
-  // Losing the pointer (the window lost focus, the element went away) ends the drag, filing nothing.
+  // Losing the pointer (the window lost focus, the element went away) ends the carry, filing nothing.
   hit.addEventListener("lostpointercapture", end);
+}
+
+//: Moves a capture from the planet it was carried off to another. When saved citations in the
+//: orbit it leaves point at it, the reader is told how many before anything changes: those
+//: citations go unverified once its source is gone (its id is never reused).
+async function moveCapture(item, to, { confirm = false } = {}) {
+  const fromTitle = orbitTitles.get(item.orbit) || t("suggest.anOrbit", "an orbit");
+  let moved;
+  try {
+    moved = await api(`/horizon/${encodeURIComponent(item.id)}/move`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from_orbit: item.orbit, to_orbit: to.id, confirm }),
+    });
+  } catch (err) {
+    if (err.status === 409 && !confirm) {
+      const n = Number((String(err.message).match(/(\d+) saved citations/) || [])[1] || 0);
+      const ok = await confirmAction(t("map.moveCited",
+        `${n} saved citations in ${fromTitle} point at this. Moving it out leaves them unverified. Move it anyway?`,
+        { n, from: fromTitle }));
+      if (ok) await moveCapture(item, to, { confirm: true });
+      return;
+    }
+    notify(readableError(err.message));
+    return;
+  }
+  renderCaptureCard.cache = null;
+  notify(t("map.moved", `Moved to ${to.title}.`, { name: to.title }), {
+    tone: "good",
+    timeout: 8000,
+    action: moved.removed ? {
+      label: t("map.undo", "Undo"),
+      run: () => void moveCapture({ ...item, orbit: to.slug }, { id: item.orbit, slug: item.orbit, title: fromTitle },
+        { confirm: true }),
+    } : null,
+  });
+  if (!moved.removed) {
+    notify(t("map.moveKept", `It was added to ${to.title} but could not be taken out of ${fromTitle}.`,
+      { name: to.title, from: fromTitle }));
+  }
+  void refreshHorizon();
+  void renderStarMap();
 }
 
 function showMapTip(target, title, sub) {

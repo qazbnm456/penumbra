@@ -8169,11 +8169,68 @@ button.card-chip:hover {
   stroke-width: 1.5;
 }
 
-.map-drag-ghost {
-  fill: var(--accent);
-  stroke: var(--bg);
-  stroke-width: 1.5;
+/* Carrying a capture: the dot lifts off (it grows and rises while its shadow stays on the map and
+   spreads), trails the pointer, and either falls into a planet, which ripples, or springs back. */
+.map-carry {
   pointer-events: none;
+}
+
+.map-carry-shadow {
+  fill: rgb(0 0 0 / 0.45);
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: map-carry-shadow 180ms ease-out both;
+}
+
+.map-carry-lift {
+  animation: map-carry-lift 180ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.map-carry-body {
+  fill: var(--text-faint);
+  stroke: var(--bg);
+  stroke-width: 1.2;
+}
+
+.map-carry-body.is-done {
+  fill: var(--accent);
+}
+
+@keyframes map-carry-lift {
+  from { transform: translateY(0) scale(1); }
+  to { transform: translateY(-6px) scale(1.5); }
+}
+
+@keyframes map-carry-shadow {
+  from { opacity: 0; transform: scale(0.6); }
+  to { opacity: 1; transform: scale(1.3); }
+}
+
+.map-dot.is-lifted {
+  opacity: 0.15;
+}
+
+.map-ripple {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  transform-box: fill-box;
+  transform-origin: center;
+  pointer-events: none;
+  animation: map-ripple 650ms ease-out forwards;
+}
+
+@keyframes map-ripple {
+  from { opacity: 0.9; transform: scale(1); }
+  to { opacity: 0; transform: scale(1.9); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-carry-shadow,
+  .map-carry-lift,
+  .map-ripple {
+    animation: none;
+  }
 }
 
 .starmap-tip {
