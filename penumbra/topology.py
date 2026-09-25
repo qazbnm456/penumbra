@@ -27,6 +27,10 @@ MAX_ENTITIES = 60
 MAX_CAPTURES = 300
 MAX_BRIDGES = 12
 TOP_PER_ORBIT = 6
+#: How many captures the map names one by one: the moons around one planet and the dots around the
+#: Horizon. The map draws no more than these, so a name for each drawn dot is all it needs.
+MAX_MOONS = 12
+MAX_LOOSE = 28
 
 
 def _names(raw: str | None) -> list[str]:
@@ -53,6 +57,10 @@ def _label(row) -> str:
     return (preview.get("title") if isinstance(preview, dict) else None) or row["origin"]
 
 
+def _newest(stamped: list[tuple[float, dict]], limit: int) -> list[dict]:
+    return [item for _, item in sorted(stamped, key=lambda pair: -pair[0])[:limit]]
+
+
 def _entity(name: str, count: int, alias_table: dict[str, str]) -> dict:
     """An entity as drawn, with the other names a merge folded into it, so the reader can see and
     undo each one."""
@@ -70,7 +78,8 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
     bridges between orbits that share an entity."""
     with horizon._connect(base_dir) as conn:
         rows = conn.execute(
-            """SELECT n.id, n.state, n.entities, n.tags, n.created_at, m.orbit_id, m.promoted_at
+            """SELECT n.id, n.state, n.entities, n.tags, n.created_at, n.title, n.origin, n.preview,
+                      m.orbit_id, m.promoted_at
                FROM nodes n LEFT JOIN memberships m ON m.node_id = n.id"""
         ).fetchall()
 
@@ -80,6 +89,8 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
     orbits: dict[str, dict] = {}
     entity_sets: dict[str, set[str]] = defaultdict(set)
     loose = {"count": 0, "undistilled": 0, "busy": 0}
+    loose_items: list[tuple[float, dict]] = []
+    moons: dict[str, list[tuple[float, dict]]] = defaultdict(list)
     total = {"count": 0, "distilled": 0}
     counted: set[str] = set()
     for row in rows:
@@ -89,7 +100,9 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
             total["count"] += 1
             if row["state"] == "ready":
                 total["distilled"] += 1
+        item = {"id": node_id, "title": _label(row), "state": row["state"]}
         if row["orbit_id"] is None:
+            loose_items.append((float(row["created_at"] or 0), item))
             loose["count"] += 1
             if row["state"] == "ready_undistilled":
                 loose["undistilled"] += 1
@@ -101,6 +114,7 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
             "_entities": Counter(), "_tags": Counter(),
         })
         entry["captures"] += 1
+        moons[row["orbit_id"]].append((float(row["promoted_at"] or 0), item))
         if row["state"] == "ready_undistilled":
             entry["undistilled"] += 1
         entry["last_filed_at"] = max(entry["last_filed_at"], float(row["promoted_at"] or 0))
@@ -118,6 +132,7 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
             "last_filed_at": entry["last_filed_at"],
             "entities": [name for name, _ in entry["_entities"].most_common(TOP_PER_ORBIT)],
             "tags": [name for name, _ in entry["_tags"].most_common(TOP_PER_ORBIT)],
+            "moons": _newest(moons[entry["slug"]], MAX_MOONS),
         })
     out_orbits.sort(key=lambda o: -o["last_filed_at"])
 
@@ -127,6 +142,7 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
         if shared:
             bridges.append({"a": a, "b": b, "shared": sorted(shared)[:5], "weight": len(shared)})
     bridges.sort(key=lambda br: (-br["weight"], br["a"], br["b"]))
+    loose["items"] = _newest(loose_items, MAX_LOOSE)
     return {
         "orbits": out_orbits, "loose": loose, "total": total, "bridges": bridges[:MAX_BRIDGES],
         "omitted": {"bridges": max(0, len(bridges) - MAX_BRIDGES)},

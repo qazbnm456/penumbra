@@ -49,7 +49,9 @@ def test_loose_captures_are_counted_apart_from_orbits():
     _capture("https://x.example/a", state="ready_undistilled")
     horizon.add_pending_node("https://x.example/q", "web", base_dir=BASE)
     loose = topology.star_map(base_dir=BASE)["loose"]
+    items = loose.pop("items")
     assert loose == {"count": 2, "undistilled": 1, "busy": 1}
+    assert {i["state"] for i in items} == {"ready_undistilled", "queued"}
 
 
 def test_orbits_that_share_an_entity_are_bridged_by_it():
@@ -117,3 +119,25 @@ def test_an_orbit_narrows_an_ask_scope():
     picked = search.select_for_ask("sleep", "entity", "REM", budget_chars=10_000, max_items=5,
                                    orbit="sleep", base_dir=BASE)
     assert picked.node_ids == [inside]
+
+
+def test_each_drawn_moon_and_loose_dot_carries_a_name_newest_first():
+    """The map names what it draws, so a pointer on a moon can say which capture it is."""
+    first = _capture("https://x.example/a", title="Older")
+    second = _capture("https://x.example/b", title="Newer", state="ready_undistilled")
+    _file(first, "sleep")
+    _file(second, "sleep")
+    _capture("https://x.example/c", title="Loose one")
+    found = topology.star_map(base_dir=BASE)
+    (orbit,) = found["orbits"]
+    assert [m["title"] for m in orbit["moons"]] == ["Newer", "Older"]
+    assert orbit["moons"][0] == {"id": second, "title": "Newer", "state": "ready_undistilled"}
+    assert [i["title"] for i in found["loose"]["items"]] == ["Loose one"]
+
+
+def test_the_named_moons_are_capped_at_what_the_map_draws():
+    for i in range(topology.MAX_MOONS + 3):
+        _file(_capture(f"https://x.example/{i}"), "big")
+    (orbit,) = topology.star_map(base_dir=BASE)["orbits"]
+    assert orbit["captures"] == topology.MAX_MOONS + 3
+    assert len(orbit["moons"]) == topology.MAX_MOONS

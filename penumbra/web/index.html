@@ -181,6 +181,17 @@
           <span class="legend-item legend-note" data-i18n="map.legendDistance">Closer to the centre means more recent.</span>
         </div>
         <aside class="starmap-card" id="starmap-card" hidden aria-live="polite"></aside>
+        <div class="starmap-tip" id="starmap-tip" role="tooltip" hidden></div>
+        <!-- The camera: scroll or pinch to zoom, drag empty space to pan, and these for a pointer
+             that cannot. + and - and 0 do the same from the keyboard, and Escape goes home. -->
+        <div class="map-camera" role="group" aria-label="Zoom" data-i18n-label="map.zoom">
+          <button type="button" class="map-camera-btn" id="map-zoom-in" aria-label="Zoom in" title="Zoom in"
+                  data-i18n-label="map.zoomIn" data-i18n-title="map.zoomIn">+</button>
+          <button type="button" class="map-camera-btn" id="map-zoom-out" aria-label="Zoom out" title="Zoom out"
+                  data-i18n-label="map.zoomOut" data-i18n-title="map.zoomOut">&minus;</button>
+          <button type="button" class="map-camera-btn" id="map-zoom-home" aria-label="Back to the whole map" title="Back to the whole map"
+                  data-i18n-label="map.zoomHome" data-i18n-title="map.zoomHome" disabled>&#x21BA;</button>
+        </div>
       </div>
 
 
