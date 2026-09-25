@@ -4065,16 +4065,47 @@ class HorizonAskScope(BaseModel):
     #: Narrow the scope to the captures filed into one orbit: a tag or an entity on that orbit's
     #: knowledge graph. The question is still asked over the Horizon and kept in its history.
     orbit: str | None = Field(default=None, max_length=200)
+    #: Narrow it to captures filed into any of several orbits: an entity on the link between two
+    #: planets, asked about across both.
+    orbits: list[str] | None = Field(default=None, max_length=8)
 
     @model_validator(mode="after")
     def _value_matches_kind(self):
         if self.orbit is not None and not self.orbit.strip():
             raise ValueError("an orbit scope needs an orbit")
+        if self.orbits is not None:
+            if self.orbit is not None:
+                raise ValueError("give one orbit or several, not both")
+            if not self.orbits or any(not o.strip() or len(o) > 200 for o in self.orbits):
+                raise ValueError("every orbit in a scope needs a name")
         if self.kind == "all":
             self.value = None
         elif not (self.value or "").strip():
             raise ValueError(f"a {self.kind} scope needs a value")
         return self
+
+
+def _scope_orbit_list(scope: HorizonAskScope) -> list[str]:
+    if scope.orbits:
+        return list(dict.fromkeys(slug(o) for o in scope.orbits))
+    return [slug(scope.orbit)] if scope.orbit else []
+
+
+def _scope_orbit_arg(scope: HorizonAskScope) -> str | list[str] | None:
+    """What `search` narrows by: one slug, a list of them, or nothing."""
+    slugs = _scope_orbit_list(scope)
+    if scope.orbits:
+        return slugs
+    return slugs[0] if slugs else None
+
+
+def _stored_scope(kind: str, value: str | None, orbit: str | None) -> dict:
+    """A kept ask's scope as the page reads it: an orbit list is stored joined by commas."""
+    orbits = [o for o in (orbit or "").split(",") if o]
+    out = {"kind": kind, "value": value, "orbit": orbits[0] if len(orbits) == 1 else None}
+    if len(orbits) > 1:
+        out["orbits"] = orbits
+    return out
 
 
 class HorizonAskPreviewRequest(BaseModel):
@@ -4137,7 +4168,7 @@ def _select_or_http(question: str, scope: HorizonAskScope) -> search.Selection:
         budget, items_cap = _ask_bounds()
         return search.select_for_ask(
             question, scope.kind, scope.value, budget_chars=budget, max_items=items_cap,
-            orbit=slug(scope.orbit) if scope.orbit else None,
+            orbit=_scope_orbit_arg(scope),
         )
     except search.SearchUnavailable as exc:
         raise HTTPException(500, str(exc)) from exc
@@ -4223,7 +4254,7 @@ def _ask_payload(record, corpus: Corpus | None) -> dict:
     return {
         "id": record.id,
         "created_at": record.created_at,
-        "scope": {"kind": record.scope_kind, "value": record.scope_value, "orbit": record.scope_orbit},
+        "scope": _stored_scope(record.scope_kind, record.scope_value, record.scope_orbit),
         "question": record.question,
         "text": prose,
         "citations": citations,
@@ -4255,6 +4286,15 @@ async def horizon_topology() -> dict:
     last gained one and its most-named entities; the captures filed nowhere; and the bridges between
     orbits that share an entity. Local, derived from summaries only, never a model call."""
     return await asyncio.to_thread(topology.star_map)
+
+
+@app.get("/horizon/bridge")
+async def horizon_bridge(a: str = Query(..., max_length=200), b: str = Query(..., max_length=200)) -> dict:
+    """The link between two planets: each entity both orbits name, with the captures on each side
+    that name it. Local, from summaries only."""
+    if not a.strip() or not b.strip():
+        raise HTTPException(400, "a link needs two orbits")
+    return await asyncio.to_thread(lambda: topology.bridge(slug(a), slug(b)))
 
 
 @app.get("/horizon/graph")
@@ -4408,7 +4448,7 @@ async def ask_horizon(body: HorizonAskRequest, request: Request) -> dict:
     record = await asyncio.to_thread(
         lambda: asks.add_ask(
             scope_kind=body.scope.kind, scope_value=body.scope.value,
-            scope_orbit=slug(body.scope.orbit) if body.scope.orbit else None,
+            scope_orbit=",".join(_scope_orbit_list(body.scope)) or None,
             question=question,
             answer=answer, sources=sources, strategy=strategy, run_id=run_id,
         )
@@ -4423,7 +4463,7 @@ async def list_horizon_asks(limit: int = Query(50, ge=1, le=200), offset: int = 
     return {
         "asks": [
             {"id": r.id, "created_at": r.created_at, "question": r.question,
-             "scope": {"kind": r.scope_kind, "value": r.scope_value, "orbit": r.scope_orbit},
+             "scope": _stored_scope(r.scope_kind, r.scope_value, r.scope_orbit),
              "count": len(r.sources)}
             for r in records
         ]

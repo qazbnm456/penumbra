@@ -8619,3 +8619,56 @@ body.is-resizing .cols {
     transition: none;
   }
 }
+
+/* The link between two planets, handled like the rest of the map: a wide invisible twin to point
+   at, the line and its two planets lit while everything else dims, a thicker line for more shared. */
+.map-bridge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  cursor: pointer;
+}
+
+.map-bridge-hit:focus-visible {
+  outline: none;
+  stroke: color-mix(in oklch, var(--accent) 25%, transparent);
+}
+
+.map-bridge-label {
+  cursor: pointer;
+}
+
+.map-bridge.is-lit,
+.map-bridge.is-selected {
+  stroke: var(--accent);
+  opacity: 1;
+}
+
+.map-bridge-label.is-lit {
+  fill: var(--accent-text);
+}
+
+.starmap-svg.has-lit .map-planet:not(.is-linked),
+.starmap-svg.has-lit .map-bridge:not(.is-lit),
+.starmap-svg.has-lit .map-bridge-label:not(.is-lit),
+.starmap-svg.has-lit .map-hole {
+  opacity: 0.35;
+  transition: opacity 160ms ease;
+}
+
+.map-planet.is-linked .map-planet-halo {
+  opacity: 0.8;
+}
+
+.bridge-sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-5);
+}
+
+.bridge-side {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}

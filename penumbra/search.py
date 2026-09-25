@@ -282,11 +282,13 @@ _MARKER_SLACK = 64
 
 
 def _scope_clause(
-    kind: str, value: str | None, orbit: str | None = None, base_dir: str | Path = DEFAULT_HORIZON_DIR
+    kind: str, value: str | None, orbit: str | list[str] | None = None,
+    base_dir: str | Path = DEFAULT_HORIZON_DIR,
 ) -> tuple[str, list[object]]:
     """The WHERE fragment (over `nodes`) that keeps a readable node inside the scope. `orbit`
     narrows any scope to the captures filed into that orbit, which is what a tag or an entity means
-    on the knowledge graph of one orbit."""
+    on the knowledge graph of one orbit; a list narrows it to captures filed into any of them, which
+    is what an entity on the link between two orbits means."""
     if kind not in SCOPE_KINDS:
         raise ValueError(f"unknown scope {kind!r} (expected one of {', '.join(SCOPE_KINDS)})")
     placeholders = ", ".join("?" for _ in SEARCHABLE_STATES)
@@ -305,7 +307,12 @@ def _scope_clause(
                 f"(SELECT 1 FROM json_each(nodes.{column}) WHERE json_each.value IN ({marks})) "
                 f"ELSE 0 END")
         params.extend(names)
-    if orbit is not None:
+    if isinstance(orbit, list):
+        marks = ", ".join("?" for _ in orbit)
+        sql += (" AND EXISTS (SELECT 1 FROM memberships m WHERE m.node_id = nodes.id "
+                f"AND m.orbit_id IN ({marks}))")
+        params.extend(orbit)
+    elif orbit is not None:
         sql += " AND EXISTS (SELECT 1 FROM memberships m WHERE m.node_id = nodes.id AND m.orbit_id = ?)"
         params.append(orbit)
     return sql, params
@@ -363,7 +370,7 @@ def select_for_ask(
     *,
     budget_chars: int,
     max_items: int,
-    orbit: str | None = None,
+    orbit: str | list[str] | None = None,
     base_dir: str | Path = DEFAULT_HORIZON_DIR,
 ) -> Selection:
     """Pick the captures an ask over a scope reads.

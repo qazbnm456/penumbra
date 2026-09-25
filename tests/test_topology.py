@@ -151,3 +151,28 @@ def test_a_pasted_capture_is_named_by_its_words_not_its_origin_key():
     horizon.update_node(node_id, base_dir=BASE, state="ready_undistilled")
     (item,) = topology.star_map(base_dir=BASE)["loose"]["items"]
     assert item["title"] == "some thought worth keeping"
+
+
+def test_a_bridge_lists_where_each_orbit_names_what_they_share():
+    a1 = _capture("https://x.example/a1", title="Codex notes", entities=["OpenAI Codex", "iOS"])
+    b1 = _capture("https://x.example/b1", title="CFP call", entities=["OpenAI Codex"])
+    _capture("https://x.example/c1", title="Unrelated", entities=["iOS"])
+    _file(a1, "first")
+    _file(b1, "cfp")
+    found = topology.bridge("first", "cfp", base_dir=BASE)
+    assert [s["name"] for s in found["shared"]] == ["OpenAI Codex"]
+    (codex,) = found["shared"]
+    assert [c["title"] for c in codex["a"]] == ["Codex notes"]
+    assert [c["title"] for c in codex["b"]] == ["CFP call"]
+
+
+def test_an_entity_scope_can_span_two_orbits():
+    a1 = _capture("https://x.example/a1", entities=["Codex"])
+    b1 = _capture("https://x.example/b1", entities=["Codex"])
+    c1 = _capture("https://x.example/c1", entities=["Codex"])
+    _file(a1, "one")
+    _file(b1, "two")
+    _file(c1, "three")
+    picked = search.select_for_ask("?", "entity", "Codex", orbit=["one", "two"], budget_chars=10_000,
+                                   max_items=5, base_dir=BASE)
+    assert set(picked.node_ids) == {a1, b1}
