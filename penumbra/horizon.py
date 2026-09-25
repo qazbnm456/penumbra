@@ -855,6 +855,47 @@ def nodes_in_orbit(orbit_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR)
     return [NodeMembership.model_validate(dict(row)) for row in rows]
 
 
+def record_orbit_sources(
+    orbit_id: str, sources: list[Source], *, base_dir: str | Path = DEFAULT_HORIZON_DIR
+) -> int:
+    """Give every source an orbit holds a node in the Horizon, filed into that orbit, and return
+    how many were newly recorded.
+
+    **Everything crosses the Horizon, including what was added from inside an orbit.** A source
+    pasted, uploaded or promoted from a note inside an orbit used to skip it: no summary read it,
+    it named no entities, it could not be filed anywhere else, and the star map drew it as a hollow
+    moon nobody could explain. Now it becomes a node like any capture (state `ready_undistilled`, so
+    capture still never pays for a summary, invariant 80) with a membership pointing at the source
+    the orbit ALREADY holds. Nothing is appended to the orbit: its source ids and every citation
+    against them stay exactly as they were (invariants 12 and 50).
+
+    Idempotent, keyed on the source id: a source already recorded for this orbit is skipped, so the
+    same call is the backfill for orbits written before this existed. A URL shares its node with a
+    capture of the same URL; a node that had failed or was still queued takes this text.
+    """
+    recorded = {m.source_id for m in nodes_in_orbit(orbit_id, base_dir=base_dir)}
+    added = 0
+    for source in sources:
+        if source.id in recorded or not source.blocks:
+            continue
+        node = add_node(source, origin_is_the_identity=is_url(source.origin), base_dir=base_dir)
+        if node.state in ("queued", "parsing", "failed"):
+            store_blocks(node.id, source, base_dir=base_dir)
+        try:
+            with _connect(base_dir) as conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO memberships (node_id, orbit_id, source_id, promoted_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (node.id, slug(orbit_id), source.id, time.time()),
+                )
+        except sqlite3.IntegrityError:
+            # The node was removed in between; the orbit's source is untouched, and the next call
+            # records it again.
+            continue
+        added += 1
+    return added
+
+
 def _unused_origin(orbit, origin: str) -> str:
     """`origin` with a counter inserted until no live source carries it.
 

@@ -8244,3 +8244,7 @@ button.card-chip:hover {
   max-height: calc(100% - var(--space-11) - var(--space-5));
   overflow-y: auto;
 }
+
+.legend-item[hidden] {
+  display: none;
+}
