@@ -9570,6 +9570,7 @@ function askHChipLabel(chip) {
   const scope = chip.scope || { kind: "all" };
   // A tag or entity picked from the "other" list reads across every orbit, which is worth saying
   // beside an orbit-narrowed chip of the same name.
+  if (chip.id === "custom" && scope.orbits) return askHScopeLabel(scope);
   if (chip.id === "custom") {
     return t("askH.chipEverywhere", `${askHScopeLabel(scope)} (everywhere)`, { name: askHScopeLabel(scope) });
   }
@@ -9640,6 +9641,10 @@ function renderAskHChips() {
 function askHScopeLabel(scope) {
   if (!scope || scope.kind === "all") return t("askH.everything", "Everything");
   const base = scope.kind === "tag" ? `#${scope.value}` : scope.value || "";
+  if (scope.orbits) {
+    const names = scope.orbits.map((key) => orbitLabelForSlug(key) || t("suggest.anOrbit", "an orbit"));
+    return `${base} \u00b7 ${names.join(" + ")}`;
+  }
   const orbit = scope.orbit ? orbitLabelForSlug(scope.orbit) : "";
   return orbit ? `${base} · ${orbit}` : base;
 }
@@ -10604,12 +10609,13 @@ function placeStarMap() {
     at.set(p.orbit.slug, pos);
     group.setAttribute("transform", `translate(${pos.x.toFixed(2)} ${pos.y.toFixed(2)})`);
   });
-  scene.bridges.forEach(({ bridge, path, label }) => {
+  scene.bridges.forEach(({ bridge, path, hit, label }) => {
     const a = at.get(bridge.a);
     const b = at.get(bridge.b);
     if (!a || !b) return;
     const g = bridgeGeometry(a, b);
     path.setAttribute("d", g.d);
+    hit.setAttribute("d", g.d);
     label.setAttribute("x", g.lx.toFixed(2));
     label.setAttribute("y", g.ly.toFixed(2));
   });
@@ -10722,14 +10728,55 @@ function drawStarMap() {
 
   (topo.bridges || []).forEach((bridge) => {
     if (!planets.some((p) => p.orbit.slug === bridge.a) || !planets.some((p) => p.orbit.slug === bridge.b)) return;
+    // Thicker for more shared entities; a wide invisible twin makes the thin line easy to point at.
     const path = svgEl("path", { d: "M 0 0" }, "map-bridge");
-    const label = svgText(0, 0, shortLabel(bridge.shared[0], 14), "map-bridge-label");
-    const title = svgEl("title");
-    title.textContent = bridge.shared.join(", ");
-    label.appendChild(title);
+    path.style.strokeWidth = String(1.2 + Math.min(bridge.weight || 1, 5) * 0.45);
+    const hit = svgEl("path", { d: "M 0 0", tabindex: 0, role: "button" }, "map-bridge-hit");
+    const extra = bridge.weight > 1 ? ` +${bridge.weight - 1}` : "";
+    const label = svgText(0, 0, `${shortLabel(bridge.shared[0], 14)}${extra}`, "map-bridge-label");
+    const titleA = orbitTitles.get(bridge.a) || bridge.a;
+    const titleB = orbitTitles.get(bridge.b) || bridge.b;
+    hit.setAttribute("aria-label", t("map.bridgeLabel", `${titleA} and ${titleB} both name ${bridge.shared.join(", ")}`,
+      { a: titleA, b: titleB, names: bridge.shared.join(t("list.sep", ", ")) }));
+    const light = (on) => {
+      horizonEl("starmap-svg").classList.toggle("has-lit", on);
+      path.classList.toggle("is-lit", on);
+      label.classList.toggle("is-lit", on);
+      scene.planets.forEach(({ p, group }) => {
+        group.classList.toggle("is-linked", on && (p.orbit.slug === bridge.a || p.orbit.slug === bridge.b));
+      });
+      mapMotion.paused = on;
+      if (on) {
+        showMapTip(hit, `${titleA} \u2194 ${titleB}`, bridge.shared.join(t("list.sep", ", ")));
+      } else {
+        hideMapTip();
+      }
+    };
+    const open = () => openMapFocus({ kind: "bridge", a: bridge.a, b: bridge.b });
+    [hit, label].forEach((el) => {
+      el.addEventListener("pointerenter", () => light(true));
+      el.addEventListener("pointerleave", () => light(false));
+      el.addEventListener("click", (event) => {
+        event.stopPropagation();
+        light(false);
+        open();
+      });
+    });
+    hit.addEventListener("focus", () => light(true));
+    hit.addEventListener("blur", () => light(false));
+    hit.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        open();
+      }
+    });
+    if (starMap.focus && starMap.focus.kind === "bridge" && starMap.focus.a === bridge.a && starMap.focus.b === bridge.b) {
+      path.classList.add("is-selected");
+    }
     world.appendChild(path);
+    world.appendChild(hit);
     world.appendChild(label);
-    scene.bridges.push({ bridge, path, label });
+    scene.bridges.push({ bridge, path, hit, label });
   });
 
   // The Horizon: a black hole whose accretion disk is two blurred copper arcs turning around a black
@@ -11186,6 +11233,7 @@ function openMapFocus(focus) {
     starMap.selected = focus.kind === "capture" ? focus.orbit : null;
     starMap.focus = focus;
   }
+  if (mapPanelGrip && mapPanelGrip.isCollapsed()) mapPanelGrip.setCollapsed(false, { persist: false });
   drawStarMap();
   syncStarMapContext();
   if (starMap.selected) focusCameraOn(starMap.selected);
@@ -11320,7 +11368,8 @@ function initStarMapCamera() {
     zoomBy(factor, clientToView(svg, event.clientX, event.clientY));
   }, { passive: false });
   svg.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || event.target.closest(".map-planet, .map-hit, .map-hole-hit, .map-hole-sub")) return;
+    if (event.button !== 0
+      || event.target.closest(".map-planet, .map-hit, .map-hole-hit, .map-hole-sub, .map-bridge-hit, .map-bridge-label")) return;
     event.preventDefault(); // no text selection starting under a pan
     mapPan.id = event.pointerId;
     mapPan.start = { cx: event.clientX, cy: event.clientY, x: mapCamera.x, y: mapCamera.y };
@@ -11464,6 +11513,88 @@ function renderHorizonCard(card, { standing = false } = {}) {
   }
 }
 
+//: The link between two planets: what they both name, and side by side, the captures on each side
+//: that name the entity in focus. The question it offers is the reason to open it: how do these two
+//: orbits each talk about this, asked over just the captures that name it on both sides.
+function renderBridgeCard(card, focus) {
+  mapCardClose(card);
+  const titleA = orbitTitles.get(focus.a) || t("suggest.anOrbit", "an orbit");
+  const titleB = orbitTitles.get(focus.b) || t("suggest.anOrbit", "an orbit");
+  card.appendChild(elt("p", "card-kicker", t("map.bridgeKicker", "What two orbits share")));
+  card.appendChild(elt("h2", "card-title", `${titleA} \u2194 ${titleB}`));
+  const detail = elt("div", "card-detail");
+  detail.appendChild(elt("p", "card-note", t("map.loading", "Loading\u2026")));
+  card.appendChild(detail);
+  const token = (renderBridgeCard.token = (renderBridgeCard.token || 0) + 1);
+  void (async () => {
+    let got;
+    try {
+      got = await api(`/horizon/bridge?a=${encodeURIComponent(focus.a)}&b=${encodeURIComponent(focus.b)}`);
+    } catch (err) {
+      if (token === renderBridgeCard.token) detail.replaceChildren(elt("p", "card-note", readableError(err.message)));
+      return;
+    }
+    if (token !== renderBridgeCard.token || !detail.isConnected) return;
+    const shared = got.shared || [];
+    if (!shared.length) {
+      detail.replaceChildren(elt("p", "card-note", t("map.bridgeNone", "They no longer name anything in common.")));
+      return;
+    }
+    const chosen = shared.find((s) => s.name === focus.entity) || shared[0];
+    detail.textContent = "";
+    detail.appendChild(elt("h3", "card-section", t("map.bridgeShared", "Both name")));
+    const chips = elt("div", "card-chips");
+    shared.forEach((s) => {
+      const chip = elt("button", "card-chip", s.name);
+      chip.type = "button";
+      chip.setAttribute("aria-pressed", String(s === chosen));
+      chip.addEventListener("click", () => {
+        starMap.focus = { ...focus, entity: s.name };
+        renderStarMapCard();
+      });
+      chips.appendChild(chip);
+    });
+    detail.appendChild(chips);
+    const sides = elt("div", "bridge-sides");
+    [[titleA, focus.a, chosen.a], [titleB, focus.b, chosen.b]].forEach(([title, slugKey, items]) => {
+      const side = elt("div", "bridge-side");
+      side.appendChild(elt("h3", "card-section", title));
+      const list = elt("ul", "card-list");
+      items.forEach((item) => {
+        const row = elt("li", "card-row");
+        const name = elt("button", "card-row-title", item.title);
+        name.type = "button";
+        name.addEventListener("click", () => openMapFocus({ kind: "capture", id: item.id, title: item.title, state: "ready", orbit: slugKey }));
+        row.appendChild(name);
+        list.appendChild(row);
+      });
+      side.appendChild(list);
+      sides.appendChild(side);
+    });
+    detail.appendChild(sides);
+    const ask = elt("button", "btn btn-primary card-enter",
+      t("map.bridgeAsk", `Ask how both talk about ${chosen.name}`, { name: chosen.name }));
+    ask.type = "button";
+    ask.addEventListener("click", () => askAcrossBridge(focus, chosen.name, titleA, titleB));
+    detail.appendChild(ask);
+  })();
+}
+
+//: Sets the dock to the entity across both orbits, writes the question, and opens it. Nothing is
+//: spent: Enter still previews what it would read, free, first (invariant 47).
+function askAcrossBridge(focus, name, titleA, titleB) {
+  askH.custom = { id: "custom", scope: { kind: "entity", value: name, orbits: [focus.a, focus.b] } };
+  askH.chips = askH.chips.filter((chip) => chip.id !== "custom");
+  askH.chips.push(askH.custom);
+  askH.chosen = "custom";
+  renderAskHChips();
+  dismissAskHPlan();
+  const input = horizonEl("ask-h-input");
+  input.value = t("map.bridgeQuestion", `How do ${titleA} and ${titleB} each talk about ${name}, and where do they differ?`,
+    { a: titleA, b: titleB, name });
+  openDock();
+}
+
 //: A capture's card fills in after one fetch; the part known from the map is drawn at once.
 function renderCaptureCard(card, focus) {
   mapCardClose(card);
@@ -11563,6 +11694,11 @@ function paintStarMapCard(mapCard) {
   }
   if (starMap.focus && starMap.focus.kind === "capture") {
     renderCaptureCard(mapCard, starMap.focus);
+    mapCard.hidden = false;
+    return;
+  }
+  if (starMap.focus && starMap.focus.kind === "bridge") {
+    renderBridgeCard(mapCard, starMap.focus);
     mapCard.hidden = false;
     return;
   }

@@ -243,3 +243,27 @@ def graph(
             "captures": max(0, len(parsed) - len(captures)),
         },
     }
+
+
+def bridge(a: str, b: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
+    """What two orbits share, and where each says it: for every entity the captures filed into both
+    orbits name, the captures on each side that name it. Aliases apply, as everywhere a reader sees
+    an entity (`concepts.py`). Derived from summaries only, never a model call."""
+    resolve = concepts.resolver(base_dir=base_dir)
+    with horizon._connect(base_dir) as conn:
+        rows = conn.execute(
+            """SELECT n.id, n.title, n.origin, n.preview, n.entities, m.orbit_id
+               FROM nodes n JOIN memberships m ON m.node_id = n.id
+               WHERE m.orbit_id IN (?, ?)""",
+            (a, b),
+        ).fetchall()
+    sides: dict[str, dict[str, list[dict]]] = {a: defaultdict(list), b: defaultdict(list)}
+    for row in rows:
+        names = dict.fromkeys(resolve(e) for e in _names(row["entities"]))
+        for name in names:
+            sides[row["orbit_id"]][name].append({"id": row["id"], "title": _label(row)})
+    shared = sorted(set(sides[a]) & set(sides[b]), key=lambda n: (-(len(sides[a][n]) + len(sides[b][n])), n))
+    return {
+        "a": a, "b": b,
+        "shared": [{"name": n, "a": sides[a][n], "b": sides[b][n]} for n in shared],
+    }
