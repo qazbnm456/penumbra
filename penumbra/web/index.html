@@ -107,6 +107,10 @@
       <div class="facet-rule" role="presentation"></div>
       <div id="facet-list"></div>
       <button type="button" class="facet facet-new" id="facet-new" data-i18n="horizon.newFacet">+ New orbit</button>
+      <!-- Drag to size, drag narrow to put away, double-click to toggle, arrows from the keyboard. -->
+      <div class="panel-grip panel-grip-right" id="facets-grip" role="separator" aria-orientation="vertical"
+           aria-label="Resize the orbit list" data-i18n-label="panes.resizeOrbits" tabindex="0"
+           aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="studio-grip" aria-hidden="true">⣿</span></div>
     </nav>
 
     <div class="horizon-scroll">
@@ -180,7 +184,6 @@
           <span class="legend-item"><span class="legend-bridge" aria-hidden="true"></span><span data-i18n="map.legendBridge">Orbits that share an entity</span></span>
           <span class="legend-item legend-note" data-i18n="map.legendDistance">Closer to the centre means more recent.</span>
         </div>
-        <aside class="starmap-card" id="starmap-card" hidden aria-live="polite"></aside>
         <div class="starmap-tip" id="starmap-tip" role="tooltip" hidden></div>
         <!-- The camera: scroll or pinch to zoom, drag empty space to pan, and these for a pointer
              that cannot. + and - and 0 do the same from the keyboard, and Escape goes home. -->
@@ -251,7 +254,18 @@
       </div>
     </div>
     </div>
-  </section>
+    <!-- The map's side panel: the Horizon's own summary until something is chosen, then the planet,
+       the capture or the link that was. A column of its own rather than a card floating over the
+       map, so the map is never under it and the reader decides how wide it is. -->
+  <aside class="map-panel" id="map-panel" aria-label="Details" data-i18n-label="panes.details">
+      <div class="panel-grip panel-grip-left" id="map-panel-grip" role="separator" aria-orientation="vertical"
+           aria-label="Resize the details panel" data-i18n-label="panes.resizeDetails" tabindex="0"
+           aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="studio-grip" aria-hidden="true">⣿</span></div>
+      <button type="button" class="map-panel-open" id="map-panel-open" aria-label="Show the details panel"
+              data-i18n-label="panes.showDetails" title="Show the details panel" data-i18n-title="panes.showDetails">&lsaquo;</button>
+      <div class="starmap-card" id="starmap-card" aria-live="polite"></div>
+  </aside>
+</section>
 
   <main class="cols" id="view-orbit" hidden>
     <!-- The orbit's own name is in the header picker and changes per orbit; this is the
@@ -274,6 +288,9 @@
               data-i18n="studio.head">Studio</button>
     </div>
     <section class="col col-sources" id="col-sources" role="tabpanel" aria-labelledby="panel-tab-sources">
+      <div class="panel-grip panel-grip-right" id="sources-grip" role="separator" aria-orientation="vertical"
+           aria-label="Resize the sources panel" data-i18n-label="panes.resizeSources" tabindex="0"
+           aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="studio-grip" aria-hidden="true">⣿</span></div>
       <h2 class="panel-head" data-i18n="sources.head">Sources</h2>
 
       <form id="add-source-form" class="add-source">

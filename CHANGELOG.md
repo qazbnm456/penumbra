@@ -86,6 +86,7 @@ Each entry states what the product does now and why. The reasoning behind each r
 #### Web UI
 
 - A zero-build web UI is the desktop app's workspace, and `penumbra serve` serves the same UI from a source install (invariant 29). It has a warm paper theme and a dark theme, Literata for reading and Public Sans for the interface, one copper accent, and an English and a Traditional Chinese interface.
+- Side panels all size the same way: drag the grip, drag it narrow to put it away, double-click or Enter to toggle, arrows to step. The Horizon's orbit list, the star map's details panel and an orbit's sources column joined the Studio, each with a minimum width and a floor for the middle column, and each remembers its width. The star map's details moved out from over the map into a column of their own, which shows the Horizon's unfiled captures when nothing is chosen. A put-away Studio no longer squeezes the podcast panel into its icon rail.
 - Every long-running action shows that it is running, with elapsed time and a Stop, and starts only on an explicit press (invariant 47).
 - Below 640px wide (a narrow desktop window or high zoom), an orbit shows one panel at a time through a Sources, Chat and Studio tab row.
 - An empty orbit offers Paste a link, Paste text and Upload a file as its first move. An answer's references link, steps pill and Regenerate share one footer row. The Studio's tab strip stays pinned while its column scrolls.
