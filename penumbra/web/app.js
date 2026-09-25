@@ -130,7 +130,8 @@ function showTokenGate(message) {
   const desktop = isDesktopShell();
   gate.classList.toggle("is-desktop", desktop);
   if (desktop) {
-    message = t("token.desktop", "This window lost its connection to the server. Choose File > Restart Server to reconnect.");
+    const menu = menuItems();
+    message = t("token.desktop", `This window lost its connection to the server. Choose ${menu.restart} to reconnect.`, menu);
   }
   const error = document.getElementById("token-gate-error");
   if (error) {
@@ -199,6 +200,18 @@ function captureApiToken() {
         // blocked storage: only the wording of a few error messages depends on this
       }
       url.searchParams.delete("shell");
+      rewritten = true;
+    }
+    const menuLang = url.searchParams.get("menu");
+    if (menuLang) {
+      if (menuLang === "zh" || menuLang === "en") {
+        try {
+          sessionStorage.setItem("penumbra-menu", menuLang);
+        } catch {
+          // blocked storage: menu names then follow the interface language
+        }
+      }
+      url.searchParams.delete("menu");
       rewritten = true;
     }
     const fromUrl = url.searchParams.get("token");
@@ -2051,7 +2064,8 @@ function renderSettings(state_) {
   if (isDesktopShell()) {
     body.appendChild(elt("p", "setting-source settings-where", t(
       "settings.modelWhere",
-      "The model and its API key are set in File > Open Configuration File…, not here.",
+      `The model and its API key are set in ${menuItems().config}, not here.`,
+      menuItems(),
     )));
   }
 
@@ -2369,13 +2383,35 @@ function isDesktopShell() {
 // start the server again, which the desktop app does from the same menu.
 function withShellHint(text, kind = "config") {
   if (!isDesktopShell()) return text;
+  const menu = menuItems();
   const hint = kind === "restart"
-    ? t("err.desktopRestart", "File > Restart Server starts it again.")
+    ? t("err.desktopRestart", `${menu.restart} starts it again.`, menu)
     : t(
       "err.desktopWhere",
-      "In the desktop app, these settings are in File > Open Configuration File…, and File > Restart Server applies them."
+      `In the desktop app, these settings are in ${menu.config}, and ${menu.restart} applies them.`,
+      menu
     );
   return `${text} ${hint}`;
+}
+
+//: The desktop menu items a message sends the reader to, spelled the way the menu bar spells them.
+//: The menu follows the OS language and the page follows its own setting, so a Chinese interface on
+//: an English Mac quoted 「檔案 > 開啟設定檔…」 at a menu that reads "File > Open Configuration File…".
+//: The shell says which language its menu is in; without that, the interface language is the guess.
+const MENU_ITEMS = {
+  en: { config: "File > Open Configuration File…", restart: "File > Restart Server" },
+  zh: { config: "檔案 > 開啟設定檔…", restart: "檔案 > 重新啟動伺服器" },
+};
+
+function menuItems() {
+  let lang = null;
+  try {
+    lang = sessionStorage.getItem("penumbra-menu");
+  } catch {
+    // blocked storage: fall through to the interface language
+  }
+  if (!MENU_ITEMS[lang]) lang = uiLang().startsWith("zh") ? "zh" : "en";
+  return MENU_ITEMS[lang];
 }
 
 function readableError(text) {

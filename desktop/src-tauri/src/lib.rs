@@ -387,7 +387,7 @@ fn start_server(app: &AppHandle) -> Result<Server, String> {
     let port = choose_port(app);
     let token = mint_token();
 
-    let log = File::create(log_path(app)).map_err(|e| format!("{}: {e}", word("Could not write the server log", "無法寫入伺服器記錄")))?;
+    let log = File::create(log_path(app)).map_err(|e| format!("{}: {e}", word("Could not write the server log", "無法寫入伺服器紀錄")))?;
     let log_err = log.try_clone().map_err(|e| e.to_string())?;
 
     let mut command = Command::new(&python);
@@ -603,7 +603,10 @@ fn boot(app: AppHandle) {
 
         // In the FRAGMENT, which the browser never sends: in the query string uvicorn's access log
         // wrote the token into `server.log`, the file "Show Server Log" invites people to share.
-        let target = format!("http://127.0.0.1:{port}/#token={token}&shell=desktop");
+        // `menu` is the language the menu bar is written in, which follows the OS, not the page's
+        // interface language, so the page can quote a menu item the way the reader will see it.
+        let menu = if chinese() { "zh" } else { "en" };
+        let target = format!("http://127.0.0.1:{port}/#token={token}&shell=desktop&menu={menu}");
         if let Ok(url) = url::Url::parse(&target) {
             let _ = window.navigate(url);
         }

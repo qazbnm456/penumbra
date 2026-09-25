@@ -28,5 +28,8 @@ const readableError = buildReadableError(src);
 
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
-const { cases } = JSON.parse(input);
+const { cases, session = null, ui = "en" } = JSON.parse(input);
+// A desktop window: the shell's flags live in sessionStorage, which node does not have.
+if (session) globalThis.sessionStorage = { getItem: (key) => session[key] ?? null };
+globalThis.__uiLang = ui;
 process.stdout.write(JSON.stringify({ results: cases.map((c) => readableError(c)) }));

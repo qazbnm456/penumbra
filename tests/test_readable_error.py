@@ -27,7 +27,7 @@ import pytest
 HARNESS = Path(__file__).with_name("readable_error_harness.mjs")
 
 
-def _clean(*messages: str) -> list[str]:
+def _clean(*messages: str, session: dict | None = None, ui: str = "en") -> list[str]:
     node = shutil.which("node")
     assert node, (
         "node is required to run the shipped `readableError`. CI installs it; see "
@@ -36,7 +36,7 @@ def _clean(*messages: str) -> list[str]:
     )
     done = subprocess.run(
         [node, str(HARNESS)],
-        input=json.dumps({"cases": list(messages)}),
+        input=json.dumps({"cases": list(messages), "session": session, "ui": ui}),
         capture_output=True,
         text=True,
         timeout=60,
@@ -412,3 +412,17 @@ def test_a_setting_the_server_cannot_run_with_keeps_its_reason():
     assert reason in cleaned and "log" not in cleaned, cleaned
     (cap,) = _clean("413: assembled corpus is 9000001 chars, over the 8000000 cap (PN_MAX_CORPUS_CHARS) — x")
     assert "PN_MAX_CORPUS_CHARS" in cap and "Remove a source" in cap, cap
+
+
+def test_a_desktop_hint_quotes_the_menu_in_the_language_the_menu_bar_uses():
+    """The menu follows the OS language and the page its own setting. A Chinese interface on an
+    English Mac quoted 「檔案 > 開啟設定檔…」 at a menu reading "File > Open Configuration File…"."""
+    raw = "PN_MAIN_MODEL is not set"
+    (english_menu,) = _clean(raw, session={"penumbra-shell": "desktop", "penumbra-menu": "en"}, ui="zh-Hant")
+    assert "File > Open Configuration File…" in english_menu, english_menu
+    (chinese_menu,) = _clean(raw, session={"penumbra-shell": "desktop", "penumbra-menu": "zh"})
+    assert "檔案 > 開啟設定檔…" in chinese_menu, chinese_menu
+    (unknown,) = _clean(raw, session={"penumbra-shell": "desktop"}, ui="zh-Hant")
+    assert "檔案 > 開啟設定檔…" in unknown, "without the shell's word, the interface language is the guess"
+    (browser,) = _clean(raw)
+    assert "File >" not in browser and "檔案" not in browser, "a browser tab has no menu to point at"

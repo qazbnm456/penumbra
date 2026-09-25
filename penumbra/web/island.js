@@ -188,7 +188,9 @@
       } catch {
         // not JSON
       }
-      throw new Error(detail);
+      const failure = new Error(typeof detail === "string" ? detail : `${resp.status}`);
+      failure.status = resp.status;
+      throw failure;
     }
     return resp.json();
   }
@@ -216,6 +218,18 @@
     }
   }
 
+  //: What a screen reader hears after "Could not take that in". This printed the server's raw
+  //: detail, an English sentence with an HTTP status and sometimes a Python class name, or
+  //: "[object Object]" for a validation error whose detail is a list. Only a reason the reader can
+  //: act on is said; anything else leaves the plain sentence alone.
+  function whyNot(err) {
+    if (err && err.names) return `${say("island.couldNotRead", "these could not be read")} (${err.names.join(", ")})`;
+    if (err instanceof TypeError) return say("island.noServer", "Penumbra is not answering. Right-click here to restart it.");
+    if (err && err.status === 413) return say("island.tooBig", "that file is too large");
+    if (err && err.status === 401) return say("island.restarted", "Penumbra was just restarted. Drop it again.");
+    return "";
+  }
+
   async function capture(item) {
     if (item.files.length) {
       const form = new FormData();
@@ -223,7 +237,9 @@
       const out = await send("/horizon/upload", { method: "POST", body: form });
       const refused = (out.refused || []).length;
       if (refused && !(out.nodes || []).length) {
-        throw new Error(out.refused.map((r) => r.filename).join(", "));
+        const failure = new Error("refused");
+        failure.names = out.refused.map((r) => r.filename);
+        throw failure;
       }
       return { landed: (out.nodes || []).length, refused };
     }
@@ -311,7 +327,8 @@
       );
     } catch (err) {
       result("bad");
-      live.textContent = `${say("island.failed", "Could not take that in")}: ${err.message}`;
+      const why = whyNot(err);
+      live.textContent = why ? `${say("island.failed", "Could not take that in")}: ${why}` : say("island.failed", "Could not take that in");
     } finally {
       delete document.body.dataset.busy;
     }
