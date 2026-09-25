@@ -23,7 +23,7 @@ macOS 13 is the floor because the stylesheet uses `color-mix()`, which WKWebView
 
 Model settings live in `penumbra.env` in the app's data folder, one `KEY=VALUE` per line. **File > Open Configuration File…** (or right-clicking the island) creates it from a template that lists every setting an error message can name, with its default, and opens it; **File > Restart Server** applies a change. The full list is [`.env.example`](../.env.example), which uses the same names. Keys never go on the settings page (invariant 41). A configuration file created before the template changed keeps its old contents; delete it and open it again to get the current template.
 
-The bundled runtime installs Penumbra with the `api` extra only, so the Claude subscription path (`claude-agent-sdk/` models) and the Chatterbox voice (`PN_TTS_PROVIDER=chatterbox`) do not work in the app. Both need a source install.
+A `claude-agent-sdk/…` model runs on your Claude subscription through the Claude Code installed on this computer: install it, run `claude` once to log in, and set the model. The runtime carries the SDK's Python but not the 260 MB copy of Claude Code its wheel bundles, and the shell puts Claude Code's usual install locations on the server's PATH. The Chatterbox voice (`PN_TTS_PROVIDER=chatterbox`) needs a source install.
 
 An install from before the rename (rlm-notebook, `tw.boik.rlm-notebook`) is moved here on first launch, and its `rlm-notebook.env` becomes `penumbra.env` with every `RN_` setting spelled `PN_`.
 

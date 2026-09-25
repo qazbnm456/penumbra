@@ -405,6 +405,7 @@ const STRINGS = {
     "err.refusedTarget": "這個位址不在可以抓取的範圍內。",
     "err.unreachable": "連不上這個位址。",
     "err.runTimedOut": "這次執行超過時間上限而被中止。較長的 Podcast 需要更多時間：把 PN_RUN_TIMEOUT_SECONDS 調高，然後重新啟動伺服器。",
+    "err.noClaudeCode": "claude-agent-sdk 開頭的模型會透過 Claude Code 使用你的 Claude 訂閱，但這台電腦沒有安裝 Claude Code。請先安裝，在終端機執行一次 claude 登入，然後重新啟動伺服器。",
     "err.misconfigured": "有一項設定讓伺服器無法執行這個動作：{why}",
     "err.corpusCap": "這次要讀的文字超過單次執行的上限。移除一份來源，或把 PN_MAX_CORPUS_CHARS 調高，然後重新啟動伺服器。",
     "err.htmlReply": "模型伺服器回傳的是一個網頁，而不是回覆。中間很可能有代理伺服器或登入頁擋著。",

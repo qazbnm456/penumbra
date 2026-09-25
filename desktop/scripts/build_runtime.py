@@ -106,11 +106,13 @@ def install_app(python: Path, home: Path) -> None:
     with tempfile.TemporaryDirectory() as scratch:
         pinned = Path(scratch) / "requirements.txt"
         run(
-            "uv", "export", "--project", str(ROOT), "--locked", "--no-default-groups", "--extra", "api",
+            "uv", "export", "--project", str(ROOT), "--locked", "--no-default-groups",
+            "--extra", "api", "--extra", "subscription",
             "--no-emit-project", "--format", "requirements-txt", "--output-file", str(pinned),
         )
         run("uv", "pip", "sync", "--python", str(python), str(pinned))
     run("uv", "pip", "install", "--python", str(python), "--no-deps", str(ROOT))
+    drop_bundled_claude(python)
     # Precompiled bytecode: the first launch imports numpy, onnxruntime and dspy, and compiling
     # them on that launch is seconds the reader spends watching a splash screen. UNCHECKED hashes,
     # not the default timestamps: a .deb, an AppImage or an MSI install does not keep source
@@ -121,6 +123,26 @@ def install_app(python: Path, home: Path) -> None:
         str(python), "-m", "compileall", "-q", "-j", "0",
         "--invalidation-mode", "unchecked-hash", str(home),
     )
+
+
+def drop_bundled_claude(python: Path) -> None:
+    """Keep the subscription path's Python and drop the copy of Claude Code its wheel carries.
+
+    `claude-agent-sdk` is under a megabyte of Python and 260 MB of bundled Claude Code CLI. A
+    subscription run needs Claude Code installed and logged in on this computer anyway, because the
+    login is the subscription, and the SDK falls back to the `claude` on PATH when it finds no copy
+    of its own (the shell puts the usual install locations on the server's PATH). So a model named
+    `claude-agent-sdk/…` in the configuration file works in the app with nothing more to install,
+    and nobody on an API key carries 260 MB for it.
+    """
+    found = subprocess.run(
+        [str(python), "-c", "import claude_agent_sdk, os; print(os.path.dirname(claude_agent_sdk.__file__))"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    bundled = Path(found) / "_bundled"
+    if bundled.exists():
+        shutil.rmtree(bundled)
+        print(f"removed the SDK's bundled Claude Code from {bundled}", flush=True)
 
 
 def install_deno(dest: Path, target: str) -> None:

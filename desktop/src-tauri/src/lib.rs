@@ -170,6 +170,10 @@ const CONFIG_TEMPLATE: &str = "\
 # PN_MAIN_MODEL=anthropic/claude-sonnet-5
 # PN_API_KEY=
 #
+# Or use your Claude Pro or Max subscription instead of a key: install Claude Code, run claude
+# once in a terminal to log in, and set this instead (no PN_API_KEY needed):
+# PN_MAIN_MODEL=claude-agent-sdk/claude-sonnet-5
+#
 # Optional: a separate, cheaper model for sub-calls, and an OpenAI-compatible endpoint.
 # PN_SUB_MODEL=
 # PN_BASE_URL=
@@ -446,8 +450,11 @@ fn search_path(app: &AppHandle) -> std::ffi::OsString {
         parts.push(runtime.join("deno"));
     }
     if cfg!(target_os = "macos") {
+        // Where Claude Code's installers put `claude`, which the subscription path runs: the
+        // native installer's ~/.local/bin, and ~/.claude/local for an older local install.
         if let Some(home) = std::env::var_os("HOME") {
-            parts.push(PathBuf::from(home).join(".local/bin"));
+            parts.push(PathBuf::from(&home).join(".local/bin"));
+            parts.push(PathBuf::from(&home).join(".claude/local"));
         }
         parts.push(PathBuf::from("/opt/homebrew/bin"));
         parts.push(PathBuf::from("/usr/local/bin"));
