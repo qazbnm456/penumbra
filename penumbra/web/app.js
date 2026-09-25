@@ -1871,74 +1871,88 @@ function settingRows() {
 // once, on a press, with its size stated beside the button; removing it deletes the model and every
 // stored vector. No model call and no money, so it is not a safety bound (invariant 41).
 function renderVectorsRow(body) {
-  const wrap = elt("div", "setting-row");
-  // A `label` like every other row's, so it takes the same style; it names the control below.
-  const name = elt("label", "", t("settings.vectors", "Local relations"));
-  wrap.appendChild(name);
-  const line = elt("div", "vectors-line");
-  wrap.appendChild(line);
+  const wrap = elt("div", "setting-row vec-row");
+  const head = elt("div", "vec-head");
+  head.appendChild(elt("label", "", t("settings.vectors", "Local relations")));
+  const pill = elt("span", "vec-pill", "");
+  head.appendChild(pill);
+  wrap.appendChild(head);
   wrap.appendChild(elt("div", "setting-source", t("settings.vectorsHelp",
     "Finds captures with similar content on this computer, so ones not yet summarised can be linked too. Free; the model is downloaded once.")));
+  const stage = elt("div", "vec-stage");
+  wrap.appendChild(stage);
   body.appendChild(wrap);
   let timer = null;
   const mb = (n) => (n / 1048576).toFixed(0);
+
+  async function act(path, method) {
+    try {
+      await api(path, { method });
+    } catch (err) {
+      notify(readableError(err.message));
+    }
+    void paint();
+  }
+
   async function paint() {
     let st;
     try {
       st = await api("/horizon/vectors");
     } catch (err) {
-      line.textContent = readableError(err.message);
+      stage.textContent = readableError(err.message);
       return;
     }
-    if (!line.isConnected) return;
-    line.textContent = "";
-    const busy = st.download.running || (st.embedding && st.embedding.running);
-    if (st.download.running) {
-      line.appendChild(elt("span", "vectors-state", t("settings.vectorsDownloading",
-        `Downloading ${mb(st.download.done)} of ${mb(st.download.total)} MB`,
-        { done: mb(st.download.done), total: mb(st.download.total) })));
-      const stop = elt("button", "btn", t("run.stop", "\u23f9 Stop"));
+    if (!stage.isConnected) return;
+    stage.textContent = "";
+    const dl = st.download;
+    const working = st.embedding && st.embedding.running;
+    pill.className = "vec-pill";
+    if (dl.running) {
+      const pct = dl.total ? Math.min(100, Math.round((dl.done / dl.total) * 100)) : 0;
+      pill.textContent = t("settings.vectorsPillDownloading", `Downloading ${pct}%`, { pct });
+      pill.classList.add("is-busy");
+      const bar = elt("div", "vec-bar");
+      bar.setAttribute("role", "progressbar");
+      bar.setAttribute("aria-valuemin", "0");
+      bar.setAttribute("aria-valuemax", "100");
+      bar.setAttribute("aria-valuenow", String(pct));
+      bar.setAttribute("aria-label", t("settings.vectorsDownloadLabel", "Model download"));
+      const fill = elt("span", "vec-bar-fill");
+      fill.style.width = `${pct}%`;
+      bar.appendChild(fill);
+      stage.appendChild(bar);
+      const meta = elt("div", "vec-meta");
+      meta.appendChild(elt("span", "vec-count", t("settings.vectorsBytes", `${mb(dl.done)} of ${mb(dl.total)} MB`,
+        { done: mb(dl.done), total: mb(dl.total) })));
+      const stop = elt("button", "vec-link", t("settings.vectorsStop", "Stop"));
       stop.type = "button";
-      stop.addEventListener("click", async () => {
-        stop.disabled = true;
-        await api("/horizon/vectors/cancel", { method: "POST" }).catch(() => {});
-      });
-      line.appendChild(stop);
+      stop.addEventListener("click", () => { stop.disabled = true; void act("/horizon/vectors/cancel", "POST"); });
+      meta.appendChild(stop);
+      stage.appendChild(meta);
     } else if (st.installed) {
-      line.appendChild(elt("span", "vectors-state", st.embedding && st.embedding.running
-        ? t("settings.vectorsWorking", "On. Comparing new captures\u2026")
-        : t("settings.vectorsOn", "On")));
-      const off = elt("button", "btn", t("settings.vectorsRemove", "Turn off and delete the model"));
+      pill.textContent = working ? t("settings.vectorsPillWorking", "On, comparing") : t("settings.vectorsPillOn", "On");
+      pill.classList.add(working ? "is-busy" : "is-on");
+      const meta = elt("div", "vec-meta");
+      meta.appendChild(elt("span", "vec-count", t("settings.vectorsCount", `${st.count || 0} captures compared`,
+        { n: st.count || 0 })));
+      const off = elt("button", "vec-link is-danger", t("settings.vectorsRemoveShort", "Delete the model"));
       off.type = "button";
-      off.addEventListener("click", async () => {
-        off.disabled = true;
-        try {
-          await api("/horizon/vectors", { method: "DELETE" });
-        } catch (err) {
-          notify(readableError(err.message));
-        }
-        void paint();
-      });
-      line.appendChild(off);
+      off.addEventListener("click", () => { off.disabled = true; void act("/horizon/vectors", "DELETE"); });
+      meta.appendChild(off);
+      stage.appendChild(meta);
     } else {
-      const go = elt("button", "btn", t("settings.vectorsDownload", `Download the model (${mb(st.bytes)} MB)`,
-        { mb: mb(st.bytes) }));
+      pill.textContent = t("settings.vectorsPillOff", "Off");
+      const go = elt("button", "vec-go", "");
       go.type = "button";
-      go.addEventListener("click", async () => {
-        go.disabled = true;
-        try {
-          await api("/horizon/vectors/download", { method: "POST" });
-        } catch (err) {
-          notify(readableError(err.message));
-        }
-        void paint();
-      });
-      line.appendChild(go);
+      go.appendChild(elt("span", "", t("settings.vectorsDownloadShort", "Download the model")));
+      go.appendChild(elt("span", "vec-go-size", `${mb(st.bytes)} MB`));
+      go.addEventListener("click", () => { go.disabled = true; void act("/horizon/vectors/download", "POST"); });
+      stage.appendChild(go);
     }
-    const why = st.download.error || (st.embedding && st.embedding.error);
-    if (why) line.appendChild(elt("span", "vectors-error", readableError(why)));
+    const why = dl.error || (st.embedding && st.embedding.error);
+    if (why) stage.appendChild(elt("p", "vec-error", readableError(why)));
     clearTimeout(timer);
-    if (busy) timer = setTimeout(paint, 1000);
+    if (dl.running || working) timer = setTimeout(paint, 700);
   }
   void paint();
 }
@@ -8224,9 +8238,10 @@ function updateStreamFoot() {
       const extra = est.long
         ? t("horizon.longNote", `${est.long} are long and take several model calls each.`, { n: est.long })
         : "";
-      horizonEl("pending-count").textContent = [base, extra,
+      const zh = uiLang().startsWith("zh");
+      horizonEl("pending-count").textContent = `${base}${zh ? "\u3002" : ". "}${[extra,
         t("horizon.alignNote", "A pass may end by matching new entities, one more run.")]
-        .filter(Boolean).join(uiLang().startsWith("zh") ? "" : " ");
+        .filter(Boolean).join(zh ? "" : " ")}`;
     });
   }
   renderDistilError();
@@ -9380,8 +9395,14 @@ function renderAskHChips() {
   const chosen = askHChosen();
   const check = horizonEl("ask-h-check");
   // An orbit chip asks straight into that orbit's conversation, where a question is one press as it
-  // always has been; everything else checks first.
-  check.textContent = chosen.orbit ? t("askH.askOrbit", "Ask in this orbit") : t("askH.check", "See what it reads");
+  // always has been; everything else checks first, for free. The round button is an arrow, so what
+  // it will do is said in the line under the box and in its name, never left to guess.
+  const does = chosen.orbit ? t("askH.askOrbit", "Ask in this orbit") : t("askH.check", "See what it reads");
+  check.setAttribute("aria-label", does);
+  check.title = does;
+  horizonEl("ask-h-hint").textContent = chosen.orbit
+    ? t("askH.hintOrbit", "Enter asks in this orbit's conversation, one paid run.")
+    : t("askH.hint", "Enter shows what the question would read, free. It is asked only after you confirm.");
 }
 
 function askHScopeLabel(scope) {
@@ -9844,6 +9865,8 @@ function syncDock() {
   dockEl.hidden = !shown;
   dock.open = shown && (dock.near || dockPinned());
   dockEl.classList.toggle("is-open", dock.open);
+  // The open dock sits over the foot of the map, where the legend and the summary note are.
+  document.body.classList.toggle("dock-open", dock.open);
   horizonEl("ask-dock-handle").setAttribute("aria-expanded", dock.open ? "true" : "false");
 }
 
@@ -10101,6 +10124,17 @@ function paintStarMapLenses() {
   });
 }
 
+//: Orbital motion. Each ring turns at its own pace, inner rings faster, as a star system does;
+//: the periods are long enough that a planet can still be clicked while it moves. The clock only
+//: advances while the map is on screen and no planet is under the pointer, and a reader who asks for
+//: reduced motion gets the same map standing still.
+const MAP_PERIODS = [240, 360, 520]; // seconds per revolution, per ring
+const mapMotion = { clock: 0, last: 0, paused: false, frame: 0 };
+
+function motionAllowed() {
+  return !window.matchMedia || !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 function planetLayout() {
   const placed = [];
   let index = 0;
@@ -10110,18 +10144,100 @@ function planetLayout() {
       const orbit = starMap.orbits[index];
       index += 1;
       // Spread evenly on the ring, each ring turned a little so planets do not line up radially.
-      const angle = (-Math.PI / 2) + (i / count) * Math.PI * 2 + ring * 0.7;
+      const base = (-Math.PI / 2) + (i / count) * Math.PI * 2 + ring * 0.7;
       const size = Math.max(orbit.sources, orbit.captures);
       placed.push({
-        orbit,
-        x: MAP_CENTRE.x + rx * Math.cos(angle),
-        y: MAP_CENTRE.y + ry * Math.sin(angle),
+        orbit, rx, ry, base,
+        omega: (Math.PI * 2) / MAP_PERIODS[ring],
         r: Math.min(30, 11 + Math.sqrt(size) * 2.6),
-        angle,
       });
     }
   });
   return placed;
+}
+
+function planetAt(p) {
+  const angle = p.base + mapMotion.clock * p.omega;
+  return { x: MAP_CENTRE.x + p.rx * Math.cos(angle), y: MAP_CENTRE.y + p.ry * Math.sin(angle), angle };
+}
+
+//: A bridge bowed away from the centre, so it never runs through the Horizon.
+function bridgeGeometry(a, b) {
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  let ox = mx - MAP_CENTRE.x;
+  let oy = my - MAP_CENTRE.y;
+  let len = Math.hypot(ox, oy);
+  if (len < 1) {
+    ox = -(b.y - a.y);
+    oy = b.x - a.x;
+    len = Math.hypot(ox, oy) || 1;
+  }
+  const cx = mx + (ox / len) * 160;
+  const cy = my + (oy / len) * 160;
+  return { d: `M ${a.x} ${a.y} Q ${cx} ${cy} ${b.x} ${b.y}`, lx: (a.x + 2 * cx + b.x) / 4, ly: (a.y + 2 * cy + b.y) / 4 - 6 };
+}
+
+function placeStarMap() {
+  const scene = starMap.scene;
+  if (!scene) return;
+  const at = new Map();
+  scene.planets.forEach(({ p, group }) => {
+    const pos = planetAt(p);
+    at.set(p.orbit.slug, pos);
+    group.setAttribute("transform", `translate(${pos.x.toFixed(2)} ${pos.y.toFixed(2)})`);
+  });
+  scene.bridges.forEach(({ bridge, path, label }) => {
+    const a = at.get(bridge.a);
+    const b = at.get(bridge.b);
+    if (!a || !b) return;
+    const g = bridgeGeometry(a, b);
+    path.setAttribute("d", g.d);
+    label.setAttribute("x", g.lx.toFixed(2));
+    label.setAttribute("y", g.ly.toFixed(2));
+  });
+}
+
+function mapTick(now) {
+  mapMotion.frame = 0;
+  const onScreen = document.body.dataset.view === "horizon" && !horizonEl("starmap").hidden && !document.hidden;
+  if (!onScreen || !motionAllowed()) {
+    mapMotion.last = 0;
+    return;
+  }
+  if (mapMotion.last && !mapMotion.paused) mapMotion.clock += Math.min(0.1, (now - mapMotion.last) / 1000);
+  mapMotion.last = now;
+  placeStarMap();
+  mapMotion.frame = requestAnimationFrame(mapTick);
+}
+
+function startMapMotion() {
+  if (!mapMotion.frame && motionAllowed()) mapMotion.frame = requestAnimationFrame(mapTick);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) startMapMotion();
+});
+
+//: The shared paint for the map: gradients for a planet's body and shade, the Horizon's glow, and
+//: the soft blur the accretion disk is drawn through, the same material as the notch's ring.
+function starMapDefs() {
+  const defs = svgEl("defs");
+  const radial = (id, attrs, stops) => {
+    const g = svgEl("radialGradient", { id, ...attrs });
+    stops.forEach(([offset, cls]) => g.appendChild(svgEl("stop", { offset }, cls)));
+    defs.appendChild(g);
+  };
+  radial("pn-planet", { cx: "0.38", cy: "0.34", r: "0.75" },
+    [["0", "stop-planet-light"], ["0.55", "stop-planet-mid"], ["1", "stop-planet-dark"]]);
+  radial("pn-shade", { cx: "0.32", cy: "0.3", r: "0.95" },
+    [["0.5", "stop-clear"], ["1", "stop-shade"]]);
+  radial("pn-halo", {}, [["0.55", "stop-halo"], ["1", "stop-clear"]]);
+  radial("pn-hole-glow", {}, [["0.3", "stop-hole-glow"], ["1", "stop-clear"]]);
+  const blur = svgEl("filter", { id: "pn-soft", x: "-50%", y: "-50%", width: "200%", height: "200%" });
+  blur.appendChild(svgEl("feGaussianBlur", { stdDeviation: "3.2" }));
+  defs.appendChild(blur);
+  return defs;
 }
 
 //: Which drawn element had focus, so a redraw can hand it back. `clearSvg` removes the focused
@@ -10141,85 +10257,111 @@ function drawStarMap() {
   const svg = horizonEl("starmap-svg");
   const keepFocus = focusedKey(svg);
   clearSvg(svg);
+  starMap.scene = null;
+  mapMotion.paused = false; // the planet under the pointer is rebuilt; it holds again on the next move
   const topo = starMap.data;
   if (!topo) return;
   const empty = !starMap.orbits.length && !topo.total.count;
   horizonEl("starmap-empty").textContent = t("map.empty", "Capture something and the map starts to grow.");
   horizonEl("starmap-empty").hidden = !empty;
+  svg.appendChild(starMapDefs());
 
-  MAP_RINGS.forEach(([rx, ry]) => {
-    svg.appendChild(svgEl("ellipse", { cx: MAP_CENTRE.x, cy: MAP_CENTRE.y, rx, ry }, "map-ring"));
+  // A faint field of stars, fixed per position so it does not reshuffle on every redraw.
+  const field = svgEl("g", { "aria-hidden": "true" }, "map-field");
+  for (let i = 0; i < 70; i += 1) {
+    const star = svgEl("circle", {
+      cx: (stableHash(`sx${i}`) * 1000).toFixed(1), cy: (stableHash(`sy${i}`) * 640).toFixed(1),
+      r: (0.5 + stableHash(`sr${i}`) * 0.9).toFixed(2),
+    }, "map-star");
+    star.style.animationDelay = `${(stableHash(`sd${i}`) * 6).toFixed(2)}s`;
+    field.appendChild(star);
+  }
+  svg.appendChild(field);
+
+  MAP_RINGS.forEach(([rx, ry], ring) => {
+    svg.appendChild(svgEl("ellipse", { cx: MAP_CENTRE.x, cy: MAP_CENTRE.y, rx, ry }, `map-ring ring-${ring}`));
   });
 
   const planets = planetLayout();
-  const at = new Map(planets.map((p) => [p.orbit.slug, p]));
+  const scene = { planets: [], bridges: [] };
 
   (topo.bridges || []).forEach((bridge) => {
-    const a = at.get(bridge.a);
-    const b = at.get(bridge.b);
-    if (!a || !b) return;
-    // Bowed away from the centre, so a bridge between two planets never runs through the Horizon.
-    const mx = (a.x + b.x) / 2;
-    const my = (a.y + b.y) / 2;
-    let ox = mx - MAP_CENTRE.x;
-    let oy = my - MAP_CENTRE.y;
-    let len = Math.hypot(ox, oy);
-    if (len < 1) {
-      ox = -(b.y - a.y);
-      oy = b.x - a.x;
-      len = Math.hypot(ox, oy) || 1;
-    }
-    const cx = mx + (ox / len) * 160;
-    const cy = my + (oy / len) * 160;
-    svg.appendChild(svgEl("path", { d: `M ${a.x} ${a.y} Q ${cx} ${cy} ${b.x} ${b.y}` }, "map-bridge"));
-    const label = svgText((a.x + 2 * cx + b.x) / 4, (a.y + 2 * cy + b.y) / 4 - 6,
-      shortLabel(bridge.shared[0], 14), "map-bridge-label");
+    if (!planets.some((p) => p.orbit.slug === bridge.a) || !planets.some((p) => p.orbit.slug === bridge.b)) return;
+    const path = svgEl("path", { d: "M 0 0" }, "map-bridge");
+    const label = svgText(0, 0, shortLabel(bridge.shared[0], 14), "map-bridge-label");
     const title = svgEl("title");
     title.textContent = bridge.shared.join(", ");
     label.appendChild(title);
+    svg.appendChild(path);
     svg.appendChild(label);
+    scene.bridges.push({ bridge, path, label });
   });
 
-  // The Horizon itself: a black hole with its accretion ring, and the captures filed nowhere yet
-  // circling it as loose points.
+  // The Horizon: a black hole whose accretion disk is two blurred copper arcs turning around a black
+  // core, the notch's own ring at a larger size; the captures filed nowhere circle it slowly.
   const hole = svgEl("g", { transform: `translate(${MAP_CENTRE.x} ${MAP_CENTRE.y})` }, "map-hole");
-  hole.appendChild(svgEl("circle", { r: 58 }, "map-hole-glow"));
-  hole.appendChild(svgEl("circle", { r: 40 }, "map-hole-ring"));
-  hole.appendChild(svgEl("circle", { r: 26 }, "map-hole-core"));
-  svg.appendChild(hole);
+  // Paints are attributes, not stylesheet `url()`s: the stylesheet names no reference of any kind.
+  hole.appendChild(svgEl("circle", { r: 78, fill: "url(#pn-hole-glow)" }, "map-hole-glow"));
+  const disk = svgEl("g", { filter: "url(#pn-soft)" }, "map-disk");
+  disk.appendChild(svgEl("circle", { r: 42 }, "map-disk-a"));
+  disk.appendChild(svgEl("circle", { r: 42 }, "map-disk-b"));
+  hole.appendChild(disk);
+  hole.appendChild(svgEl("circle", { r: 29 }, "map-hole-rim"));
+  hole.appendChild(svgEl("circle", { r: 27 }, "map-hole-core"));
+  const looseRing = svgEl("g", {}, "map-loose");
   const loose = topo.loose || { count: 0, undistilled: 0, busy: 0 };
   const shown = Math.min(loose.count, 28);
   const done = loose.count - loose.undistilled - loose.busy;
   for (let i = 0; i < shown; i += 1) {
     const angle = (i / Math.max(shown, 1)) * Math.PI * 2 + 0.4;
-    const d = 64 + (i % 3) * 8;
+    const d = 62 + (i % 3) * 7;
     const cls = i < Math.round((done / Math.max(loose.count, 1)) * shown) ? "map-dot is-done" : "map-dot";
-    svg.appendChild(svgEl("circle", {
-      cx: MAP_CENTRE.x + d * Math.cos(angle), cy: MAP_CENTRE.y + d * 0.62 * Math.sin(angle), r: 2.6,
-    }, cls));
+    looseRing.appendChild(svgEl("circle", { cx: d * Math.cos(angle), cy: d * Math.sin(angle), r: 2.2 }, cls));
   }
-  svg.appendChild(svgText(MAP_CENTRE.x, MAP_CENTRE.y + 92, t("horizon.home", "Horizon"), "map-hole-label"));
-  svg.appendChild(svgText(MAP_CENTRE.x, MAP_CENTRE.y + 110,
+  hole.appendChild(looseRing);
+  svg.appendChild(hole);
+  svg.appendChild(svgText(MAP_CENTRE.x, MAP_CENTRE.y + 104, t("horizon.home", "Horizon"), "map-hole-label"));
+  svg.appendChild(svgText(MAP_CENTRE.x, MAP_CENTRE.y + 122,
     t("map.loose", `${loose.count} not in an orbit`, { n: loose.count }), "map-hole-sub"));
 
-  planets.forEach((p) => {
+  planets.forEach((p, index) => {
     const { orbit } = p;
     const dimmed = starMap.lens && !(orbit.tags || []).includes(starMap.lens);
     const group = svgEl("g", { tabindex: 0, role: "button", "aria-label":
       t("map.planetLabel", `${orbit.title}, ${orbit.sources} sources`, { name: orbit.title, n: orbit.sources }) },
     `map-planet${starMap.selected === orbit.slug ? " is-selected" : ""}${dimmed ? " is-dim" : ""}`);
+    group.appendChild(svgEl("circle", { r: p.r + 14, fill: "url(#pn-halo)" }, "map-planet-halo"));
+    // Moons: the captures filed here, copper once summarised, turning around their planet.
     const moons = Math.min(orbit.captures, 12);
     const doneMoons = orbit.captures ? Math.round(((orbit.captures - orbit.undistilled) / orbit.captures) * moons) : 0;
+    const moonRing = svgEl("g", {}, "map-moons");
+    moonRing.style.animationDuration = `${16 + (index % 5) * 3}s`;
     for (let i = 0; i < moons; i += 1) {
-      const angle = (i / moons) * Math.PI * 2 + p.angle;
+      const angle = (i / moons) * Math.PI * 2;
       const d = p.r + 8 + (i % 2) * 5;
-      group.appendChild(svgEl("circle", { cx: p.x + d * Math.cos(angle), cy: p.y + d * Math.sin(angle), r: 2.4 },
+      moonRing.appendChild(svgEl("circle", { cx: d * Math.cos(angle), cy: d * Math.sin(angle), r: 2.2 },
         i < doneMoons ? "map-dot is-done" : "map-dot"));
     }
-    group.appendChild(svgEl("circle", { cx: p.x, cy: p.y, r: p.r }, "map-planet-body"));
-    group.appendChild(svgText(p.x, p.y + p.r + 30, shortLabel(orbit.title), "map-planet-label"));
-    group.appendChild(svgText(p.x, p.y + p.r + 46,
-      t("map.planetCount", `${orbit.sources} sources`, { n: orbit.sources }), "map-planet-sub"));
+    group.appendChild(moonRing);
+    // The planet: a lit sphere whose surface bands turn under a fixed shade, so it reads as spinning.
+    const clipId = `pn-clip-${index}`;
+    const clip = svgEl("clipPath", { id: clipId });
+    clip.appendChild(svgEl("circle", { r: p.r }));
+    group.appendChild(clip);
+    group.appendChild(svgEl("circle", { r: p.r, fill: "url(#pn-planet)" }, "map-planet-body"));
+    const surface = svgEl("g", { "clip-path": `url(#${clipId})` });
+    const bands = svgEl("g", {}, "map-planet-bands");
+    bands.style.animationDuration = `${28 + (index % 4) * 6}s`;
+    bands.appendChild(svgEl("ellipse", { cx: 0, cy: -p.r * 0.35, rx: p.r * 1.5, ry: p.r * 0.16 }, "map-band"));
+    bands.appendChild(svgEl("ellipse", { cx: p.r * 0.3, cy: p.r * 0.18, rx: p.r * 1.2, ry: p.r * 0.11 }, "map-band"));
+    bands.appendChild(svgEl("circle", { cx: -p.r * 0.45, cy: p.r * 0.5, r: p.r * 0.18 }, "map-band"));
+    surface.appendChild(bands);
+    group.appendChild(surface);
+    group.appendChild(svgEl("circle", { r: p.r, fill: "url(#pn-shade)" }, "map-planet-shade"));
+    group.appendChild(svgEl("circle", { r: p.r }, "map-planet-rim"));
+    group.appendChild(svgText(0, p.r + 30, shortLabel(orbit.title), "map-planet-label"));
+    group.appendChild(svgText(0, p.r + 46, t("map.planetCount", `${orbit.sources} sources`, { n: orbit.sources }),
+      "map-planet-sub"));
     const title = svgEl("title");
     title.textContent = orbit.title;
     group.appendChild(title);
@@ -10240,8 +10382,19 @@ function drawStarMap() {
         pick();
       }
     });
+    // A planet holds still while it is pointed at or focused, so it can be read and clicked.
+    const hold = () => { mapMotion.paused = true; };
+    const release = () => { mapMotion.paused = false; };
+    group.addEventListener("pointerenter", hold);
+    group.addEventListener("pointerleave", release);
+    group.addEventListener("focus", hold);
+    group.addEventListener("blur", release);
     svg.appendChild(group);
+    scene.planets.push({ p, group });
   });
+  starMap.scene = scene;
+  placeStarMap();
+  startMapMotion();
   restoreFocus(svg, keepFocus);
   renderStarMapCard();
 }

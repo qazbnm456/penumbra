@@ -538,25 +538,35 @@
      star map, the list and the knowledge graph, and slides up when the pointer nears the bottom
      edge or the handle takes focus. Its scope follows what is selected on screen. -->
 <div class="ask-dock" id="ask-dock" hidden>
-  <button type="button" class="ask-dock-handle" id="ask-dock-handle" aria-expanded="false" aria-controls="ask-h">
+  <!-- The handle is only a grip, breathing softly while the panel rests, so it is found without a
+       word on screen; its name is for a screen reader. -->
+  <button type="button" class="ask-dock-handle" id="ask-dock-handle" aria-expanded="false" aria-controls="ask-h"
+          aria-label="Ask what you kept" data-i18n-label="askH.title" title="Ask what you kept" data-i18n-title="askH.title">
     <span class="ask-dock-grip" aria-hidden="true"></span>
-    <span data-i18n="askH.title">Ask what you kept</span>
   </button>
   <!-- Two presses on purpose: the first decides locally which captures the question would read
        and says how many, the second spends (invariant 47: nothing paid starts without a press). -->
   <section class="ask-h" id="ask-h" aria-labelledby="ask-h-title">
     <h2 class="sr-only" id="ask-h-title" data-i18n="askH.title">Ask what you kept</h2>
-    <div class="ask-h-chips" id="ask-h-chips" role="group" aria-label="Read from" data-i18n-label="askH.scope"></div>
+    <!-- What the question reads: the scopes the screen suggests, then any other tag or entity. -->
+    <div class="ask-h-scopes">
+      <div class="ask-h-chips" id="ask-h-chips" role="group" aria-label="Read from" data-i18n-label="askH.scope"></div>
+      <label class="sr-only" for="ask-h-scope" data-i18n="askH.more">Other tags and entities</label>
+      <select id="ask-h-scope" class="ask-h-more">
+        <option value="" data-i18n="askH.moreChip">+ Another tag or entity</option>
+      </select>
+    </div>
+    <!-- The same box as the capture field: one place to write, one round button to go. -->
     <form class="ask-h-form" id="ask-h-form">
       <label class="sr-only" for="ask-h-input" data-i18n="askH.label">Question</label>
-      <textarea id="ask-h-input" class="ask-h-input" rows="1" autocomplete="off"
-                data-i18n-placeholder="askH.placeholder"
-                placeholder="Ask a question across your captures…"></textarea>
-      <label class="sr-only" for="ask-h-scope" data-i18n="askH.more">Other tags and entities</label>
-      <select id="ask-h-scope" class="ask-h-scope">
-        <option value="" data-i18n="askH.more">Other tags and entities</option>
-      </select>
-      <button type="submit" class="btn" id="ask-h-check" data-i18n="askH.check">See what it reads</button>
+      <div class="ask-h-box">
+        <textarea id="ask-h-input" class="ask-h-input" rows="1" autocomplete="off"
+                  data-i18n-placeholder="askH.placeholder"
+                  placeholder="Ask a question across your captures…"></textarea>
+        <button type="submit" class="ask-h-go" id="ask-h-check" aria-label="See what it reads"
+                title="See what it reads"><span aria-hidden="true">&#8594;</span></button>
+      </div>
+      <p class="ask-h-hint" id="ask-h-hint"></p>
     </form>
     <div class="ask-h-plan" id="ask-h-plan" hidden>
       <p class="ask-h-plan-line" id="ask-h-plan-line" role="status"></p>

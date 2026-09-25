@@ -3478,8 +3478,16 @@ def _vector_status() -> dict:
     worker = _VECTORS["worker"]
     with _VECTORS_LOCK:
         download = {k: v for k, v in _VECTOR_DL.items() if k != "cancel"}
+    ready = _vectors_ready()
+    count = 0
+    if ready:
+        try:
+            count = vectors.compared(base_dir=_horizon_queue_base())
+        except Exception:  # noqa: BLE001 - a count on a status line never fails the status
+            count = 0
     return {
-        "installed": _vectors_ready(),
+        "installed": ready,
+        "count": count,
         "bytes": vectors.MODEL_BYTES,
         "download": download,
         "embedding": dict(worker.state) if worker is not None else {"running": False, "error": ""},
