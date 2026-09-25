@@ -10516,7 +10516,19 @@ function renderStarMapCard() {
     orbit.entities.forEach((name) => chips.appendChild(elt("span", "card-chip", name)));
     mapCard.appendChild(chips);
   } else {
-    mapCard.appendChild(elt("p", "card-note", t("map.noEntities", "No entities yet: nothing filed here has been summarised.")));
+    //: Entities come only from summaries of captures filed from the Horizon. A source added inside
+    //: the orbit is not a capture, and "nothing has been summarised yet" over it promised something
+    //: no summary pass would ever deliver.
+    let why;
+    if (!orbit.captures) {
+      why = t("map.noCaptures", "No entities: its sources were added in the orbit, and entities come from summaries of captures filed from the Horizon.");
+    } else if (orbit.undistilled) {
+      why = t("map.noEntitiesWaiting", `No entities yet: ${orbit.undistilled} filed here still wait for a summary.`,
+        { n: orbit.undistilled });
+    } else {
+      why = t("map.noEntitiesNamed", "No entities: the summaries here did not name any.");
+    }
+    mapCard.appendChild(elt("p", "card-note", why));
   }
   const enter = elt("button", "btn btn-primary card-enter", t("map.enter", "Open orbit"));
   enter.type = "button";
