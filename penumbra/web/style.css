@@ -7002,6 +7002,14 @@ body[data-view="horizon"] .orbit-picker {
   opacity: 1;
 }
 
+/* A source added inside the orbit: no summary pass reads it, so it is neither copper nor grey. */
+.map-dot.is-local {
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 1;
+  opacity: 0.9;
+}
+
 .map-planet {
   cursor: pointer;
   outline: none;
@@ -7066,6 +7074,11 @@ body.dock-open .pending-note {
 
 .legend-dot.is-done {
   background: var(--accent);
+}
+
+.legend-dot.is-local {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--text-dim);
 }
 
 .legend-bridge {

@@ -584,6 +584,7 @@ const STRINGS = {
     "map.empty": "收進第一樣東西，星圖就會開始長出來。",
     "map.legendDone": "已摘要",
     "map.legendPending": "還沒摘要",
+    "map.legendLocal": "在軌道裡直接加的",
     "map.legendBridge": "兩個軌道有共同的實體",
     "map.legendDistance": "越靠近中心，越近期有新東西。",
     "map.loose": "{n} 項還沒歸入軌道",
