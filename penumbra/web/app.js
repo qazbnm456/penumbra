@@ -2598,11 +2598,21 @@ function humanBytes(n) {
   return `${Math.round(n / 1e3)} KB`;
 }
 
-function notify(message, { tone = "bad", timeout = 0 } = {}) {
+//: `action` is one button beside the text, such as Undo; pressing it runs it and closes the notice.
+function notify(message, { tone = "bad", timeout = 0, action = null } = {}) {
   const host = document.getElementById("notices");
   if (!host || !message) return;
   const note = elt("div", `notice notice-${tone}`);
   note.appendChild(elt("span", "notice-text", readableError(message)));
+  if (action) {
+    const act = elt("button", "notice-action", action.label);
+    act.type = "button";
+    act.addEventListener("click", () => {
+      note.remove();
+      action.run();
+    });
+    note.appendChild(act);
+  }
   const close = elt("button", "notice-close", "\u2715");
   close.type = "button";
   close.setAttribute("aria-label", t("app.dismiss", "Dismiss"));
@@ -10154,7 +10164,8 @@ function renderLenses(lensRow, tags, active, onPick) {
 
 // --- the star map ---------------------------------------------------------------------------------
 
-const starMap = { data: null, orbits: [], selected: null, lens: null, generation: 0 };
+//: `focus` is what the card shows when it is not a planet: the Horizon's unfiled list, or one capture.
+const starMap = { data: null, orbits: [], selected: null, lens: null, generation: 0, focus: null, world: null };
 
 const MAP_CENTRE = { x: 500, y: 330 };
 const MAP_RINGS = [[230, 138], [330, 198], [430, 258]];
@@ -10194,6 +10205,7 @@ async function renderStarMap() {
       undistilled: filed.undistilled,
       entities: filed.entities,
       tags: filed.tags,
+      moons: filed.moons || [],
       recency: Math.max(o.updated_at || 0, filed.last_filed_at || 0),
     };
   }).sort((a, b) => b.recency - a.recency);
@@ -10220,7 +10232,9 @@ function paintStarMapLenses() {
 //: advances while the map is on screen and no planet is under the pointer, and a reader who asks for
 //: reduced motion gets the same map standing still.
 const MAP_PERIODS = [240, 360, 520]; // seconds per revolution, per ring
-const mapMotion = { clock: 0, last: 0, paused: false, frame: 0 };
+//: `paused` is the pointer or focus resting on something; `held` is the camera focused on a planet,
+//: which must stay where the camera went until the reader goes back to the whole map.
+const mapMotion = { clock: 0, last: 0, paused: false, held: false, frame: 0 };
 
 function motionAllowed() {
   return !window.matchMedia || !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -10296,7 +10310,7 @@ function mapTick(now) {
     mapMotion.last = 0;
     return;
   }
-  if (mapMotion.last && !mapMotion.paused) mapMotion.clock += Math.min(0.1, (now - mapMotion.last) / 1000);
+  if (mapMotion.last && !mapMotion.paused && !mapMotion.held) mapMotion.clock += Math.min(0.1, (now - mapMotion.last) / 1000);
   mapMotion.last = now;
   placeStarMap();
   mapMotion.frame = requestAnimationFrame(mapTick);
@@ -10351,12 +10365,20 @@ function drawStarMap() {
   clearSvg(svg);
   starMap.scene = null;
   mapMotion.paused = false; // the planet under the pointer is rebuilt; it holds again on the next move
+  // The element a tooltip belongs to is about to be removed, and a removed element sends no
+  // pointerleave, so the tip would stay on screen naming something that is gone.
+  hideMapTip();
   const topo = starMap.data;
   if (!topo) return;
   const empty = !starMap.orbits.length && !topo.total.count;
   horizonEl("starmap-empty").textContent = t("map.empty", "Capture something and the map starts to grow.");
   horizonEl("starmap-empty").hidden = !empty;
   svg.appendChild(starMapDefs());
+  // Everything drawn lives in one group the camera moves (`applyCamera`), so zooming and panning
+  // are one transform and nothing below needs to know about them.
+  const world = svgEl("g", {}, "map-world");
+  svg.appendChild(world);
+  starMap.world = world;
 
   // A faint field of stars, fixed per position so it does not reshuffle on every redraw.
   const field = svgEl("g", { "aria-hidden": "true" }, "map-field");
@@ -10368,10 +10390,10 @@ function drawStarMap() {
     star.style.animationDelay = `${(stableHash(`sd${i}`) * 6).toFixed(2)}s`;
     field.appendChild(star);
   }
-  svg.appendChild(field);
+  world.appendChild(field);
 
   MAP_RINGS.forEach(([rx, ry], ring) => {
-    svg.appendChild(svgEl("ellipse", { cx: MAP_CENTRE.x, cy: MAP_CENTRE.y, rx, ry }, `map-ring ring-${ring}`));
+    world.appendChild(svgEl("ellipse", { cx: MAP_CENTRE.x, cy: MAP_CENTRE.y, rx, ry }, `map-ring ring-${ring}`));
   });
 
   const planets = planetLayout();
@@ -10384,8 +10406,8 @@ function drawStarMap() {
     const title = svgEl("title");
     title.textContent = bridge.shared.join(", ");
     label.appendChild(title);
-    svg.appendChild(path);
-    svg.appendChild(label);
+    world.appendChild(path);
+    world.appendChild(label);
     scene.bridges.push({ bridge, path, label });
   });
 
@@ -10400,21 +10422,45 @@ function drawStarMap() {
   hole.appendChild(disk);
   hole.appendChild(svgEl("circle", { r: 29 }, "map-hole-rim"));
   hole.appendChild(svgEl("circle", { r: 27 }, "map-hole-core"));
+  // The Horizon itself is a button: it opens the list of what is filed nowhere, each with a way to
+  // file it. That list is also the keyboard's way to do what dragging a dot onto a planet does.
+  const loose = topo.loose || { count: 0, undistilled: 0, busy: 0, items: [] };
+  const holeHit = svgEl("circle", {
+    r: 48, tabindex: 0, role: "button",
+    "aria-label": t("map.holeLabel", `Horizon: ${loose.count} not in an orbit`, { n: loose.count }),
+  }, "map-hole-hit");
+  holeHit.dataset.key = "horizon";
+  holeHit.addEventListener("click", () => openMapFocus({ kind: "horizon" }));
+  holeHit.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openMapFocus({ kind: "horizon" });
+    }
+  });
+  hole.appendChild(holeHit);
   const looseRing = svgEl("g", {}, "map-loose");
-  const loose = topo.loose || { count: 0, undistilled: 0, busy: 0 };
-  const shown = Math.min(loose.count, 28);
-  const done = loose.count - loose.undistilled - loose.busy;
+  const items = loose.items || [];
+  const shown = Math.min(loose.count, items.length || loose.count, 28);
   for (let i = 0; i < shown; i += 1) {
     const angle = (i / Math.max(shown, 1)) * Math.PI * 2 + 0.4;
     const d = 62 + (i % 3) * 7;
-    const cls = i < Math.round((done / Math.max(loose.count, 1)) * shown) ? "map-dot is-done" : "map-dot";
-    looseRing.appendChild(svgEl("circle", { cx: d * Math.cos(angle), cy: d * Math.sin(angle), r: 2.2 }, cls));
+    const item = items[i];
+    const x = d * Math.cos(angle);
+    const y = d * Math.sin(angle);
+    looseRing.appendChild(svgEl("circle", { cx: x, cy: y, r: 2.2 }, moonClass(item)));
+    if (item) looseRing.appendChild(moonHit(x, y, { kind: "capture", ...item }));
   }
   hole.appendChild(looseRing);
-  svg.appendChild(hole);
-  svg.appendChild(svgText(MAP_CENTRE.x, MAP_CENTRE.y + 104, t("horizon.home", "Horizon"), "map-hole-label"));
-  svg.appendChild(svgText(MAP_CENTRE.x, MAP_CENTRE.y + 122,
-    t("map.loose", `${loose.count} not in an orbit`, { n: loose.count }), "map-hole-sub"));
+  if (starMap.focus && starMap.focus.kind === "horizon") hole.classList.add("is-selected");
+  world.appendChild(hole);
+  // Close under the loose ring and drawn with a halo, so a planet passing on the inner ring never
+  // runs through the words. The count reads as the Horizon's action when there is something to file.
+  world.appendChild(svgText(MAP_CENTRE.x, MAP_CENTRE.y + 94, t("horizon.home", "Horizon"), "map-hole-label"));
+  const sub = svgText(MAP_CENTRE.x, MAP_CENTRE.y + 110,
+    t("map.loose", `${loose.count} not in an orbit`, { n: loose.count }),
+    loose.count ? "map-hole-sub is-action" : "map-hole-sub");
+  if (loose.count) sub.addEventListener("click", () => openMapFocus({ kind: "horizon" }));
+  world.appendChild(sub);
 
   planets.forEach((p, index) => {
     const { orbit } = p;
@@ -10423,23 +10469,24 @@ function drawStarMap() {
       t("map.planetLabel", `${orbit.title}, ${orbit.sources} sources`, { name: orbit.title, n: orbit.sources }) },
     `map-planet${starMap.selected === orbit.slug ? " is-selected" : ""}${dimmed ? " is-dim" : ""}`);
     group.appendChild(svgEl("circle", { r: p.r + 14, fill: "url(#pn-halo)" }, "map-planet-halo"));
-    // Moons: one per source, so they agree with the "N sources" under the planet. A capture filed
-    // from the Horizon is copper once summarised and grey before; a source added inside the orbit
-    // is hollow, because no summary pass reads it. Drawing captures alone left an orbit built in
-    // place with "1 source" and no moon at all, which read as a bug.
-    const sources = Math.max(orbit.sources || 0, orbit.captures);
-    const moons = Math.min(sources, 12);
-    const share = (n) => (sources ? Math.round((n / sources) * moons) : 0);
-    const doneMoons = share(orbit.captures - orbit.undistilled);
-    const capturedMoons = Math.max(doneMoons, share(orbit.captures));
+    // Moons: one per source, so they agree with the "N sources" under the planet. Each capture
+    // filed from the Horizon is its own moon, copper once summarised and grey before, and can be
+    // pointed at and opened; a source added inside the orbit is hollow, because no summary pass
+    // reads it. Drawing captures alone left an orbit built in place with "1 source" and no moon.
+    const captured = (orbit.moons || []).slice(0, 12);
+    const local = Math.max(0, Math.min(12 - captured.length, (orbit.sources || 0) - orbit.captures));
+    const moonItems = [...captured.map((item) => ({ kind: "capture", ...item })),
+      ...Array.from({ length: local }, () => ({ kind: "local", orbit: orbit.slug, title: orbit.title }))];
     const moonRing = svgEl("g", {}, "map-moons");
     moonRing.style.animationDuration = `${16 + (index % 5) * 3}s`;
-    for (let i = 0; i < moons; i += 1) {
-      const angle = (i / moons) * Math.PI * 2;
+    moonItems.forEach((item, i) => {
+      const angle = (i / moonItems.length) * Math.PI * 2;
       const d = p.r + 8 + (i % 2) * 5;
-      const kind = i < doneMoons ? "map-dot is-done" : i < capturedMoons ? "map-dot" : "map-dot is-local";
-      moonRing.appendChild(svgEl("circle", { cx: d * Math.cos(angle), cy: d * Math.sin(angle), r: 2.2 }, kind));
-    }
+      const x = d * Math.cos(angle);
+      const y = d * Math.sin(angle);
+      moonRing.appendChild(svgEl("circle", { cx: x, cy: y, r: 2.2 }, moonClass(item)));
+      moonRing.appendChild(moonHit(x, y, { ...item, orbit: orbit.slug }));
+    });
     group.appendChild(moonRing);
     // The planet: a lit sphere whose surface bands turn under a fixed shade, so it reads as spinning.
     const clipId = `pn-clip-${index}`;
@@ -10465,13 +10512,15 @@ function drawStarMap() {
     group.appendChild(title);
     group.dataset.key = `orbit:${orbit.slug}`;
     const pick = () => {
-      if (starMap.selected === orbit.slug) {
+      if (starMap.selected === orbit.slug && !starMap.focus) {
         void enterOrbit(orbit);
         return;
       }
       starMap.selected = orbit.slug;
+      starMap.focus = null;
       drawStarMap();
       syncStarMapContext();
+      focusCameraOn(orbit.slug);
     };
     group.addEventListener("click", pick);
     group.addEventListener("keydown", (event) => {
@@ -10487,11 +10536,12 @@ function drawStarMap() {
     group.addEventListener("pointerleave", release);
     group.addEventListener("focus", hold);
     group.addEventListener("blur", release);
-    svg.appendChild(group);
+    world.appendChild(group);
     scene.planets.push({ p, group });
   });
   starMap.scene = scene;
   placeStarMap();
+  applyCamera();
   startMapMotion();
   restoreFocus(svg, keepFocus);
   renderStarMapCard();
@@ -10512,14 +10562,509 @@ function syncStarMapContext({ follow = true } = {}) {
   setAskContext(chips, { follow });
 }
 
+// --- pointing at, opening and filing what the map draws -------------------------------------------
+//
+// Every moon and every dot around the Horizon is one capture. Pointing at one names it, clicking
+// opens it in the card, and (next) dragging it onto a planet files it there. A hollow moon is a
+// source added inside its orbit: it can be pointed at and opens its orbit, but it is not a capture.
+
+function moonClass(item) {
+  if (!item) return "map-dot";
+  if (item.kind === "local") return "map-dot is-local";
+  if (item.state === "ready") return "map-dot is-done";
+  if (item.state === "failed") return "map-dot is-failed";
+  if (item.state === "queued" || item.state === "parsing" || item.state === "distilling") return "map-dot is-busy";
+  return "map-dot";
+}
+
+function moonStateLabel(item) {
+  if (item.kind === "local") return t("map.moonLocal", "Added inside the orbit");
+  if (item.state === "ready") return t("map.legendDone", "Summarised");
+  if (item.state === "failed") return t("map.moonFailed", "Could not be read");
+  if (item.state === "queued" || item.state === "parsing") return t("map.moonReading", "Being read");
+  if (item.state === "distilling") return t("map.moonSummarising", "Being summarised");
+  return t("map.legendPending", "Not summarised yet");
+}
+
+//: A dot is 2.2 units across, far too small to point at, so each gets an invisible target around it.
+function moonHit(x, y, item) {
+  const hit = svgEl("circle", { cx: x, cy: y, r: 7 }, "map-hit");
+  const owner = () => hit.closest(".map-planet, .map-hole");
+  hit.addEventListener("pointerenter", () => {
+    mapMotion.paused = true;
+    const held = owner();
+    if (held) held.classList.add("is-holding");
+    hit.classList.add("is-pointed");
+    showMapTip(hit, item.title || "", moonStateLabel(item));
+  });
+  hit.addEventListener("pointerleave", () => {
+    mapMotion.paused = false;
+    const held = owner();
+    if (held) held.classList.remove("is-holding");
+    hit.classList.remove("is-pointed");
+    hideMapTip();
+  });
+  hit.addEventListener("click", (event) => {
+    event.stopPropagation();
+    hideMapTip();
+    if (mapDrag.moved) return;
+    if (item.kind === "local") {
+      openMapFocus({ kind: "planet", orbit: item.orbit });
+    } else {
+      openMapFocus({ kind: "capture", id: item.id, title: item.title, state: item.state, orbit: item.orbit || null });
+    }
+  });
+  hit.addEventListener("pointerdown", (event) => startMoonDrag(event, item, hit));
+  return hit;
+}
+
+//: Dragging a capture onto a planet files it there. Planets it can go to light up while it is
+//: carried, and everything holds still so the target stays put. A drag that ends anywhere else
+//: files nothing. A hollow moon is not a capture and cannot be carried.
+const mapDrag = { item: null, id: null, start: null, moved: false, ghost: null, over: null };
+
+function worldAt(clientX, clientY) {
+  const v = clientToView(horizonEl("starmap-svg"), clientX, clientY);
+  return {
+    x: mapCamera.x + (v.x - MAP_VIEW_CENTRE.x) / mapCamera.k,
+    y: mapCamera.y + (v.y - MAP_VIEW_CENTRE.y) / mapCamera.k,
+  };
+}
+
+function planetUnder(point, exclude) {
+  const scene = starMap.scene;
+  if (!scene) return null;
+  let best = null;
+  scene.planets.forEach((entry) => {
+    if (entry.p.orbit.slug === exclude) return;
+    const pos = planetAt(entry.p);
+    const d = Math.hypot(point.x - pos.x, point.y - pos.y);
+    if (d <= entry.p.r + 16 && (!best || d < best.d)) best = { entry, d };
+  });
+  return best && best.entry;
+}
+
+function startMoonDrag(event, item, hit) {
+  if (event.button !== 0 || item.kind !== "capture") return;
+  event.stopPropagation();
+  mapDrag.item = item;
+  mapDrag.id = event.pointerId;
+  mapDrag.start = { x: event.clientX, y: event.clientY };
+  mapDrag.moved = false;
+  hit.setPointerCapture(event.pointerId);
+  const move = (e) => {
+    if (e.pointerId !== mapDrag.id) return;
+    if (!mapDrag.moved) {
+      if (Math.hypot(e.clientX - mapDrag.start.x, e.clientY - mapDrag.start.y) < 5) return;
+      mapDrag.moved = true;
+      mapMotion.paused = true;
+      hideMapTip();
+      horizonEl("starmap-svg").classList.add("is-carrying");
+      starMap.scene.planets.forEach(({ p, group }) => {
+        if (p.orbit.slug !== item.orbit) group.classList.add("is-drop-target");
+      });
+      mapDrag.ghost = svgEl("circle", { r: 5 }, "map-drag-ghost");
+      starMap.world.appendChild(mapDrag.ghost);
+    }
+    const at = worldAt(e.clientX, e.clientY);
+    mapDrag.ghost.setAttribute("cx", at.x.toFixed(1));
+    mapDrag.ghost.setAttribute("cy", at.y.toFixed(1));
+    const under = planetUnder(at, item.orbit);
+    if (mapDrag.over && mapDrag.over !== under) mapDrag.over.group.classList.remove("is-drop-hover");
+    mapDrag.over = under;
+    if (under) under.group.classList.add("is-drop-hover");
+  };
+  const end = (e) => {
+    if (e.pointerId !== mapDrag.id) return;
+    hit.removeEventListener("pointermove", move);
+    hit.removeEventListener("pointerup", end);
+    hit.removeEventListener("pointercancel", end);
+    const target = e.type === "pointerup" && mapDrag.over;
+    if (mapDrag.ghost) mapDrag.ghost.remove();
+    horizonEl("starmap-svg").classList.remove("is-carrying");
+    if (starMap.scene) {
+      starMap.scene.planets.forEach(({ group }) => group.classList.remove("is-drop-target", "is-drop-hover"));
+    }
+    mapMotion.paused = false;
+    mapDrag.id = null;
+    mapDrag.ghost = null;
+    mapDrag.over = null;
+    // `moved` survives until after the click that follows a drag, so that click opens nothing.
+    setTimeout(() => { mapDrag.moved = false; }, 0);
+    if (target) void fileCapture(item.id, target.p.orbit.id);
+  };
+  hit.addEventListener("pointermove", move);
+  hit.addEventListener("pointerup", end);
+  hit.addEventListener("pointercancel", end);
+}
+
+function showMapTip(target, title, sub) {
+  const tip = horizonEl("starmap-tip");
+  const host = horizonEl("starmap").getBoundingClientRect();
+  const box = target.getBoundingClientRect();
+  tip.textContent = "";
+  tip.appendChild(elt("span", "map-tip-title", shortLabel(title, 60)));
+  tip.appendChild(elt("span", "map-tip-sub", sub));
+  tip.hidden = false;
+  const x = box.left + box.width / 2 - host.left;
+  const y = box.top - host.top;
+  tip.style.left = `${Math.round(x)}px`;
+  tip.style.top = `${Math.round(y)}px`;
+}
+
+function hideMapTip() {
+  const tip = horizonEl("starmap-tip");
+  if (tip) tip.hidden = true;
+}
+
+//: What the map is showing in its card, and where the camera goes for it. A planet or a capture
+//: filed in one brings the camera to that planet; the Horizon brings it home.
+function openMapFocus(focus) {
+  if (focus.kind === "planet") {
+    starMap.selected = focus.orbit;
+    starMap.focus = null;
+  } else {
+    starMap.selected = focus.kind === "capture" ? focus.orbit : null;
+    starMap.focus = focus;
+  }
+  drawStarMap();
+  syncStarMapContext();
+  if (starMap.selected) focusCameraOn(starMap.selected);
+  else cameraHome();
+}
+
+function closeMapFocus() {
+  starMap.selected = null;
+  starMap.focus = null;
+  drawStarMap();
+  syncStarMapContext();
+  cameraHome();
+}
+
+// --- the camera ------------------------------------------------------------------------------------
+//
+// One transform on the world group: the world point at the centre of the view, and a zoom. Moving
+// to a planet is a short eased glide rather than a jump, so the reader keeps their bearings; with
+// reduced motion it is a jump.
+
+const MAP_VIEW_CENTRE = { x: 500, y: 320 };
+const MAP_HOME = { x: 500, y: 320, k: 1 };
+const MAP_ZOOM = { min: 0.6, max: 4, planet: 1.8 };
+const mapCamera = { x: 500, y: 320, k: 1, anim: 0 };
+
+function applyCamera() {
+  const world = starMap.world;
+  if (!world) return;
+  const { x, y, k } = mapCamera;
+  world.setAttribute("transform",
+    `translate(${MAP_VIEW_CENTRE.x} ${MAP_VIEW_CENTRE.y}) scale(${k.toFixed(4)}) translate(${(-x).toFixed(2)} ${(-y).toFixed(2)})`);
+  const home = Math.abs(k - 1) < 0.01 && Math.abs(x - MAP_HOME.x) < 1 && Math.abs(y - MAP_HOME.y) < 1;
+  const reset = horizonEl("map-zoom-home");
+  if (reset) reset.disabled = home;
+}
+
+function clampCamera(c) {
+  const k = Math.min(MAP_ZOOM.max, Math.max(MAP_ZOOM.min, c.k));
+  return { k, x: Math.min(1000, Math.max(0, c.x)), y: Math.min(640, Math.max(0, c.y)) };
+}
+
+function setCamera(c) {
+  cancelAnimationFrame(mapCamera.anim);
+  mapCamera.anim = 0;
+  Object.assign(mapCamera, clampCamera(c));
+  applyCamera();
+}
+
+function animateCamera(target, ms = 620) {
+  const to = clampCamera(target);
+  cancelAnimationFrame(mapCamera.anim);
+  if (!motionAllowed()) {
+    setCamera(to);
+    return;
+  }
+  const from = { x: mapCamera.x, y: mapCamera.y, k: mapCamera.k };
+  const started = performance.now();
+  const ease = (u) => (u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2);
+  const step = (now) => {
+    const u = Math.min(1, (now - started) / ms);
+    const e = ease(u);
+    mapCamera.x = from.x + (to.x - from.x) * e;
+    mapCamera.y = from.y + (to.y - from.y) * e;
+    // Zoom is interpolated in log space, so doubling feels the same speed at any scale.
+    mapCamera.k = Math.exp(Math.log(from.k) + (Math.log(to.k) - Math.log(from.k)) * e);
+    applyCamera();
+    mapCamera.anim = u < 1 ? requestAnimationFrame(step) : 0;
+  };
+  mapCamera.anim = requestAnimationFrame(step);
+}
+
+function cameraHome() {
+  mapMotion.held = false;
+  animateCamera(MAP_HOME);
+}
+
+//: The planet stops where it is while the camera is on it (`held`), and sits left of centre so the
+//: card on the right does not cover it.
+function focusCameraOn(slug) {
+  const entry = starMap.scene && starMap.scene.planets.find(({ p }) => p.orbit.slug === slug);
+  if (!entry) return;
+  mapMotion.held = true;
+  const pos = planetAt(entry.p);
+  animateCamera({ x: pos.x + 110 / MAP_ZOOM.planet, y: pos.y, k: MAP_ZOOM.planet });
+}
+
+function zoomBy(factor, around) {
+  const k = Math.min(MAP_ZOOM.max, Math.max(MAP_ZOOM.min, mapCamera.k * factor));
+  const v = around || MAP_VIEW_CENTRE;
+  // Keep the world point under `around` where it is on screen.
+  const wx = mapCamera.x + (v.x - MAP_VIEW_CENTRE.x) / mapCamera.k;
+  const wy = mapCamera.y + (v.y - MAP_VIEW_CENTRE.y) / mapCamera.k;
+  setCamera({ k, x: wx - (v.x - MAP_VIEW_CENTRE.x) / k, y: wy - (v.y - MAP_VIEW_CENTRE.y) / k });
+}
+
+//: A pointer position in the SVG's own units (its viewBox), whatever size it is drawn at.
+function clientToView(svg, clientX, clientY) {
+  const ctm = svg.getScreenCTM();
+  if (!ctm) return { ...MAP_VIEW_CENTRE };
+  const point = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
+  return { x: point.x, y: point.y };
+}
+
+const mapPan = { id: null, start: null, moved: false };
+
+function initStarMapCamera() {
+  const svg = horizonEl("starmap-svg");
+  if (!svg || svg.dataset.camera) return;
+  svg.dataset.camera = "on";
+  svg.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    const factor = Math.exp(-event.deltaY * (event.ctrlKey ? 0.01 : 0.0015));
+    zoomBy(factor, clientToView(svg, event.clientX, event.clientY));
+  }, { passive: false });
+  svg.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || event.target.closest(".map-planet, .map-hit, .map-hole-hit")) return;
+    mapPan.id = event.pointerId;
+    mapPan.start = { cx: event.clientX, cy: event.clientY, x: mapCamera.x, y: mapCamera.y };
+    mapPan.moved = false;
+  });
+  svg.addEventListener("pointermove", (event) => {
+    if (mapPan.id !== event.pointerId || !mapPan.start) return;
+    const dx = event.clientX - mapPan.start.cx;
+    const dy = event.clientY - mapPan.start.cy;
+    if (!mapPan.moved && Math.hypot(dx, dy) < 4) return;
+    if (!mapPan.moved) {
+      mapPan.moved = true;
+      svg.setPointerCapture(event.pointerId);
+      svg.classList.add("is-panning");
+    }
+    const scale = (svg.getScreenCTM() || { a: 1 }).a || 1;
+    setCamera({ k: mapCamera.k, x: mapPan.start.x - dx / scale / mapCamera.k, y: mapPan.start.y - dy / scale / mapCamera.k });
+  });
+  const endPan = (event) => {
+    if (mapPan.id !== event.pointerId) return;
+    const wasPan = mapPan.moved;
+    mapPan.id = null;
+    mapPan.start = null;
+    svg.classList.remove("is-panning");
+    // A click on empty space, not the end of a pan, closes the card.
+    if (!wasPan && event.type === "pointerup" && (starMap.selected || starMap.focus)) {
+      starMap.selected = null;
+      starMap.focus = null;
+      mapMotion.held = false;
+      drawStarMap();
+      syncStarMapContext();
+    }
+  };
+  svg.addEventListener("pointerup", endPan);
+  svg.addEventListener("pointercancel", endPan);
+  horizonEl("starmap").addEventListener("keydown", (event) => {
+    if (event.target.closest("input, select, textarea")) return;
+    if (event.key === "+" || event.key === "=") zoomBy(1.25);
+    else if (event.key === "-" || event.key === "_") zoomBy(0.8);
+    else if (event.key === "0") cameraHome();
+    else if (event.key === "Escape" && (starMap.selected || starMap.focus || mapCamera.k !== 1)) closeMapFocus();
+    else return;
+    event.preventDefault();
+  });
+  horizonEl("map-zoom-in").addEventListener("click", () => zoomBy(1.25));
+  horizonEl("map-zoom-out").addEventListener("click", () => zoomBy(0.8));
+  horizonEl("map-zoom-home").addEventListener("click", () => closeMapFocus());
+}
+
+// --- the card for the Horizon and for one capture ---------------------------------------------------
+
+function mapCardClose(card) {
+  const close = elt("button", "card-close", "×");
+  close.type = "button";
+  close.setAttribute("aria-label", t("map.closeCard", "Close"));
+  close.title = t("map.closeCard", "Close");
+  close.addEventListener("click", closeMapFocus);
+  card.appendChild(close);
+}
+
+//: "File into…" for one capture. Only orbits it is not already in are offered.
+function filePicker(nodeId, orbits = starMap.orbits) {
+  const picker = document.createElement("select");
+  picker.className = "card-file";
+  picker.setAttribute("aria-label", t("map.fileInto", "File into…"));
+  picker.appendChild(new Option(t("map.fileInto", "File into…"), ""));
+  orbits.forEach((o) => picker.appendChild(new Option(o.title, o.id)));
+  picker.addEventListener("change", () => {
+    if (picker.value) void fileCapture(nodeId, picker.value, picker);
+  });
+  return picker;
+}
+
+async function fileCapture(nodeId, orbitId, control) {
+  if (control) control.disabled = true;
+  let filed;
+  try {
+    filed = await api(`/horizon/${encodeURIComponent(nodeId)}/promote`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orbit_id: orbitId, create: false }),
+    });
+  } catch (err) {
+    if (control) control.disabled = false;
+    notify(readableError(err.message));
+    return false;
+  }
+  const orbit = starMap.orbits.find((o) => o.id === orbitId);
+  const name = orbit ? orbit.title : t("suggest.anOrbit", "an orbit");
+  const sourceId = filed && filed.membership && filed.membership.source_id;
+  notify(t("map.filed", `Filed into ${name}.`, { name }), {
+    tone: "good",
+    timeout: 8000,
+    // Undo takes the source out of the orbit again, which also drops the filing (and keeps it
+    // from being suggested straight back).
+    action: sourceId ? {
+      label: t("map.undo", "Undo"),
+      run: async () => {
+        try {
+          await api(`/orbits/${encodeURIComponent(orbitId)}/sources/${encodeURIComponent(sourceId)}`, { method: "DELETE" });
+        } catch (err) {
+          notify(readableError(err.message));
+        }
+        void refreshHorizon();
+      },
+    } : null,
+  });
+  void refreshHorizon();
+  return true;
+}
+
+function renderHorizonCard(card) {
+  const loose = (starMap.data && starMap.data.loose) || { count: 0, items: [] };
+  mapCardClose(card);
+  card.appendChild(elt("p", "card-kicker", t("horizon.home", "Horizon")));
+  card.appendChild(elt("h2", "card-title", t("map.loose", `${loose.count} not in an orbit`, { n: loose.count })));
+  if (!loose.count) {
+    card.appendChild(elt("p", "card-note", t("map.looseNone", "Everything you kept is in an orbit.")));
+    return;
+  }
+  card.appendChild(elt("p", "card-note", t("map.looseHelp", "File each into an orbit here, or drag its dot onto a planet.")));
+  const list = elt("ul", "card-list");
+  (loose.items || []).forEach((item) => {
+    const row = elt("li", "card-row");
+    const name = elt("button", "card-row-title", item.title);
+    name.type = "button";
+    name.addEventListener("click", () => openMapFocus({ kind: "capture", ...item, orbit: null }));
+    row.appendChild(name);
+    row.appendChild(filePicker(item.id));
+    list.appendChild(row);
+  });
+  card.appendChild(list);
+  if (loose.count > (loose.items || []).length) {
+    card.appendChild(elt("p", "card-note", t("map.looseMore", `The newest ${(loose.items || []).length} are shown; the list view has them all.`,
+      { n: (loose.items || []).length })));
+  }
+}
+
+//: A capture's card fills in after one fetch; the part known from the map is drawn at once.
+function renderCaptureCard(card, focus) {
+  mapCardClose(card);
+  card.appendChild(elt("p", "card-kicker", moonStateLabel({ kind: "capture", state: focus.state })));
+  card.appendChild(elt("h2", "card-title", focus.title || ""));
+  const detail = elt("div", "card-detail");
+  detail.appendChild(elt("p", "card-note", t("map.loading", "Loading…")));
+  card.appendChild(detail);
+  const token = (renderCaptureCard.token = (renderCaptureCard.token || 0) + 1);
+  void (async () => {
+    let got;
+    try {
+      got = await api(`/horizon/${encodeURIComponent(focus.id)}`);
+    } catch (err) {
+      if (token === renderCaptureCard.token) detail.replaceChildren(elt("p", "card-note", readableError(err.message)));
+      return;
+    }
+    if (token !== renderCaptureCard.token || !detail.isConnected) return;
+    const node = got.node || {};
+    detail.textContent = "";
+    if (node.summary) detail.appendChild(elt("p", "card-summary", node.summary));
+    const names = [...(node.entities || []), ...(node.tags || []).map((tag) => `#${tag}`)];
+    if (names.length) {
+      const chips = elt("div", "card-chips");
+      names.slice(0, 10).forEach((name) => chips.appendChild(elt("span", "card-chip", name)));
+      detail.appendChild(chips);
+    }
+    // Memberships name an orbit by its key, which is only ever looked up: into its label for the
+    // "In …" line, and out of the orbits the picker offers (invariant 37).
+    const memberships = got.orbits || [];
+    const offer = new Map(starMap.orbits.map((o) => [o.slug, o]));
+    memberships.forEach((m) => offer.delete(m.orbit_id));
+    const where = memberships.map((m) => orbitTitles.get(m.orbit_id) || t("suggest.anOrbit", "an orbit"));
+    if (where.length) {
+      const joined = where.join(t("list.sep", ", "));
+      detail.appendChild(elt("p", "card-meta", t("map.filedIn", `In ${joined}`, { where: joined })));
+    }
+    const actions = elt("div", "card-actions");
+    actions.appendChild(filePicker(focus.id, [...offer.values()]));
+    const read = elt("button", "btn", t("map.readInList", "Read it"));
+    read.type = "button";
+    read.addEventListener("click", () => revealNode(focus.id));
+    actions.appendChild(read);
+    detail.appendChild(actions);
+  })();
+}
+
+//: Opens one capture where its full text is read: the list, with that row open and in view.
+function revealNode(nodeId) {
+  horizonState.open.add(nodeId);
+  setViewMode("horizon", "list");
+  let tries = 0;
+  const find = () => {
+    const row = document.querySelector(`.node[data-node-id="${CSS.escape(nodeId)}"]`);
+    if (!row) {
+      if ((tries += 1) < 40) setTimeout(find, 100);
+      return;
+    }
+    const open = row.querySelector(".node-open");
+    if (open && !row.classList.contains("is-open")) open.click();
+    row.scrollIntoView({ block: "center" });
+    if (open) open.focus();
+  };
+  find();
+}
+
 function renderStarMapCard() {
   const mapCard = horizonEl("starmap-card");
   mapCard.textContent = "";
+  if (starMap.focus && starMap.focus.kind === "horizon") {
+    renderHorizonCard(mapCard);
+    mapCard.hidden = false;
+    return;
+  }
+  if (starMap.focus && starMap.focus.kind === "capture") {
+    renderCaptureCard(mapCard, starMap.focus);
+    mapCard.hidden = false;
+    return;
+  }
   const orbit = starMap.orbits.find((o) => o.slug === starMap.selected);
   if (!orbit) {
     mapCard.hidden = true;
     return;
   }
+  mapCardClose(mapCard);
   mapCard.appendChild(elt("p", "card-kicker", relativeTime(orbit.recency)));
   mapCard.appendChild(elt("h2", "card-title", orbit.title));
   mapCard.appendChild(elt("p", "card-meta", orbit.captures
@@ -10544,6 +11089,20 @@ function renderStarMapCard() {
       why = t("map.noEntitiesNamed", "No entities: the summaries here did not name any.");
     }
     mapCard.appendChild(elt("p", "card-note", why));
+  }
+  // Its captures by name, the keyboard's way to what pointing at a moon does.
+  if ((orbit.moons || []).length) {
+    const list = elt("ul", "card-list");
+    orbit.moons.forEach((item) => {
+      const row = elt("li", "card-row");
+      row.appendChild(elt("span", moonClass({ kind: "capture", ...item }).replace("map-dot", "legend-dot"), ""));
+      const name = elt("button", "card-row-title", item.title);
+      name.type = "button";
+      name.addEventListener("click", () => openMapFocus({ kind: "capture", ...item, orbit: orbit.slug }));
+      row.appendChild(name);
+      list.appendChild(row);
+    });
+    mapCard.appendChild(list);
   }
   const enter = elt("button", "btn btn-primary card-enter", t("map.enter", "Open orbit"));
   enter.type = "button";
@@ -11273,6 +11832,7 @@ function initAskH() {
 
 initAskH();
 initDock();
+initStarMapCamera();
 initViewModes();
 initSuggestions();
 

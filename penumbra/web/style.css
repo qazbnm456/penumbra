@@ -7965,3 +7965,267 @@ button.card-chip:hover {
     animation: none;
   }
 }
+
+/* --- Pointing at, carrying and zooming the map ------------------------------------------------- */
+.starmap-svg {
+  cursor: grab;
+  touch-action: none;
+}
+
+.starmap-svg.is-panning {
+  cursor: grabbing;
+}
+
+.map-hit {
+  fill: transparent;
+  cursor: pointer;
+}
+
+.map-hit.is-pointed {
+  fill: color-mix(in oklch, var(--accent) 18%, transparent);
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+
+.starmap-svg.is-carrying,
+.starmap-svg.is-carrying .map-hit {
+  cursor: grabbing;
+}
+
+.map-planet.is-holding .map-moons,
+.map-hole.is-holding .map-loose,
+.starmap-svg.is-carrying .map-moons,
+.starmap-svg.is-carrying .map-loose {
+  animation-play-state: paused;
+}
+
+.map-dot.is-busy {
+  fill: var(--accent-dim);
+  opacity: 0.9;
+}
+
+.map-dot.is-failed {
+  fill: var(--bad);
+  opacity: 0.9;
+}
+
+.map-hole-hit {
+  fill: transparent;
+  cursor: pointer;
+}
+
+.map-hole-hit:focus {
+  outline: none;
+}
+
+.map-hole-hit:focus-visible {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
+.map-hole.is-selected .map-hole-rim,
+.map-hole:hover .map-hole-rim {
+  stroke: var(--accent);
+}
+
+/* A halo in the page's own colour, so a planet passing behind never cuts through the words. */
+.map-hole-label,
+.map-hole-sub {
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+.map-hole-sub.is-action {
+  fill: var(--accent);
+  cursor: pointer;
+}
+
+.map-planet.is-drop-target .map-planet-halo {
+  opacity: 0.45;
+}
+
+.map-planet.is-drop-hover .map-planet-halo {
+  opacity: 1;
+}
+
+.map-planet.is-drop-hover .map-planet-rim {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
+.map-drag-ghost {
+  fill: var(--accent);
+  stroke: var(--bg);
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+
+.starmap-tip {
+  position: absolute;
+  z-index: 3;
+  transform: translate(-50%, calc(-100% - 10px));
+  max-width: 260px;
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px -14px rgb(0 0 0 / 0.6);
+  pointer-events: none;
+}
+
+.starmap-tip[hidden] {
+  display: none;
+}
+
+.map-tip-title,
+.map-tip-sub {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.map-tip-title {
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+
+.map-tip-sub {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.map-camera {
+  position: absolute;
+  right: var(--space-5);
+  bottom: calc(var(--space-11) + var(--space-5));
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.map-camera-btn {
+  width: 32px;
+  height: 32px;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.map-camera-btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent-dim);
+}
+
+.map-camera-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.card-close {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  width: 28px;
+  height: 28px;
+  font: inherit;
+  font-size: 16px;
+  color: var(--text-dim);
+  background: none;
+  border: 0;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.card-close:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.card-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.card-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.card-row .legend-dot {
+  flex: none;
+}
+
+.card-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--space-1) 0;
+  font: inherit;
+  font-size: var(--text-md);
+  text-align: left;
+  color: var(--text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.card-row-title:hover {
+  color: var(--accent);
+}
+
+.card-file {
+  flex: none;
+  max-width: 130px;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-1) var(--space-2);
+}
+
+.card-summary {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: var(--text-md);
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.card-detail,
+.card-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.card-actions {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.notice-action {
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0 var(--space-2);
+}

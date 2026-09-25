@@ -240,9 +240,13 @@ Everything follows from it. The title and the distilled summary are set in the r
 
 **The ask dock is a grip until you reach for it.** At rest it shows only `.ask-dock-grip`, a short bar that breathes, with no label, and it slides up when the pointer nears the bottom edge. Open, it reads like the capture field: scope chips, a `.ask-h-more` menu for any other tag or entity, one field (`.ask-h-box`) with a single round send button (`.ask-h-go`), and one line under it saying what Enter will do and whether it costs anything. While it is open, the map's legend and summary note fade out beneath it. It stays up while it holds a running ask or an answer not yet read, because that run's Stop lives only there (invariant 47).
 
+**The map is handled, not only watched.** One transform on `.map-world` is the camera: scroll or pinch zooms around the pointer, dragging empty space pans, and `.map-camera` holds zoom in, zoom out and return, with + - 0 and Escape from the keyboard. Clicking a planet glides the camera to it over about 600ms, eased, and holds the planet still while the camera is on it, left of centre so the card does not cover it. Every moon and every dot around the Horizon is one capture with an invisible `.map-hit` around it: pointing names it in `.starmap-tip`, clicking opens it in the card, and dragging it onto a planet files it there, with the planets it can go to lit and a notice carrying Undo. A hollow moon is not a capture: it can be pointed at and opens its orbit, and it cannot be carried. Clicking the Horizon (`.map-hole-hit`) lists what is filed nowhere with File into… on each, the keyboard's way to do what dragging does, and a planet's card lists its captures for the same reason.
+
 ### Acceptance, the star map and the dock
 
 - Planets travel their rings and moons circle them; resting the pointer on the map stops everything, and moving away starts it again.
+- Pointing at a moon names its capture; the name never stays behind after the map redraws.
+- Clicking a planet brings the camera to it and back with the return button or Escape; dragging a dot onto a planet files it, and Undo takes it out again.
 - With reduced motion on, nothing on the map moves.
 - The dock is a breathing grip at rest and opens when the pointer nears the bottom edge; with it open, no legend text shows through beside it.
 - A scope chip names what the question will read, and Enter on a Horizon scope previews the captures for free before anything is spent.
