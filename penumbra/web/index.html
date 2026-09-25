@@ -563,18 +563,21 @@
     <!-- What the question reads: the scopes the screen suggests, then any other tag or entity. -->
     <div class="ask-h-scopes">
       <div class="ask-h-chips" id="ask-h-chips" role="group" aria-label="Read from" data-i18n-label="askH.scope"></div>
-      <label class="sr-only" for="ask-h-scope" data-i18n="askH.more">Other tags and entities</label>
-      <select id="ask-h-scope" class="ask-h-more">
-        <option value="" data-i18n="askH.moreChip">+ Another tag or entity</option>
-      </select>
+      <!-- Any other scope: a staged list (tags, entities, orbits, then the names in each), opened
+           here or by typing / at the start of the question. A native select listed every name at
+           once and ran off the screen once there were a few dozen. -->
+      <button type="button" class="ask-h-add" id="ask-h-add" aria-expanded="false" aria-controls="ask-h-picker"
+              aria-label="Choose what to read (or type /)" title="Choose what to read (or type /)"
+              data-i18n-label="askH.addScope" data-i18n-title="askH.addScope">+</button>
     </div>
+    <div class="ask-picker" id="ask-h-picker" role="group" aria-label="What to read" data-i18n-label="askH.pickerLabel" hidden></div>
     <!-- The same box as the capture field: one place to write, one round button to go. -->
     <form class="ask-h-form" id="ask-h-form">
       <label class="sr-only" for="ask-h-input" data-i18n="askH.label">Question</label>
       <div class="ask-h-box">
         <textarea id="ask-h-input" class="ask-h-input" rows="1" autocomplete="off"
                   data-i18n-placeholder="askH.placeholder"
-                  placeholder="Ask a question across your captures…"></textarea>
+                  placeholder="Ask a question across your captures… (/ to choose what it reads)"></textarea>
         <button type="submit" class="ask-h-go" id="ask-h-check" aria-label="See what it reads"
                 title="See what it reads"><span aria-hidden="true">&#8594;</span></button>
       </div>
