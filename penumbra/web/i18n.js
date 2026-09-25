@@ -188,6 +188,7 @@ const STRINGS = {
     "island.failed": "收不進來",
     "island.pen": "寫一句",
     "island.noteLabel": "寫一句話收進視界",
+    "island.notePlaceholder": "寫下一個念頭，按 Return 收進視界，Esc 取消",
     "island.noted": "收進視界了",
     "island.couldNotRead": "這些檔案無法讀取",
     "island.noServer": "Penumbra 沒有回應。在這裡按右鍵可以重新啟動它。",

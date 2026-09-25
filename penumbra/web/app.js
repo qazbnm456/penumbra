@@ -2873,8 +2873,15 @@ function initOrbitSwitch() {
     });
   }
 
+  // Home is the star map, not whichever Horizon view was last on screen: the list is a way of
+  // reading the Horizon, the map is where the app starts.
   document.getElementById("new-orbit").addEventListener("click", () => {
     closeOrbitMenu();
+    try {
+      localStorage.setItem(MODE_KEYS.horizon, "map");
+    } catch {
+      /* storage blocked: the map is the default anyway */
+    }
     showHorizon();
   });
 
@@ -10382,14 +10389,15 @@ function openCaptureDock() {
   syncCaptureDock();
 }
 
-// A resting drawer opens only when the pointer comes to its grip, not anywhere along the edge: a
-// band the width of the window fired whenever the reader reached for a tag chip, the view switch or
-// the map's legend.
-function nearGrip(event, handle) {
-  const box = handle.getBoundingClientRect();
+// A resting drawer opens only when the pointer comes to the grip bar itself, give or take a few
+// pixels. A band the width of the window fired whenever the reader reached for a tag chip, the view
+// switch or the legend, and a zone the size of the grip's button still caught the tag row that sits
+// just under the top grip.
+function nearGrip(event, grip) {
+  const box = grip.getBoundingClientRect();
   if (!box.width) return false;
-  return event.clientX >= box.left - 56 && event.clientX <= box.right + 56
-    && event.clientY >= box.top - 24 && event.clientY <= box.bottom + 24;
+  return event.clientX >= box.left - 16 && event.clientX <= box.right + 16
+    && event.clientY >= box.top - 10 && event.clientY <= box.bottom + 10;
 }
 
 // --- the mascot -------------------------------------------------------------------------------------
@@ -10498,7 +10506,7 @@ function initCaptureDock() {
   document.addEventListener("mousemove", (event) => {
     if (document.body.dataset.view !== "horizon") return;
     const box = root.getBoundingClientRect();
-    const near = nearGrip(event, horizonEl("capture-dock-handle"))
+    const near = nearGrip(event, root.querySelector(".capture-dock-grip"))
       || (root.classList.contains("is-open") && event.clientY <= box.bottom + 16
         && event.clientX >= box.left - 24 && event.clientX <= box.right + 24);
     if (near !== captureDock.near) {
@@ -10543,7 +10551,7 @@ function initDock() {
   document.addEventListener("mousemove", (event) => {
     if (root.hidden) return;
     const box = root.getBoundingClientRect();
-    const near = nearGrip(event, horizonEl("ask-dock-handle"))
+    const near = nearGrip(event, root.querySelector(".ask-dock-grip"))
       || (dock.open && event.clientY >= box.top - 12 && event.clientX >= box.left - 24 && event.clientX <= box.right + 24);
     if (near !== dock.near) {
       dock.near = near;

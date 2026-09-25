@@ -525,6 +525,12 @@ body[data-state="note"] .accretion {
   -webkit-user-select: text;
 }
 
+/* The hint fades as soon as there is a word to replace it. */
+.note-input::placeholder {
+  color: oklch(52% 0.015 75);
+  opacity: 1;
+}
+
 .note-input::selection {
   background: oklch(54% 0.16 55 / 0.55);
 }
