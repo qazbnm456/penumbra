@@ -17,7 +17,7 @@ export const CONSTANTS = [
 
 //: Functions `readableError` calls. Extracted BY NAME, so a rename fails loudly here rather than
 //: leaving a copy behind that no longer ships.
-export const HELPERS = ["fromProviderNotAUrl", "isDesktopShell", "withShellHint"];
+export const HELPERS = ["fromProviderNotAUrl", "isDesktopShell", "withShellHint", "menuItems"];
 
 //: Build the real function out of `src` (the text of `app.js`).
 export function buildReadableError(src) {
@@ -31,11 +31,15 @@ export function buildReadableError(src) {
     if (at < 0) throw new Error(`app.js no longer declares ${name}`);
     return src.slice(at, src.indexOf("\n}\n", at) + 3);
   };
+  const menuTable = src.match(/^const MENU_ITEMS = \{[\s\S]*?^\};$/m);
+  if (!menuTable) throw new Error("app.js no longer declares MENU_ITEMS");
   const at = src.indexOf("function readableError(");
   if (at < 0) throw new Error("app.js no longer declares readableError");
   return new Function(
     CONSTANTS.map(decl).join("\n") +
       "\n" + HELPERS.map(helper).join("\n") +
+      "\n" + menuTable[0] +
+      "\nconst uiLang = () => globalThis.__uiLang || \"en\";\n" +
       "\nconst t = (key, fallback) => fallback;\n" +
       "const humanBytes = (n) => `${n} bytes`;\n" +
       src.slice(at, src.indexOf("\n}\n", at) + 3) +

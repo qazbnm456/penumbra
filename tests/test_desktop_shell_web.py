@@ -25,6 +25,11 @@ def _fn(name: str) -> str:
     return APP[start : APP.index("\n}\n", start) + 2]
 
 
+def _menu_table() -> str:
+    start = APP.index("const MENU_ITEMS = {")
+    return APP[start : APP.index("\n};\n", start) + 4]
+
+
 def _node(script: str) -> dict:
     node = shutil.which("node")
     assert node, "node is required; see AGENTS.md's Verify section"
@@ -43,25 +48,28 @@ const history = { calls: [], replaceState(_s, _t, u) { this.calls.push(u); } };
 const window = { location: { href: HREF }, history };
 const API_TOKEN_KEY = "penumbra-api-token"; let apiTokenMemo = null;
 const t = (key, fallback) => fallback;
+let interfaceLang = "en"; const uiLang = () => interfaceLang;
 """
 
 
 def test_the_token_and_the_shell_flag_come_from_the_fragment_and_leave_no_trace():
     script = (
-        'const HREF = "http://127.0.0.1:5000/?nb=rag#token=abc123&shell=desktop";\n'
+        'const HREF = "http://127.0.0.1:5000/?nb=rag#token=abc123&shell=desktop&menu=en";\n'
         + STUBS
         + _fn("captureApiToken")
         + _fn("isDesktopShell")
         + "\ncaptureApiToken();\n"
         "process.stdout.write(JSON.stringify({token: apiTokenMemo, stored: store[API_TOKEN_KEY],"
-        " desktop: isDesktopShell(), urls: window.history.calls}));"
+        " desktop: isDesktopShell(), menu: session['penumbra-menu'], urls: window.history.calls}));"
     )
     got = _node(script)
     assert got["token"] == "abc123" and got["stored"] == "abc123"
     assert got["desktop"] is True
+    assert got["menu"] == "en", "the menu bar's language was not kept for the session"
     assert got["urls"], "the address bar was never rewritten"
     final = got["urls"][-1]
     assert "abc123" not in final and "token" not in final and "shell" not in final, final
+    assert "menu" not in final, final
     assert final == "/?nb=rag", "the orbit route must survive the strip"
 
 
@@ -81,6 +89,8 @@ def test_the_desktop_hint_appears_only_inside_the_shell():
         'const HREF = "x";\n'
         + STUBS
         + _fn("isDesktopShell")
+        + _menu_table()
+        + _fn("menuItems")
         + _fn("withShellHint")
         + '\nconst before = withShellHint("No model is configured.");'
         '\nsession["penumbra-shell"] = "desktop";'
