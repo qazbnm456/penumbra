@@ -1861,3 +1861,37 @@ def test_recording_orbit_sources_is_idempotent_and_is_the_backfill(client):
     assert horizon.record_orbit_sources(loaded.id, loaded.sources) == 0, "already recorded"
     assert len(client.get("/horizon").json()["nodes"]) == before
     assert api._backfill_horizon() == 0
+
+
+def test_moving_a_capture_takes_it_out_of_the_orbit_it_left(client):
+    """Dragging a moon to another planet is a move: one orbit gains it, the other loses it."""
+    node = client.post("/horizon", json={"texts": ["move me across"]}).json()["nodes"][0]
+    client.post(f"/horizon/{node['id']}/promote", json={"orbit_id": "from-here", "create": True})
+    client.post("/orbits/to-there/sources", json={"texts": ["something already there"]})
+    moved = client.post(
+        f"/horizon/{node['id']}/move", json={"from_orbit": "from-here", "to_orbit": "to-there"}
+    ).json()
+    assert moved["appended"] is True and moved["removed"]
+    assert client.get("/orbits/from-here").json()["sources"] == []
+    assert len(client.get("/orbits/to-there").json()["sources"]) == 2
+    orbits = [m["orbit_id"] for m in client.get(f"/horizon/{node['id']}").json()["orbits"]]
+    assert orbits == ["to-there"]
+
+
+def test_a_move_that_would_orphan_citations_asks_first(client):
+    from penumbra import orbit as ob
+    from penumbra.schema import Answer, ChatTurn, Citation
+
+    node = client.post("/horizon", json={"texts": ["cited text"]}).json()["nodes"][0]
+    sid = client.post(
+        f"/horizon/{node['id']}/promote", json={"orbit_id": "cited", "create": True}
+    ).json()["membership"]["source_id"]
+    client.post("/orbits/elsewhere/sources", json={"texts": ["x"]})
+    ob.mutate_orbit("cited", lambda o: o.turns.append(ChatTurn(question="q", answer=Answer(
+        text="a", citations=[Citation(source_id=sid, locator="whole", quote="cited text")]))), create=False)
+    body = {"from_orbit": "cited", "to_orbit": "elsewhere"}
+    refused = client.post(f"/horizon/{node['id']}/move", json=body)
+    assert refused.status_code == 409 and refused.json()["cited"] == 1
+    assert len(client.get("/orbits/cited").json()["sources"]) == 1, "nothing moved before the answer"
+    done = client.post(f"/horizon/{node['id']}/move", json={**body, "confirm": True})
+    assert done.status_code == 200 and done.json()["removed"] == sid
