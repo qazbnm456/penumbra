@@ -556,3 +556,44 @@ def test_a_poll_during_add_cannot_cache_the_answer_from_before_it(client, monkey
     monkeypatch.setattr(horizon, "promote_node", promote_with_a_poll)
     assert client.post(f"/horizon/{loose}/promote", json={"orbit_id": "sleep"}).status_code == 200
     assert client.get("/horizon/suggestions").json()["count"] == 0
+
+
+def test_a_pass_run_whose_reply_could_not_be_read_is_tried_once_more(monkeypatch):
+    """A model reply in the wrong shape is recovered by one fresh run; a timeout, a Stop or a second
+    identical failure is not retried."""
+    from penumbra import runner
+
+    monkeypatch.setenv("PN_MAIN_MODEL", "openai/test")
+    monkeypatch.setitem(api._DISTIL, "cancel", False)
+    calls = []
+
+    def flaky(dotted, kwargs, prefix, config):
+        calls.append(prefix)
+        if len(calls) == 1:
+            raise runner.RunError("Failed to produce a valid 'merges' after 1 attempts")
+        return {"merges": []}
+
+    monkeypatch.setattr(api, "_run_pass_once", flaky)
+    assert api._run_pass_task("m:T", {}, "horizon-align") == {"merges": []}
+    assert len(calls) == 2
+
+    def slow(*a):
+        calls.append("slow")
+        raise runner.RunError("run 'x' timed out after 300.0s and was cancelled")
+
+    calls.clear()
+    monkeypatch.setattr(api, "_run_pass_once", slow)
+    with pytest.raises(runner.RunError):
+        api._run_pass_task("m:T", {}, "horizon-align")
+    assert calls == ["slow"], "a timeout was retried"
+
+    def always_bad(*a):
+        calls.append("bad")
+        raise runner.RunError("AdapterParseError: Expected to find output fields")
+
+    calls.clear()
+    monkeypatch.setattr(api, "_run_pass_once", always_bad)
+    monkeypatch.setitem(api._DISTIL, "cancel", True)
+    with pytest.raises(runner.RunError):
+        api._run_pass_task("m:T", {}, "horizon-align")
+    assert calls == ["bad"], "a stopped pass was retried"

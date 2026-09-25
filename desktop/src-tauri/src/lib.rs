@@ -192,6 +192,9 @@ const CONFIG_TEMPLATE: &str = "\
 # PN_RUN_TIMEOUT_SECONDS=300
 # The most text one run reads at once, in characters.
 # PN_MAX_CORPUS_CHARS=8000000
+# A reasoning model (for example Qwen on vLLM) can think until it hits PN_MAX_TOKENS. Capping its
+# thinking at about half of that keeps it from running away:
+# PN_MAIN_LM_KWARGS={\"extra_body\": {\"thinking_token_budget\": 16384}}
 # How many captures one automatic summary pass may summarise.
 # PN_AUTO_DISTIL_MAX_PER_BATCH=20
 #

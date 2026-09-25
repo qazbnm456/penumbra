@@ -24,6 +24,8 @@ The number is a request, and the provider has the last word. Many models have a 
 
 `worker._describe` carries the root cause across the process boundary. "Failed to produce a valid 'script' after 1 attempts" names the symptom; the exception chain names the cause, which used to be discarded exactly where a person starts reading.
 
+**A thinking budget, not a bigger cap, is what stops a reasoning runaway.** `PN_MAIN_LM_KWARGS` and `PN_SUB_LM_KWARGS` pass extra `dspy.LM` kwargs to one role each (rlm-harness 1.12+), merged over what `configure` builds from the shared `max_tokens`. A concept alignment on a self-hosted Qwen spent 32768 of 32768 tokens reasoning on its retry; on vLLM, `{"extra_body": {"thinking_token_budget": 16384}}`, about half the cap, was measured to end that, and `reasoning_effort` moved reasoning the wrong way. Unset sends nothing, so the four defaults above still hold as written.
+
 ---
 
 Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

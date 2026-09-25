@@ -53,6 +53,6 @@ class AlignConcepts(RLMTask):
     instructions = _INSTRUCTIONS
 
     def __init__(self, *, skills_dir: str | None = SKILLS_DIR, **kw: Any) -> None:
-        self.tools = [make_grounded_validator(ConceptMerges)]
+        self.tools = [make_grounded_validator(ConceptMerges, field=self.output_field)]
         apply_skills(self, skills_dir)
         super().__init__(**kw)

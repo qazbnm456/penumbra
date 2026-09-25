@@ -697,3 +697,21 @@ def test_every_task_is_told_to_submit_on_a_LATER_turn_than_it_validates():
 
     for name, instructions in _shipped_tasks().items():
         assert "LATER REPL turn" in instructions, f"{name} lost the ordering rule"
+
+
+def test_nothing_the_validator_says_tells_the_model_to_reply_with_the_json():
+    """dspy appends a tool's docstring to the planner's prompt, and the success verdict is the last
+    thing a model reads before it submits. rlm-harness's own line said "You may now output this JSON
+    string", and a model that took it literally replied with the JSON and the run failed."""
+    from penumbra.align import AlignConcepts
+    from penumbra.instructions import make_grounded_validator
+    from penumbra.schema import ConceptMerges
+
+    validate = make_grounded_validator(ConceptMerges, field="merges")
+    verdict = validate('{"merges": []}')
+    assert verdict.startswith("Validation successful"), verdict
+    assert "SUBMIT(merges=" in verdict and "output this JSON" not in verdict, verdict
+    assert "final answer" not in (validate.__doc__ or "") and "SUBMIT" in validate.__doc__
+    import inspect
+
+    assert "field=self.output_field" in inspect.getsource(AlignConcepts.__init__)

@@ -3063,13 +3063,33 @@ _DISTIL_RUN: dict[str, object] = {"run": None}
 _DEFAULT_DISTIL_LANGUAGE = "the language the document is written in"
 
 
+#: A run that failed on the SHAPE of the model's reply rather than on time, a Stop or a setting. One
+#: fresh attempt recovers it: a sibling project measured this failure on 6 of 685 runs and all of
+#: its re-runs came back fine. Only for the pass's own runs, which nobody pressed one by one; a
+#: question, a guide or a podcast stays one press, one run (invariant 47), and says why it failed.
+_REPLY_SHAPE_FAILURE = ("AdapterParseError", "Expected to find output fields", "Failed to produce a valid")
+
+
 def _run_pass_task(dotted: str, kwargs: dict, prefix: str) -> object:
     """Run one `RLMTask` in a worker subprocess (invariant 21) from the summary pass's own thread,
-    registered in `_DISTIL_RUN` so the pass's Stop ends it at once. Raises on failure."""
+    registered in `_DISTIL_RUN` so the pass's Stop ends it at once. Raises on failure, after one
+    fresh attempt (new run id, new trace) when the failure was the shape of the model's reply."""
     try:
         config = PenumbraConfig.from_env()
     except SystemExit as exc:
         raise RuntimeError(f"server misconfigured: {exc}") from exc
+    try:
+        return _run_pass_once(dotted, kwargs, prefix, config)
+    except runner.RunError as exc:
+        with _DISTIL_GUARD:
+            stopped = bool(_DISTIL["cancel"])
+        if stopped or not any(mark in str(exc) for mark in _REPLY_SHAPE_FAILURE):
+            raise
+        _log.warning("%s: the model's reply could not be read, trying once more: %s", prefix, exc)
+        return _run_pass_once(dotted, kwargs, prefix, config)
+
+
+def _run_pass_once(dotted: str, kwargs: dict, prefix: str, config: PenumbraConfig) -> object:
     run_id = f"{prefix}-{uuid.uuid4().hex[:12]}"
 
     async def go():

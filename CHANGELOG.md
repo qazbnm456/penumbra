@@ -124,7 +124,10 @@ Each entry states what the product does now and why. The reasoning behind each r
 - The desktop runtime installs exactly what `uv.lock` pins, hashes checked, and refuses a lock that no longer matches `pyproject.toml`. It used to resolve the dependencies afresh on build day, which is how it shipped a dspy the tests had never run. The export leaves out every default dependency group, so the dev venv's subscription SDK stays out of the app.
 - `rlm-harness` is pinned to 1.13.0, and the worker uses only its public API. `dspy` is held below 3.4: dspy 3.4.0 made `RLM.aforward` keyword-only while rlm-harness still passes the sandbox positionally, so every RLM run failed with "aforward() takes 1 positional argument but 2 were given". rlm-harness itself asks only for `dspy>=3.3.1`, and the desktop runtime, which installs without the lockfile, had picked up 3.4.0.
 - Budgets were sized against measured distributions: `max_tokens` is 32768 because a smaller cap cut replies off mid-JSON, the step budget is 25, and the run timeout is 300s for API models and 1800s on the subscription path, scaled up for long podcasts (invariants 59 and 68).
-- Regenerate bypasses the model cache, so it actually produces a new run.
+- No run reads the model response cache. dspy caches every call on disk by default, so a summary pass, a concept alignment or a first overview tried again after a bad reply got the same reply back in seconds; only Regenerate used to bypass it.
+- A summary pass or concept alignment whose model reply could not be read is run once more, fresh, before it counts as failed. A question, a guide or a podcast stays one press, one run.
+- The validator no longer tells the model to "output this JSON string". Its description and its success line say to pass the value to `SUBMIT` from code on the next turn, matching the shared rule that every reply is reasoning plus code; a self-hosted model had replied with the JSON itself and failed on the parse.
+- `PN_MAIN_LM_KWARGS` and `PN_SUB_LM_KWARGS` pass extra model settings to one role, chiefly a thinking budget for a reasoning model, and `PN_REQUEST_TIMEOUT` bounds one model request (invariant 59).
 - Every RLM task carries `rlm_harness.skills`. Anything that would corrupt the output if skipped stays in the prompt (invariant 65).
 
 ### Fixed

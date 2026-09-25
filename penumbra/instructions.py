@@ -390,6 +390,8 @@ def make_grounded_validator(
     model: type,
     coordinates: Callable[[], set[str]] | None = None,
     script: Callable[[], str | None] | None = None,
+    *,
+    field: str = "<the output field>",
 ) -> Callable[[str], str]:
     """`rlm_harness`'s schema validator PLUS a check the schema cannot express: no `[[SRC:...]]`
     marker anywhere in the model's own prose.
@@ -427,9 +429,9 @@ def make_grounded_validator(
     script_reports = 0
 
     def validate(data_json_str: str) -> str:
-        """Validate a JSON string against the expected output schema AND check that no
-        `[[SRC:...]]` marker appears in your own prose. Pass your generated JSON here before
-        emitting it as the final answer."""
+        """Check a draft JSON string from code: the output schema, and that no `[[SRC:...]]`
+        marker appears in your own prose. Read what it returns, then on a LATER turn pass the
+        same value to SUBMIT from code. Never reply with the JSON itself."""
         started = time.perf_counter()
         verdict = _validate(data_json_str)
         # `record_tool_call` is OPT-IN — every tool wrapper calls it or the event does not exist.
@@ -539,6 +541,15 @@ def make_grounded_validator(
                     f"one exception, and this check cannot see the difference; keep those as they "
                     f"are."
                 )
+        # rlm-harness's own success line is "You may now output this JSON string", which is the
+        # one instruction a model that skips the REPL needs least: a concept alignment replied with
+        # its JSON as a message and the run failed on the parse. The docstring above reaches the
+        # prompt too (dspy appends every tool's docstring), so both say the same thing.
+        if verdict.startswith("Validation successful"):
+            verdict = (
+                f"Validation successful. On your NEXT turn call SUBMIT({field}=<this value>) from "
+                f"code. Do not reply with the JSON itself."
+            )
         return verdict
 
     validate.__name__ = f"validate_{model.__name__.lower()}"
@@ -611,7 +622,8 @@ class GroundedTask(RLMTask):
         self._script: str | None = None
         self.tools = [
             make_grounded_validator(
-                self.output_model, lambda: self._coordinates, lambda: self._script
+                self.output_model, lambda: self._coordinates, lambda: self._script,
+                field=self.output_field,
             )
         ]
         apply_skills(self, skills_dir)
