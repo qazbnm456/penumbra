@@ -1989,6 +1989,15 @@ body.is-resizing .cols {
   font-size: var(--text-md);
 }
 
+/* In the desktop app there is no printed token to paste; the gate only says how to reconnect. */
+.token-gate.is-desktop .token-gate-why,
+.token-gate.is-desktop .token-gate-label,
+.token-gate.is-desktop .token-gate-input,
+.token-gate.is-desktop .token-gate-hint,
+.token-gate.is-desktop .token-gate-card > button {
+  display: none;
+}
+
 .setting-source {
   font-size: var(--text-xs);
   color: var(--text-faint);

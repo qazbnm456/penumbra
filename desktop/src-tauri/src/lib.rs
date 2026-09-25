@@ -161,21 +161,48 @@ const CONFIG_TEMPLATE: &str = "\
 # Penumbra desktop configuration.
 #
 # One KEY=VALUE per line. Lines starting with # are ignored. After editing, choose
-# File > Restart Server for the change to take effect.
+# File > Restart Server for the change to take effect. Every setting an error message in the app
+# names is listed below with its default; remove the # to change one.
 #
-# The model every run uses. Required before you can ask a question.
+# --- The model (required before you can ask a question or summarise) ---
+#
+# The model every run uses, as provider/model, and its API key.
 # PN_MAIN_MODEL=anthropic/claude-sonnet-5
 # PN_API_KEY=
 #
-# Optional: a separate, cheaper model for sub-calls, and a custom endpoint.
+# Optional: a separate, cheaper model for sub-calls, and an OpenAI-compatible endpoint.
 # PN_SUB_MODEL=
 # PN_BASE_URL=
 #
+# --- Network ---
+#
 # Behind a fake-IP proxy or VPN (Clash, Surge, Mihomo), every link resolves into a reserved range
-# and is refused. Set this to the range your proxy uses (invariant 76):
+# and is refused. Set this to the range your proxy uses:
 # PN_FETCH_ALLOW_CIDRS=198.18.0.0/15
 #
-# The full list of settings is in .env.example in the Penumbra repository.
+# --- Limits ---
+#
+# The longest reply one model call may write. Lower it if a model refuses the reply length.
+# PN_MAX_TOKENS=32768
+# Seconds one run may take before it is stopped. A long podcast takes longer.
+# PN_RUN_TIMEOUT_SECONDS=300
+# The most text one run reads at once, in characters.
+# PN_MAX_CORPUS_CHARS=8000000
+# How many captures one automatic summary pass may summarise.
+# PN_AUTO_DISTIL_MAX_PER_BATCH=20
+#
+# --- Settings page overrides ---
+#
+# These are normally set on the settings page. Set here, they win and the page shows them locked.
+# PN_OUTPUT_LANGUAGE=Traditional Chinese
+# PN_AUTO_DISTIL=on
+# PN_LANDING_ORBIT=off
+#
+# The podcast voice provider. The desktop app includes edge-tts only.
+# PN_TTS_PROVIDER=edge-tts
+#
+# Every setting, with what it does:
+# https://github.com/qazbnm456/penumbra/blob/main/.env.example
 ";
 
 /// `KEY=VALUE` lines, `#` comments, optional surrounding quotes. Only names made of capitals,
@@ -348,15 +375,19 @@ fn mint_token() -> String {
 
 fn start_server(app: &AppHandle) -> Result<Server, String> {
     let python = python_path(app).ok_or_else(|| {
-        "The bundled Python runtime is missing. Rebuild the app with desktop/scripts/build_runtime.py, \
-         or set PENUMBRA_PYTHON when running from a source checkout."
-            .to_string()
+        // The developer's half (rebuild the runtime, or point PENUMBRA_PYTHON at a checkout's
+        // Python) is in desktop/README.md; the reader of this screen installed an app.
+        word(
+            "Some of Penumbra's files are missing. Install the app again.",
+            "Penumbra 有部分檔案不見了，請重新安裝這個 app。",
+        )
+        .to_string()
     })?;
     let data = data_dir(app);
     let port = choose_port(app);
     let token = mint_token();
 
-    let log = File::create(log_path(app)).map_err(|e| format!("cannot write the server log: {e}"))?;
+    let log = File::create(log_path(app)).map_err(|e| format!("{}: {e}", word("Could not write the server log", "無法寫入伺服器記錄")))?;
     let log_err = log.try_clone().map_err(|e| e.to_string())?;
 
     let mut command = Command::new(&python);

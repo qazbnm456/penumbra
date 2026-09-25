@@ -8,9 +8,9 @@ through the same command.
     penumbra audio --source ./paper.pdf
 
     # a persistent, continuing conversation / orbit:
-    penumbra ask "what does it say about X?" --source ./paper.pdf --orbit mynb
-    penumbra ask "and what about Y?" --orbit mynb
-    penumbra guide faq --orbit mynb
+    penumbra ask "what does it say about X?" --source ./paper.pdf --orbit research
+    penumbra ask "and what about Y?" --orbit research
+    penumbra guide faq --orbit research
 
 Needs model credentials (`PN_*`, see `.env.example`) and a sandbox (`brew install deno`). Without
 `--orbit`, every invocation ingests its `--source` list from scratch and runs exactly once —
@@ -74,15 +74,18 @@ two-host podcast script + synthesized Audio Overview.
 
 Add --orbit <id> to persist sources (and, for `ask`, history) across invocations:
 
-    penumbra ask "what does it say about X?" --source ./paper.pdf --orbit mynb
-    penumbra ask "and what about Y?" --orbit mynb    # no --source needed to continue
-    penumbra guide timeline --orbit mynb
-    penumbra audio --orbit mynb
+    penumbra ask "what does it say about X?" --source ./paper.pdf --orbit research
+    penumbra ask "and what about Y?" --orbit research    # no --source needed to continue
+    penumbra guide timeline --orbit research
+    penumbra audio --orbit research
 
 `--source` accepts a path to a text file, a path to a PDF (scanned pages are OCR'd automatically),
 or an http(s) URL. Needs PN_* model credentials (see .env.example) and a sandbox (brew install
 deno) for a live run. `audio` additionally needs network access to the TTS provider (edge-tts by
 default — free, no API key).
+
+The CLI works on orbits only. The Horizon, the star map and the ask dock are in the desktop app
+and in the web UI that `penumbra serve` starts.
 """
 
 #: `guide <kind>` -> the RLMTask that produces it. Shared by `build_parser` (as `choices`) and
