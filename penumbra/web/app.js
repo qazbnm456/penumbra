@@ -10039,6 +10039,14 @@ function stableHash(text) {
     h ^= text.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
+  // FNV alone barely mixes the last character, so "sx1", "sx2", "sx3" landed a near-constant step
+  // apart and the star field drew as dotted lines that read like the legend's bridges. This is
+  // MurmurHash3's finaliser, which spreads one changed bit across the whole word.
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
   return (h >>> 0) / 4294967295;
 }
 
