@@ -9510,45 +9510,191 @@ function orbitLabelForSlug(slug) {
   return orbitTitles.get(slug) || "";
 }
 
+// --- choosing what a question reads: the staged picker -------------------------------------------
+//
+// Opened by the + beside the chips or by typing "/" at the start of the question. The first level
+// is the kinds (tags, entities, orbits) with how many of each; choosing one lists its names, and
+// Escape goes back up one level. Typing searches every kind at once. The highlight moves without
+// rebuilding the list, because rebuilding under a still pointer replaced the row between mousedown
+// and mouseup, and the click never landed.
+
+const askPick = { open: false, fromSlash: false, drill: null, items: [], index: 0, data: { tags: [], entities: [] } };
+
 async function loadAskHScopes() {
-  const select = horizonEl("ask-h-scope");
-  let data;
   try {
-    data = await api("/horizon/concepts");
+    askPick.data = await api("/horizon/concepts");
   } catch {
-    return; // the narrower scopes simply are not offered
+    return; // the narrower scopes are simply not offered
   }
-  while (select.options.length > 1) select.remove(1);
-  const group = (label, kind, rows) => {
-    if (!rows || !rows.length) return;
-    const optgroup = document.createElement("optgroup");
-    optgroup.label = label;
-    rows.forEach((row) => {
-      const option = document.createElement("option");
-      option.value = `${kind}:${row.name}`;
-      option.textContent = kind === "tag" ? `#${row.name} (${row.count})` : `${row.name} (${row.count})`;
-      optgroup.appendChild(option);
-    });
-    select.appendChild(optgroup);
-  };
-  group(t("askH.tags", "Tags"), "tag", data.tags);
-  group(t("askH.entities", "Entities"), "entity", data.entities);
-  select.value = "";
+  if (askPick.open) refreshAskPicker();
 }
 
-function pickOtherScope() {
-  const select = horizonEl("ask-h-scope");
-  const raw = select.value;
-  select.value = "";
-  if (!raw) return;
-  const cut = raw.indexOf(":");
-  askH.custom = { id: "custom", scope: { kind: raw.slice(0, cut), value: raw.slice(cut + 1) } };
+function askPickKinds() {
+  const orbits = (starMap.orbits || []).map((o) => ({ name: o.title, count: o.sources || 0, orbit: o }));
+  return {
+    tag: { label: t("askH.tags", "Tags"), rows: askPick.data.tags || [] },
+    entity: { label: t("askH.entities", "Entities"), rows: askPick.data.entities || [] },
+    orbit: { label: t("askH.orbits", "Orbits"), rows: orbits },
+  };
+}
+
+function askPickRow(kind, row) {
+  return {
+    kind, name: row.name, orbit: row.orbit || null,
+    title: kind === "tag" ? `#${row.name}` : row.name,
+    fact: String(row.count),
+  };
+}
+
+function askPickMatches(query) {
+  const kinds = askPickKinds();
+  let q = query.trim().toLowerCase();
+  let drill = askPick.drill;
+  // "#" searches tags, the way a tag is written everywhere else in the product.
+  if (!drill && q.startsWith("#")) {
+    drill = "tag";
+    q = q.slice(1);
+  }
+  const hit = (row) => !q || row.name.toLowerCase().includes(q);
+  if (drill) return kinds[drill].rows.filter(hit).map((row) => askPickRow(drill, row));
+  if (!q) {
+    return Object.entries(kinds)
+      .filter(([, k]) => k.rows.length)
+      .map(([kind, k]) => ({ kind: "open", drill: kind, title: k.label, fact: String(k.rows.length) }));
+  }
+  const found = [];
+  for (const [kind, k] of Object.entries(kinds)) {
+    k.rows.filter(hit).forEach((row) => found.push({ ...askPickRow(kind, row), badge: k.label }));
+  }
+  return found.sort((a, b) => Number(b.fact) - Number(a.fact)).slice(0, 50);
+}
+
+function askSlashQuery() {
+  const value = horizonEl("ask-h-input").value;
+  return value.startsWith("/") && !value.includes("\n") ? value.slice(1) : null;
+}
+
+function refreshAskPicker() {
+  askPick.items = askPickMatches(askPick.fromSlash ? askSlashQuery() || "" : "");
+  askPick.index = Math.min(askPick.index, Math.max(0, askPick.items.length - 1));
+  renderAskPicker();
+}
+
+function highlightAskPick(i) {
+  askPick.index = i;
+  horizonEl("ask-h-picker").querySelectorAll(".ask-opt").forEach((opt, n) => {
+    opt.classList.toggle("is-active", n === i);
+  });
+}
+
+function renderAskPicker() {
+  const box = horizonEl("ask-h-picker");
+  box.textContent = "";
+  if (askPick.drill) {
+    const head = elt("p", "ask-opt-head");
+    head.appendChild(elt("span", "ask-opt-head-where", askPickKinds()[askPick.drill].label));
+    head.appendChild(elt("span", "ask-opt-head-back", t("askH.pickBack", "Esc to go back")));
+    box.appendChild(head);
+  }
+  askPick.items.forEach((row, i) => {
+    const opt = elt("button", `ask-opt${i === askPick.index ? " is-active" : ""}`);
+    opt.type = "button";
+    opt.appendChild(elt("span", "ask-opt-title", row.title));
+    if (row.badge) opt.appendChild(elt("span", "ask-opt-badge", row.badge));
+    opt.appendChild(elt("span", "ask-opt-fact", row.fact));
+    if (row.kind === "open") opt.appendChild(elt("span", "ask-opt-more", "›"));
+    opt.addEventListener("mousedown", (event) => {
+      event.preventDefault(); // keep focus in the question
+      chooseAskPick(i);
+    });
+    opt.addEventListener("mouseenter", () => highlightAskPick(i));
+    box.appendChild(opt);
+  });
+  if (!askPick.items.length) {
+    box.appendChild(elt("p", "ask-opt-empty", askPick.drill || askSlashQuery()
+      ? t("askH.pickNone", "Nothing by that name.")
+      : t("askH.pickNothing", "No tags, entities or orbits yet. Summaries find tags and entities.")));
+  }
+}
+
+function openAskPicker({ fromSlash = false } = {}) {
+  if (!askPick.open) askPick.drill = null;
+  askPick.open = true;
+  askPick.fromSlash = fromSlash;
+  askPick.index = 0;
+  horizonEl("ask-h-picker").hidden = false;
+  horizonEl("ask-h-add").setAttribute("aria-expanded", "true");
+  // While it is open, Enter chooses a row rather than checking the question; the line says so.
+  horizonEl("ask-h-hint").textContent = t("askH.pickHint", "\u2191 \u2193 to move, Enter to choose, Esc to go back or close.");
+  refreshAskPicker();
+  void loadAskHScopes(); // summaries land in the background; what is on offer follows them
+  syncDock();
+}
+
+function closeAskPicker() {
+  askPick.open = false;
+  askPick.fromSlash = false;
+  askPick.drill = null;
+  horizonEl("ask-h-picker").hidden = true;
+  horizonEl("ask-h-add").setAttribute("aria-expanded", "false");
+  renderAskHChips(); // puts the question's own hint back
+}
+
+function chooseAskPick(i) {
+  const row = askPick.items[i];
+  if (!row) return;
+  const input = horizonEl("ask-h-input");
+  if (row.kind === "open") {
+    askPick.drill = row.drill;
+    askPick.index = 0;
+    if (askPick.fromSlash) input.value = "/";
+    refreshAskPicker();
+    input.focus();
+    return;
+  }
+  askH.custom = row.kind === "orbit"
+    ? { id: "custom", orbit: { id: row.orbit.id, slug: row.orbit.slug, title: row.orbit.title } }
+    : { id: "custom", scope: { kind: row.kind, value: row.name } };
   askH.chips = askH.chips.filter((chip) => chip.id !== "custom");
   askH.chips.push(askH.custom);
   askH.chosen = "custom";
+  if (askPick.fromSlash) input.value = "";
+  closeAskPicker();
   renderAskHChips();
   dismissAskHPlan();
+  input.focus();
 }
+
+//: The keys that belong to the picker while it is open: arrows move, Enter chooses, Escape backs
+//: out one level. Registered in the capture phase so Enter chooses a row instead of checking the
+//: question.
+function askPickerKeys(event) {
+  if (!askPick.open) return;
+  const n = askPick.items.length;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    if (n) {
+      const next = (askPick.index + (event.key === "ArrowDown" ? 1 : n - 1)) % n;
+      highlightAskPick(next);
+      horizonEl("ask-h-picker").querySelectorAll(".ask-opt")[next]?.scrollIntoView({ block: "nearest" });
+    }
+  } else if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229) {
+    chooseAskPick(askPick.index);
+  } else if (event.key === "Escape") {
+    if (askPick.drill) {
+      askPick.drill = null;
+      askPick.index = 0;
+      if (askPick.fromSlash) horizonEl("ask-h-input").value = "/";
+      refreshAskPicker();
+    } else {
+      closeAskPicker();
+    }
+  } else {
+    return;
+  }
+  event.preventDefault();
+  event.stopImmediatePropagation();
+}
+
 function askHShowError(message) {
   const el = horizonEl("ask-h-error");
   el.textContent = message || "";
@@ -10679,6 +10825,7 @@ function planetUnder(point, exclude = []) {
 function startMoonDrag(event, item, hit) {
   if (event.button !== 0 || item.kind !== "capture") return;
   event.stopPropagation();
+  event.preventDefault(); // a carry, not a text selection
   mapDrag.item = item;
   mapDrag.id = event.pointerId;
   mapDrag.start = { x: event.clientX, y: event.clientY };
@@ -10903,6 +11050,7 @@ function initStarMapCamera() {
   }, { passive: false });
   svg.addEventListener("pointerdown", (event) => {
     if (event.button !== 0 || event.target.closest(".map-planet, .map-hit, .map-hole-hit, .map-hole-sub")) return;
+    event.preventDefault(); // no text selection starting under a pan
     mapPan.id = event.pointerId;
     mapPan.start = { cx: event.clientX, cy: event.clientY, x: mapCamera.x, y: mapCamera.y };
     mapPan.moved = false;
@@ -11918,11 +12066,26 @@ function initAskH() {
   });
   // A preview is for ONE question in ONE scope; changing either means it no longer describes Ask.
   input.addEventListener("input", dismissAskHPlan);
-  const scope = horizonEl("ask-h-scope");
-  scope.addEventListener("change", pickOtherScope);
-  // Summaries land in the background, so the tags and entities on offer are refreshed whenever the
-  // reader goes to pick one rather than only once at load.
-  scope.addEventListener("focus", () => void loadAskHScopes());
+  input.addEventListener("keydown", askPickerKeys, true);
+  input.addEventListener("input", () => {
+    const q = askSlashQuery();
+    if (q === null) {
+      if (askPick.fromSlash) closeAskPicker();
+      return;
+    }
+    if (!askPick.open || !askPick.fromSlash) openAskPicker({ fromSlash: true });
+    else refreshAskPicker();
+  });
+  horizonEl("ask-h-add").addEventListener("click", () => {
+    if (askPick.open) closeAskPicker();
+    else openAskPicker();
+    input.focus();
+  });
+  document.addEventListener("mousedown", (event) => {
+    if (!askPick.open) return;
+    if (event.target.closest("#ask-h-picker, #ask-h-add, #ask-h-input")) return;
+    closeAskPicker();
+  });
   horizonEl("ask-h-send").addEventListener("click", () => void sendAskH());
   horizonEl("ask-h-dismiss").addEventListener("click", dismissAskHPlan);
   renderAskHChips();
