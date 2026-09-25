@@ -7953,18 +7953,14 @@ function viewIsHorizon() {
 //: fragment: a fragment moves focus only if the target is focusable AND rendered, which is exactly
 //: the condition that failed here.
 //: **The rail said the Horizon was current while you were inside an orbit.** `is-current` was
-//: written into `#facet-horizon` in the markup and nothing ever took it off, so the one control that
+//: written into the rail's old Horizon row and nothing ever took it off, so the one control that
 //: shows the two-tier model marked the wrong tier the moment you went into an orbit — and no
 //: facet carried `aria-current`, so a screen reader was told nothing either way.
 function syncFacetCurrent() {
   const horizon = viewIsHorizon();
-  const home = document.getElementById("facet-horizon");
-  if (home) {
-    home.classList.toggle("is-current", horizon);
-    //: `page`, not `true`: these are places you navigate to, which is what the token means.
-    if (horizon) home.setAttribute("aria-current", "page");
-    else home.removeAttribute("aria-current");
-  }
+  //: The rail lists orbits only. It used to open with a "Horizon" row, a second way home beside the
+  //: moon and the crumb in the header, and on the Horizon it repeated the screen you were on.
+  //: `page`, not `true`: these are places you navigate to, which is what the token means.
   document.querySelectorAll("#facet-list .facet").forEach((item) => {
     const on = !horizon && item.dataset.orbitId === state.orbitId;
     item.classList.toggle("is-current", on);
@@ -8678,7 +8674,7 @@ function renderStream({ append = false, newIds = new Set() } = {}) {
   if (!empty.hidden) {
     empty.textContent = horizonState.query
       ? t("horizon.noMatch", `Nothing matched \u201c${horizonState.query}\u201d.`, { q: horizonState.query })
-      : t("horizon.empty", "Nothing here yet. Paste a link above and it stays.");
+      : t("horizon.empty", "Nothing has landed yet. Paste a link above and Penny will keep it.");
   }
   // The first-run explanation belongs to an EMPTY Horizon, not to a search that found nothing: a
   // reader who just typed a query does not need to be told what a facet is.
@@ -9605,7 +9601,6 @@ function initHorizon() {
   horizonEl("horizon-home").addEventListener("click", showHorizon);
   const exportBtn = document.getElementById("orbit-export");
   if (exportBtn) exportBtn.addEventListener("click", downloadOrbitMarkdown);
-  horizonEl("facet-horizon").addEventListener("click", showHorizon);
   horizonEl("facet-new").addEventListener("click", async () => {
     // The id is a HANDLE and the UI mints it (invariant 37): a reader is never asked to invent one
     // before they can start, which is the mistake the first version of this product made.
@@ -10387,13 +10382,123 @@ function openCaptureDock() {
   syncCaptureDock();
 }
 
+// A resting drawer opens only when the pointer comes to its grip, not anywhere along the edge: a
+// band the width of the window fired whenever the reader reached for a tag chip, the view switch or
+// the map's legend.
+function nearGrip(event, handle) {
+  const box = handle.getBoundingClientRect();
+  if (!box.width) return false;
+  return event.clientX >= box.left - 56 && event.clientX <= box.right + 56
+    && event.clientY >= box.top - 24 && event.clientY <= box.bottom + 24;
+}
+
+// --- the mascot -------------------------------------------------------------------------------------
+//
+// Penny, the half-lit moon, is the brand in the header. A press goes home; a right click, or the
+// context-menu key, lets her introduce herself the way a game character would: portrait, name plate
+// and a few lines that appear as she says them. The whole line is in a live region for a screen
+// reader, so the typing is decoration only, and with reduced motion each line appears at once.
+
+function mascotLines() {
+  return [
+    t("mascot.line1", "Hi, I'm Penny. Half of me is lit and half is in shadow, and the soft edge between them is a penumbra. That's where the name comes from."),
+    t("mascot.line2", "Whatever you throw in lands on the Horizon first. I go through it one piece at a time with this lantern, and what it lights up becomes a summary."),
+    t("mascot.line3", "Things that seem related, I tie together with thread: those are the dashed lines on the star map. Once something has a home, it goes into an orbit."),
+    t("mascot.line4", "Unless you change the setting, I only get to work when you press something, so I never spend your credits behind your back. Now, throw something in!"),
+  ];
+}
+
+const npc = { index: 0, typing: null, opener: null };
+
+function npcShowLine() {
+  const lines = mascotLines();
+  const line = lines[npc.index];
+  const text = document.getElementById("npc-text");
+  const next = document.getElementById("npc-next");
+  document.getElementById("npc-full").textContent = line;
+  document.getElementById("npc-step").textContent = `${npc.index + 1} / ${lines.length}`;
+  next.textContent = npc.index === lines.length - 1 ? t("mascot.done", "Got it") : t("mascot.next", "Next");
+  clearInterval(npc.typing);
+  npc.typing = null;
+  if (!motionAllowed()) {
+    text.textContent = line;
+    return;
+  }
+  const chars = Array.from(line);
+  let shown = 0;
+  text.textContent = "";
+  npc.typing = setInterval(() => {
+    shown += 1;
+    text.textContent = chars.slice(0, shown).join("");
+    if (shown >= chars.length) {
+      clearInterval(npc.typing);
+      npc.typing = null;
+    }
+  }, 28);
+}
+
+function npcAdvance() {
+  if (npc.typing) {
+    clearInterval(npc.typing);
+    npc.typing = null;
+    document.getElementById("npc-text").textContent = mascotLines()[npc.index];
+    return;
+  }
+  if (npc.index >= mascotLines().length - 1) {
+    closeNpc();
+    return;
+  }
+  npc.index += 1;
+  npcShowLine();
+}
+
+function openNpc() {
+  const box = document.getElementById("npc");
+  npc.index = 0;
+  npc.opener = document.activeElement;
+  box.hidden = false;
+  document.getElementById("new-orbit").setAttribute("aria-expanded", "true");
+  npcShowLine();
+  document.getElementById("npc-next").focus();
+}
+
+function closeNpc() {
+  const box = document.getElementById("npc");
+  if (box.hidden) return;
+  clearInterval(npc.typing);
+  npc.typing = null;
+  box.hidden = true;
+  document.getElementById("new-orbit").setAttribute("aria-expanded", "false");
+  npc.opener?.focus?.();
+}
+
+function initMascot() {
+  const brand = document.getElementById("new-orbit");
+  const box = document.getElementById("npc");
+  brand.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    openNpc();
+  });
+  document.getElementById("npc-next").addEventListener("click", (event) => {
+    event.stopPropagation();
+    npcAdvance();
+  });
+  // A click anywhere on her speech moves it on, as it would in a game.
+  box.addEventListener("click", npcAdvance);
+  document.addEventListener("mousedown", (event) => {
+    if (!box.hidden && !box.contains(event.target) && !brand.contains(event.target)) closeNpc();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !box.hidden) closeNpc();
+  });
+}
+
 function initCaptureDock() {
   const root = horizonEl("capture-dock");
   document.addEventListener("mousemove", (event) => {
     if (document.body.dataset.view !== "horizon") return;
     const box = root.getBoundingClientRect();
-    const top = 56;
-    const near = (event.clientY - top < 48 && event.clientY >= top)
+    const near = nearGrip(event, horizonEl("capture-dock-handle"))
       || (root.classList.contains("is-open") && event.clientY <= box.bottom + 16
         && event.clientX >= box.left - 24 && event.clientX <= box.right + 24);
     if (near !== captureDock.near) {
@@ -10438,7 +10543,7 @@ function initDock() {
   document.addEventListener("mousemove", (event) => {
     if (root.hidden) return;
     const box = root.getBoundingClientRect();
-    const near = window.innerHeight - event.clientY < 56
+    const near = nearGrip(event, horizonEl("ask-dock-handle"))
       || (dock.open && event.clientY >= box.top - 12 && event.clientX >= box.left - 24 && event.clientX <= box.right + 24);
     if (near !== dock.near) {
       dock.near = near;
@@ -10984,6 +11089,7 @@ function drawStarMap() {
     const x = d * Math.cos(angle);
     const y = d * Math.sin(angle);
     looseRing.appendChild(svgEl("circle", { cx: x, cy: y, r: 2.2 }, moonClass(item)));
+    if (item && isFocusedMoon(item)) looseRing.appendChild(moonMark(x, y));
     if (item) looseRing.appendChild(moonHit(x, y, { kind: "capture", ...item }));
   }
   hole.appendChild(looseRing);
@@ -11003,7 +11109,7 @@ function drawStarMap() {
     const dimmed = starMap.lens && !(orbit.tags || []).includes(starMap.lens);
     const group = svgEl("g", { tabindex: 0, role: "button", "aria-label":
       t("map.planetLabel", `${orbit.title}, ${orbit.sources} sources`, { name: orbit.title, n: orbit.sources }) },
-    `map-planet${starMap.selected === orbit.slug ? " is-selected" : ""}${dimmed ? " is-dim" : ""}`);
+    `map-planet${planetMark(orbit.slug)}${dimmed ? " is-dim" : ""}`);
     group.appendChild(svgEl("circle", { r: p.r + 14, fill: "url(#pn-halo)" }, "map-planet-halo"));
     // Moons: one per source, so they agree with the "N sources" under the planet. Each capture
     // filed from the Horizon is its own moon, copper once summarised and grey before, and can be
@@ -11021,6 +11127,7 @@ function drawStarMap() {
       const x = d * Math.cos(angle);
       const y = d * Math.sin(angle);
       moonRing.appendChild(svgEl("circle", { cx: x, cy: y, r: 2.2 }, moonClass(item)));
+      if (isFocusedMoon(item)) moonRing.appendChild(moonMark(x, y));
       moonRing.appendChild(moonHit(x, y, { ...item, orbit: orbit.slug }));
     });
     group.appendChild(moonRing);
@@ -11103,6 +11210,25 @@ function syncStarMapContext({ follow = true } = {}) {
 // Every moon and every dot around the Horizon is one capture. Pointing at one names it, clicking
 // opens it in the card, and (next) dragging it onto a planet files it there. A hollow moon is a
 // source added inside its orbit: it can be pointed at and opens its orbit, but it is not a capture.
+
+//: A moon that is open in the card is marked on the moon itself, not on its planet. Its planet is
+//: only the host: a faint dashed ring says where the moon lives, while the halo and the copper rim
+//: stay the planet's own selection, so the two can never be mistaken for each other.
+function isFocusedMoon(item) {
+  return item.kind !== "local" && starMap.focus?.kind === "capture" && starMap.focus.id === item.id;
+}
+
+function planetMark(slug) {
+  if (starMap.selected !== slug) return "";
+  return starMap.focus?.kind === "capture" ? " is-host" : " is-selected";
+}
+
+function moonMark(x, y) {
+  const mark = svgEl("g", { transform: `translate(${x} ${y})` }, "map-moon-mark");
+  mark.appendChild(svgEl("circle", { r: 4 }, "map-moon-ping"));
+  mark.appendChild(svgEl("circle", { r: 3.6 }, "map-moon-core"));
+  return mark;
+}
 
 function moonClass(item) {
   if (!item) return "map-dot";
@@ -12687,6 +12813,7 @@ function initAskH() {
 initAskH();
 initDock();
 initCaptureDock();
+initMascot();
 initPanels();
 initStarMapCamera();
 initDesktopContextMenu();

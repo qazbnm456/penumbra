@@ -2,9 +2,9 @@
 // workspace does, over HTTP with the same token (invariants 77 and 81).
 //
 // The SHELL owns geometry: it watches the pointer, sizes this window and calls
-// `island.setState(...)`. The page owns everything drawn, and one navigation: clicking asks the shell
-// to open the workspace by navigating to `/__shell/open`, which the shell intercepts and refuses.
-// That fixed URL is the only thing this page can ask of the shell, and it carries no data.
+// `island.setState(...)`. The page owns everything drawn, and asks the shell for things only by
+// navigating to one of four fixed paths (`/__shell/open`, `/menu`, `/rest`, `/note`), which the
+// shell intercepts and refuses. None of them carries any data.
 
 (() => {
   const TOKEN_KEY = "penumbra-api-token";
@@ -83,6 +83,8 @@
       if (words) announce(...words);
       if (state === "hover") startGlance();
       else stopGlance();
+      if (state === "note") beginNote();
+      else endNoteFocus();
     },
   };
 
@@ -161,7 +163,13 @@
     window.location.href = "/__shell/open";
   }
 
-  hole.addEventListener("click", openWorkspace);
+  hole.addEventListener("click", (event) => {
+    // While it is a field, a click inside it is the reader placing the caret, not a request to
+    // open the workspace.
+    if (document.body.dataset.state === "note") return;
+    if (event.target.closest(".pen")) return;
+    openWorkspace();
+  });
   // Right-click: the shell's menu (open, configure, restart, quit). In the background there is no
   // menu bar and no Dock icon, so this is the only place to quit from.
   window.addEventListener("contextmenu", (event) => {
@@ -174,6 +182,130 @@
       openWorkspace();
     }
   });
+
+  // --- a thought, written straight into the Horizon ------------------------------------------------
+  //
+  // The pen (or the menu's "Write a Thought…") asks the shell for the note state with a fourth fixed
+  // path, `/__shell/note`, which carries nothing. The shell opens the island into a one-line field
+  // and lets this window take the keyboard. Return sends the line to the server over HTTP with the
+  // token, the same way a drop is sent; Escape, or clicking anywhere else, puts it away. A line not
+  // sent is kept for the next time, so putting the island away never loses a thought.
+
+  const pen = document.getElementById("pen");
+  const note = document.getElementById("note");
+  const noteInput = document.getElementById("note-input");
+  const DRAFT_KEY = "penumbra-island-draft";
+  let sendingNote = false;
+
+  pen.addEventListener("click", (event) => {
+    event.stopPropagation();
+    window.location.href = "/__shell/note";
+  });
+
+  function keepDraft() {
+    try {
+      if (noteInput.value.trim()) localStorage.setItem(DRAFT_KEY, noteInput.value);
+      else localStorage.removeItem(DRAFT_KEY);
+    } catch {
+      // storage blocked: the draft lives only as long as this page
+    }
+  }
+
+  function syncNoteLook() {
+    note.classList.toggle("has-text", Boolean(noteInput.value.trim()));
+  }
+
+  function beginNote() {
+    try {
+      if (!noteInput.value) noteInput.value = localStorage.getItem(DRAFT_KEY) || "";
+    } catch {
+      // no storage
+    }
+    noteInput.tabIndex = 0;
+    syncNoteLook();
+    // The window becomes key a moment after the shell asks; focusing now and again on `focus`
+    // covers either order.
+    setTimeout(() => noteInput.focus(), 40);
+    // The pointer no longer closes the island while it is a field, so a window that never got the
+    // keyboard would stay open with nothing able to close it. It puts itself away instead.
+    setTimeout(() => {
+      if (document.body.dataset.state === "note" && !document.hasFocus()) putNoteAway();
+    }, 2000);
+  }
+
+  function endNoteFocus() {
+    noteInput.tabIndex = -1;
+    if (document.activeElement === noteInput) noteInput.blur();
+  }
+
+  function putNoteAway() {
+    keepDraft();
+    window.location.href = "/__shell/rest";
+  }
+
+  window.addEventListener("focus", () => {
+    if (document.body.dataset.state === "note") noteInput.focus();
+  });
+  // Clicking anywhere else takes the keyboard away from this window: that is the reader moving on.
+  window.addEventListener("blur", () => {
+    if (document.body.dataset.state === "note" && !sendingNote) putNoteAway();
+  });
+  noteInput.addEventListener("input", () => {
+    syncNoteLook();
+    keepDraft();
+  });
+  noteInput.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      putNoteAway();
+    }
+    // Return picks a candidate while an input method is composing (Zhuyin, Pinyin, Kana); only a
+    // Return outside composition sends. WebKit reports that Return as keyCode 229.
+    if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229) {
+      event.preventDefault();
+      void sendNote();
+    }
+  });
+  // Implicit submission is not used: it cannot tell a composing Return from a real one.
+  note.addEventListener("submit", (event) => event.preventDefault());
+
+  async function sendNote() {
+    const line = noteInput.value.trim();
+    if (!line) {
+      putNoteAway();
+      return;
+    }
+    if (sendingNote) return;
+    sendingNote = true;
+    const link = /^https?:\/\/\S+$/i.test(line);
+    const box = noteInput.getBoundingClientRect();
+    document.body.dataset.busy = "";
+    try {
+      await send("/horizon", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(link ? { urls: [line], texts: [] } : { urls: [], texts: [line] }),
+      });
+      noteInput.value = "";
+      keepDraft();
+      syncNoteLook();
+      fall([line], box.left + 24, box.top + box.height / 2);
+      result("ok");
+      announce("island.noted", "Kept in the Horizon");
+      setTimeout(() => {
+        sendingNote = false;
+        window.location.href = "/__shell/rest";
+      }, 900);
+    } catch (err) {
+      sendingNote = false;
+      result("bad");
+      const why = whyNot(err);
+      live.textContent = why ? `${say("island.failed", "Could not take that in")}: ${why}` : say("island.failed", "Could not take that in");
+      noteInput.focus();
+    } finally {
+      delete document.body.dataset.busy;
+    }
+  }
 
   // --- capture -------------------------------------------------------------------------------------
 

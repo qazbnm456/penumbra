@@ -2199,7 +2199,11 @@ def test_design_md_never_names_a_selector_the_code_no_longer_has():
     paragraph, so nobody reads it as current.
     """
     design = (WEB / "DESIGN.md").read_text(encoding="utf-8")
-    live = "".join((WEB / f).read_text(encoding="utf-8") for f in ("app.js", "style.css", "index.html"))
+    # The island's files too: §11 describes the island, whose classes live only there.
+    live = "".join(
+        (WEB / f).read_text(encoding="utf-8")
+        for f in ("app.js", "style.css", "index.html", "island.html", "island.css", "island.js")
+    )
 
     named = sorted({m.group(1) for m in re.finditer(r"`\.([a-z][a-z0-9-]+)`", design)})
     assert len(named) > 15, "the extraction broke; this would pass vacuously"

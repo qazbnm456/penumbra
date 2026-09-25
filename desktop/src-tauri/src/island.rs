@@ -9,6 +9,9 @@
 //! - **armed**: something is being DRAGGED near it (a mouse button is held), so it opens wide
 //!   enough to be an easy target.
 //! - **swallow**: the drag ended over it; the page plays the drop falling in, then it closes.
+//! - **note**: the reader asked to write a thought (the pen on the hover shape, or the menu), so
+//!   it opens into a one-line field and, for this state only, takes the keyboard. It stays until
+//!   the page says it is done, and then hands the keyboard back.
 //!
 //! The page draws every state; this module only decides which state it is and how big the window
 //! is. Watching the pointer from here, rather than from the page, is what lets the island open
@@ -66,6 +69,7 @@ pub struct Geometry {
     pub rest: Rect,
     pub hover: Rect,
     pub armed: Rect,
+    pub note: Rect,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,6 +78,7 @@ enum State {
     Hover,
     Armed,
     Swallow,
+    Note,
 }
 
 impl State {
@@ -83,6 +88,7 @@ impl State {
             State::Hover => "hover",
             State::Armed => "armed",
             State::Swallow => "swallow",
+            State::Note => "note",
         }
     }
 }
@@ -103,9 +109,18 @@ const IDLE_TICK: Duration = Duration::from_millis(120);
 /// knows when that happened.
 static REST_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-/// The page asks for the island to close (after a swallow). Picked up by the pointer loop.
+/// Set by the page (`/__shell/note`) or the menu: open the one-line field.
+static NOTE_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// The page asks for the island to close (after a swallow, or when a note is sent or dismissed).
+/// Picked up by the pointer loop.
 pub fn request_rest() {
     REST_REQUESTED.store(true, Ordering::SeqCst);
+}
+
+/// Open the island as a field to write a thought in. Picked up by the pointer loop.
+pub fn request_note() {
+    NOTE_REQUESTED.store(true, Ordering::SeqCst);
 }
 
 /// Work out where the island goes. Must run on the main thread on macOS (AppKit's screen APIs).
@@ -181,6 +196,7 @@ fn tell(app: &AppHandle, state: State, geo: &Geometry) {
         State::Rest => geo.rest,
         State::Hover => geo.hover,
         State::Armed | State::Swallow => geo.armed,
+        State::Note => geo.note,
     };
     if let Some(window) = app.get_webview_window(LABEL) {
         let _ = window.eval(format!(
@@ -233,8 +249,13 @@ fn watch(app: AppHandle) {
         let now = Instant::now();
 
         let rest_asked = REST_REQUESTED.swap(false, Ordering::SeqCst);
+        let note_asked = NOTE_REQUESTED.swap(false, Ordering::SeqCst);
         let next = match state {
             _ if rest_asked => State::Rest,
+            _ if note_asked => State::Note,
+            // Writing ignores the pointer: the reader may move it anywhere while they type, and a
+            // drag passing by must not turn the field into a drop target under their words.
+            State::Note => State::Note,
             // After a release over it the island waits for the page to say it took a drop (it
             // then asks for rest itself); the backstop covers a drag cancelled with Escape.
             State::Swallow => match swallow_until {
@@ -272,7 +293,7 @@ fn watch(app: AppHandle) {
         };
         was_dragging = dragging;
         // Slow down only when nothing can happen within a frame.
-        tick = if next == State::Rest && !pressed && !geo.armed.contains(px, py, 300.0) { IDLE_TICK } else { TICK };
+        tick = if next == State::Rest && !pressed && !note_asked && !geo.armed.contains(px, py, 300.0) { IDLE_TICK } else { TICK };
         if next == state {
             continue;
         }
@@ -281,6 +302,9 @@ fn watch(app: AppHandle) {
         let epoch = EPOCH.fetch_add(1, Ordering::SeqCst) + 1;
         match next {
             State::Rest => {
+                if state == State::Note {
+                    yield_keyboard(&app);
+                }
                 tell(&app, State::Rest, &geo);
                 let app = app.clone();
                 thread::spawn(move || {
@@ -299,12 +323,41 @@ fn watch(app: AppHandle) {
                 place(&app, padded(geo.armed, geo.edge));
                 tell(&app, State::Armed, &geo);
             }
+            State::Note => {
+                place(&app, padded(geo.note, geo.edge));
+                tell(&app, State::Note, &geo);
+                take_keyboard(&app);
+            }
             // The page already put itself in the swallow state when it received the drop; telling it
             // again would only race its own words.
             State::Swallow => {}
         }
         state = next;
     }
+}
+
+/// The island takes the keyboard only while it is a field. On the main thread, as AppKit requires.
+fn take_keyboard(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(window) = handle.get_webview_window(LABEL) {
+            let _ = window.set_focus();
+        }
+    });
+}
+
+/// Give the keyboard back to whatever had it before, unless the workspace is up and should keep it.
+fn yield_keyboard(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let workspace_up = handle
+            .webview_windows()
+            .iter()
+            .any(|(label, w)| label != LABEL && w.is_visible().unwrap_or(false));
+        if !workspace_up {
+            platform::deactivate();
+        }
+    });
 }
 
 #[derive(Clone, Copy)]
@@ -337,7 +390,7 @@ mod platform {
     use super::{Geometry, Rect};
     use objc2::MainThreadMarker;
     use objc2_app_kit::{
-        NSEvent, NSPasteboard, NSPasteboardNameDrag, NSScreen, NSStatusWindowLevel, NSWindow,
+        NSApplication, NSEvent, NSPasteboard, NSPasteboardNameDrag, NSScreen, NSStatusWindowLevel, NSWindow,
         NSWindowCollectionBehavior,
     };
     use tauri::{AppHandle, WebviewWindow};
@@ -364,6 +417,8 @@ mod platform {
         // is a drop target, and a bigger target is easier to hit.
         let hover_w = rest.w + 40.0;
         let armed_w = (rest.w + 160.0).max(340.0);
+        // Wide enough for a sentence to be read back while it is typed.
+        let note_w = (rest.w + 260.0).max(460.0);
         Some(Geometry {
             edge: "top",
             inset: if top > 0.0 { top } else { 0.0 },
@@ -371,6 +426,7 @@ mod platform {
             rest,
             hover: Rect { x: centre - hover_w / 2.0, y: 0.0, w: hover_w, h: bar + 76.0 },
             armed: Rect { x: centre - armed_w / 2.0, y: 0.0, w: armed_w, h: bar + 118.0 },
+            note: Rect { x: centre - note_w / 2.0, y: 0.0, w: note_w, h: bar + 60.0 },
         })
     }
 
@@ -422,6 +478,14 @@ mod platform {
     pub fn button_down() -> bool {
         NSEvent::pressedMouseButtons() & 1 == 1
     }
+
+    /// Hand activation back to the app the reader was in before they wrote a note. Hiding would
+    /// take the island with it; deactivating leaves every window where it is.
+    pub fn deactivate() {
+        if let Some(mtm) = MainThreadMarker::new() {
+            NSApplication::sharedApplication(mtm).deactivate();
+        }
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -442,10 +506,14 @@ mod platform {
             rest: Rect { x: 0.0, y: mid - 70.0, w: 5.0, h: 140.0 },
             hover: Rect { x: 0.0, y: mid - 60.0, w: 300.0, h: 120.0 },
             armed: Rect { x: 0.0, y: mid - 100.0, w: 400.0, h: 200.0 },
+            note: Rect { x: 0.0, y: mid - 30.0, w: 460.0, h: 60.0 },
         })
     }
 
     pub fn float_above_menu_bar(_app: &AppHandle, _window: &WebviewWindow) {}
+
+    /// Elsewhere the window manager moves focus on the next click; nothing to hand back.
+    pub fn deactivate() {}
 
     /// No portable drag-session signal here: a press that started off the island and moved is
     /// taken as a drag.
