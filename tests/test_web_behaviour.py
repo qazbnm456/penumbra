@@ -1016,3 +1016,25 @@ def test_a_resting_note_shows_the_whole_summary_a_page_at_a_time():
     assert result["whole"], "paging never drops a word"
     assert result["dwellShort"] == 8000, "never under 8 seconds"
     assert 8000 < result["dwellLong"] <= 30000, "a full page is held long enough to read, not a minute"
+
+
+def test_the_details_column_opens_for_what_waits_and_closes_when_idle():
+    result = _run("panelSettle")
+    assert result["opensOverRemembered"], "something waiting must open a column remembered as closed"
+    assert result["closesWhenEmpty"], "with nothing waiting the map takes the width"
+    assert result["opensWhenSomethingArrives"], "an auto-closed column opens again when something arrives"
+    assert result["readerCloseRespected"], "closed by the reader over the same items, it stays closed"
+    assert result["opensWhenCountRises"], "a new item opens it again"
+    assert result["listClosesIdle"], "the list with nothing chosen gives the column's width back"
+    assert result["listKeepsHandOpened"], "a column the reader opened by hand stays open"
+    assert result["choosingOpens"], "choosing a capture opens the column for it"
+    assert result["closingAfterChoosingCloses"], "closing that capture puts the column away again"
+
+
+def test_assign_opens_the_orbit_choice_and_needs_an_orbit_to_offer():
+    result = _run("filingSettings")
+    assert result["hiddenOnManual"], "the orbit choice belongs to assign only"
+    assert result["shownOnAssign"], "choosing assign shows the orbit choice"
+    assert result["keepsChosenOrbit"] == "cfp", "the saved orbit is the one shown"
+    assert result["registered"], "the orbit choice must be saved with the rest"
+    assert result["assignDisabledWithoutOrbits"], "assign with nowhere to go must not be offered"

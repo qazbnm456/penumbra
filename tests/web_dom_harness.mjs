@@ -1627,6 +1627,94 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
 
   //: A resting note's pages: whole sentences, each page within the column, and a dwell that
   //: grows with the words but stays between 12 and 45 seconds.
+  //: The details column beside the map and the list. On the map it opens whenever something
+  //: waits, even over a remembered "closed", and closes only when nothing does; in the list it
+  //: closes when nothing is chosen unless the reader opened it by hand.
+  panelSettle() {
+    const grip = {
+      collapsed: true,
+      isCollapsed() { return this.collapsed; },
+      setCollapsed(v) { this.collapsed = v; },
+    };
+    const starMap = { focus: null };
+    let waiting = 1;
+    let mode = "map";
+    const run = new Function(
+      "mapPanelGrip", "viewMode", "horizonTodoCount", "starMap", "document", "renderStarMapCard",
+      `${extract("settleIdlePanel")}\n${extract("settleListPanel")}\n${extract("selectNode")}\n` +
+      "return { settleIdlePanel, settleListPanel, selectNode };"
+    )(grip, () => mode, () => waiting, starMap, { querySelectorAll: () => [] }, () => {});
+    const out = {};
+    run.settleIdlePanel();
+    out.opensOverRemembered = !grip.collapsed;
+    waiting = 0; run.settleIdlePanel();
+    out.closesWhenEmpty = grip.collapsed;
+    waiting = 1; run.settleIdlePanel();
+    out.opensWhenSomethingArrives = !grip.collapsed;
+    grip.collapsed = true; starMap.autoCollapsed = false; run.settleIdlePanel();
+    out.readerCloseRespected = grip.collapsed;
+    waiting = 2; run.settleIdlePanel();
+    out.opensWhenCountRises = !grip.collapsed;
+
+    mode = "list";
+    grip.collapsed = false; starMap.keepPanel = false; run.settleListPanel();
+    out.listClosesIdle = grip.collapsed;
+    grip.collapsed = false; starMap.keepPanel = true; run.settleListPanel();
+    out.listKeepsHandOpened = !grip.collapsed;
+    const row = new El("row");
+    grip.collapsed = true;
+    run.selectNode({ id: "n1" }, row);
+    out.choosingOpens = !grip.collapsed && starMap.keepPanel === false;
+    run.settleListPanel();
+    out.closingAfterChoosingCloses = grip.collapsed;
+    return out;
+  },
+
+  //: "Assign" opens a second choice, the orbit; the others hide it, and with no orbit to offer the
+  //: assign choice itself is disabled.
+  filingSettings() {
+    const make = (values, current) => {
+      const select = new El("", "select");
+      values.forEach((v) => {
+        const o = new El("", "option");
+        o.value = v;
+        select.appendChild(o);
+      });
+      Object.defineProperty(select, "options", { get() { return this.children; } });
+      select.value = current;
+      return select;
+    };
+    const document = {
+      createElement(tag) {
+        const el = new El("", tag);
+        if (tag === "select") Object.defineProperty(el, "options", { get() { return this.children; } });
+        return el;
+      },
+    };
+    const run = new Function(
+      "document", "settingsDraft",
+      `${extract("elt")}\n${extract("settingSubChoice")}\nreturn { settingSubChoice };`
+    )(document, null);
+    const sub = { key: "landing_orbit", when: "assign", label: "Orbit", values: ["reading", "cfp"],
+      labels: { reading: "Reading", cfp: "CFP" } };
+    const parent = make(["manual", "auto", "assign"], "manual");
+    const inputs = new Map();
+    const box = run.settingSubChoice({ sub }, parent, { landing_orbit: { value: "cfp", source: "file" } }, inputs);
+    const hiddenOnManual = box.hidden;
+    parent.value = "assign";
+    parent.dispatch("change");
+    const picked = inputs.get("landing_orbit").children.find((o) => o.selected);
+    const bare = make(["manual", "auto", "assign"], "manual");
+    run.settingSubChoice({ sub: { ...sub, values: [], labels: {} } }, bare, {}, new Map());
+    return {
+      hiddenOnManual,
+      shownOnAssign: !box.hidden,
+      keepsChosenOrbit: picked ? picked.value : null,
+      registered: inputs.has("landing_orbit"),
+      assignDisabledWithoutOrbits: bare.children.find((o) => o.value === "assign").disabled,
+    };
+  },
+
   restPages() {
     const run = new Function(
       `const REST_PAGE_UNITS = 440;\n${extract("textUnits")}\n${extract("notePages")}\n${extract("pageDwell")}\n` +
