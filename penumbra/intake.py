@@ -462,7 +462,7 @@ class IntakeQueue:
         except BaseException:  # noqa: BLE001 - a policy hook must never end intake, see below
             # `BaseException`, not `Exception`, and that difference was measured. `config._env_int`
             # raises `SystemExit` for a malformed `PN_*` value, which is a `BaseException` — so a
-            # typo in `PN_AUTO_DISTIL_MAX_PER_BATCH` escaped an `except Exception` here, unwound
+            # typo in `PN_DISTIL_BATCH` escaped an `except Exception` here, unwound
             # `_run`, and ENDED THE WORKER THREAD. `threading` swallows `SystemExit` without a
             # traceback, so the operator got no signal at all: captures simply stopped being
             # parsed until the next submit happened to restart the thread. This docstring's

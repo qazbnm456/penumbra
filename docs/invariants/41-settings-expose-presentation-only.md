@@ -1,10 +1,10 @@
 # Invariant 41: No safety bound goes on the settings page
 
-**No safety bound goes on the settings page; that is what "presentation only" protects. A behaviour toggle whose bound stays in the environment is fine.**
+**No safety bound goes on the settings page; that is what "presentation only" protects. A behaviour toggle, or a number capped at what an endpoint already grants every token holder, is fine.**
 
 `GET` and `PUT /settings` carry four keys: the output language, the two podcast voices and `auto_distil`. Trace retention, the upload cap and every model or credential variable are deliberately absent. Lowering `PN_TRACE_RETENTION_DAYS` deletes trace files that can hold source text, and raising `PN_MAX_UPLOAD_BYTES` is a denial-of-service lever. Moving a safety bound onto a page every token holder can write is the same mistake as moving a key there, only quieter. `PN_BASE_URL` is the sharpest case: `config.setup` passes it to `configure` together with `api_key`, so a writable base URL would send the key to someone else on the next run. It is not "just a URL".
 
-`auto_distil` is a behaviour preference, not presentation, and it is allowed for a stated reason. It turns on an action any token holder can already take by hand (`POST /horizon/distil`), so the toggle grants nothing new. Its bound, `PN_AUTO_DISTIL_MAX_PER_BATCH`, stays environment-only, which is the line this invariant draws; invariant 80 describes the same split from the other side.
+`auto_distil` is a behaviour preference, not presentation, and it is allowed for a stated reason. It turns on an action any token holder can already take by hand (`POST /horizon/distil`), so the toggle grants nothing new. The batch size beside it (`distil_batch`, `PN_DISTIL_BATCH`) is allowed for the same reason: `POST /horizon/distil` takes up to 500 captures per request from any token holder, and the page cannot set more than that, so it grants nothing new. It belongs with the operator because the right number depends on the model: a fast or local one makes a large batch cheap. What stays off the page is anything that grants more than an endpoint already does: trace retention, the upload cap, keys and the base URL.
 
 The settings endpoints change global state: they affect orbits the caller never named, and the change persists across restarts. The Horizon's endpoints are global too, by design, since there is one index per installation (invariant 78). That is why this surface stays narrow.
 

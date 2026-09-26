@@ -488,11 +488,15 @@ const STRINGS = {
     "settings.outputLanguagePlaceholder": "例如：繁體中文",
     "settings.voiceA": "Podcast 聲音：主持人 A",
     // The toggle invariant 80 promised. A BEHAVIOUR preference, which invariant 41 allows on
-    // this page; its BOUND (PN_AUTO_DISTIL_MAX_PER_BATCH) stays environment-only.
+    // this page, beside the batch size it runs with (capped at what POST /horizon/distil accepts).
     "settings.on": "開啟",
     "settings.off": "關閉",
     "settings.autoDistil": "自動摘要新收進來的東西",
     "settings.autoDistilHelp": "預設關閉。每一則摘要都是一次模型呼叫，用的是你自己的 API 金鑰，所以匯入 200 筆書籤，在你開啟這個選項前不會花一毛錢。",
+    "settings.autoDistilLong": "自動摘要也處理長文件",
+    "settings.autoDistilLongHelp": "長文件要跑好幾次模型，摘要時新收的東西會先排隊。關閉時，長文件等你按「摘要」才處理。用速度快或本機的模型時，可以打開。",
+    "settings.distilBatch": "每輪摘要幾則",
+    "settings.distilBatchHelp": "自動和手動摘要共用這個數量，預設 20。每則至少一次模型呼叫，用速度快或本機的模型時，可以設大一點。",
     "settings.voiceB": "Podcast 聲音：主持人 B",
     "settings.voiceHelp": "留空的話，就讓軌道的語言決定這一對聲音。",
     "settings.pinnedBy": "由 {env} 指定。取消這個環境變數後才能在這裡修改。",

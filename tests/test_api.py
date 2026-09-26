@@ -2333,6 +2333,11 @@ def test_no_safety_bound_or_credential_is_readable_or_writable(client, monkeypat
         # token holder can call, so this changes WHEN summaries happen, not whether someone can
         # cause them. Its bound is the next line down, and stays off the page.
         "auto_distil",
+        # The same kind: whether that pass takes long captures, and how many one pass takes. The
+        # number is capped at what `POST /horizon/distil` already accepts from any token holder,
+        # so the page grants nothing that endpoint did not (invariant 41).
+        "auto_distil_long",
+        "distil_batch",
         # Also BEHAVIOUR preferences: they decide which of the reader's own tiers a capture lands
         # in, make no model call, and bound nothing.
         "filing_mode",
@@ -2346,9 +2351,6 @@ def test_no_safety_bound_or_credential_is_readable_or_writable(client, monkeypat
         "main_model",
         "api_key",
         "base_url",
-        # The bound on the toggle above. Writable here, a flipped toggle turns one dropped folder
-        # into an unbounded bill — which is precisely the move invariant 41 exists to refuse.
-        "auto_distil_max_per_batch",
     ):
         assert client.put("/settings", json={forbidden: "1"}).status_code == 422, forbidden
         assert forbidden not in client.get("/settings").json()
