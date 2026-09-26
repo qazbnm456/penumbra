@@ -145,6 +145,10 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
             "last_filed_at": entry["last_filed_at"],
             "entities": [name for name, _ in entry["_entities"].most_common(TOP_PER_ORBIT)],
             "tags": [name for name, _ in entry["_tags"].most_common(TOP_PER_ORBIT)],
+            # Every tag any of its captures carries, for the map's lens. `tags` is the top few, for
+            # display, and a lens matched against it left a planet dark whenever the tag was one of
+            # many named once (an orbit of two captures easily carries twelve).
+            "all_tags": sorted(entry["_tags"]),
             "moons": _newest(moons[entry["slug"]], MAX_MOONS),
         })
     out_orbits.sort(key=lambda o: -o["last_filed_at"])

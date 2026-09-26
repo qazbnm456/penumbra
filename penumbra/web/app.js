@@ -11114,7 +11114,8 @@ function drawStarMap() {
 
   planets.forEach((p, index) => {
     const { orbit } = p;
-    const dimmed = starMap.lens && !(orbit.tags || []).includes(starMap.lens);
+    // `all_tags`, not `tags`: the latter is only the orbit's most common few, for display.
+    const dimmed = starMap.lens && !(orbit.all_tags || orbit.tags || []).includes(starMap.lens);
     const group = svgEl("g", { tabindex: 0, role: "button", "aria-label":
       t("map.planetLabel", `${orbit.title}, ${orbit.sources} sources`, { name: orbit.title, n: orbit.sources }) },
     `map-planet${planetMark(orbit.slug)}${dimmed ? " is-dim" : ""}`);
