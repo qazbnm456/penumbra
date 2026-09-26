@@ -163,7 +163,7 @@ def _prepare(args) -> tuple[Orbit, Corpus] | None:
     # lock nor a write: the snapshot above is already exactly as fresh as any reader ever gets.
     if ingested and args.orbit:
         orbit = mutate_orbit(
-            args.orbit, lambda nb: append_sources(nb, ingested), create=True
+            args.orbit, lambda orb: append_sources(orb, ingested), create=True
         )
     elif ingested:
         # Ephemeral: nothing is persisted, so there's nothing to lock against and no fresh copy to
@@ -279,7 +279,7 @@ def _cmd_ask(args) -> int:
         # returned before it — see `orbit.mutate_orbit`. `_prepare` already persisted any
         # newly ingested sources, so this critical section carries only the turn.
         turn = ChatTurn(question=args.question, answer=result)
-        mutate_orbit(args.orbit, lambda nb: nb.turns.append(turn), create=True)
+        mutate_orbit(args.orbit, lambda orb: orb.turns.append(turn), create=True)
     return 0
 
 
@@ -711,29 +711,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    _report_legacy_state()
     return args.func(args)
-
-
-def _report_legacy_state() -> None:
-    """Move pre-rename data folders into place and name any `RN_*` variable still set (`legacy`)."""
-    from . import legacy
-
-    for old, new in legacy.migrate_data_dirs():
-        print(f"penumbra: moved {old}/ to {new}/ (renamed from rlm-notebook)", file=sys.stderr)
-    for old, new in legacy.stranded_dirs():
-        print(
-            f"penumbra: left {old}/ in place because {new}/ already exists; nothing reads {old}/. "
-            f"Move what you need from it into {new}/ by hand.",
-            file=sys.stderr,
-        )
-    stale = legacy.legacy_env_names()
-    if stale:
-        renamed = ", ".join(f"{name} -> PN_{name[3:]}" for name in stale)
-        print(
-            f"penumbra: ignoring {len(stale)} old setting(s); rename them: {renamed}",
-            file=sys.stderr,
-        )
 
 
 if __name__ == "__main__":

@@ -25,8 +25,6 @@ Model settings live in `penumbra.env` in the app's data folder, one `KEY=VALUE` 
 
 A `claude-agent-sdk/…` model runs on your Claude subscription through the Claude Code installed on this computer: install it, run `claude` once to log in, and set the model. The runtime carries the SDK's Python but not the 260 MB copy of Claude Code its wheel bundles, and the shell puts Claude Code's usual install locations on the server's PATH. The Chatterbox voice (`PN_TTS_PROVIDER=chatterbox`) needs a source install.
 
-An install from before the rename (rlm-notebook, `tw.boik.rlm-notebook`) is moved here on first launch, and its `rlm-notebook.env` becomes `penumbra.env` with every `RN_` setting spelled `PN_`.
-
 The data folder holds orbits, the Horizon, traces and the server log (**File > Show Data Folder**, **File > Show Server Log**):
 
 - macOS: `~/Library/Application Support/tw.boik.penumbra/`

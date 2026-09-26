@@ -26,7 +26,7 @@ Filing matches on the node's own membership, never on the origin. `append_source
 
 A node id for a URL is a hash of the origin alone, so capturing the same URL twice is one row, as invariant 12 requires, and a queued capture can get its id before anything is fetched (invariant 79). Every other origin folds the text into the hash, because a filename is not an identity: two different files named `notes.txt` used to become one node and the second file's content was silently discarded. The input is NFC-normalised first.
 
-An id the module mints is hex and filename-safe; an id it is handed is not. `node_blocks_path` validates the id against the exact minting pattern and asserts that the resulting path stays inside the nodes directory. Before that, `remove_node("../../orbits/mynb")` deleted a live orbit file, and an absolute id escaped the directory entirely, because `Path("horizon/nodes") / "/etc/x"` is `/etc/x`. `test_a_node_id_never_becomes_an_arbitrary_path` pins it.
+An id the module mints is hex and filename-safe; an id it is handed is not. `node_blocks_path` validates the id against the exact minting pattern and asserts that the resulting path stays inside the nodes directory. Before that, `remove_node("../../orbits/myorbit")` deleted a live orbit file, and an absolute id escaped the directory entirely, because `Path("horizon/nodes") / "/etc/x"` is `/etc/x`. `test_a_node_id_never_becomes_an_arbitrary_path` pins it.
 
 ## The delta rule
 

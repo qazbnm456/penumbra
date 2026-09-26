@@ -158,7 +158,7 @@ def _live_env(monkeypatch) -> None:
 
 
 def _add_a_source(client) -> None:
-    resp = client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
+    resp = client.post("/orbits/myorbit/sources", json={"sources": ["https://example.com/a"]})
     assert resp.status_code == 200, resp.text
 
 
@@ -199,26 +199,26 @@ def test_list_orbits_flags_a_corrupted_file_without_breaking_the_rest(client, tm
     assert resp.status_code == 200
     body = resp.json()
     assert body["unreadable"] == ["broken"]
-    assert [nb["id"] for nb in body["orbits"]] == ["mynb"]
+    assert [orb["id"] for orb in body["orbits"]] == ["myorbit"]
 
 
 # --- /orbits/{id}/sources & GET /orbits/{id} ----------------------------------------------
 
 
 def test_add_sources_creates_and_persists_a_orbit(client):
-    resp = client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
+    resp = client.post("/orbits/myorbit/sources", json={"sources": ["https://example.com/a"]})
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["id"] == "mynb"
+    assert body["id"] == "myorbit"
     assert len(body["sources"]) == 1
-    assert load_orbit("mynb") is not None  # actually persisted, not just returned
+    assert load_orbit("myorbit") is not None  # actually persisted, not just returned
 
 
 def test_add_sources_extends_without_duplicating(client):
-    client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
+    client.post("/orbits/myorbit/sources", json={"sources": ["https://example.com/a"]})
     resp = client.post(
-        "/orbits/mynb/sources",
+        "/orbits/myorbit/sources",
         json={"sources": ["https://example.com/a", "https://example.com/b"]},
     )
 
@@ -228,7 +228,7 @@ def test_add_sources_extends_without_duplicating(client):
 
 
 def test_add_sources_accepts_pasted_text(client):
-    resp = client.post("/orbits/mynb/sources", json={"texts": ["some pasted text"]})
+    resp = client.post("/orbits/myorbit/sources", json={"texts": ["some pasted text"]})
 
     assert resp.status_code == 200
     body = resp.json()
@@ -239,30 +239,30 @@ def test_add_sources_accepts_pasted_text(client):
 
 def test_add_sources_dedupes_identical_pasted_text_within_one_call(client):
     resp = client.post(
-        "/orbits/mynb/sources", json={"texts": ["same text", "same text", "same text"]}
+        "/orbits/myorbit/sources", json={"texts": ["same text", "same text", "same text"]}
     )
     assert resp.status_code == 200
     assert len(resp.json()["sources"]) == 1
 
 
 def test_add_sources_dedupes_identical_pasted_text_across_calls(client):
-    client.post("/orbits/mynb/sources", json={"texts": ["same text"]})
-    resp = client.post("/orbits/mynb/sources", json={"texts": ["same text", "different text"]})
+    client.post("/orbits/myorbit/sources", json={"texts": ["same text"]})
+    resp = client.post("/orbits/myorbit/sources", json={"texts": ["same text", "different text"]})
 
     assert resp.status_code == 200
     assert len(resp.json()["sources"]) == 2
 
 
 def test_add_sources_rejects_blank_pasted_text(client):
-    resp = client.post("/orbits/mynb/sources", json={"texts": ["real text", "   "]})
+    resp = client.post("/orbits/myorbit/sources", json={"texts": ["real text", "   "]})
 
     assert resp.status_code == 422
-    assert load_orbit("mynb") is None  # rejected before anything was persisted
+    assert load_orbit("myorbit") is None  # rejected before anything was persisted
 
 
 def test_add_sources_combines_urls_and_pasted_text_in_one_call(client):
     resp = client.post(
-        "/orbits/mynb/sources",
+        "/orbits/myorbit/sources",
         json={"sources": ["https://example.com/a"], "texts": ["pasted content"]},
     )
 
@@ -278,15 +278,15 @@ def test_add_sources_rejects_local_file_paths(client, tmp_path):
     secret = tmp_path / "secret.txt"
     secret.write_text("TOP SECRET CONTENTS", encoding="utf-8")
 
-    resp = client.post("/orbits/mynb/sources", json={"sources": [str(secret)]})
+    resp = client.post("/orbits/myorbit/sources", json={"sources": [str(secret)]})
 
     assert resp.status_code == 422
     assert "secret.txt" not in resp.text or "TOP SECRET" not in resp.text  # never echoes file contents
-    assert load_orbit("mynb") is None  # nothing was created, let alone populated
+    assert load_orbit("myorbit") is None  # nothing was created, let alone populated
 
 
 def test_add_sources_reports_422_on_a_real_ingestion_failure(client):
-    resp = client.post("/orbits/mynb/sources", json={"sources": [_FAIL_URL]})
+    resp = client.post("/orbits/myorbit/sources", json={"sources": [_FAIL_URL]})
     assert resp.status_code == 422
 
 
@@ -304,17 +304,17 @@ def test_add_sources_reports_422_not_500_on_a_captionless_youtube_video(client, 
     monkeypatch.setattr("penumbra.ingest.parse_youtube", _fake_parse_youtube)
 
     resp = client.post(
-        "/orbits/mynb/sources", json={"sources": ["https://www.youtube.com/watch?v=none"]}
+        "/orbits/myorbit/sources", json={"sources": ["https://www.youtube.com/watch?v=none"]}
     )
     assert resp.status_code == 422
 
 
 def test_add_sources_reports_409_on_a_corrupted_orbit_file(client, tmp_path):
-    path = tmp_path / "orbits" / "mynb.json"
+    path = tmp_path / "orbits" / "myorbit.json"
     path.parent.mkdir(parents=True)
-    path.write_text('{"id": "mynb", "sources": [}', encoding="utf-8")
+    path.write_text('{"id": "myorbit", "sources": [}', encoding="utf-8")
 
-    resp = client.post("/orbits/mynb/sources", json={"sources": []})
+    resp = client.post("/orbits/myorbit/sources", json={"sources": []})
     assert resp.status_code == 409
 
 
@@ -324,7 +324,7 @@ def test_an_id_outside_the_latin_whitelist_is_a_usable_orbit_not_a_400(
 ):
     """These used to reduce to an empty slug and 400. A user reported the consequence: naming a
     orbit in Chinese returned `400 invalid orbit id … reduces to an empty token`. `slug` now
-    falls back to `nb-<hash>` for any id the whitelist empties, so all of these are ordinary
+    falls back to `orbit-<hash>` for any id the whitelist empties, so all of these are ordinary
     orbits — the read endpoints 404 (nothing there yet) and the write endpoints succeed.
 
     This SUPERSEDES the earlier "400 not 500" test for these payloads; the 500 that invariant 27
@@ -375,7 +375,7 @@ def test_a_lone_surrogate_run_id_is_not_a_500(client, monkeypatch):
     # Sent as raw bytes, not `json=`: httpx refuses to ENCODE a lone surrogate, so the escape has
     # to travel as JSON source text and be decoded server-side by `json.loads`, which accepts it.
     resp = client.post(
-        "/orbits/mynb/ask",
+        "/orbits/myorbit/ask",
         content=rb'{"question": "x", "run_id": "\ud800"}',
         headers={"Content-Type": "application/json"},
     )
@@ -391,11 +391,11 @@ def test_get_orbit_404_when_missing(client):
 def test_get_orbit_returns_sources_and_turns(client):
     _add_a_source(client)
 
-    resp = client.get("/orbits/mynb")
+    resp = client.get("/orbits/myorbit")
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["id"] == "mynb"
+    assert body["id"] == "myorbit"
     assert body["turns"] == []
     assert len(body["sources"]) == 1
 
@@ -413,9 +413,9 @@ def test_get_orbit_includes_full_turn_history_with_freshly_verified_citations(cl
             "citations": [{"source_id": "s1", "locator": "whole", "quote": "hello"}],
         },
     )
-    client.post("/orbits/mynb/ask", json={"question": "what?"})
+    client.post("/orbits/myorbit/ask", json={"question": "what?"})
 
-    resp = client.get("/orbits/mynb")
+    resp = client.get("/orbits/myorbit")
 
     assert resp.status_code == 200
     turns = resp.json()["turns"]
@@ -435,7 +435,7 @@ def test_get_source_404_when_orbit_missing(client):
 
 def test_get_source_404_when_source_id_unknown(client):
     _add_a_source(client)
-    resp = client.get("/orbits/mynb/sources/does-not-exist")
+    resp = client.get("/orbits/myorbit/sources/does-not-exist")
     assert resp.status_code == 404
 
 
@@ -445,7 +445,7 @@ def test_get_source_returns_full_text_every_block(client):
     loop: click a citation, see the highlighted original passage."""
     _add_a_source(client)
 
-    resp = client.get("/orbits/mynb/sources/s1")
+    resp = client.get("/orbits/myorbit/sources/s1")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -467,12 +467,12 @@ def test_get_source_carries_the_preview_so_the_viewer_can_show_the_title(client)
 
     _add_a_source(client)
 
-    def _titled(nb):
-        nb.sources[0].preview = {"title": "A page about things", "site": "Example"}
+    def _titled(orb):
+        orb.sources[0].preview = {"title": "A page about things", "site": "Example"}
 
-    mutate_orbit("mynb", _titled)
+    mutate_orbit("myorbit", _titled)
 
-    body = client.get("/orbits/mynb/sources/s1").json()
+    body = client.get("/orbits/myorbit/sources/s1").json()
     assert body["preview"] == {"title": "A page about things", "site": "Example"}
 
 
@@ -481,17 +481,17 @@ def test_get_source_carries_the_preview_so_the_viewer_can_show_the_title(client)
 
 def test_add_note_creates_and_persists_a_orbit(client):
     """Mirrors `add_sources`: a brand-new orbit can start life by adding a note."""
-    resp = client.post("/orbits/mynb/notes", json={"text": "a first note"})
+    resp = client.post("/orbits/myorbit/notes", json={"text": "a first note"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["notes"] == [{"id": "n1", "text": "a first note"}]
 
-    reloaded = client.get("/orbits/mynb")
+    reloaded = client.get("/orbits/myorbit")
     assert reloaded.json()["notes"] == [{"id": "n1", "text": "a first note"}]
 
 
 def test_add_note_rejects_blank_text(client):
-    resp = client.post("/orbits/mynb/notes", json={"text": "   "})
+    resp = client.post("/orbits/myorbit/notes", json={"text": "   "})
     assert resp.status_code == 422
 
 
@@ -501,18 +501,18 @@ def test_delete_note_404_when_orbit_missing(client):
 
 
 def test_delete_note_404_when_note_id_unknown(client):
-    client.post("/orbits/mynb/notes", json={"text": "a note"})
-    resp = client.delete("/orbits/mynb/notes/does-not-exist")
+    client.post("/orbits/myorbit/notes", json={"text": "a note"})
+    resp = client.delete("/orbits/myorbit/notes/does-not-exist")
     assert resp.status_code == 404
 
 
 def test_delete_note_removes_it_and_persists(client):
-    client.post("/orbits/mynb/notes", json={"text": "a note"})
-    resp = client.delete("/orbits/mynb/notes/n1")
+    client.post("/orbits/myorbit/notes", json={"text": "a note"})
+    resp = client.delete("/orbits/myorbit/notes/n1")
     assert resp.status_code == 200
     assert resp.json()["notes"] == []
 
-    reloaded = client.get("/orbits/mynb")
+    reloaded = client.get("/orbits/myorbit")
     assert reloaded.json()["notes"] == []
 
 
@@ -522,15 +522,15 @@ def test_promote_note_404_when_orbit_missing(client):
 
 
 def test_promote_note_404_when_note_id_unknown(client):
-    client.post("/orbits/mynb/notes", json={"text": "a note"})
-    resp = client.post("/orbits/mynb/notes/does-not-exist/promote")
+    client.post("/orbits/myorbit/notes", json={"text": "a note"})
+    resp = client.post("/orbits/myorbit/notes/does-not-exist/promote")
     assert resp.status_code == 404
 
 
 def test_promote_note_turns_it_into_a_source_and_persists(client):
-    client.post("/orbits/mynb/notes", json={"text": "promote this text"})
+    client.post("/orbits/myorbit/notes", json={"text": "promote this text"})
 
-    resp = client.post("/orbits/mynb/notes/n1/promote")
+    resp = client.post("/orbits/myorbit/notes/n1/promote")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -538,7 +538,7 @@ def test_promote_note_turns_it_into_a_source_and_persists(client):
     assert len(body["sources"]) == 1
     assert body["sources"][0]["kind"] == "text"
 
-    reloaded = client.get("/orbits/mynb")
+    reloaded = client.get("/orbits/myorbit")
     assert reloaded.json()["notes"] == []
     assert len(reloaded.json()["sources"]) == 1
 
@@ -569,7 +569,7 @@ def test_ask_runs_isolated_and_returns_verified_citations(client, monkeypatch):
         dotted_tasks=dotted_tasks,
     )
 
-    resp = client.post("/orbits/mynb/ask", json={"question": "what does it say?"})
+    resp = client.post("/orbits/myorbit/ask", json={"question": "what does it say?"})
 
     assert resp.status_code == 200
     body = resp.json()
@@ -584,9 +584,9 @@ def test_ask_persists_the_turn_to_the_orbit(client, monkeypatch):
     _add_a_source(client)
     _mock_runner(monkeypatch, {"text": "the answer", "citations": []})
 
-    client.post("/orbits/mynb/ask", json={"question": "what?"})
+    client.post("/orbits/myorbit/ask", json={"question": "what?"})
 
-    orbit = load_orbit("mynb")
+    orbit = load_orbit("myorbit")
     assert len(orbit.turns) == 1
     assert orbit.turns[0].question == "what?"
     assert orbit.turns[0].answer.text == "the answer"
@@ -605,7 +605,7 @@ def test_ask_translates_a_run_error_into_502(client, monkeypatch):
     monkeypatch.setattr(api.runner, "start_run", _fake_start_run)
     monkeypatch.setattr(api.runner, "wait_result", _fake_wait_result)
 
-    resp = client.post("/orbits/mynb/ask", json={"question": "what?"})
+    resp = client.post("/orbits/myorbit/ask", json={"question": "what?"})
     assert resp.status_code == 502
     assert "simulated crash" in resp.json()["detail"]
 
@@ -616,7 +616,7 @@ def test_ask_reports_a_clean_500_when_the_server_is_misconfigured(client, monkey
     monkeypatch.delenv("PN_MAIN_MODEL", raising=False)
     _add_a_source(client)
 
-    resp = client.post("/orbits/mynb/ask", json={"question": "what?"})
+    resp = client.post("/orbits/myorbit/ask", json={"question": "what?"})
     assert resp.status_code == 500
     assert "PN_MAIN_MODEL" in resp.json()["detail"]
 
@@ -628,7 +628,7 @@ def test_guide_404_on_unknown_kind(client, monkeypatch):
     _live_env(monkeypatch)
     _add_a_source(client)
 
-    resp = client.post("/orbits/mynb/guide/not-a-real-kind")
+    resp = client.post("/orbits/myorbit/guide/not-a-real-kind")
     assert resp.status_code == 404
 
 
@@ -637,7 +637,7 @@ def test_guide_summary(client, monkeypatch):
     _add_a_source(client)
     _mock_runner(monkeypatch, Summary(text="a summary", citations=[]).model_dump())
 
-    resp = client.post("/orbits/mynb/guide/summary")
+    resp = client.post("/orbits/myorbit/guide/summary")
 
     assert resp.status_code == 200
     assert resp.json()["text"] == "a summary"
@@ -649,7 +649,7 @@ def test_guide_faq(client, monkeypatch):
     faq = FAQ(items=[{"question": "q?", "answer": "a.", "citations": []}])
     _mock_runner(monkeypatch, faq.model_dump())
 
-    resp = client.post("/orbits/mynb/guide/faq")
+    resp = client.post("/orbits/myorbit/guide/faq")
 
     assert resp.status_code == 200
     assert resp.json()["items"][0]["question"] == "q?"
@@ -661,7 +661,7 @@ def test_guide_timeline(client, monkeypatch):
     timeline = Timeline(events=[{"when": "ch.1", "description": "it happens", "citations": []}])
     _mock_runner(monkeypatch, timeline.model_dump())
 
-    resp = client.post("/orbits/mynb/guide/timeline")
+    resp = client.post("/orbits/myorbit/guide/timeline")
 
     assert resp.status_code == 200
     assert resp.json()["events"][0]["when"] == "ch.1"
@@ -672,7 +672,7 @@ def test_guide_insight(client, monkeypatch):
     _add_a_source(client)
     _mock_runner(monkeypatch, KeyInsight(text="the one thing", citations=[]).model_dump())
 
-    resp = client.post("/orbits/mynb/guide/insight")
+    resp = client.post("/orbits/myorbit/guide/insight")
 
     assert resp.status_code == 200
     assert resp.json()["text"] == "the one thing"
@@ -684,7 +684,7 @@ def test_guide_dispatches_the_correct_task_per_kind(client, monkeypatch):
 
     dotted_tasks: list[str] = []
     _mock_runner(monkeypatch, Summary(text="x", citations=[]).model_dump(), dotted_tasks=dotted_tasks)
-    client.post("/orbits/mynb/guide/summary")
+    client.post("/orbits/myorbit/guide/summary")
     assert dotted_tasks == ["penumbra.guide:GenerateSummary"]
 
 
@@ -773,7 +773,7 @@ def test_audio_runs_isolated_and_returns_base64_encoded_audio(client, monkeypatc
     provider = _FakeTTSProvider(payload=b"real-mp3-payload")
     _fake_tts_provider(monkeypatch, provider)
 
-    resp = client.post("/orbits/mynb/audio")
+    resp = client.post("/orbits/myorbit/audio")
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -817,16 +817,16 @@ def test_a_orbit_cannot_be_deleted_while_its_episode_is_being_synthesized(client
     _live_env(monkeypatch)
     _add_a_source(client)
     _mock_runner(monkeypatch, _one_utterance_script())
-    provider = _DuringSynthesis(lambda: client.delete("/orbits/mynb").status_code)
+    provider = _DuringSynthesis(lambda: client.delete("/orbits/myorbit").status_code)
     _fake_tts_provider(monkeypatch, provider)
 
-    resp = client.post("/orbits/mynb/audio")
+    resp = client.post("/orbits/myorbit/audio")
 
     assert provider.seen == 409, f"a delete mid-synthesis answered {provider.seen}, not 409"
     assert resp.status_code == 200, resp.text
-    assert client.get("/orbits/mynb/audio/file").status_code == 200
+    assert client.get("/orbits/myorbit/audio/file").status_code == 200
     # ...and the guard is released afterwards, or nothing could ever be deleted again.
-    assert client.delete("/orbits/mynb").status_code == 200
+    assert client.delete("/orbits/myorbit").status_code == 200
     assert api._BUSY == {}
 
 
@@ -840,12 +840,12 @@ def test_a_orbit_that_vanishes_mid_synthesis_takes_its_audio_with_it(client, mon
     _live_env(monkeypatch)
     _add_a_source(client)
     _mock_runner(monkeypatch, _one_utterance_script())
-    _fake_tts_provider(monkeypatch, _DuringSynthesis(lambda: delete_orbit("mynb")))
+    _fake_tts_provider(monkeypatch, _DuringSynthesis(lambda: delete_orbit("myorbit")))
 
-    resp = client.post("/orbits/mynb/audio")
+    resp = client.post("/orbits/myorbit/audio")
 
     assert resp.status_code == 404, resp.text
-    assert find_audio("mynb") is None, "an episode was left behind for an orbit that is gone"
+    assert find_audio("myorbit") is None, "an episode was left behind for an orbit that is gone"
     assert api._BUSY == {}
 
 
@@ -889,7 +889,7 @@ def test_synthesis_runs_where_a_quitting_server_does_not_wait_for_it(client, mon
     _mock_runner(monkeypatch, _one_utterance_script())
     _fake_tts_provider(monkeypatch, _FakeTTSProvider())
 
-    assert client.post("/orbits/mynb/audio").status_code == 200
+    assert client.post("/orbits/myorbit/audio").status_code == 200
     assert "synthesize" in routed, f"synthesis did not go through `_abandonable`: {routed}"
 
 
@@ -933,11 +933,11 @@ def test_audio_carries_offsets_through_response_persistence_and_reopen(client, m
     )
     _fake_tts_provider(monkeypatch, _FakeTTSProvider(offsets=[0.0, 5.25, 7.5]))
 
-    posted = client.post("/orbits/mynb/audio")
+    posted = client.post("/orbits/myorbit/audio")
     assert posted.status_code == 200, posted.text
     assert posted.json()["offsets"] == [0.0, 5.25, 7.5]
 
-    reopened = client.get("/orbits/mynb")
+    reopened = client.get("/orbits/myorbit")
     assert reopened.status_code == 200
     podcast = reopened.json()["podcast"]
     assert podcast["offsets"] == [0.0, 5.25, 7.5]
@@ -960,7 +960,7 @@ def test_audio_passes_the_resolved_language_to_synthesize(client, monkeypatch):
     provider = _FakeTTSProvider()
     _fake_tts_provider(monkeypatch, provider)
 
-    assert client.post("/orbits/mynb/audio").status_code == 200
+    assert client.post("/orbits/myorbit/audio").status_code == 200
     assert provider.calls[0][3] == "English"
     # ...and the same language reached the pre-flight, which is what makes invariant 19's ordering
     # meaningful rather than decorative.
@@ -977,7 +977,7 @@ def test_audio_returns_null_audio_when_script_has_no_utterances(client, monkeypa
     provider = _FakeTTSProvider()
     _fake_tts_provider(monkeypatch, provider)
 
-    resp = client.post("/orbits/mynb/audio")
+    resp = client.post("/orbits/myorbit/audio")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -994,17 +994,17 @@ def test_audio_with_an_empty_script_clears_the_previously_persisted_episode(clie
     _mock_runner(monkeypatch, _podcast_script_result([{"speaker": "host_a", "text": "hi",
                                                       "citations": []}]))
     _fake_tts_provider(monkeypatch, _FakeTTSProvider(payload=b"first-episode"))
-    assert client.post("/orbits/mynb/audio").status_code == 200
-    assert client.get("/orbits/mynb/audio/file").status_code == 200
+    assert client.post("/orbits/myorbit/audio").status_code == 200
+    assert client.get("/orbits/myorbit/audio/file").status_code == 200
 
     _mock_runner(monkeypatch, _podcast_script_result([]))
     _fake_tts_provider(monkeypatch, _FakeTTSProvider())
-    resp = client.post("/orbits/mynb/audio")
+    resp = client.post("/orbits/myorbit/audio")
 
     assert resp.status_code == 200
     assert resp.json()["utterances"] == []
-    assert client.get("/orbits/mynb/audio/file").status_code == 404
-    assert client.get("/orbits/mynb").json()["podcast"] is None
+    assert client.get("/orbits/myorbit/audio/file").status_code == 404
+    assert client.get("/orbits/myorbit").json()["podcast"] is None
 
 
 def test_upload_reports_a_clean_500_when_the_size_cap_env_var_is_malformed(client, monkeypatch):
@@ -1013,7 +1013,7 @@ def test_upload_reports_a_clean_500_when_the_size_cap_env_var_is_malformed(clien
     FIRST statement of this handler — an independent audit reproduced a raw 500 with a traceback."""
     monkeypatch.setenv("PN_MAX_UPLOAD_BYTES", "not-an-int")
     resp = client.post(
-        "/orbits/mynb/sources/upload",
+        "/orbits/myorbit/sources/upload",
         files={"file": ("a.txt", b"hello", "text/plain")},
     )
     assert resp.status_code == 500
@@ -1041,7 +1041,7 @@ def test_add_sources_reports_a_clean_500_when_the_fetch_allow_cidrs_are_malforme
     refactor that drops it reinstates exactly the bug it fixed."""
     _real_web_ingestion(monkeypatch)
     monkeypatch.setenv("PN_FETCH_ALLOW_CIDRS", "198.18.0.0/16,not-a-cidr")
-    resp = client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
+    resp = client.post("/orbits/myorbit/sources", json={"sources": ["https://example.com/a"]})
     assert resp.status_code == 500
     assert "server misconfigured" in resp.json()["detail"]
     assert "PN_FETCH_ALLOW_CIDRS" in resp.json()["detail"]
@@ -1051,7 +1051,7 @@ def test_a_guard_disabling_allow_cidr_is_refused_at_the_api_boundary_too(client,
     """The same arm, for the value that is dangerous rather than merely malformed."""
     _real_web_ingestion(monkeypatch)
     monkeypatch.setenv("PN_FETCH_ALLOW_CIDRS", "0.0.0.0/0")
-    resp = client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
+    resp = client.post("/orbits/myorbit/sources", json={"sources": ["https://example.com/a"]})
     assert resp.status_code == 500
     assert "disable the SSRF guard" in resp.json()["detail"]
 
@@ -1068,7 +1068,7 @@ def test_audio_reports_a_clean_500_when_tts_provider_misconfigured_before_runnin
     dotted_tasks: list[str] = []
     _mock_runner(monkeypatch, _podcast_script_result([]), dotted_tasks=dotted_tasks)
 
-    resp = client.post("/orbits/mynb/audio")
+    resp = client.post("/orbits/myorbit/audio")
 
     assert resp.status_code == 500
     assert "not-a-real-provider" in resp.json()["detail"]
@@ -1085,7 +1085,7 @@ def test_audio_translates_a_synthesis_failure_into_502_and_cleans_up_the_temp_fi
     provider = _FakeTTSProvider(boom="simulated network failure")
     _fake_tts_provider(monkeypatch, provider)
 
-    resp = client.post("/orbits/mynb/audio")
+    resp = client.post("/orbits/myorbit/audio")
 
     assert resp.status_code == 502
     assert "audio synthesis failed" in resp.json()["detail"]
@@ -1114,7 +1114,7 @@ class _FakeRequestDeclaredOversized:
 
 def test_upload_source_rejects_before_ever_reading_the_body_when_content_length_exceeds_cap():
     with pytest.raises(api.HTTPException) as exc_info:
-        asyncio.run(api.upload_source("mynb", _FakeRequestDeclaredOversized()))
+        asyncio.run(api.upload_source("myorbit", _FakeRequestDeclaredOversized()))
     assert exc_info.value.status_code == 413
 
 
@@ -1127,22 +1127,22 @@ class _FakeRequestNoContentLength:
 
 def test_upload_source_rejects_a_missing_content_length_with_411():
     with pytest.raises(api.HTTPException) as exc_info:
-        asyncio.run(api.upload_source("mynb", _FakeRequestNoContentLength()))
+        asyncio.run(api.upload_source("myorbit", _FakeRequestNoContentLength()))
     assert exc_info.value.status_code == 411
 
 
 def test_upload_source_creates_and_persists_a_orbit(client):
     resp = client.post(
-        "/orbits/mynb/sources/upload",
+        "/orbits/myorbit/sources/upload",
         files={"file": ("notes.txt", b"hello from an uploaded file", "text/plain")},
     )
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["id"] == "mynb"
+    assert body["id"] == "myorbit"
     assert body["sources"][0]["kind"] == "text"
     assert body["sources"][0]["origin"] == "notes.txt"
-    assert load_orbit("mynb") is not None
+    assert load_orbit("myorbit") is not None
 
 
 def test_upload_source_pdf():
@@ -1150,7 +1150,7 @@ def test_upload_source_pdf():
     client = _authed_client()
 
     resp = client.post(
-        "/orbits/mynb/sources/upload",
+        "/orbits/myorbit/sources/upload",
         files={"file": ("report.pdf", data, "application/pdf")},
     )
 
@@ -1162,11 +1162,11 @@ def test_upload_source_pdf():
 
 def test_upload_source_dedupes_by_filename(client):
     client.post(
-        "/orbits/mynb/sources/upload",
+        "/orbits/myorbit/sources/upload",
         files={"file": ("notes.txt", b"first version", "text/plain")},
     )
     resp = client.post(
-        "/orbits/mynb/sources/upload",
+        "/orbits/myorbit/sources/upload",
         files={"file": ("notes.txt", b"a different version, same filename", "text/plain")},
     )
 
@@ -1176,19 +1176,19 @@ def test_upload_source_dedupes_by_filename(client):
 
 def test_upload_source_rejects_an_unsupported_file_type(client):
     resp = client.post(
-        "/orbits/mynb/sources/upload",
+        "/orbits/myorbit/sources/upload",
         files={"file": ("image.png", b"not really an image", "image/png")},
     )
 
     assert resp.status_code == 422
-    assert load_orbit("mynb") is None  # rejected before anything was persisted
+    assert load_orbit("myorbit") is None  # rejected before anything was persisted
 
 
 def test_upload_source_rejects_a_body_that_exceeds_the_declared_cap(client, monkeypatch):
     monkeypatch.setenv("PN_MAX_UPLOAD_BYTES", "10")
 
     resp = client.post(
-        "/orbits/mynb/sources/upload",
+        "/orbits/myorbit/sources/upload",
         files={"file": ("notes.txt", b"this is much longer than ten bytes", "text/plain")},
     )
 
@@ -1209,18 +1209,18 @@ def test_upload_source_reports_400_not_500_on_an_empty_orbit_id(client):
 
 
 def test_cancel_404_when_no_active_run(client):
-    resp = client.post("/orbits/mynb/cancel")
+    resp = client.post("/orbits/myorbit/cancel")
     assert resp.status_code == 404
 
 
 def test_cancel_calls_cancel_on_the_active_run(client):
-    fake_run = _FakeRun("mynb-abcd1234")
-    api._ACTIVE_RUNS["mynb"] = fake_run
+    fake_run = _FakeRun("myorbit-abcd1234")
+    api._ACTIVE_RUNS["myorbit"] = fake_run
 
-    resp = client.post("/orbits/mynb/cancel")
+    resp = client.post("/orbits/myorbit/cancel")
 
     assert resp.status_code == 200
-    assert resp.json()["cancelled"] == "mynb-abcd1234"
+    assert resp.json()["cancelled"] == "myorbit-abcd1234"
     assert fake_run.cancelled is True
 
 
@@ -1228,20 +1228,20 @@ def test_cancel_calls_cancel_on_the_active_run(client):
 
 
 def test_derive_run_id_uses_the_client_token_when_given():
-    assert api._derive_run_id("mynb", "abc123") == "mynb-abc123"
+    assert api._derive_run_id("myorbit", "abc123") == "myorbit-abc123"
 
 
 def test_derive_run_id_sanitizes_the_client_token():
     """Reuses orbit.slug()'s whitelist — a client-supplied token becomes a filename component
     too, and an unsanitized value would be the same class of path-traversal vector invariant 10
     already closed for orbit ids."""
-    assert api._derive_run_id("mynb", "../../etc/passwd") == "mynb-etc-passwd"
+    assert api._derive_run_id("myorbit", "../../etc/passwd") == "myorbit-etc-passwd"
 
 
 def test_derive_run_id_falls_back_to_a_server_random_token_when_none_given():
-    run_id = api._derive_run_id("mynb", None)
-    assert run_id.startswith("mynb-")
-    assert len(run_id) == len("mynb-") + 8  # uuid4().hex[:8], byte-for-byte the old scheme
+    run_id = api._derive_run_id("myorbit", None)
+    assert run_id.startswith("myorbit-")
+    assert len(run_id) == len("myorbit-") + 8  # uuid4().hex[:8], byte-for-byte the old scheme
 
 
 def test_ask_persists_the_client_supplied_run_id_on_the_chat_turn(client, monkeypatch):
@@ -1249,12 +1249,12 @@ def test_ask_persists_the_client_supplied_run_id_on_the_chat_turn(client, monkey
     _add_a_source(client)
     _mock_runner(monkeypatch, {"text": "the answer", "citations": []})
 
-    resp = client.post("/orbits/mynb/ask", json={"question": "what?", "run_id": "myrun"})
+    resp = client.post("/orbits/myorbit/ask", json={"question": "what?", "run_id": "myrun"})
 
     assert resp.status_code == 200, resp.text
-    orbit = load_orbit("mynb")
-    assert orbit.turns[0].run_id == "mynb-myrun"
-    assert (api._TRACE_DIR / "mynb-myrun.jsonl").exists()
+    orbit = load_orbit("myorbit")
+    assert orbit.turns[0].run_id == "myorbit-myrun"
+    assert (api._TRACE_DIR / "myorbit-myrun.jsonl").exists()
 
 
 def test_ask_persists_a_server_generated_run_id_when_none_supplied(client, monkeypatch):
@@ -1262,21 +1262,21 @@ def test_ask_persists_a_server_generated_run_id_when_none_supplied(client, monke
     _add_a_source(client)
     _mock_runner(monkeypatch, {"text": "the answer", "citations": []})
 
-    client.post("/orbits/mynb/ask", json={"question": "what?"})
+    client.post("/orbits/myorbit/ask", json={"question": "what?"})
 
-    orbit = load_orbit("mynb")
-    assert orbit.turns[0].run_id.startswith("mynb-")
+    orbit = load_orbit("myorbit")
+    assert orbit.turns[0].run_id.startswith("myorbit-")
 
 
 def test_get_orbit_echoes_the_persisted_run_id_per_turn(client, monkeypatch):
     _live_env(monkeypatch)
     _add_a_source(client)
     _mock_runner(monkeypatch, {"text": "the answer", "citations": []})
-    client.post("/orbits/mynb/ask", json={"question": "what?", "run_id": "myrun"})
+    client.post("/orbits/myorbit/ask", json={"question": "what?", "run_id": "myrun"})
 
-    resp = client.get("/orbits/mynb")
+    resp = client.get("/orbits/myorbit")
 
-    assert resp.json()["turns"][0]["run_id"] == "mynb-myrun"
+    assert resp.json()["turns"][0]["run_id"] == "myorbit-myrun"
 
 
 def test_ask_reports_409_when_the_run_id_collides_with_one_already_in_use(client, monkeypatch):
@@ -1287,9 +1287,9 @@ def test_ask_reports_409_when_the_run_id_collides_with_one_already_in_use(client
     _live_env(monkeypatch)
     _add_a_source(client)
     api._TRACE_DIR.mkdir(parents=True, exist_ok=True)
-    (api._TRACE_DIR / "mynb-dupe.jsonl").touch()  # simulates an already-in-flight (or used) run_id
+    (api._TRACE_DIR / "myorbit-dupe.jsonl").touch()  # simulates an already-in-flight (or used) run_id
 
-    resp = client.post("/orbits/mynb/ask", json={"question": "what?", "run_id": "dupe"})
+    resp = client.post("/orbits/myorbit/ask", json={"question": "what?", "run_id": "dupe"})
 
     assert resp.status_code == 409
     assert "dupe" in resp.json()["detail"]
@@ -1307,10 +1307,10 @@ def test_run_isolated_cleans_up_the_reserved_trace_file_when_start_run_fails(mon
 
     with pytest.raises(OSError, match="simulated spawn failure"):
         asyncio.run(
-            api._run_isolated("mynb", "some:Task", {}, api.PenumbraConfig(), "mynb-willfail")
+            api._run_isolated("myorbit", "some:Task", {}, api.PenumbraConfig(), "myorbit-willfail")
         )
 
-    assert not (api._TRACE_DIR / "mynb-willfail.jsonl").exists()
+    assert not (api._TRACE_DIR / "myorbit-willfail.jsonl").exists()
 
 
 def test_run_isolated_tracks_and_clears_run_processes(monkeypatch, tmp_path):
@@ -1321,10 +1321,10 @@ def test_run_isolated_tracks_and_clears_run_processes(monkeypatch, tmp_path):
     _mock_runner(monkeypatch, {"ok": True})
 
     async def _run():
-        return await api._run_isolated("mynb", "some:Task", {}, api.PenumbraConfig(), "mynb-tracked")
+        return await api._run_isolated("myorbit", "some:Task", {}, api.PenumbraConfig(), "myorbit-tracked")
 
     asyncio.run(_run())
-    assert "mynb-tracked" not in api._RUN_PROCESSES  # cleared once the (fake) run finished
+    assert "myorbit-tracked" not in api._RUN_PROCESSES  # cleared once the (fake) run finished
 
 
 def _write_trace(run_id: str, events: list[dict]) -> None:
@@ -1388,7 +1388,7 @@ def test_a_long_reasoning_is_clipped_before_it_reaches_the_stream():
 
 def test_stream_run_replays_a_finished_trace_without_waiting(client, monkeypatch):
     _write_trace(
-        "mynb-done",
+        "myorbit-done",
         [
             {"type": "run_start", "payload": {}},
             {"type": "main_step", "payload": {"reasoning": "thinking"}},
@@ -1396,7 +1396,7 @@ def test_stream_run_replays_a_finished_trace_without_waiting(client, monkeypatch
         ],
     )
 
-    resp = client.get("/orbits/mynb/runs/mynb-done/stream")
+    resp = client.get("/orbits/myorbit/runs/myorbit-done/stream")
 
     assert resp.status_code == 200
     body = resp.text
@@ -1412,7 +1412,7 @@ def test_stream_run_reports_not_found_when_run_id_does_not_belong_to_the_orbit(c
     own completion check (citation_turn already had this check, stream_run didn't yet)."""
     _write_trace("othernb-run", [{"type": "run_start", "payload": {}}])
 
-    resp = client.get("/orbits/mynb/runs/othernb-run/stream")
+    resp = client.get("/orbits/myorbit/runs/othernb-run/stream")
 
     assert resp.status_code == 200  # SSE has already committed headers
     assert "not_found" in resp.text
@@ -1424,7 +1424,7 @@ def test_stream_run_reports_not_found_after_the_grace_period_when_no_trace_ever_
     monkeypatch.setattr(api, "_TRACE_FILE_WAIT_GRACE", 0.05)
     monkeypatch.setattr(api, "_TRACE_POLL_INTERVAL", 0.01)
 
-    resp = client.get("/orbits/mynb/runs/mynb-nonexistent/stream")
+    resp = client.get("/orbits/myorbit/runs/myorbit-nonexistent/stream")
 
     assert resp.status_code == 200  # SSE has already committed headers — the error is IN the stream
     assert "not_found" in resp.text
@@ -1447,7 +1447,7 @@ def test_stream_run_keeps_waiting_for_an_announced_run_whose_trace_does_not_exis
     monkeypatch.setattr(api, "_TRACE_POLL_INTERVAL", 0.01)
     monkeypatch.setattr(api, "_TRACE_DIR", tmp_path)
 
-    run_id = "mynb-late"
+    run_id = "myorbit-late"
     trace = tmp_path / f"{run_id}.jsonl"
 
     async def _write_the_trace_late():
@@ -1514,12 +1514,12 @@ def test_a_orbit_cannot_be_deleted_while_either_overview_run_is_in_flight(client
                 for _ in range(20):  # let the fast run's `finally` clear what it owns
                     await asyncio.sleep(0)
                 try:
-                    return await ac.delete("/orbits/mynb")
+                    return await ac.delete("/orbits/myorbit")
                 finally:
                     delete_sent.set()
 
             return await asyncio.gather(
-                ac.post("/orbits/mynb/overview", json={}), _delete_mid_run()
+                ac.post("/orbits/myorbit/overview", json={}), _delete_mid_run()
             )
 
     posted, deleted = asyncio.run(_go())
@@ -1552,7 +1552,7 @@ def test_overview_announces_its_runs_before_the_language_call(client, monkeypatc
     _mock_runner(monkeypatch, {"text": "an overview", "citations": []})
 
     token = "ticker"
-    summary_run = f"mynb-{token}-summary"
+    summary_run = f"myorbit-{token}-summary"
 
     async def _go():
         transport = httpx.ASGITransport(app=api.app)
@@ -1563,13 +1563,13 @@ def test_overview_announces_its_runs_before_the_language_call(client, monkeypatc
         ) as ac:
             async def _stream():
                 async with ac.stream(
-                    "GET", f"/orbits/mynb/runs/{summary_run}/stream"
+                    "GET", f"/orbits/myorbit/runs/{summary_run}/stream"
                 ) as resp:
                     return "".join([chunk async for chunk in resp.aiter_text()])
 
             streamed, posted = await asyncio.gather(
                 _stream(),
-                ac.post("/orbits/mynb/overview", json={"run_id": token}),
+                ac.post("/orbits/myorbit/overview", json={"run_id": token}),
             )
             return streamed, posted
 
@@ -1586,10 +1586,10 @@ def test_cancel_run_targets_one_run_id_not_the_whole_orbit(client, monkeypatch):
     killed: list = []
     monkeypatch.setattr(api.os, "killpg", lambda pid, sig: killed.append(pid))
 
-    api._RUN_PROCESSES["mynb-a"] = types.SimpleNamespace(pid=4242)
-    api._RUN_PROCESSES["mynb-b"] = None  # announced, not spawned yet
+    api._RUN_PROCESSES["myorbit-a"] = types.SimpleNamespace(pid=4242)
+    api._RUN_PROCESSES["myorbit-b"] = None  # announced, not spawned yet
     try:
-        assert client.post("/orbits/mynb/runs/mynb-a/cancel").json()["cancelled"] == "mynb-a"
+        assert client.post("/orbits/myorbit/runs/myorbit-a/cancel").json()["cancelled"] == "myorbit-a"
         assert killed == [4242]
 
         # **Reserved-but-not-spawned is STOPPED, not merely reported.** This used to assert
@@ -1598,29 +1598,29 @@ def test_cancel_run_targets_one_run_id_not_the_whole_orbit(client, monkeypatch):
         # the run over — and watched the main worker spawn twenty-four seconds later and burn a full
         # model call with no indicator and no control. Invariant 47 broken inside invariant 46's own
         # window, on the paid path. Recording the id is what makes the stop real.
-        body = client.post("/orbits/mynb/runs/mynb-b/cancel").json()
-        assert body["cancelled"] == "mynb-b", "a stop that signals nothing is not a stop"
+        body = client.post("/orbits/myorbit/runs/myorbit-b/cancel").json()
+        assert body["cancelled"] == "myorbit-b", "a stop that signals nothing is not a stop"
         assert "before it started" in body["detail"]
-        assert "mynb-b" in api._CANCELLED_BEFORE_SPAWN
+        assert "myorbit-b" in api._CANCELLED_BEFORE_SPAWN
         assert killed == [4242], "there was no process to kill, and none was invented"
 
         # And the PRE-WORK, which is a live subprocess under a DERIVED id the caller never saw:
         # `_resolve_language` registers `{base}-lang`, so a Stop naming only the base id left the
         # very model call that makes this window long enough to press Stop in still running.
-        api._RUN_PROCESSES["mynb-c"] = None
-        api._RUN_PROCESSES["mynb-c-lang"] = types.SimpleNamespace(pid=777)
-        body = client.post("/orbits/mynb/runs/mynb-c/cancel").json()
-        assert body["also_cancelled"] == ["mynb-c-lang"]
+        api._RUN_PROCESSES["myorbit-c"] = None
+        api._RUN_PROCESSES["myorbit-c-lang"] = types.SimpleNamespace(pid=777)
+        body = client.post("/orbits/myorbit/runs/myorbit-c/cancel").json()
+        assert body["also_cancelled"] == ["myorbit-c-lang"]
         assert killed == [4242, 777]
-        api._RUN_PROCESSES.pop("mynb-c", None)
-        api._RUN_PROCESSES.pop("mynb-c-lang", None)
+        api._RUN_PROCESSES.pop("myorbit-c", None)
+        api._RUN_PROCESSES.pop("myorbit-c-lang", None)
 
         # A run belonging to another orbit is refused, same guard `stream_run` applies.
-        assert client.post("/orbits/other/runs/mynb-a/cancel").status_code == 404
-        assert client.post("/orbits/mynb/runs/mynb-nope/cancel").status_code == 404
+        assert client.post("/orbits/other/runs/myorbit-a/cancel").status_code == 404
+        assert client.post("/orbits/myorbit/runs/myorbit-nope/cancel").status_code == 404
     finally:
-        api._RUN_PROCESSES.pop("mynb-a", None)
-        api._RUN_PROCESSES.pop("mynb-b", None)
+        api._RUN_PROCESSES.pop("myorbit-a", None)
+        api._RUN_PROCESSES.pop("myorbit-b", None)
         api._CANCELLED_BEFORE_SPAWN.clear()
 
 
@@ -1631,17 +1631,17 @@ def test_a_stop_also_records_the_derived_pre_work_run(client, monkeypatch):
     described in the changelog and asserted nowhere is the shape four rounds of review kept
     finding."""
     monkeypatch.setattr(api.os, "killpg", lambda pid, sig: None)
-    api._RUN_PROCESSES["mynb-x"] = None
-    api._RUN_PROCESSES["mynb-x-lang"] = types.SimpleNamespace(pid=999)
+    api._RUN_PROCESSES["myorbit-x"] = None
+    api._RUN_PROCESSES["myorbit-x-lang"] = types.SimpleNamespace(pid=999)
     try:
-        body = client.post("/orbits/mynb/runs/mynb-x/cancel").json()
-        assert body["also_cancelled"] == ["mynb-x-lang"]
-        assert "mynb-x-lang" in api._CANCELLED_BEFORE_SPAWN, (
+        body = client.post("/orbits/myorbit/runs/myorbit-x/cancel").json()
+        assert body["also_cancelled"] == ["myorbit-x-lang"]
+        assert "myorbit-x-lang" in api._CANCELLED_BEFORE_SPAWN, (
             "the derived pre-work run was signalled but not RECORDED, so a respawn is not refused"
         )
     finally:
-        api._RUN_PROCESSES.pop("mynb-x", None)
-        api._RUN_PROCESSES.pop("mynb-x-lang", None)
+        api._RUN_PROCESSES.pop("myorbit-x", None)
+        api._RUN_PROCESSES.pop("myorbit-x-lang", None)
         api._CANCELLED_BEFORE_SPAWN.clear()
 
 
@@ -1659,18 +1659,18 @@ def test_a_run_stopped_before_it_spawned_never_spawns(client, monkeypatch):
         api.runner, "start_run", lambda *a, **k: started.append(a) or _asyncio.sleep(0)
     )
 
-    api._CANCELLED_BEFORE_SPAWN.add("mynb-stopped")
+    api._CANCELLED_BEFORE_SPAWN.add("myorbit-stopped")
     try:
         with pytest.raises(api.HTTPException) as caught:
             _asyncio.run(
                 api._run_isolated(
-                    "mynb", "x.Y", {}, api.PenumbraConfig(main_model="m"), "mynb-stopped"
+                    "myorbit", "x.Y", {}, api.PenumbraConfig(main_model="m"), "myorbit-stopped"
                 )
             )
         assert caught.value.status_code == 499
         assert started == [], "the run the reader stopped was spawned anyway"
         # And the flag is consumed, so a later run reusing the id is not refused forever.
-        assert "mynb-stopped" not in api._CANCELLED_BEFORE_SPAWN
+        assert "myorbit-stopped" not in api._CANCELLED_BEFORE_SPAWN
     finally:
         api._CANCELLED_BEFORE_SPAWN.clear()
 
@@ -1698,12 +1698,12 @@ def test_a_stop_during_the_pre_work_window_survives_the_announcement(client, mon
     )
 
     async def scenario():
-        run_id = "mynb-prework"
+        run_id = "myorbit-prework"
         # EXACTLY the handler shape: announce, do slow pre-work, then run.
         with api._announced(run_id):
             # The reader presses Stop while the language call is still going.
             assert run_id in api._RUN_PROCESSES, "the id has to be announced (invariant 46)"
-            client.post(f"/orbits/mynb/runs/{run_id}/cancel")
+            client.post(f"/orbits/myorbit/runs/{run_id}/cancel")
             assert run_id in api._CANCELLED_BEFORE_SPAWN
             await _asyncio.sleep(0)
         # The `with` has exited. THIS is where the flag used to vanish.
@@ -1712,7 +1712,7 @@ def test_a_stop_during_the_pre_work_window_survives_the_announcement(client, mon
         )
         with pytest.raises(api.HTTPException) as caught:
             await api._run_isolated(
-                "mynb", "x.Y", {}, api.PenumbraConfig(main_model="m"), run_id
+                "myorbit", "x.Y", {}, api.PenumbraConfig(main_model="m"), run_id
             )
         assert caught.value.status_code == 499
         assert started == [], "the run the reader stopped was spawned anyway"
@@ -1724,16 +1724,16 @@ def test_a_stop_during_the_pre_work_window_survives_the_announcement(client, mon
         _asyncio.run(scenario())
     finally:
         api._CANCELLED_BEFORE_SPAWN.clear()
-        api._RUN_PROCESSES.pop("mynb-prework", None)
+        api._RUN_PROCESSES.pop("myorbit-prework", None)
 
 
 def test_an_uncancelled_announcement_still_cleans_up_after_itself(client):
     """The other side of the same `finally`: with no stop, the placeholder must still be released
     when the announcement ends, or a run id that was announced and then abandoned occupies
     `_RUN_PROCESSES` forever and `stream_run` keeps waiting for a writer that is never coming."""
-    with api._announced("mynb-quiet"):
-        assert "mynb-quiet" in api._RUN_PROCESSES
-    assert "mynb-quiet" not in api._RUN_PROCESSES
+    with api._announced("myorbit-quiet"):
+        assert "myorbit-quiet" in api._RUN_PROCESSES
+    assert "myorbit-quiet" not in api._RUN_PROCESSES
 
 
 def test_every_run_taking_handler_announces_before_resolving_the_language():
@@ -1767,7 +1767,7 @@ def test_announced_release_does_not_steal_a_run_that_actually_started(client):
     """`_announced` must not pop an id `_run_isolated` has taken ownership of — that entry is how
     `stream_run` tells "still writing" from "the writer exited", and `_run_isolated`'s own `finally`
     is what clears it."""
-    run_id = "mynb-owned"
+    run_id = "myorbit-owned"
     sentinel = object()
     with api._announced(run_id):
         assert api._RUN_PROCESSES[run_id] is None
@@ -1786,11 +1786,11 @@ def test_stream_run_synthesizes_a_terminal_event_for_a_dead_process_with_no_run_
     """A killpg-cancelled run's TraceRecorder never reaches __exit__, so no run_end is ever
     written — the stream must still reach a terminal state instead of hanging forever."""
     monkeypatch.setattr(api, "_TRACE_POLL_INTERVAL", 0.01)
-    _write_trace("mynb-killed", [{"type": "run_start", "payload": {}}])
+    _write_trace("myorbit-killed", [{"type": "run_start", "payload": {}}])
     # No entry in _RUN_PROCESSES at all == "no longer tracked as alive", the same state a
     # finished-and-cleaned-up (or never-tracked) run would be in.
 
-    resp = client.get("/orbits/mynb/runs/mynb-killed/stream")
+    resp = client.get("/orbits/myorbit/runs/myorbit-killed/stream")
 
     assert resp.status_code == 200
     # A crash with no `run_end` is a FAILURE. It used to be reported as "done", which told a reader
@@ -1800,7 +1800,7 @@ def test_stream_run_synthesizes_a_terminal_event_for_a_dead_process_with_no_run_
 
 def test_citation_turn_finds_the_first_event_containing_the_marker(client):
     _write_trace(
-        "mynb-cit",
+        "myorbit-cit",
         [
             {"type": "main_step", "payload": {"reasoning": "reading around", "output": "nothing here"}},
             {"type": "main_step", "payload": {"output": "found [[SRC:s1|whole]] right here"}},
@@ -1808,7 +1808,7 @@ def test_citation_turn_finds_the_first_event_containing_the_marker(client):
         ],
     )
 
-    resp = client.get("/orbits/mynb/runs/mynb-cit/citation-turn?source_id=s1&locator=whole")
+    resp = client.get("/orbits/myorbit/runs/myorbit-cit/citation-turn?source_id=s1&locator=whole")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -1820,7 +1820,7 @@ def test_citation_turn_finds_the_marker_in_a_sub_call_event_not_just_main_step(c
     reasoning/code/output field list misses a sub_call event's real payload keys
     (input/raw/processed/etc). Searching the whole serialized payload must not repeat that."""
     _write_trace(
-        "mynb-sub",
+        "myorbit-sub",
         [
             {
                 "type": "sub_call",
@@ -1832,7 +1832,7 @@ def test_citation_turn_finds_the_marker_in_a_sub_call_event_not_just_main_step(c
         ],
     )
 
-    resp = client.get("/orbits/mynb/runs/mynb-sub/citation-turn?source_id=s1&locator=page:2")
+    resp = client.get("/orbits/myorbit/runs/myorbit-sub/citation-turn?source_id=s1&locator=page:2")
 
     assert resp.status_code == 200
     assert resp.json()["type"] == "sub_call"
@@ -1840,14 +1840,14 @@ def test_citation_turn_finds_the_marker_in_a_sub_call_event_not_just_main_step(c
 
 def test_citation_turn_404s_when_the_trace_file_does_not_exist():
     client = _authed_client()
-    resp = client.get("/orbits/mynb/runs/mynb-never-ran/citation-turn?source_id=s1&locator=whole")
+    resp = client.get("/orbits/myorbit/runs/myorbit-never-ran/citation-turn?source_id=s1&locator=whole")
     assert resp.status_code == 404
 
 
 def test_citation_turn_404s_when_no_event_contains_the_marker(client):
-    _write_trace("mynb-nomatch", [{"type": "main_step", "payload": {"output": "nothing relevant"}}])
+    _write_trace("myorbit-nomatch", [{"type": "main_step", "payload": {"output": "nothing relevant"}}])
 
-    resp = client.get("/orbits/mynb/runs/mynb-nomatch/citation-turn?source_id=s1&locator=whole")
+    resp = client.get("/orbits/myorbit/runs/myorbit-nomatch/citation-turn?source_id=s1&locator=whole")
 
     assert resp.status_code == 404
 
@@ -1855,7 +1855,7 @@ def test_citation_turn_404s_when_no_event_contains_the_marker(client):
 def test_citation_turn_404s_when_run_id_does_not_belong_to_the_orbit(client):
     _write_trace("othernb-run", [{"type": "main_step", "payload": {"output": "[[SRC:s1|whole]]"}}])
 
-    resp = client.get("/orbits/mynb/runs/othernb-run/citation-turn?source_id=s1&locator=whole")
+    resp = client.get("/orbits/myorbit/runs/othernb-run/citation-turn?source_id=s1&locator=whole")
 
     assert resp.status_code == 404
 
@@ -1885,19 +1885,19 @@ def test_a_source_and_a_note_added_during_an_ask_both_survive_it(monkeypatch, cl
 
     async def _scenario():
         asking = asyncio.create_task(
-            api.ask("mynb", api.AskRequest(question="what?"), _FakeRequest())
+            api.ask("myorbit", api.AskRequest(question="what?"), _FakeRequest())
         )
         await asyncio.sleep(0.05)  # let `ask` load the orbit and park on the run
 
-        await api.add_sources("mynb", api.SourcesRequest(texts=["added while asking"]))
-        await api.add_note_endpoint("mynb", api.NoteRequest(text="a note taken while asking"))
+        await api.add_sources("myorbit", api.SourcesRequest(texts=["added while asking"]))
+        await api.add_note_endpoint("myorbit", api.NoteRequest(text="a note taken while asking"))
 
         gate.set()
         await asking
 
     asyncio.run(_scenario())
 
-    saved = load_orbit("mynb")
+    saved = load_orbit("myorbit")
     assert len(saved.sources) == 2, "the source added mid-run was destroyed"
     assert saved.sources[1].origin.startswith("pasted:added while asking")
     assert [n.id for n in saved.notes] == ["n1"], "the note added mid-run was destroyed"
@@ -1927,10 +1927,10 @@ def test_delete_note_404s_on_a_note_a_concurrent_request_already_removed(client)
     """`delete_note`'s `ValueError` must still reach the client as a 404 now that it is raised
     inside `mutate_orbit`'s worker thread — and must NOT be mistaken for `orbit_path`'s
     same-typed invalid-id `ValueError`, which would report a 400 naming the wrong thing."""
-    client.post("/orbits/mynb/notes", json={"text": "a note"})
+    client.post("/orbits/myorbit/notes", json={"text": "a note"})
 
-    assert client.delete("/orbits/mynb/notes/n1").status_code == 200
-    resp = client.delete("/orbits/mynb/notes/n1")
+    assert client.delete("/orbits/myorbit/notes/n1").status_code == 200
+    resp = client.delete("/orbits/myorbit/notes/n1")
 
     assert resp.status_code == 404
     assert "n1" in resp.json()["detail"]
@@ -1952,9 +1952,9 @@ def test_a_finished_run_prunes_old_trace_files(monkeypatch, client):
     _live_env(monkeypatch)
     _add_a_source(client)
     _mock_runner(monkeypatch, {"text": "an answer", "citations": []})
-    stale = _stale_trace("mynb-ancient", age_days=30)
+    stale = _stale_trace("myorbit-ancient", age_days=30)
 
-    assert client.post("/orbits/mynb/ask", json={"question": "what?"}).status_code == 200
+    assert client.post("/orbits/myorbit/ask", json={"question": "what?"}).status_code == 200
 
     assert not stale.exists()
 
@@ -1969,14 +1969,14 @@ def test_a_finished_run_leaves_its_own_fresh_trace_alone(monkeypatch, client):
     monkeypatch.setenv("PN_TRACE_RETENTION_DAYS", "1")
     monkeypatch.setenv("PN_MAX_TRACE_FILES", "1")
 
-    resp = client.post("/orbits/mynb/ask", json={"question": "what?", "run_id": "keepme"})
+    resp = client.post("/orbits/myorbit/ask", json={"question": "what?", "run_id": "keepme"})
 
     assert resp.status_code == 200
-    assert (api._TRACE_DIR / "mynb-keepme.jsonl").exists()
+    assert (api._TRACE_DIR / "myorbit-keepme.jsonl").exists()
 
 
 def test_the_startup_lifespan_prunes_old_traces():
-    stale = _stale_trace("mynb-ancient", age_days=30)
+    stale = _stale_trace("myorbit-ancient", age_days=30)
 
     with _authed_client():
         pass
@@ -2013,7 +2013,7 @@ def test_a_broken_retention_setting_does_not_take_down_a_run(monkeypatch, client
     _mock_runner(monkeypatch, {"text": "an answer", "citations": []})
     monkeypatch.setenv("PN_MAX_TRACE_FILES", "not-a-number")
 
-    assert client.post("/orbits/mynb/ask", json={"question": "what?"}).status_code == 200
+    assert client.post("/orbits/myorbit/ask", json={"question": "what?"}).status_code == 200
 
 
 def test_prune_never_deletes_the_trace_of_a_run_still_in_flight(monkeypatch):
@@ -2022,13 +2022,13 @@ def test_prune_never_deletes_the_trace_of_a_run_still_in_flight(monkeypatch):
     gate is still relying on being taken, letting a second request append into the same file. An
     independent test-quality review found this wiring had no coverage: replacing the protected set
     with `set()` left the whole suite green."""
-    live = _stale_trace("mynb-stillrunning", age_days=30)
-    dead = _stale_trace("mynb-finished", age_days=30)
-    monkeypatch.setitem(api._RUN_PROCESSES, "mynb-stillrunning", _FakeProcess())
+    live = _stale_trace("myorbit-stillrunning", age_days=30)
+    dead = _stale_trace("myorbit-finished", age_days=30)
+    monkeypatch.setitem(api._RUN_PROCESSES, "myorbit-stillrunning", _FakeProcess())
     try:
         asyncio.run(api._prune_traces())
     finally:
-        api._RUN_PROCESSES.pop("mynb-stillrunning", None)
+        api._RUN_PROCESSES.pop("myorbit-stillrunning", None)
 
     assert live.exists(), "an in-flight run's trace was deleted"
     assert not dead.exists()
@@ -2045,7 +2045,7 @@ def test_the_stream_does_not_declare_a_reserved_run_dead(monkeypatch):
     and widens the window). The reservation placeholder (`_RUN_PROCESSES[run_id] = None`) is what
     distinguishes "starting" from "gone"; this pins that an ABSENT key still means gone."""
     monkeypatch.setattr(api, "_TRACE_POLL_INTERVAL", 0.01)
-    run_id = "mynb-reserved"
+    run_id = "myorbit-reserved"
     _write_trace(run_id, [])  # the exclusively-created, still-empty trace file
 
     async def _drain(limit):
@@ -2090,11 +2090,11 @@ def test_the_overview_persists_and_is_returned_on_read(client, monkeypatch):
     showing the first-run button — even one mid-conversation (reported with a screenshot)."""
     _overview_orbit(client, monkeypatch)
 
-    resp = client.post("/orbits/mynb/overview", json={"run_id": "tok"})
+    resp = client.post("/orbits/myorbit/overview", json={"run_id": "tok"})
     assert resp.status_code == 200, resp.text
     assert resp.json()["overview"]["text"] == "an overview"
 
-    reopened = client.get("/orbits/mynb").json()["overview"]
+    reopened = client.get("/orbits/myorbit").json()["overview"]
     assert reopened is not None
     assert reopened["stale"] is False
 
@@ -2104,11 +2104,11 @@ def test_adding_a_source_marks_the_overview_stale_rather_than_deleting_it(client
     worse than showing it with a marker — it is still true about the sources it was computed from.
     Before this, "never generated" and "generated but the sources changed" rendered identically."""
     _overview_orbit(client, monkeypatch)
-    client.post("/orbits/mynb/overview", json={"run_id": "tok"})
+    client.post("/orbits/myorbit/overview", json={"run_id": "tok"})
 
-    client.post("/orbits/mynb/sources", json={"texts": ["a second source"]})
+    client.post("/orbits/myorbit/sources", json={"texts": ["a second source"]})
 
-    overview = client.get("/orbits/mynb").json()["overview"]
+    overview = client.get("/orbits/myorbit").json()["overview"]
     assert overview is not None, "the overview was deleted instead of marked stale"
     assert overview["stale"] is True
 
@@ -2121,13 +2121,13 @@ def test_the_overview_run_id_is_suffixed_after_derivation(client, monkeypatch):
     client-chosen token, 409ing one run as a confusing half-failure."""
     _overview_orbit(client, monkeypatch)
 
-    first = client.post("/orbits/mynb/overview", json={})
-    second = client.post("/orbits/mynb/overview", json={})
+    first = client.post("/orbits/myorbit/overview", json={})
+    second = client.post("/orbits/myorbit/overview", json={})
     assert first.status_code == 200 and second.status_code == 200, "an anonymous retry 409'd"
     assert "None" not in (first.json()["overview"]["run_id"] or "")
 
     long_token = "a" * 200
-    resp = client.post("/orbits/mynb/overview", json={"run_id": long_token})
+    resp = client.post("/orbits/myorbit/overview", json={"run_id": long_token})
     assert resp.status_code == 200, resp.text
     assert resp.json()["overview"]["run_id"].endswith("-summary")
 
@@ -2147,9 +2147,9 @@ def test_the_persisted_overviews_citations_are_reverified_on_read(client, monkey
         {"text": "x", "citations": [{"source_id": "s99", "locator": "whole", "quote": "q"}]},
     )
 
-    client.post("/orbits/mynb/overview", json={"run_id": "tok"})
+    client.post("/orbits/myorbit/overview", json={"run_id": "tok"})
 
-    citation = client.get("/orbits/mynb").json()["overview"]["citations"][0]
+    citation = client.get("/orbits/myorbit").json()["overview"]["citations"][0]
     assert citation["verified"] is False
     assert "s99" in citation["reason"]
 
@@ -2203,10 +2203,10 @@ def test_a_forced_language_skips_the_resolution_run_entirely(client, monkeypatch
     dotted: list[str] = []
     _mock_runner(monkeypatch, {"text": "an answer", "citations": []}, dotted_tasks=dotted)
 
-    assert client.post("/orbits/mynb/ask", json={"question": "q"}).status_code == 200
+    assert client.post("/orbits/myorbit/ask", json={"question": "q"}).status_code == 200
 
     assert dotted == ["penumbra.task:AnswerQuestion"], "a resolution run fired despite the override"
-    assert load_orbit("mynb").output_language is None, "the override must not be persisted"
+    assert load_orbit("myorbit").output_language is None, "the override must not be persisted"
 
 
 def test_the_language_is_resolved_once_and_persisted(client, monkeypatch):
@@ -2216,12 +2216,12 @@ def test_the_language_is_resolved_once_and_persisted(client, monkeypatch):
     dotted: list[str] = []
     _mock_runner_by_run(monkeypatch, dotted, lang="Japanese", other={"text": "x", "citations": []})
 
-    client.post("/orbits/mynb/guide/summary")
+    client.post("/orbits/myorbit/guide/summary")
     assert dotted[0] == "penumbra.naming:SuggestLanguage", dotted
-    assert load_orbit("mynb").output_language == "Japanese"
+    assert load_orbit("myorbit").output_language == "Japanese"
 
     dotted.clear()
-    client.post("/orbits/mynb/guide/faq")
+    client.post("/orbits/myorbit/guide/faq")
     assert "penumbra.naming:SuggestLanguage" not in dotted, "resolved a second time"
 
 
@@ -2237,7 +2237,7 @@ def test_the_overview_resolves_the_language_once_not_once_per_run(client, monkey
         monkeypatch, dotted, lang="Japanese", other={"text": "x", "citations": [], "items": []}
     )
 
-    resp = client.post("/orbits/mynb/overview", json={"run_id": "tok"})
+    resp = client.post("/orbits/myorbit/overview", json={"run_id": "tok"})
 
     assert resp.status_code == 200, resp.text
     assert dotted.count("penumbra.naming:SuggestLanguage") == 1, dotted
@@ -2266,7 +2266,7 @@ def test_a_failed_resolution_never_costs_the_caller_their_artifact(client, monke
     monkeypatch.setattr(api.runner, "start_run", _start)
     monkeypatch.setattr(api.runner, "wait_result", _dispatch)
     try:
-        resp = client.post("/orbits/mynb/ask", json={"question": "q"})
+        resp = client.post("/orbits/myorbit/ask", json={"question": "q"})
     finally:
         monkeypatch.setattr(api.runner, "wait_result", real_wait)
 
@@ -2367,8 +2367,8 @@ def test_the_settings_language_beats_a_orbits_cached_resolution(client, monkeypa
     _add_a_source(client)
     dotted: list[str] = []
     _mock_runner_by_run(monkeypatch, dotted, lang="Japanese", other={"text": "x", "citations": []})
-    client.post("/orbits/mynb/guide/summary")
-    assert load_orbit("mynb").output_language == "Japanese"
+    client.post("/orbits/myorbit/guide/summary")
+    assert load_orbit("myorbit").output_language == "Japanese"
 
     client.put("/settings", json={"output_language": "Traditional Chinese"})
 
@@ -2403,18 +2403,18 @@ def test_the_podcast_persists_and_is_served_as_a_file(client, monkeypatch, tmp_p
 
     monkeypatch.setattr(api, "get_tts_provider", lambda name: _FakeProvider())
 
-    resp = client.post("/orbits/mynb/audio", json={"run_id": "pod"})
+    resp = client.post("/orbits/myorbit/audio", json={"run_id": "pod"})
     assert resp.status_code == 200, resp.text
 
     # the transcript comes back on a plain orbit read...
-    podcast = client.get("/orbits/mynb").json()["podcast"]
+    podcast = client.get("/orbits/myorbit").json()["podcast"]
     assert podcast is not None
     assert podcast["utterances"][0]["text"] == "hi"
     assert podcast["stale"] is False
 
     # ...and the audio is a separate file endpoint, so a multi-MB blob never rides along on it
     assert "audio_base64" not in str(podcast)
-    audio = client.get("/orbits/mynb/audio/file")
+    audio = client.get("/orbits/myorbit/audio/file")
     assert audio.status_code == 200
     assert audio.headers["content-type"] == "audio/mpeg"
     assert audio.content == b"ID3fake-mp3-bytes"
@@ -2442,11 +2442,11 @@ def test_adding_a_source_marks_the_podcast_stale(client, monkeypatch):
             out_path.write_bytes(b"x")
 
     monkeypatch.setattr(api, "get_tts_provider", lambda name: _FakeProvider())
-    client.post("/orbits/mynb/audio", json={"run_id": "pod"})
+    client.post("/orbits/myorbit/audio", json={"run_id": "pod"})
 
-    client.post("/orbits/mynb/sources", json={"texts": ["a second source"]})
+    client.post("/orbits/myorbit/sources", json={"texts": ["a second source"]})
 
-    assert client.get("/orbits/mynb").json()["podcast"]["stale"] is True
+    assert client.get("/orbits/myorbit").json()["podcast"]["stale"] is True
 
 
 def test_the_audio_file_endpoint_404s_and_400s_cleanly(client):
@@ -2480,7 +2480,7 @@ def test_run_id_is_reserved_in_run_processes_before_the_subprocess_is_spawned(cl
     monkeypatch.setattr(api.runner, "start_run", _start)
     monkeypatch.setattr(api.runner, "wait_result", _wait)
 
-    assert client.post("/orbits/mynb/ask", json={"question": "q"}).status_code == 200
+    assert client.post("/orbits/myorbit/ask", json={"question": "q"}).status_code == 200
     assert seen == [(True, None)]
 
 
@@ -2515,7 +2515,7 @@ def test_a_finishing_run_never_clears_a_LATER_runs_active_entry(client, monkeypa
             # Yield until the first run has finished AND run its `finally`.
             for _ in range(20):
                 await asyncio.sleep(0)
-            observed.append(api._ACTIVE_RUNS.get("mynb"))
+            observed.append(api._ACTIVE_RUNS.get("myorbit"))
         return {"text": "a", "citations": []}
 
     monkeypatch.setattr(api.runner, "start_run", _start)
@@ -2529,18 +2529,18 @@ def test_a_finishing_run_never_clears_a_LATER_runs_active_entry(client, monkeypa
             headers={"Authorization": f"Bearer {auth.api_token()}"},
         ) as ac:
             return await asyncio.gather(
-                ac.post("/orbits/mynb/ask", json={"question": "q", "run_id": "first"}),
-                ac.post("/orbits/mynb/ask", json={"question": "q", "run_id": "second"}),
+                ac.post("/orbits/myorbit/ask", json={"question": "q", "run_id": "first"}),
+                ac.post("/orbits/myorbit/ask", json={"question": "q", "run_id": "second"}),
             )
 
     responses = asyncio.run(_go())
 
     assert [r.status_code for r in responses] == [200, 200]
     # The still-running second run's entry survived the first run's cleanup.
-    assert observed and observed[0] is runs["mynb-second"], observed
+    assert observed and observed[0] is runs["myorbit-second"], observed
     # And both are cleaned up once they have each finished.
-    assert "mynb" not in api._ACTIVE_RUNS
-    assert not [k for k in api._RUN_PROCESSES if k.startswith("mynb-")]
+    assert "myorbit" not in api._ACTIVE_RUNS
+    assert not [k for k in api._RUN_PROCESSES if k.startswith("myorbit-")]
 
 
 # --- Removing a source, renaming an orbit, and what the picker shows ---------------------------
@@ -2551,16 +2551,16 @@ def test_deleting_a_source_never_renumbers_the_survivors(client):
     that makes removal safe to offer at all — a citation in a saved turn either still resolves to
     the text it was written against, or fails verification loudly."""
     for url in ("https://example.com/a", "https://example.com/b", "https://example.com/c"):
-        client.post("/orbits/mynb/sources", json={"sources": [url]})
-    assert [s["id"] for s in client.get("/orbits/mynb").json()["sources"]] == ["s1", "s2", "s3"]
+        client.post("/orbits/myorbit/sources", json={"sources": [url]})
+    assert [s["id"] for s in client.get("/orbits/myorbit").json()["sources"]] == ["s1", "s2", "s3"]
 
-    resp = client.delete("/orbits/mynb/sources/s2")
+    resp = client.delete("/orbits/myorbit/sources/s2")
     assert resp.status_code == 200
     assert [s["id"] for s in resp.json()["sources"]] == ["s1", "s3"]
 
     # And the NEXT source must not land on `s3` — the collision `next_source_id` exists to prevent.
-    client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/d"]})
-    ids = [s["id"] for s in client.get("/orbits/mynb").json()["sources"]]
+    client.post("/orbits/myorbit/sources", json={"sources": ["https://example.com/d"]})
+    ids = [s["id"] for s in client.get("/orbits/myorbit").json()["sources"]]
     assert ids == ["s1", "s3", "s4"]
     assert len(ids) == len(set(ids))
 
@@ -2569,13 +2569,13 @@ def test_deleting_a_source_leaves_its_citations_unverified_rather_than_repointed
     """The honest outcome, and the reason nothing needs renumbering: `citations.py` re-verifies
     every stored citation against the CURRENT corpus on every read (invariants 5 and 11)."""
     for url in ("https://example.com/a", "https://example.com/b"):
-        client.post("/orbits/mynb/sources", json={"sources": [url]})
+        client.post("/orbits/myorbit/sources", json={"sources": [url]})
     from penumbra.orbit import mutate_orbit
     from penumbra.schema import Answer, ChatTurn, Citation
 
     mutate_orbit(
-        "mynb",
-        lambda nb: nb.turns.append(
+        "myorbit",
+        lambda orb: orb.turns.append(
             ChatTurn(
                 question="q",
                 answer=Answer(
@@ -2592,9 +2592,9 @@ def test_deleting_a_source_leaves_its_citations_unverified_rather_than_repointed
         ),
     )
 
-    assert client.get("/orbits/mynb").json()["turns"][0]["citations"][0]["verified"] is True
-    client.delete("/orbits/mynb/sources/s2")
-    citation = client.get("/orbits/mynb").json()["turns"][0]["citations"][0]
+    assert client.get("/orbits/myorbit").json()["turns"][0]["citations"][0]["verified"] is True
+    client.delete("/orbits/myorbit/sources/s2")
+    citation = client.get("/orbits/myorbit").json()["turns"][0]["citations"][0]
     assert citation["verified"] is False
     assert citation["source_id"] == "s2"  # still says where it pointed, not repointed at s1
     assert citation["reason"]
@@ -2611,13 +2611,13 @@ def test_a_removed_sources_citation_cannot_be_revived_by_the_next_source(client)
     with a ✓ next to it. `next_source_id` allocates from a persisted high-water mark for this.
     """
     for url in ("https://example.com/a", "https://example.com/b"):
-        client.post("/orbits/mynb/sources", json={"sources": [url]})
+        client.post("/orbits/myorbit/sources", json={"sources": [url]})
     from penumbra.orbit import mutate_orbit
     from penumbra.schema import Answer, ChatTurn, Citation
 
     mutate_orbit(
-        "mynb",
-        lambda nb: nb.turns.append(
+        "myorbit",
+        lambda orb: orb.turns.append(
             ChatTurn(
                 question="q",
                 answer=Answer(
@@ -2631,50 +2631,50 @@ def test_a_removed_sources_citation_cannot_be_revived_by_the_next_source(client)
             )
         ),
     )
-    assert client.get("/orbits/mynb").json()["turns"][0]["citations"][0]["verified"] is True
+    assert client.get("/orbits/myorbit").json()["turns"][0]["citations"][0]["verified"] is True
 
-    client.delete("/orbits/mynb/sources/s2")
-    resp = client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/c"]})
+    client.delete("/orbits/myorbit/sources/s2")
+    resp = client.post("/orbits/myorbit/sources", json={"sources": ["https://example.com/c"]})
     assert resp.status_code == 200
     ids = [s["id"] for s in resp.json()["sources"]]
     assert ids == ["s1", "s3"], "the freed id must never be handed out again"
 
-    citation = client.get("/orbits/mynb").json()["turns"][0]["citations"][0]
+    citation = client.get("/orbits/myorbit").json()["turns"][0]["citations"][0]
     assert citation["verified"] is False, "a removed source's citation must not be revived"
     assert citation["source_id"] == "s2"
     # And the mark SURVIVES the round trip through the file, which is what makes it a guarantee
     # rather than a property of one in-memory object.
-    assert load_orbit("mynb").source_seq == 3
+    assert load_orbit("myorbit").source_seq == 3
 
 
 def test_deleting_a_source_404s_for_an_unknown_id(client):
-    client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
-    assert client.delete("/orbits/mynb/sources/s99").status_code == 404
+    client.post("/orbits/myorbit/sources", json={"sources": ["https://example.com/a"]})
+    assert client.delete("/orbits/myorbit/sources/s99").status_code == 404
     assert client.delete("/orbits/nope/sources/s1").status_code == 404
 
 
 def test_renaming_normalises_the_same_way_a_generated_title_does(client):
-    client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
-    resp = client.put("/orbits/mynb/title", json={"title": '  "Voyager   notes."  '})
+    client.post("/orbits/myorbit/sources", json={"sources": ["https://example.com/a"]})
+    resp = client.put("/orbits/myorbit/title", json={"title": '  "Voyager   notes."  '})
     assert resp.status_code == 200
     assert resp.json()["title"] == "Voyager notes"
-    assert load_orbit("mynb").title == "Voyager notes"
+    assert load_orbit("myorbit").title == "Voyager notes"
 
 
 def test_renaming_refuses_an_empty_title_instead_of_deriving_one(client):
     """The one way rename differs from generation: substituting a derived label for what someone
     typed would be the UI lying about what it did."""
-    client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
-    assert client.put("/orbits/mynb/title", json={"title": "   "}).status_code == 422
-    assert client.put("/orbits/mynb/title", json={"title": "x" * 500}).status_code == 422
-    assert load_orbit("mynb").title is None
+    client.post("/orbits/myorbit/sources", json={"sources": ["https://example.com/a"]})
+    assert client.put("/orbits/myorbit/title", json={"title": "   "}).status_code == 422
+    assert client.put("/orbits/myorbit/title", json={"title": "x" * 500}).status_code == 422
+    assert load_orbit("myorbit").title is None
 
 
 def test_renaming_rejects_an_unknown_field_rather_than_dropping_it(client):
     """`extra="forbid"`, for the reason invariant 41 records: pydantic's default DROPS unknown keys,
     so a typo'd field would arrive as a rename to nothing."""
-    client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/a"]})
-    assert client.put("/orbits/mynb/title", json={"titel": "oops"}).status_code == 422
+    client.post("/orbits/myorbit/sources", json={"sources": ["https://example.com/a"]})
+    assert client.put("/orbits/myorbit/title", json={"titel": "oops"}).status_code == 422
     assert client.put("/orbits/nope/title", json={"title": "x"}).status_code == 404
 
 
@@ -2682,9 +2682,9 @@ def test_the_picker_falls_back_to_the_same_derived_label_in_both_places(client):
     """The header reads `OrbitResponse.derived_title` and the picker row reads
     `OrbitSummary.derived_title`. They used to disagree — one said "Untitled orbit" while the
     other showed a derived label for the same orbit, which reads as two different orbits."""
-    client.post("/orbits/mynb/sources", json={"sources": ["https://example.com/voyager"]})
-    from_get = client.get("/orbits/mynb").json()
-    from_list = next(n for n in client.get("/orbits").json()["orbits"] if n["id"] == "mynb")
+    client.post("/orbits/myorbit/sources", json={"sources": ["https://example.com/voyager"]})
+    from_get = client.get("/orbits/myorbit").json()
+    from_list = next(n for n in client.get("/orbits").json()["orbits"] if n["id"] == "myorbit")
 
     assert from_get["title"] is None and from_list["title"] is None
     assert from_get["derived_title"] == from_list["derived_title"] != ""
@@ -2782,13 +2782,13 @@ def test_an_answer_span_survives_the_ask_endpoint_and_a_bogus_one_does_not(clien
         },
     )
 
-    citations = client.post("/orbits/mynb/ask", json={"question": "q"}).json()["citations"]
+    citations = client.post("/orbits/myorbit/ask", json={"question": "q"}).json()["citations"]
     assert citations[0]["answer_span"] == "Voyager left the heliosphere in 2012."
     assert citations[1]["answer_span"] is None  # dropped, but the citation itself survives
     assert citations[1]["verified"] is True
 
     # And it survives the round trip, checked against the SAME text on read.
-    reread = client.get("/orbits/mynb").json()["turns"][0]["citations"]
+    reread = client.get("/orbits/myorbit").json()["turns"][0]["citations"]
     assert reread[0]["answer_span"] == "Voyager left the heliosphere in 2012."
     assert reread[1]["answer_span"] is None
 
@@ -2833,10 +2833,10 @@ def test_follow_up_questions_come_back_with_the_answer_and_survive_a_reload(clie
         },
     )
 
-    asked = client.post("/orbits/mynb/ask", json={"question": "q"}).json()
+    asked = client.post("/orbits/myorbit/ask", json={"question": "q"}).json()
     assert asked["follow_ups"] == ["What powers it?", "Where is Voyager 2?"]
 
-    turn = client.get("/orbits/mynb").json()["turns"][0]
+    turn = client.get("/orbits/myorbit").json()["turns"][0]
     assert turn["follow_ups"] == ["What powers it?", "Where is Voyager 2?"]
 
 
@@ -2846,14 +2846,14 @@ def test_a_turn_saved_before_follow_ups_existed_still_loads(client, monkeypatch)
     _live_env(monkeypatch)
     _add_a_source(client)
     _mock_runner(monkeypatch, {"text": "an answer", "citations": []})
-    client.post("/orbits/mynb/ask", json={"question": "q"})
+    client.post("/orbits/myorbit/ask", json={"question": "q"})
 
-    path = orbit_path("mynb")
+    path = orbit_path("myorbit")
     raw = json.loads(path.read_text(encoding="utf-8"))
     del raw["turns"][0]["answer"]["follow_ups"]
     path.write_text(json.dumps(raw), encoding="utf-8")
 
-    turn = client.get("/orbits/mynb").json()["turns"][0]
+    turn = client.get("/orbits/myorbit").json()["turns"][0]
     assert turn["follow_ups"] == []
 
 
@@ -2922,12 +2922,12 @@ def test_no_response_ships_a_corpus_marker_in_its_prose(client, monkeypatch):
         },
     )
 
-    asked = client.post("/orbits/mynb/ask", json={"question": "q"}).json()
+    asked = client.post("/orbits/myorbit/ask", json={"question": "q"}).json()
     assert "[[SRC:" not in asked["text"]
     # ...and the span still locates against the stripped prose, so the stroke survives.
     assert asked["citations"][0]["answer_span"] == "Voyager left in 2012."
 
-    turn = client.get("/orbits/mynb").json()["turns"][0]
+    turn = client.get("/orbits/myorbit").json()["turns"][0]
     assert "[[SRC:" not in turn["answer"]
     assert turn["citations"][0]["answer_span"] == "Voyager left in 2012."
 
@@ -2975,11 +2975,11 @@ def test_the_podcast_length_reaches_the_task(client, monkeypatch):
     monkeypatch.setattr(api.runner, "start_run", _fake_start_run)
     monkeypatch.setattr(api.runner, "wait_result", _fake_wait_result)
 
-    client.post("/orbits/mynb/audio", json={"length": "long"})
+    client.post("/orbits/myorbit/audio", json={"length": "long"})
     assert seen and seen[-1]["target_length"] == "long"
 
     seen.clear()
-    client.post("/orbits/mynb/audio", json={})
+    client.post("/orbits/myorbit/audio", json={})
     assert seen[-1]["target_length"] == "default", "an absent length must not become empty"
 
 
@@ -2989,8 +2989,8 @@ def test_the_podcast_length_refuses_an_unknown_tier_and_a_typo(client, monkeypat
     model run."""
     _live_env(monkeypatch)
     _add_a_source(client)
-    assert client.post("/orbits/mynb/audio", json={"length": "epic"}).status_code == 422
-    assert client.post("/orbits/mynb/audio", json={"len": "long"}).status_code == 422
+    assert client.post("/orbits/myorbit/audio", json={"length": "epic"}).status_code == 422
+    assert client.post("/orbits/myorbit/audio", json={"len": "long"}).status_code == 422
 
 
 def test_the_podcast_task_declares_the_length_it_is_given():
@@ -3572,7 +3572,7 @@ def test_clearing_a_conversation_keeps_everything_that_is_not_the_conversation(t
     # The orbits dir resolves against the process cwd (`DEFAULT_ORBITS_DIR`), which is
     # how every other orbit-writing test in this file isolates itself.
     monkeypatch.chdir(tmp_path)
-    nb = Orbit(
+    orb = Orbit(
         id="nb1",
         sources=[Source(id="s1", origin="x", kind="text", blocks=[SourceBlock(locator="whole", text="t")])],
         notes=[Note(id="n1", text="kept")],
@@ -3582,7 +3582,7 @@ def test_clearing_a_conversation_keeps_everything_that_is_not_the_conversation(t
             ChatTurn(question="q2", answer=Answer(text="a2", citations=[])),
         ],
     )
-    nbmod.save_orbit(nb)
+    nbmod.save_orbit(orb)
 
     with _authed_client() as client:
         body = client.delete("/orbits/nb1/turns").json()
@@ -4137,9 +4137,9 @@ def test_evicting_cancelled_ids_takes_their_placeholders_with_them(client):
         api._RUN_PROCESSES["a-real-one"] = object()
         assert len(api._CANCELLED_BEFORE_SPAWN) >= api._MAX_CANCELLED_IDS
 
-        api._RUN_PROCESSES["nb-x-tok"] = None
-        api._ACTIVE_RUNS["nb-x"] = ["nb-x-tok"]
-        resp = client.post("/orbits/nb-x/runs/nb-x-tok/cancel")
+        api._RUN_PROCESSES["orbit-x-tok"] = None
+        api._ACTIVE_RUNS["orbit-x"] = ["orbit-x-tok"]
+        resp = client.post("/orbits/orbit-x/runs/orbit-x-tok/cancel")
         assert resp.status_code == 200, resp.text
 
         leftovers = [k for k in api._RUN_PROCESSES if k.startswith("leaked-")]
@@ -4239,15 +4239,15 @@ def test_a_client_disconnect_during_the_spawn_does_not_reserve_the_run_id_foreve
     async def drive():
         task = asyncio.create_task(
             api._run_isolated(
-                "disconnect-nb",
+                "disconnect-orb",
                 "some:Task",
                 {},
                 api.PenumbraConfig(main_model="m"),
-                "disconnect-nb-tok",
+                "disconnect-orbit-tok",
             )
         )
         await started.wait()
-        assert api._RUN_PROCESSES.get("disconnect-nb-tok", "missing") is None, (
+        assert api._RUN_PROCESSES.get("disconnect-orbit-tok", "missing") is None, (
             "the reservation should exist while the spawn is in flight"
         )
         task.cancel()
@@ -4257,10 +4257,10 @@ def test_a_client_disconnect_during_the_spawn_does_not_reserve_the_run_id_foreve
 
     asyncio.run(drive())
 
-    assert "disconnect-nb-tok" not in api._RUN_PROCESSES, (
+    assert "disconnect-orbit-tok" not in api._RUN_PROCESSES, (
         "the run id stayed reserved, so retrying with the same token now 409s forever"
     )
-    assert not (Path(api._TRACE_DIR) / "disconnect-nb-tok.jsonl").exists(), (
+    assert not (Path(api._TRACE_DIR) / "disconnect-orbit-tok.jsonl").exists(), (
         "the empty trace file survived, and `_prune_traces` protects anything _RUN_PROCESSES names"
     )
 
@@ -4277,7 +4277,7 @@ def test_a_question_about_a_orbit_with_no_sources_is_refused(client):
     """
     from penumbra.orbit import mutate_orbit
 
-    mutate_orbit("bare", lambda nb: None, create=True)
+    mutate_orbit("bare", lambda orb: None, create=True)
     resp = client.post("/orbits/bare/ask", json={"question": "what does it say?"})
     assert resp.status_code == 422, resp.text
     assert "no sources" in resp.json()["detail"]
@@ -4314,7 +4314,7 @@ def test_every_paid_endpoint_refuses_a_orbit_with_no_sources(client):
     """
     from penumbra.orbit import mutate_orbit
 
-    mutate_orbit("nothing", lambda nb: None, create=True)
+    mutate_orbit("nothing", lambda orb: None, create=True)
     paid = [
         ("post", "/orbits/nothing/ask", {"question": "what?"}),
         ("post", "/orbits/nothing/overview", {}),
@@ -4555,7 +4555,7 @@ def test_a_cancelled_await_kills_the_worker_rather_than_orphaning_it(monkeypatch
     async def drive() -> None:
         task = asyncio.create_task(
             api._run_isolated(
-                "orphan-nb", "some:Task", {}, api.PenumbraConfig(main_model="m"), "orphan-nb-tok"
+                "orphan-orb", "some:Task", {}, api.PenumbraConfig(main_model="m"), "orphan-orbit-tok"
             )
         )
         await started.wait()
@@ -4566,8 +4566,8 @@ def test_a_cancelled_await_kills_the_worker_rather_than_orphaning_it(monkeypatch
     asyncio.run(drive())
 
     assert cancelled == [True], "the worker was left running with nothing able to reach it"
-    assert "orphan-nb" not in api._ACTIVE_RUNS
-    assert "orphan-nb-tok" not in api._RUN_PROCESSES
+    assert "orphan-orb" not in api._ACTIVE_RUNS
+    assert "orphan-orbit-tok" not in api._RUN_PROCESSES
 
 
 def test_the_server_reads_the_interface_language_header_the_page_sends():

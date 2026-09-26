@@ -54,7 +54,7 @@ let interfaceLang = "en"; const uiLang = () => interfaceLang;
 
 def test_the_token_and_the_shell_flag_come_from_the_fragment_and_leave_no_trace():
     script = (
-        'const HREF = "http://127.0.0.1:5000/?nb=rag#token=abc123&shell=desktop&menu=en";\n'
+        'const HREF = "http://127.0.0.1:5000/?orb=rag#token=abc123&shell=desktop&menu=en";\n'
         + STUBS
         + _fn("captureApiToken")
         + _fn("isDesktopShell")
@@ -70,13 +70,13 @@ def test_the_token_and_the_shell_flag_come_from_the_fragment_and_leave_no_trace(
     final = got["urls"][-1]
     assert "abc123" not in final and "token" not in final and "shell" not in final, final
     assert "menu" not in final, final
-    assert final == "/?nb=rag", "the orbit route must survive the strip"
+    assert final == "/?orb=rag", "the orbit route must survive the strip"
 
 
 def test_a_plain_page_load_does_not_rewrite_history():
     """A bare `replaceState` would wipe the history entry's state, which the router reads on Back."""
     script = (
-        'const HREF = "http://127.0.0.1:5000/?nb=rag";\n'
+        'const HREF = "http://127.0.0.1:5000/?orb=rag";\n'
         + STUBS
         + _fn("captureApiToken")
         + "\ncaptureApiToken();\nprocess.stdout.write(JSON.stringify({urls: window.history.calls}));"

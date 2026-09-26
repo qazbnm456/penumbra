@@ -1360,8 +1360,8 @@ async function refreshOrbitList() {
   }
   menu.innerHTML = "";
 
-  data.orbits.forEach((nb) => {
-    menu.appendChild(renderOrbitRow(nb));
+  data.orbits.forEach((orb) => {
+    menu.appendChild(renderOrbitRow(orb));
   });
 
   const create = document.createElement("button");
@@ -1377,7 +1377,7 @@ async function refreshOrbitList() {
     // and switches nothing, so from inside an orbit it emptied the orbit you were looking at
     // and left its id in the address bar - the wordmark had the identical defect and this was the
     // other caller. The id is minted here and never asked for (invariant 37).
-    await openOrbit(`nb-${crypto.randomUUID().slice(0, 8)}`, { fresh: true });
+    await openOrbit(`orbit-${crypto.randomUUID().slice(0, 8)}`, { fresh: true });
   });
   menu.appendChild(create);
 
@@ -1400,11 +1400,11 @@ function relativeTime(epochSeconds) {
   return new Date(epochSeconds * 1000).toLocaleDateString(uiLang());
 }
 
-function renderOrbitRow(nb) {
+function renderOrbitRow(orb) {
   const row = document.createElement("div");
   row.className = "orbit-row";
-  if (nb.id === state.orbitId) row.classList.add("is-current");
-  if (activeRuns.has(nb.id)) row.classList.add("is-running");
+  if (orb.id === state.orbitId) row.classList.add("is-current");
+  if (activeRuns.has(orb.id)) row.classList.add("is-running");
 
   const open = document.createElement("button");
   open.type = "button";
@@ -1420,9 +1420,9 @@ function renderOrbitRow(nb) {
   //: A group of buttons with `aria-current` is the honest shape, and it is what the facet rail
   //: already needed too. The tablist next door went the other way — see `show()` — because those
   //: really are tabs over panels; this is a menu of places to go.
-  if (nb.id === state.orbitId) open.setAttribute("aria-current", "true");
+  if (orb.id === state.orbitId) open.setAttribute("aria-current", "true");
 
-  if (activeRuns.has(nb.id)) {
+  if (activeRuns.has(orb.id)) {
     const dot = document.createElement("span");
     dot.className = "run-dot orbit-row-dot";
     dot.dataset.tip = t("app.generating", "Generating something in this orbit");
@@ -1440,27 +1440,27 @@ function renderOrbitRow(nb) {
   // Through the same ladder the facet rail uses. Raw, `derived_title` is a sentence cut from the
   // first source at 60 characters, so the header read "…each pattern desc" - the mid-word fragment
   // this build fixed for nodes and for the rail, still live here.
-  title.textContent = facetLabel(nb) || t("app.untitled", "Untitled orbit");
+  title.textContent = facetLabel(orb) || t("app.untitled", "Untitled orbit");
   open.appendChild(title);
 
   const meta = document.createElement("span");
   meta.className = "orbit-row-meta";
   const parts = [
-    t("app.rowMeta", `${plural(nb.source_count, "source")} · ${plural(nb.turn_count, "turn")}`, {
-      sources: nb.source_count,
-      turns: nb.turn_count,
+    t("app.rowMeta", `${plural(orb.source_count, "source")} · ${plural(orb.turn_count, "turn")}`, {
+      sources: orb.source_count,
+      turns: orb.turn_count,
     }),
   ];
   // Model-authored titles are NOT unique — a user hit three orbits with near-identical generated
   // names. With the id no longer shown anywhere, "which did I touch last" is the only thing left to
   // tell them apart, so it goes on the row rather than being something to work out.
-  if (nb.updated_at) parts.push(relativeTime(nb.updated_at));
+  if (orb.updated_at) parts.push(relativeTime(orb.updated_at));
   meta.textContent = parts.join(" \u00b7 ");
   open.appendChild(meta);
 
   open.addEventListener("click", () => {
     closeOrbitMenu();
-    openOrbit(nb.id);
+    openOrbit(orb.id);
   });
   row.appendChild(open);
 
@@ -1471,7 +1471,7 @@ function renderOrbitRow(nb) {
   rename.dataset.tip = t("app.rename", "Rename");
   rename.addEventListener("click", (event) => {
     event.stopPropagation();
-    startRename(row, nb);
+    startRename(row, orb);
   });
   row.appendChild(rename);
 
@@ -1493,7 +1493,7 @@ function renderOrbitRow(nb) {
   remove.setAttribute("aria-label", deleteLabel);
   remove.addEventListener("click", async (event) => {
     event.stopPropagation();
-    const label = facetLabel(nb) || t("app.untitled", "Untitled orbit");
+    const label = facetLabel(orb) || t("app.untitled", "Untitled orbit");
     //: The confirm says what SURVIVES, not just what goes. A node was copied into the orbit at
     //: promotion (invariant 78), so deleting the orbit cannot lose a capture — and a reader who
     //: does not know that will not press the button.
@@ -1506,13 +1506,13 @@ function renderOrbitRow(nb) {
     );
     if (!ok) return;
     try {
-      await api(`/orbits/${encodeURIComponent(nb.id)}`, { method: "DELETE" });
+      await api(`/orbits/${encodeURIComponent(orb.id)}`, { method: "DELETE" });
     } catch (err) {
       // 409 while a run is in flight is the interesting one, and the server's sentence says so.
       notify(readableError(err.message), { tone: "error" });
       return;
     }
-    if (nb.id === state.orbitId) {
+    if (orb.id === state.orbitId) {
       closeOrbitMenu();
       showHorizon();
     } else {
@@ -1528,29 +1528,29 @@ function renderOrbitRow(nb) {
 
 // Rename in place. A PUT, never the generate endpoint: setting a title is an instant write that
 // always succeeds, generating one is a model run that can fail and be superseded.
-function startRename(row, nb) {
+function startRename(row, orb) {
   row.innerHTML = "";
   const input = document.createElement("input");
   input.className = "orbit-rename-input";
-  input.value = nb.title || "";
+  input.value = orb.title || "";
   input.maxLength = 120;
   row.appendChild(input);
 
   async function commit() {
     const value = input.value.trim();
-    if (!value || value === nb.title) {
+    if (!value || value === orb.title) {
       refreshOrbitList();
       return;
     }
     try {
-      const updated = await api(`/orbits/${encodeURIComponent(nb.id)}/title`, {
+      const updated = await api(`/orbits/${encodeURIComponent(orb.id)}/title`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: value }),
       });
-      if (nb.id === state.orbitId) {
+      if (orb.id === state.orbitId) {
         state.title = updated.title;
-        store.emit("orbit:titled", { title: state.title, orbitId: nb.id });
+        store.emit("orbit:titled", { title: state.title, orbitId: orb.id });
       }
     } catch (err) {
       notify(t("err.rename", `Could not rename: ${err.message}`, { message: err.message }));
@@ -1607,7 +1607,7 @@ async function openOrbit(orbitId, { push = true, fresh = false } = {}) {
   } catch (err) {
     //: **One dropped request used to fabricate the reader's orbit.** A bare `catch` here treated
     //: every failure as "does not exist yet": an orbit with four sources and two turns rendered as
-    //: an empty one, with no error, no retry and the `?nb=` silently dropped from the address bar —
+    //: an empty one, with no error, no retry and the `?orb=` silently dropped from the address bar —
     //: and "Add source" from that screen writes into an orbit the reader believes is empty. It did
     //: not heal when the network came back. Four false statements about the reader's own data, which
     //: is invariant 60's rule ("a status line may not claim something the page is not doing") aimed
@@ -1654,7 +1654,7 @@ async function openOrbit(orbitId, { push = true, fresh = false } = {}) {
   // could create an orbit and never open one. The address bar did not follow a switch either,
   // so a reload silently returned you to the orbit you had left. Both were the same missing
   // line, and a missing line in five places is a function boundary in the wrong place.
-  //: **NO `?nb=` FOR A ORBIT THAT IS NOT THERE YET.** "+ New orbit" mints an id client-side
+  //: **NO `?orb=` FOR A ORBIT THAT IS NOT THERE YET.** "+ New orbit" mints an id client-side
   //: and an orbit is created lazily by its first source, so writing the id into the address bar
   //: straight away produced a URL that leads nowhere: reload or share it and you land on the Horizon
   //: with "That orbit is not here any more" — which is false, because it never was and nothing
@@ -3320,14 +3320,14 @@ function initSourcesPanel() {
     // in something readable once there is a source to derive it from.
     const isFirstSource = !state.orbitId;
     if (isFirstSource) {
-      state.orbitId = `nb-${crypto.randomUUID().slice(0, 8)}`;
+      state.orbitId = `orbit-${crypto.randomUUID().slice(0, 8)}`;
       // Already inside the slug whitelist, so it is its own slug until the
       // server confirms one on the next orbit response.
       state.orbitSlug = state.orbitId;
       orbitGeneration += 1;
     }
     const activeKind = document.querySelector("#source-kind-tabs .tab.is-active").dataset.kind;
-    const nb = encodeURIComponent(state.orbitId);
+    const orb = encodeURIComponent(state.orbitId);
 
     const submitBtn = form.querySelector("button[type=submit]");
     submitBtn.disabled = true;
@@ -3343,7 +3343,7 @@ function initSourcesPanel() {
       if (activeKind === "url") {
         const value = document.getElementById("source-url").value.trim();
         if (!value) return;
-        orbit = await api(`/orbits/${nb}/sources`, {
+        orbit = await api(`/orbits/${orb}/sources`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sources: [value] }),
@@ -3352,7 +3352,7 @@ function initSourcesPanel() {
       } else if (activeKind === "text") {
         const value = document.getElementById("source-text").value.trim();
         if (!value) return;
-        orbit = await api(`/orbits/${nb}/sources`, {
+        orbit = await api(`/orbits/${orb}/sources`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ texts: [value] }),
@@ -3368,7 +3368,7 @@ function initSourcesPanel() {
         // which a manually-set Content-Type would break. `api()` never sets one itself (it's a
         // thin `fetch` wrapper; each JSON call site sets its own headers explicitly), so this
         // reuses it exactly as-is rather than needing a second, bespoke fetch call.
-        orbit = await api(`/orbits/${nb}/sources/upload`, {
+        orbit = await api(`/orbits/${orb}/sources/upload`, {
           method: "POST",
           body: formData,
         });
@@ -5170,7 +5170,7 @@ function initChatPanel() {
     if (composerLocked()) return;
     //: **The same gate the send button has.** Enter submits the form whether or not the button is
     //: disabled, so with no sources the question was cleared and came back as a failed turn quoting
-    //: the server's `no orbit 'nb-…' — POST sources to it first`. The question stays in the field.
+    //: the server's `no orbit 'orbit-…' — POST sources to it first`. The question stays in the field.
     if (!(state.sources || []).length) {
       notify(t("chat.needSource", "Add a source first. Every answer is grounded in your sources."));
       setPanel("sources");
@@ -8139,7 +8139,7 @@ function horizonEl(id) {
 //: be bookmarked, linked or reopened. Back is the first motion a reader reaches for once the front
 //: door is somewhere else.
 //:
-//: `?nb=` and not a path segment, because the app is served from one route and a path would need
+//: `?orb=` and not a path segment, because the app is served from one route and a path would need
 //: the server to know about it. `pushState` here, `replaceState` for the token (`captureApiToken`):
 //: the token must never become a history entry, and an orbit must always be one.
 //: The browser tab, and the Tauri window title after it. It said the product name alone on every screen,
@@ -8155,12 +8155,12 @@ function syncDocumentTitle(orbitId) {
 function syncAddressBar(orbitId, { replace = false } = {}) {
   try {
     const url = new URL(window.location.href);
-    if (orbitId) url.searchParams.set("nb", orbitId);
-    else url.searchParams.delete("nb");
+    if (orbitId) url.searchParams.set("orb", orbitId);
+    else url.searchParams.delete("orb");
     const next = url.pathname + url.search + url.hash;
     if (next === window.location.pathname + window.location.search + window.location.hash) return;
     const how = replace ? "replaceState" : "pushState";
-    window.history[how]({ nb: orbitId || "" }, "", next);
+    window.history[how]({ orb: orbitId || "" }, "", next);
   } catch {
     // Same reasoning as `captureApiToken`: no `URL`/`history` in some contexts (a Node `vm` is
     // one), and losing the address bar must never cost the reader the application.
@@ -8361,7 +8361,7 @@ function showOrbitView({ push = true } = {}) {
 //: Back and Forward. `push: false` on both branches, or restoring a state would push a NEW entry
 //: for the one being restored and the reader could never leave.
 window.addEventListener("popstate", async (event) => {
-  const wanted = (event.state && event.state.nb) || new URL(window.location.href).searchParams.get("nb") || "";
+  const wanted = (event.state && event.state.orb) || new URL(window.location.href).searchParams.get("orb") || "";
   if (!wanted) {
     showHorizon({ push: false });
     return;
@@ -9349,7 +9349,7 @@ async function nodeActions(node, detail) {
   //: `facetLabels` keys on the id, so the two never met. Every node filed into an orbit whose id
   //: differs from its slug read "In a deleted orbit" while that orbit was listed, live, in
   //: this row's own picker: `--orbit "reading list"` (slug `reading-list`), and every CJK name,
-  //: which invariant 10's `nb-<hash>` fallback exists to make possible. A false statement about the
+  //: which invariant 10's `orbit-<hash>` fallback exists to make possible. A false statement about the
   //: reader's own data whose next move is to re-file something already filed.
   const bySlug = new Map(
     (books.orbits || []).map((b) => [b.slug || b.id, bookLabels.get(b.id)])
@@ -9382,7 +9382,7 @@ async function promoteNode(node, picker) {
   const minted = orbitId === "__new__";
   if (minted) {
     // The id is a HANDLE and the UI mints it (invariant 37): a reader is never asked to invent one.
-    orbitId = `nb-${crypto.randomUUID().slice(0, 8)}`;
+    orbitId = `orbit-${crypto.randomUUID().slice(0, 8)}`;
   }
   picker.disabled = true;
   try {
@@ -9960,7 +9960,7 @@ function initHorizon() {
   horizonEl("facet-new").addEventListener("click", async () => {
     // The id is a HANDLE and the UI mints it (invariant 37): a reader is never asked to invent one
     // before they can start, which is the mistake the first version of this product made.
-    await openOrbit(`nb-${crypto.randomUUID().slice(0, 8)}`, { fresh: true });
+    await openOrbit(`orbit-${crypto.randomUUID().slice(0, 8)}`, { fresh: true });
   });
 }
 
@@ -14660,7 +14660,7 @@ initSuggestions();
   if (!apiToken()) showTokenGate("");
   let wanted = "";
   try {
-    wanted = new URL(window.location.href).searchParams.get("nb") || "";
+    wanted = new URL(window.location.href).searchParams.get("orb") || "";
   } catch {
     // no URL here; the Horizon is the right default anyway
   }

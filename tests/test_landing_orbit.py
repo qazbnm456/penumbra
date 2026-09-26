@@ -208,36 +208,6 @@ def test_the_cap_is_measured_on_the_real_blob_not_the_text(client, monkeypatch):
     assert horizon.memberships_for(node_id) == [], "text alone (50) fits; the real blob does not"
 
 
-def test_captures_the_old_first_orbit_holds_still_count_as_unfiled(client, monkeypatch):
-    """Before the mode existed every capture was filed into `first-orbit` by the app, not the
-    reader, so those captures keep their suggestions and `auto` can still file them."""
-    _assign(client, monkeypatch, "first-orbit")
-    node_id = client.post("/horizon", json={"texts": ["filed by the app"]}).json()["nodes"][0]["id"]
-    assert _filed(node_id) == ["first-orbit"]
-    _assign(client, monkeypatch, "reading")
-    monkeypatch.setenv("PN_FILING_MODE", "auto")
-    monkeypatch.setattr(api.filing, "suggestions", lambda landing, **kw: [
-        {"node_id": node_id, "orbit": "reading", "title": "t", "shared": [], "tags": [], "score": 3},
-    ] if landing == "first-orbit" else [])
-    assert api._auto_file_suggested() == 1
-    assert sorted(m.orbit_id for m in horizon.memberships_for(node_id)) == ["first-orbit", "reading"]
-
-
-def test_the_old_first_orbits_fixed_title_is_cleared_so_it_is_named_like_any_orbit(client, monkeypatch):
-    """The app used to create `first-orbit` titled "First orbit", which lazy titling never
-    overwrites (invariant 37). That fixed title is cleared; one the reader typed is kept."""
-    from penumbra.orbit import mutate_orbit
-
-    _assign(client, monkeypatch, "first-orbit")
-    mutate_orbit("first-orbit", lambda o: setattr(o, "title", "First orbit"))
-    api._untitle_legacy_first_orbit()
-    assert load_orbit("first-orbit").title is None
-
-    mutate_orbit("first-orbit", lambda o: setattr(o, "title", "My reading"))
-    api._untitle_legacy_first_orbit()
-    assert load_orbit("first-orbit").title == "My reading"
-
-
 def test_an_automatic_filing_is_announced_once_with_what_undoes_it(client, monkeypatch):
     _assign(client, monkeypatch)
     monkeypatch.setenv("PN_FILING_MODE", "manual")

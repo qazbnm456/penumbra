@@ -54,20 +54,20 @@ def test_missing_directory_is_a_no_op(tmp_path):
 
 
 def test_age_sweep_removes_only_what_is_older_than_the_cutoff(tmp_path):
-    old = _trace(tmp_path, "nb-old", age_seconds=10_000)
-    young = _trace(tmp_path, "nb-young", age_seconds=100)
+    old = _trace(tmp_path, "orbit-old", age_seconds=10_000)
+    young = _trace(tmp_path, "orbit-young", age_seconds=100)
 
     removed = prune_traces(
         tmp_path, max_age_seconds=5_000, max_files=0, protected=set(), min_age_seconds=0
     )
 
-    assert removed == ["nb-old"]
+    assert removed == ["orbit-old"]
     assert not old.exists()
     assert young.exists()
 
 
 def test_age_sweep_disabled_by_zero(tmp_path):
-    old = _trace(tmp_path, "nb-old", age_seconds=10_000_000)
+    old = _trace(tmp_path, "orbit-old", age_seconds=10_000_000)
 
     removed = prune_traces(
         tmp_path, max_age_seconds=0, max_files=0, protected=set(), min_age_seconds=0
@@ -79,28 +79,28 @@ def test_age_sweep_disabled_by_zero(tmp_path):
 
 def test_count_sweep_removes_oldest_first_down_to_the_cap(tmp_path):
     for i, age in enumerate([500, 400, 300, 200, 100]):
-        _trace(tmp_path, f"nb-{i}", age_seconds=age)
+        _trace(tmp_path, f"orbit-{i}", age_seconds=age)
 
     removed = prune_traces(
         tmp_path, max_age_seconds=0, max_files=2, protected=set(), min_age_seconds=0
     )
 
-    assert removed == ["nb-0", "nb-1", "nb-2"]  # oldest three
-    assert sorted(p.stem for p in tmp_path.glob("*.jsonl")) == ["nb-3", "nb-4"]
+    assert removed == ["orbit-0", "orbit-1", "orbit-2"]  # oldest three
+    assert sorted(p.stem for p in tmp_path.glob("*.jsonl")) == ["orbit-3", "orbit-4"]
 
 
 def test_protected_run_ids_are_never_removed(tmp_path):
     """An in-flight run's trace must survive any policy: deleting it breaks its live SSE stream AND
     frees a run id `_run_isolated`'s exclusive-create gate is still relying on being taken, which
     would let a second request append into the same file (AGENTS.md invariant 29)."""
-    live = _trace(tmp_path, "nb-live", age_seconds=10_000_000)
-    dead = _trace(tmp_path, "nb-dead", age_seconds=10_000_000)
+    live = _trace(tmp_path, "orbit-live", age_seconds=10_000_000)
+    dead = _trace(tmp_path, "orbit-dead", age_seconds=10_000_000)
 
     removed = prune_traces(
-        tmp_path, max_age_seconds=1.0, max_files=0, protected={"nb-live"}, min_age_seconds=0
+        tmp_path, max_age_seconds=1.0, max_files=0, protected={"orbit-live"}, min_age_seconds=0
     )
 
-    assert removed == ["nb-dead"]
+    assert removed == ["orbit-dead"]
     assert live.exists()
     assert not dead.exists()
 
@@ -113,9 +113,9 @@ def test_a_file_younger_than_the_floor_survives_even_an_aggressive_policy(tmp_pa
     TWO fresh files against `max_files=1`, deliberately — an independent test-quality review
     proved the first version of this test (one file, cap of 1) was hollow: one file is AT the cap,
     not over it, so it passed with the floor removed from `prune_traces` entirely. This shape fails
-    without the floor (it removes `nb-old`) and passes with it."""
-    old = _trace(tmp_path, "nb-old")  # both mtime = now
-    new = _trace(tmp_path, "nb-new")
+    without the floor (it removes `orbit-old`) and passes with it."""
+    old = _trace(tmp_path, "orbit-old")  # both mtime = now
+    new = _trace(tmp_path, "orbit-new")
 
     removed = prune_traces(tmp_path, max_age_seconds=1.0, max_files=1, protected=set())
 
@@ -127,7 +127,7 @@ def test_the_count_cap_is_soft_when_everything_is_protected_or_too_young(tmp_pat
     """A stated tradeoff, asserted so it stays deliberate: the cap yields to rules 1-2 rather than
     deleting a trace something is still using."""
     for i in range(5):
-        _trace(tmp_path, f"nb-{i}")  # all brand new
+        _trace(tmp_path, f"orbit-{i}")  # all brand new
 
     removed = prune_traces(tmp_path, max_age_seconds=0, max_files=1, protected=set())
 
@@ -142,24 +142,24 @@ def test_a_protected_file_does_not_consume_a_cap_slot(tmp_path):
     number a client influences, since `_run_isolated` reserves the trace file before spawning)
     could force well-within-retention traces to be deleted early. Retention days is a floor again,
     not a function of load."""
-    _trace(tmp_path, "nb-live", age_seconds=10_000)
-    _trace(tmp_path, "nb-a", age_seconds=9_000)
-    _trace(tmp_path, "nb-b", age_seconds=8_000)
+    _trace(tmp_path, "orbit-live", age_seconds=10_000)
+    _trace(tmp_path, "orbit-a", age_seconds=9_000)
+    _trace(tmp_path, "orbit-b", age_seconds=8_000)
 
     removed = prune_traces(
-        tmp_path, max_age_seconds=0, max_files=2, protected={"nb-live"}, min_age_seconds=0
+        tmp_path, max_age_seconds=0, max_files=2, protected={"orbit-live"}, min_age_seconds=0
     )
 
     assert removed == []  # two eligible files, cap of two — the in-flight run costs nobody a slot
-    assert sorted(p.stem for p in tmp_path.glob("*.jsonl")) == ["nb-a", "nb-b", "nb-live"]
+    assert sorted(p.stem for p in tmp_path.glob("*.jsonl")) == ["orbit-a", "orbit-b", "orbit-live"]
 
 
 def test_concurrent_runs_cannot_force_an_early_deletion(tmp_path):
     """The scenario the review used to demonstrate the bug, pinned so it can't come back: traces
     well inside the retention window, plus a burst of in-flight reservations pushing the directory
     total far past the cap."""
-    inside_retention = [_trace(tmp_path, f"nb-old-{i}", age_seconds=2 * 86_400) for i in range(10)]
-    in_flight = {f"nb-live-{i}" for i in range(50)}
+    inside_retention = [_trace(tmp_path, f"orbit-old-{i}", age_seconds=2 * 86_400) for i in range(10)]
+    in_flight = {f"orbit-live-{i}" for i in range(50)}
     for run_id in in_flight:
         _trace(tmp_path, run_id, age_seconds=2 * 86_400)
 
@@ -180,7 +180,7 @@ def test_only_this_projects_own_traces_are_ever_deleted(tmp_path):
     project's siblings all write `.jsonl` traces of their own. An independent security review
     reproduced a co-located directory being emptied at server startup on nothing but a filename
     glob and an mtime — age and `protected` bound WHEN a file dies, never WHOSE it is."""
-    ours = _trace(tmp_path, "nb-ours", age_seconds=10_000_000)
+    ours = _trace(tmp_path, "orbit-ours", age_seconds=10_000_000)
     sibling = _foreign(tmp_path, "ctx-distillery-run-1.jsonl", '{"schema": "some-other/trace/v1"}\n')
     plain = _foreign(tmp_path, "my-important-data.jsonl", '{"rows": [1, 2, 3]}\n')
     garbage = _foreign(tmp_path, "not-even-json.jsonl", "hello, world\n")
@@ -189,7 +189,7 @@ def test_only_this_projects_own_traces_are_ever_deleted(tmp_path):
         tmp_path, max_age_seconds=1.0, max_files=0, protected=set(), min_age_seconds=0
     )
 
-    assert removed == ["nb-ours"]
+    assert removed == ["orbit-ours"]
     assert not ours.exists()
     assert sibling.exists() and plain.exists() and garbage.exists()
 
@@ -198,26 +198,26 @@ def test_an_abandoned_empty_reservation_is_still_collectable(tmp_path):
     """`_run_isolated` creates the trace file empty (`O_CREAT|O_EXCL`) before spawning a worker. A
     run killed before its first event leaves that zero-byte file behind — the ownership gate has to
     keep it collectable, or the reservation leaks forever."""
-    empty = _foreign(tmp_path, "nb-abandoned.jsonl", "")
+    empty = _foreign(tmp_path, "orbit-abandoned.jsonl", "")
 
     removed = prune_traces(
         tmp_path, max_age_seconds=1.0, max_files=0, protected=set(), min_age_seconds=0
     )
 
-    assert removed == ["nb-abandoned"]
+    assert removed == ["orbit-abandoned"]
     assert not empty.exists()
 
 
 def test_an_unremovable_file_is_skipped_not_raised(tmp_path, monkeypatch):
     """Housekeeping runs in a `finally` after a successful run — it must never turn a completed
     `ask` into a 500."""
-    _trace(tmp_path, "nb-a", age_seconds=10_000)
-    _trace(tmp_path, "nb-b", age_seconds=10_000)
+    _trace(tmp_path, "orbit-a", age_seconds=10_000)
+    _trace(tmp_path, "orbit-b", age_seconds=10_000)
 
     real_unlink = os.unlink
 
     def _fail_on_a(path, *args, **kwargs):
-        if str(path).endswith("nb-a.jsonl"):
+        if str(path).endswith("orbit-a.jsonl"):
             raise PermissionError("simulated")
         return real_unlink(path, *args, **kwargs)
 
@@ -227,8 +227,8 @@ def test_an_unremovable_file_is_skipped_not_raised(tmp_path, monkeypatch):
         tmp_path, max_age_seconds=1.0, max_files=0, protected=set(), min_age_seconds=0
     )
 
-    assert removed == ["nb-b"]  # nb-a was skipped, not fatal
-    assert (tmp_path / "nb-a.jsonl").exists()
+    assert removed == ["orbit-b"]  # orbit-a was skipped, not fatal
+    assert (tmp_path / "orbit-a.jsonl").exists()
 
 
 def test_the_default_floor_is_an_hour():

@@ -87,7 +87,7 @@ def slug(raw: str) -> str:
     # unauthenticated 500 on `ask`/`guide`/`audio` via the `run_id` body field. Found and reproduced
     # by an independent review of this very fallback; `slug` never raised before it existed.
     normalized = unicodedata.normalize("NFC", raw)
-    return "nb-" + hashlib.sha256(normalized.encode("utf-8", "surrogatepass")).hexdigest()[:16]
+    return "orbit-" + hashlib.sha256(normalized.encode("utf-8", "surrogatepass")).hexdigest()[:16]
 
 
 def orbit_path(orbit_id: str, *, base_dir: str | Path = DEFAULT_ORBITS_DIR) -> Path:
@@ -511,7 +511,7 @@ def list_orbit_summaries(
         # whether names can collide. They can, so "which did I touch last" has to be answerable.
         stamps[id(orbit)] = path.stat().st_mtime
         orbits.append(orbit)
-    orbits.sort(key=lambda nb: stamps.get(id(nb), 0.0), reverse=True)
+    orbits.sort(key=lambda orb: stamps.get(id(orb), 0.0), reverse=True)
     for orbit in orbits:
         _MTIMES[orbit.id] = stamps.get(id(orbit), 0.0)
     return orbits, unreadable

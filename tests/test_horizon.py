@@ -235,10 +235,10 @@ def test_promotion_assigns_the_orbit_s_own_source_id_not_the_node_id():
     the max id in use (invariant 50), and `Source.marker()` derives the citation coordinate from
     `.id` at blob time (invariant 4) — so nothing stored ever had the placeholder baked in."""
     node = horizon.add_node(_source())
-    membership = horizon.promote_node(node.id, "mynb")
+    membership = horizon.promote_node(node.id, "myorbit")
 
     assert membership.source_id != node.id
-    orbit = load_orbit("mynb")
+    orbit = load_orbit("myorbit")
     assert [s.id for s in orbit.sources] == [membership.source_id]
     promoted = orbit.sources[0]
     assert promoted.origin == "https://example.com/a"
@@ -263,18 +263,18 @@ def test_promoting_something_the_orbit_already_holds_is_not_an_error():
     """`append_sources` dedupes by origin. A 409 here would make "add everything with this tag" fail
     on the one item the reader had already added by hand."""
     node = horizon.add_node(_source())
-    first = horizon.promote_node(node.id, "mynb")
-    again = horizon.promote_node(node.id, "mynb")
+    first = horizon.promote_node(node.id, "myorbit")
+    again = horizon.promote_node(node.id, "myorbit")
 
     assert again.source_id == first.source_id
-    assert len(load_orbit("mynb").sources) == 1
+    assert len(load_orbit("myorbit").sources) == 1
     assert len(horizon.memberships_for(node.id)) == 1
 
 
 def test_promotion_of_a_missing_node_raises_rather_than_creating_an_empty_orbit():
     with pytest.raises(ValueError, match="no such node"):
-        horizon.promote_node("nd-nope", "mynb")
-    assert load_orbit("mynb") is None
+        horizon.promote_node("nd-nope", "myorbit")
+    assert load_orbit("myorbit") is None
 
 
 def test_node_source_carries_the_blocks_back_out():
@@ -293,13 +293,13 @@ def test_removing_a_node_drops_its_memberships_but_never_a_promoted_source():
     invariant 12's promise that a source already cited in a saved turn keeps meaning what it meant.
     The source was COPIED; removal forgets the node, not the copy."""
     node = horizon.add_node(_source())
-    horizon.promote_node(node.id, "mynb")
+    horizon.promote_node(node.id, "myorbit")
 
     assert horizon.remove_node(node.id) is True
     assert horizon.get_node(node.id) is None
     assert horizon.memberships_for(node.id) == []
     assert not horizon.node_blocks_path(node.id).exists()
-    assert len(load_orbit("mynb").sources) == 1, "promotion is a copy; removal must not reach it"
+    assert len(load_orbit("myorbit").sources) == 1, "promotion is a copy; removal must not reach it"
 
 
 def test_removing_a_node_that_is_not_there_says_so_rather_than_raising():
@@ -316,7 +316,7 @@ def test_the_cascade_is_actually_on():
     which the test above would still pass, because it asks `memberships_for`, which filters by a
     node id nothing else returns."""
     node = horizon.add_node(_source())
-    horizon.promote_node(node.id, "mynb")
+    horizon.promote_node(node.id, "myorbit")
     horizon.remove_node(node.id)
     with sqlite3.connect(horizon.index_path()) as conn:
         assert conn.execute("SELECT COUNT(*) FROM memberships").fetchone()[0] == 0
@@ -329,7 +329,7 @@ def test_the_cascade_is_actually_on():
     "hostile",
     [
         "../../victim",
-        "../../orbits/mynb",
+        "../../orbits/myorbit",
         "nd-../../victim",
         "/etc/passwd",
         "nd-ABCDEF0123456789",     # uppercase is not what `node_id_for` mints
@@ -339,7 +339,7 @@ def test_the_cascade_is_actually_on():
     ],
 )
 def test_a_node_id_never_becomes_an_arbitrary_path(hostile, tmp_path):
-    """**`remove_node("../../orbits/mynb")` deleted a live orbit file and returned `False`.**
+    """**`remove_node("../../orbits/myorbit")` deleted a live orbit file and returned `False`.**
 
     Reproduced before the fix, both forms: the relative one escaped `horizon/nodes/`, and an absolute
     one discarded the directory outright, because `Path("horizon/nodes") / "/etc/x"` IS `/etc/x`. The
@@ -421,14 +421,14 @@ def test_two_nodes_sharing_an_origin_cannot_silently_shadow_each_other():
     c = horizon.add_node(pasted("CCC"))
     assert a.id != c.id
 
-    first = horizon.promote_node(a.id, "nb")
-    second = horizon.promote_node(c.id, "nb")
+    first = horizon.promote_node(a.id, "orb")
+    second = horizon.promote_node(c.id, "orb")
 
     # TWO sources, two ids, two memberships — and each membership points at its OWN node's text.
     assert first.source_id != second.source_id
-    assert sorted(m.node_id for m in horizon.nodes_in_orbit("nb")) == sorted([a.id, c.id])
+    assert sorted(m.node_id for m in horizon.nodes_in_orbit("orb")) == sorted([a.id, c.id])
     assert [m.source_id for m in horizon.memberships_for(c.id)] == [second.source_id]
-    sources = {s.id: s for s in load_orbit("nb").sources}
+    sources = {s.id: s for s in load_orbit("orb").sources}
     assert set(sources) == {first.source_id, second.source_id}
     assert sources[first.source_id].blocks[0].text == "AAA"
     assert sources[second.source_id].blocks[0].text == "CCC", "C's text is what was being lost"
@@ -440,10 +440,10 @@ def test_re_promoting_the_same_node_still_works_after_that_guard():
     """The guard must not break the idempotent case it sits next to — it matches on the node's OWN
     prior membership, not on the origin."""
     node = horizon.add_node(_source())
-    first = horizon.promote_node(node.id, "nb")
-    again = horizon.promote_node(node.id, "nb")
+    first = horizon.promote_node(node.id, "orb")
+    again = horizon.promote_node(node.id, "orb")
     assert again.source_id == first.source_id
-    assert len(load_orbit("nb").sources) == 1
+    assert len(load_orbit("orb").sources) == 1
 
 
 def test_a_bad_value_is_refused_instead_of_poisoning_the_listing():
@@ -879,7 +879,7 @@ def test_a_promotion_that_loses_a_race_keeps_a_orbit_that_already_existed(tmp_pa
     )
     horizon.promote_node(empty_before.id, "shell", base_dir=tmp_path, orbits_dir=orbits)
     # Emptied by hand, the way removing its last source would.
-    mutate_orbit("shell", lambda nb: remove_source(nb, nb.sources[0].id), base_dir=orbits)
+    mutate_orbit("shell", lambda orb: remove_source(orb, orb.sources[0].id), base_dir=orbits)
     assert not load_orbit("shell", base_dir=orbits).sources
 
     victim = horizon.add_node(
