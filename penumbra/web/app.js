@@ -9187,20 +9187,57 @@ async function nodeActions(node, detail) {
   // only possible outcome contradicts what the reader can see is the "no UI control that lies about
   // what the API does" rule, and the state is knowable here without asking.
   if (node.state === "ready" || node.state === "ready_undistilled") {
+    // What the picker offers depends on where the capture already is. Filed nowhere: file it.
+    // Filed in one orbit: it shows that orbit, and choosing another MOVES it there, the same move
+    // as carrying its moon between planets. Filed in several: "move" would not say from where, so
+    // it offers the orbits it is not in yet. An orbit it is already in is never offered again.
+    const memberships = detail.orbits || [];
+    // Memberships name an orbit by its key, which is only ever looked up (invariant 37).
+    const bookBySlug = new Map((books.orbits || []).map((b) => [b.slug || b.id, b]));
+    const filedBooks = new Set();
+    memberships.forEach((m) => {
+      const book = bookBySlug.get(m.orbit_id);
+      if (book) filedBooks.add(book);
+    });
+    const others = (books.orbits || []).filter((b) => !filedBooks.has(b));
     const picker = elt("select", "file-into");
-    picker.setAttribute("aria-label", t("horizon.fileInto", "File into an orbit"));
-    const blank = elt("option", null, t("horizon.fileIntoPlaceholder", "File into\u2026"));
-    blank.value = "";
-    picker.appendChild(blank);
-    for (const book of books.orbits || []) {
-      const option = elt("option", null, bookLabels.get(book.id));
+    const hereBook = memberships.length === 1 && filedBooks.size === 1 ? [...filedBooks][0] : null;
+    const here = hereBook ? hereBook.slug || hereBook.id : null;
+    const hereName = hereBook ? bookLabels.get(hereBook.id) : "";
+    const first = elt("option", null, here
+      ? t("horizon.filedHere", `In ${hereName}`, { name: hereName })
+      : memberships.length
+        ? t("horizon.alsoFile", "Also file into\u2026")
+        : t("horizon.fileIntoPlaceholder", "File into\u2026"));
+    first.value = "";
+    picker.appendChild(first);
+    picker.setAttribute("aria-label", here
+      ? t("horizon.moveLabel", `In ${hereName}; choose an orbit to move it to`, { name: hereName })
+      : t("horizon.fileInto", "File into an orbit"));
+    for (const book of others) {
+      const label = bookLabels.get(book.id);
+      const option = elt("option", null, here ? t("horizon.moveTo", `Move to ${label}`, { name: label }) : label);
       option.value = book.id;
       picker.appendChild(option);
     }
-    const fresh = elt("option", null, t("horizon.newOrbit", "New orbit\u2026"));
-    fresh.value = "__new__";
-    picker.appendChild(fresh);
-    picker.addEventListener("change", () => promoteNode(node, picker));
+    if (!here) {
+      const fresh = elt("option", null, t("horizon.newOrbit", "New orbit\u2026"));
+      fresh.value = "__new__";
+      picker.appendChild(fresh);
+    }
+    picker.addEventListener("change", () => {
+      if (!picker.value) return;
+      if (!here) {
+        void promoteNode(node, picker);
+        return;
+      }
+      const book = others.find((b) => b.id === picker.value);
+      picker.value = "";
+      if (book) {
+        void moveCapture({ id: node.id, orbit: here },
+          { id: book.id, slug: book.slug || book.id, title: bookLabels.get(book.id) });
+      }
+    });
     main.appendChild(picker);
     const read = elt("button", "btn", t("map.readInList", "Read it"));
     read.type = "button";
@@ -9272,6 +9309,7 @@ async function promoteNode(node, picker) {
   picker.disabled = false;
   picker.value = "";
   await refreshHorizon({ reset: true });
+  renderStarMapCard();
 }
 
 async function forgetNode(node) {
@@ -12559,7 +12597,7 @@ async function moveCapture(item, to, { confirm = false } = {}) {
     notify(t("map.moveKept", `It was added to ${to.title} but could not be taken out of ${fromTitle}.`,
       { name: to.title, from: fromTitle }));
   }
-  void refreshHorizon();
+  void refreshHorizon().then(() => renderStarMapCard());
   void renderStarMap();
 }
 
@@ -12793,11 +12831,12 @@ function mapCardClose(card) {
 }
 
 //: "File into…" for one capture. Only orbits it is not already in are offered.
-function filePicker(nodeId, orbits = starMap.orbits) {
+function filePicker(nodeId, orbits = starMap.orbits, { also = false } = {}) {
   const picker = document.createElement("select");
   picker.className = "card-file";
-  picker.setAttribute("aria-label", t("map.fileInto", "File into…"));
-  picker.appendChild(new Option(t("map.fileInto", "File into…"), ""));
+  const label = also ? t("horizon.alsoFile", "Also file into…") : t("map.fileInto", "File into…");
+  picker.setAttribute("aria-label", label);
+  picker.appendChild(new Option(label, ""));
   orbits.forEach((o) => picker.appendChild(new Option(o.title, o.id)));
   picker.addEventListener("change", () => {
     if (picker.value) void fileCapture(nodeId, picker.value, picker);
@@ -13115,7 +13154,7 @@ function renderCaptureCard(card, focus) {
       detail.appendChild(elt("p", "card-meta", t("map.filedIn", `In ${joined}`, { where: joined })));
     }
     const actions = elt("div", "card-actions");
-    actions.appendChild(filePicker(focus.id, [...offer.values()]));
+    actions.appendChild(filePicker(focus.id, [...offer.values()], { also: memberships.length > 0 }));
     const read = elt("button", "btn", t("map.readInList", "Read it in full"));
     read.type = "button";
     read.addEventListener("click", () => void showNodeReader({ ...node, id: focus.id }));
