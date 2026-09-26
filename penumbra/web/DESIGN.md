@@ -268,6 +268,14 @@ Everything follows from it. The title and the distilled summary are set in the r
 - The dock is a breathing grip at rest and opens when the pointer reaches the grip, not anywhere along the bottom edge; with it open, no legend text shows through beside it.
 - A scope chip names what the question will read, and Enter on a Horizon scope previews the captures for free before anything is spent.
 
+## 15. Worlds, weather and rest
+
+**The map is worth looking at when nothing is being done with it.** Each planet is one of nine kinds of world (terran, archipelago, desert, lava, ice, gas, barren, jungle, toxic), drawn by `planetSurface` from a seeded generator so an orbit is the same world every visit; `planetKinds` walks the orbits in name order and moves a kind already on the map to the next unused one. The surface is one 2r period drawn three times and slid by 2r (`.map-planet-spin`), so it turns without a seam under a fixed light (`pn-light`) and shade, with faster cloud on cloudy worlds and still polar caps on cold and temperate ones. Moons are `moonBody` rocks, irregular and each its own; their colour still says summarised or not.
+
+**Weather is rare while working and frequent at rest.** `.map-sky` holds meteors, showers from one radiant, comets with a tail and tumbling rocks, each a traveller that moves by its own (--dx, --dy) and removes itself. None runs with reduced motion or while the map is off screen.
+
+**Rest is the map as a wallpaper.** `.is-ambient` fades every control, pins `.starmap` over the window and shows `.ambient-clock`; the camera drifts between wide views every 16 to 24 seconds. Any movement past a few pixels, a key, a click or a wheel ends it. It starts after the idle time chosen in Settings (a preference of the browser, like the interface language) and never while a run, an intake or a summary pass is going, because resting hides their Stop.
+
 ## 14. The window
 
 **No title bar.** In the desktop app on macOS the header is the top of the window. The shell hides the title and places the traffic lights at 18,26, centred on the 56px header, and `.has-traffic-lights` (set only when the page knows it is in the shell on a Mac) starts the header after them. The header carries `data-tauri-drag-region="deep"`, so its empty space drags the window and a double-click zooms it, while its buttons stay buttons. A browser tab, and the app on other platforms, keep their own chrome.

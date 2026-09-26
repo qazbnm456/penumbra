@@ -2098,6 +2098,37 @@ function renderUiLanguageRow(body) {
   body.appendChild(wrap);
 }
 
+// When the star map rests. Like the interface language, a preference of this browser: it changes
+// nothing the server does, so it is kept here and applies at once.
+function renderRestRow(body) {
+  const wrap = document.createElement("div");
+  wrap.className = "setting-row";
+  const label = document.createElement("label");
+  label.textContent = t("settings.rest", "Rest the map when idle");
+  label.htmlFor = "setting-rest";
+  wrap.appendChild(label);
+  const select = document.createElement("select");
+  select.id = "setting-rest";
+  const current = restMinutes();
+  [[0, t("settings.restOff", "Never")], [2, t("settings.restMinutes", "After 2 minutes", { n: 2 })],
+    [5, t("settings.restMinutes", "After 5 minutes", { n: 5 })], [10, t("settings.restMinutes", "After 10 minutes", { n: 10 })],
+    [30, t("settings.restMinutes", "After 30 minutes", { n: 30 })]].forEach(([value, text]) => {
+    const option = document.createElement("option");
+    option.value = String(value);
+    option.textContent = text;
+    option.selected = value === current;
+    select.appendChild(option);
+  });
+  select.addEventListener("change", () => writeStored(AMBIENT_IDLE_KEY, select.value));
+  wrap.appendChild(select);
+  const help = document.createElement("div");
+  help.className = "setting-source";
+  help.textContent = t("settings.restHelp",
+    "Left alone on the star map, the interface steps aside and the map plays as a living wallpaper. It never starts while something is running.");
+  wrap.appendChild(help);
+  body.appendChild(wrap);
+}
+
 //: What the server says each setting may be set to, for the provider actually configured. Empty
 //: until `initSettings` fetches it; a row with no choices falls back to a free-text input, so the
 //: page still works if this request fails.
@@ -2153,6 +2184,7 @@ function renderSettings(state_) {
 
   const inputs = new Map();
   renderUiLanguageRow(body);
+  renderRestRow(body);
   renderVectorsRow(body);
 
   settingRows().forEach((row) => {
@@ -11102,6 +11134,14 @@ function starMapDefs() {
     [["0.5", "stop-clear"], ["1", "stop-shade"]]);
   radial("pn-halo", {}, [["0.55", "stop-halo"], ["1", "stop-clear"]]);
   radial("pn-hole-glow", {}, [["0.3", "stop-hole-glow"], ["1", "stop-clear"]]);
+  radial("pn-light", { cx: "0.34", cy: "0.28", r: "0.7" }, [["0", "stop-light"], ["1", "stop-light-clear"]]);
+  const linear = (id, stops) => {
+    const g = svgEl("linearGradient", { id, x1: "0", y1: "0", x2: "1", y2: "0" });
+    stops.forEach(([offset, cls]) => g.appendChild(svgEl("stop", { offset }, cls)));
+    defs.appendChild(g);
+  };
+  linear("pn-meteor", [["0", "stop-trail-clear"], ["1", "stop-trail"]]);
+  linear("pn-comet-tail", [["0", "stop-trail-clear"], ["0.8", "stop-tail"], ["1", "stop-trail"]]);
   const blur = svgEl("filter", { id: "pn-soft", x: "-50%", y: "-50%", width: "200%", height: "200%" });
   blur.appendChild(svgEl("feGaussianBlur", { stdDeviation: "3.2" }));
   defs.appendChild(blur);
@@ -11120,6 +11160,394 @@ function restoreFocus(svg, key) {
   const again = [...svg.querySelectorAll("[data-key]")].find((el) => el.dataset.key === key);
   if (again) again.focus();
   return Boolean(again);
+}
+
+// --- a sky worth looking at: planets, moons and weather, made from a seed ---------------------------
+//
+// Every planet is a world of its own kind, chosen and drawn from a seed of its orbit's name, so it
+// is the same world each time the reader comes back and a different one from its neighbours: ocean
+// and continents under drifting cloud, reef islands, dune seas, cracked lava, ice, banded giants,
+// cratered rock, jungle, toxic haze. Moons are small irregular rocks, each its own shape, and keep
+// their colour for what it means (copper summarised, grey not yet). Between them the sky has
+// weather: meteors, now and then a shower, a comet crossing slowly, a rock tumbling past. All of it
+// is SVG shapes and CSS motion; nothing is fetched and nothing costs more than a frame.
+
+//: A small seeded generator (mulberry32): the same seed gives the same world.
+function seededRandom(seed) {
+  let a = Math.floor(seed * 4294967296) >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const PLANET_KINDS = {
+  terran: { base: "#24537b", land: ["#4c7a3b", "#6b8b46", "#8a7b4c", "#3f6a33"], clouds: true, atmo: "#8fc4ff" },
+  archipelago: { base: "#1e7c84", land: ["#dac99c", "#bba978"], reef: "#66c9be", clouds: true, atmo: "#9ee6ff" },
+  desert: { base: "#c29056", land: ["#ddb67e", "#ad7e49", "#8e6236"] },
+  lava: { base: "#2a1915", land: ["#3d2620", "#4a2d24"], glow: "#ff7b2f" },
+  ice: { base: "#c5dbe8", land: ["#eef5f9", "#d9e8f1"], crack: "#85adc3", atmo: "#dff2ff" },
+  gas: { base: "#c7a07a", bands: ["#a8795a", "#e1c6a0", "#8d5c43", "#d6b48c", "#b88a63"], storm: "#b0563a" },
+  barren: { base: "#8a847f", crater: "#5d5853", rim: "#aba59f" },
+  jungle: { base: "#2b5933", land: ["#3f7a3c", "#5a8f42", "#244a2a"], clouds: true, atmo: "#a8f0b0" },
+  toxic: { base: "#8b993a", land: ["#b8c64a", "#a2b13b", "#6f7c2a"], atmo: "#e3ee76" },
+};
+
+function planetKind(seed) {
+  const kinds = Object.keys(PLANET_KINDS);
+  return kinds[Math.floor(seededRandom(seed)() * kinds.length)];
+}
+
+//: Each orbit's kind of world, varied across the map: orbits are taken in name order and one whose
+//: seeded kind is already on the map takes the next unused one, so two neighbours are rarely the
+//: same world while each stays the same world from visit to visit (for as long as the set of orbits
+//: does not change).
+function planetKinds(slugs) {
+  const kinds = Object.keys(PLANET_KINDS);
+  const used = new Set();
+  const out = new Map();
+  [...slugs].sort().forEach((slug) => {
+    let at = kinds.indexOf(planetKind(stableHash(`planet:${slug}`)));
+    for (let tries = 0; used.has(kinds[at]) && tries < kinds.length; tries += 1) at = (at + 1) % kinds.length;
+    if (used.size >= kinds.length) used.clear();
+    used.add(kinds[at]);
+    out.set(slug, kinds[at]);
+  });
+  return out;
+}
+
+//: A closed, softly irregular outline around (cx, cy): a continent, an island, a rock.
+function blobPath(cx, cy, radius, rnd, points = 9, rough = 0.45) {
+  const pts = [];
+  for (let i = 0; i < points; i += 1) {
+    const a = (i / points) * Math.PI * 2;
+    const r = radius * (1 - rough / 2 + rnd() * rough);
+    pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]);
+  }
+  const mid = (p, q) => [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+  let d = `M ${mid(pts[pts.length - 1], pts[0]).map((v) => v.toFixed(2)).join(" ")}`;
+  pts.forEach((p, i) => {
+    const m = mid(p, pts[(i + 1) % pts.length]);
+    d += ` Q ${p[0].toFixed(2)} ${p[1].toFixed(2)} ${m[0].toFixed(2)} ${m[1].toFixed(2)}`;
+  });
+  return `${d} Z`;
+}
+
+//: One period of a planet's surface, 2r wide, drawn three times side by side so sliding it by 2r
+//: loops without a seam. Returns the sliding layer and, for cloudy worlds, a faster cloud layer.
+function planetSurface(r, seed, chosen = null) {
+  const kind = chosen || planetKind(seed);
+  const paint = PLANET_KINDS[kind];
+  const rnd = seededRandom(seed + 0.5);
+  const pick = (list) => list[Math.floor(rnd() * list.length)];
+  const tile = [];
+  const add = (tag, attrs) => tile.push([tag, attrs]);
+  const x = () => -r + rnd() * 2 * r;
+  const y = (spread = 0.8) => (rnd() * 2 - 1) * r * spread;
+  if (kind === "terran" || kind === "jungle" || kind === "toxic") {
+    const count = kind === "terran" ? 4 + Math.floor(rnd() * 3) : 6 + Math.floor(rnd() * 4);
+    for (let i = 0; i < count; i += 1) {
+      add("path", { d: blobPath(x(), y(0.7), r * (0.18 + rnd() * 0.32), rnd, 10, 0.6), fill: pick(paint.land) });
+    }
+    for (let i = 0; i < 5; i += 1) add("path", { d: blobPath(x(), y(0.8), r * (0.04 + rnd() * 0.07), rnd, 6), fill: pick(paint.land) });
+  } else if (kind === "archipelago") {
+    for (let i = 0; i < 12 + Math.floor(rnd() * 6); i += 1) {
+      const cx = x();
+      const cy = y(0.8);
+      const size = r * (0.04 + rnd() * 0.1);
+      add("path", { d: blobPath(cx, cy, size * 1.7, rnd, 8), fill: paint.reef, opacity: 0.55 });
+      add("path", { d: blobPath(cx, cy, size, rnd, 8), fill: pick(paint.land) });
+    }
+  } else if (kind === "desert") {
+    for (let i = 0; i < 7; i += 1) {
+      const band = -r + ((i + rnd() * 0.5) / 7) * 2 * r;
+      const amp = r * (0.03 + rnd() * 0.05);
+      let d = `M ${-r} ${band.toFixed(2)}`;
+      for (let k = 1; k <= 8; k += 1) {
+        d += ` Q ${(-r + (k - 0.5) * r / 4).toFixed(2)} ${(band + (k % 2 ? amp : -amp)).toFixed(2)} ${(-r + k * r / 4).toFixed(2)} ${band.toFixed(2)}`;
+      }
+      add("path", { d, fill: "none", stroke: pick(paint.land), "stroke-width": (r * (0.05 + rnd() * 0.08)).toFixed(2), opacity: 0.7 });
+    }
+    for (let i = 0; i < 3; i += 1) add("path", { d: blobPath(x(), y(0.6), r * (0.08 + rnd() * 0.1), rnd), fill: paint.land[2], opacity: 0.6 });
+  } else if (kind === "lava") {
+    for (let i = 0; i < 6; i += 1) add("path", { d: blobPath(x(), y(0.8), r * (0.15 + rnd() * 0.25), rnd, 9, 0.6), fill: pick(paint.land) });
+    for (let i = 0; i < 6; i += 1) {
+      let px = x();
+      let py = y(0.8);
+      let d = `M ${px.toFixed(2)} ${py.toFixed(2)}`;
+      for (let k = 0; k < 4; k += 1) {
+        px += (rnd() - 0.3) * r * 0.35;
+        py += (rnd() - 0.5) * r * 0.35;
+        d += ` L ${px.toFixed(2)} ${py.toFixed(2)}`;
+      }
+      add("path", { d, fill: "none", stroke: paint.glow, "stroke-width": (r * 0.1).toFixed(2), opacity: 0.22, "stroke-linecap": "round" });
+      add("path", { d, fill: "none", stroke: paint.glow, "stroke-width": (r * 0.03).toFixed(2), "stroke-linecap": "round" });
+    }
+  } else if (kind === "ice") {
+    for (let i = 0; i < 6; i += 1) add("path", { d: blobPath(x(), y(0.8), r * (0.15 + rnd() * 0.25), rnd), fill: pick(paint.land), opacity: 0.8 });
+    for (let i = 0; i < 7; i += 1) {
+      const x1 = x();
+      const y1 = y(0.8);
+      add("path", { d: `M ${x1.toFixed(2)} ${y1.toFixed(2)} L ${(x1 + (rnd() - 0.5) * r).toFixed(2)} ${(y1 + (rnd() - 0.5) * r * 0.6).toFixed(2)}`,
+        fill: "none", stroke: paint.crack, "stroke-width": (r * 0.025).toFixed(2), opacity: 0.8 });
+    }
+  } else if (kind === "gas") {
+    let top = -r;
+    while (top < r) {
+      const h = r * (0.08 + rnd() * 0.22);
+      add("rect", { x: -r, y: top.toFixed(2), width: 2 * r, height: h.toFixed(2), fill: pick(paint.bands), opacity: 0.85 });
+      top += h;
+    }
+    add("ellipse", { cx: x().toFixed(2), cy: (y(0.5)).toFixed(2), rx: (r * 0.22).toFixed(2), ry: (r * 0.12).toFixed(2), fill: paint.storm, opacity: 0.85 });
+  } else if (kind === "barren") {
+    for (let i = 0; i < 9 + Math.floor(rnd() * 6); i += 1) {
+      const size = r * (0.05 + rnd() * 0.16);
+      add("circle", { cx: x().toFixed(2), cy: y(0.85).toFixed(2), r: size.toFixed(2), fill: paint.crater, stroke: paint.rim,
+        "stroke-width": (size * 0.25).toFixed(2), opacity: 0.8 });
+    }
+  }
+  const layer = (items) => {
+    const g = svgEl("g");
+    [-2 * r, 0, 2 * r].forEach((shift) => {
+      const copy = svgEl("g", { transform: `translate(${shift.toFixed(2)} 0)` });
+      items.forEach(([tag, attrs]) => copy.appendChild(svgEl(tag, attrs)));
+      g.appendChild(copy);
+    });
+    return g;
+  };
+  const surface = layer(tile);
+  let clouds = null;
+  if (paint.clouds) {
+    const puffs = [];
+    for (let i = 0; i < 6; i += 1) {
+      puffs.push(["ellipse", { cx: x().toFixed(2), cy: y(0.75).toFixed(2), rx: (r * (0.2 + rnd() * 0.3)).toFixed(2),
+        ry: (r * (0.05 + rnd() * 0.06)).toFixed(2), fill: "#ffffff", opacity: (0.25 + rnd() * 0.25).toFixed(2) }]);
+    }
+    clouds = layer(puffs);
+  }
+  return { kind, paint, surface, clouds, spin: 40 + rnd() * 50 };
+}
+
+//: A moon: a small irregular rock, its own shape from its own seed.
+function moonBody(x, y, seed, cls) {
+  const rnd = seededRandom(seed);
+  return svgEl("path", { d: blobPath(x, y, 2 + rnd() * 0.9, rnd, 7, 0.5) }, cls);
+}
+
+// --- weather on the map ------------------------------------------------------------------------------
+
+const skyWeather = { timer: 0, lastShower: 0, lastComet: 0, lastRock: 0 };
+
+function skyLayer() {
+  const layer = starMap.world && starMap.world.querySelector(".map-sky");
+  return layer && layer.isConnected ? layer : null;
+}
+
+function skyOnScreen() {
+  return document.body.dataset.view === "horizon" && !horizonEl("starmap").hidden && !document.hidden && motionAllowed();
+}
+
+//: One sky event, travelling from where it starts by (dx, dy) over `seconds`, then removed.
+function skyTraveller(cls, x, y, angle, dx, dy, seconds, build) {
+  const layer = skyLayer();
+  if (!layer) return;
+  const outer = svgEl("g", { transform: `translate(${x.toFixed(1)} ${y.toFixed(1)})` });
+  const mover = svgEl("g", {}, cls);
+  mover.style.setProperty("--dx", `${dx.toFixed(1)}px`);
+  mover.style.setProperty("--dy", `${dy.toFixed(1)}px`);
+  mover.style.animationDuration = `${seconds.toFixed(2)}s`;
+  const turned = svgEl("g", { transform: `rotate(${angle.toFixed(1)})` });
+  build(turned);
+  mover.appendChild(turned);
+  outer.appendChild(mover);
+  layer.appendChild(outer);
+  mover.addEventListener("animationend", () => outer.remove());
+}
+
+function skyMeteor(from) {
+  const angle = from ? from.angle + (Math.random() - 0.5) * 14 : 150 + Math.random() * 40;
+  const rad = (angle * Math.PI) / 180;
+  const len = 50 + Math.random() * 70;
+  const travel = 160 + Math.random() * 160;
+  const x = from ? from.x + (Math.random() - 0.5) * 120 : 100 + Math.random() * 800;
+  const y = from ? from.y + (Math.random() - 0.5) * 80 : 40 + Math.random() * 300;
+  skyTraveller("map-meteor", x, y, angle, Math.cos(rad) * travel, Math.sin(rad) * travel, 0.7 + Math.random() * 0.6,
+    (g) => g.appendChild(svgEl("rect", { x: -len, y: -0.7, width: len, height: 1.4, rx: 0.7, fill: "url(#pn-meteor)" })));
+}
+
+function skyShower() {
+  const radiant = { x: 150 + Math.random() * 700, y: 30 + Math.random() * 160, angle: 140 + Math.random() * 60 };
+  const count = 6 + Math.floor(Math.random() * 7);
+  for (let i = 0; i < count; i += 1) setTimeout(() => skyMeteor(radiant), i * (150 + Math.random() * 350));
+}
+
+function skyComet() {
+  const fromLeft = Math.random() < 0.5;
+  const x = fromLeft ? -80 : 1080;
+  const y = 60 + Math.random() * 400;
+  const dx = (fromLeft ? 1 : -1) * (1100 + Math.random() * 200);
+  const dy = (Math.random() - 0.5) * 300;
+  const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+  skyTraveller("map-comet", x, y, angle, dx, dy, 28 + Math.random() * 18, (g) => {
+    g.appendChild(svgEl("rect", { x: -140, y: -2.2, width: 140, height: 4.4, rx: 2.2, fill: "url(#pn-comet-tail)" }));
+    g.appendChild(svgEl("circle", { r: 2.4 }, "map-comet-head"));
+  });
+}
+
+function skyRock() {
+  const fromLeft = Math.random() < 0.5;
+  const x = fromLeft ? -20 : 1020;
+  const y = 40 + Math.random() * 560;
+  const dx = (fromLeft ? 1 : -1) * 1060;
+  const dy = (Math.random() - 0.5) * 200;
+  const rnd = seededRandom(Math.random());
+  skyTraveller("map-rock", x, y, 0, dx, dy, 40 + Math.random() * 25, (g) => {
+    const spin = svgEl("g", {}, "map-rock-spin");
+    spin.appendChild(svgEl("path", { d: blobPath(0, 0, 2.5 + rnd() * 2.5, rnd, 7, 0.7) }, "map-rock-body"));
+    g.appendChild(spin);
+  });
+}
+
+//: How often things happen: rare while the reader works, often while the map is resting.
+function skyTempo() {
+  return ambient.on
+    ? { meteor: [2500, 6000], shower: 60000, comet: 90000, rock: 45000 }
+    : { meteor: [7000, 18000], shower: 240000, comet: 300000, rock: 150000 };
+}
+
+function skyTick() {
+  const tempo = skyTempo();
+  if (skyOnScreen() && skyLayer()) {
+    const now = Date.now();
+    skyMeteor();
+    if (now - skyWeather.lastShower > tempo.shower * (0.7 + Math.random() * 0.6)) {
+      skyWeather.lastShower = now;
+      skyShower();
+    }
+    if (now - skyWeather.lastComet > tempo.comet * (0.7 + Math.random() * 0.6)) {
+      skyWeather.lastComet = now;
+      skyComet();
+    }
+    if (now - skyWeather.lastRock > tempo.rock * (0.7 + Math.random() * 0.6)) {
+      skyWeather.lastRock = now;
+      skyRock();
+    }
+  }
+  const [lo, hi] = tempo.meteor;
+  skyWeather.timer = setTimeout(skyTick, lo + Math.random() * (hi - lo));
+}
+
+function initSkyWeather() {
+  const start = Date.now();
+  // The first comet and rock come a little while in, not on the first frame.
+  skyWeather.lastShower = start;
+  skyWeather.lastComet = start - 200000;
+  skyWeather.lastRock = start - 100000;
+  skyWeather.timer = setTimeout(skyTick, 4000);
+}
+
+// --- resting: the map as a living wallpaper -----------------------------------------------------------
+//
+// After a while untouched on the star map, the interface steps aside: the map fills the window,
+// the camera drifts slowly between wide views, the weather comes more often, and a quiet clock
+// sits in a corner. Any movement or key brings everything back. It never starts by itself while
+// something is running, because resting hides the Stop that run's reader may need (invariant 47);
+// the Rest button can still start it. With reduced motion it is a still sky and a clock.
+
+const ambient = { on: false, lastInput: Date.now(), tour: 0, clock: 0, enteredAt: null, still: 0 };
+const AMBIENT_IDLE_KEY = "penumbra-rest-minutes";
+
+function restMinutes() {
+  const stored = Number(readStored(AMBIENT_IDLE_KEY));
+  return Number.isFinite(stored) && stored >= 0 && readStored(AMBIENT_IDLE_KEY) !== null ? stored : 5;
+}
+
+function somethingRunning() {
+  const distil = distilWatch.status && distilWatch.status.running;
+  return activeRuns.size > 0 || Boolean(distil) || document.querySelector(".intake-strip:not([hidden])") !== null;
+}
+
+function paintAmbientClock() {
+  const box = document.getElementById("ambient-clock");
+  if (!box) return;
+  const now = new Date();
+  box.querySelector(".ambient-time").textContent = now.toLocaleTimeString(uiLang(), { hour: "2-digit", minute: "2-digit", hour12: false });
+  box.querySelector(".ambient-date").textContent = now.toLocaleDateString(uiLang(), { month: "long", day: "numeric", weekday: "long" });
+}
+
+function ambientTourStep() {
+  if (!ambient.on || !motionAllowed()) return;
+  const home = mapHome();
+  const wide = Math.random() < 0.45;
+  const target = wide
+    ? { ...home, k: home.k * (0.95 + Math.random() * 0.15) }
+    : { x: 250 + Math.random() * 500, y: 160 + Math.random() * 320, k: home.k * (1.3 + Math.random() * 0.8) };
+  mapCamera.home = false;
+  animateCamera(target, 9000);
+  ambient.tour = setTimeout(ambientTourStep, 16000 + Math.random() * 8000);
+}
+
+function enterAmbient() {
+  if (ambient.on || document.body.dataset.view !== "horizon" || viewMode("horizon") !== "map") return;
+  ambient.on = true;
+  ambient.enteredAt = null;
+  closeMapFocus();
+  document.body.classList.add("is-ambient");
+  const clock = elt("div", "ambient-clock");
+  clock.id = "ambient-clock";
+  clock.setAttribute("aria-hidden", "true");
+  clock.appendChild(elt("div", "ambient-time", ""));
+  clock.appendChild(elt("div", "ambient-date", ""));
+  clock.appendChild(elt("div", "ambient-hint", t("rest.hint", "Move the pointer or press a key to come back")));
+  document.body.appendChild(clock);
+  paintAmbientClock();
+  ambient.clock = setInterval(paintAmbientClock, 15000);
+  ambient.still = setTimeout(() => document.body.classList.add("is-ambient-still"), 3000);
+  clearTimeout(skyWeather.timer);
+  skyWeather.timer = setTimeout(skyTick, 1500);
+  ambient.tour = setTimeout(ambientTourStep, 2500);
+}
+
+function exitAmbient() {
+  if (!ambient.on) return;
+  ambient.on = false;
+  clearTimeout(ambient.tour);
+  clearInterval(ambient.clock);
+  clearTimeout(ambient.still);
+  document.body.classList.remove("is-ambient", "is-ambient-still");
+  document.getElementById("ambient-clock")?.remove();
+  cameraHome();
+}
+
+function initAmbient() {
+  const woke = (event) => {
+    ambient.lastInput = Date.now();
+    if (!ambient.on) return;
+    // A pointer that drifts a pixel or two is not someone coming back.
+    if (event.type === "pointermove") {
+      if (!ambient.enteredAt) {
+        ambient.enteredAt = { x: event.clientX, y: event.clientY };
+        return;
+      }
+      if (Math.hypot(event.clientX - ambient.enteredAt.x, event.clientY - ambient.enteredAt.y) < 12) return;
+    }
+    event.preventDefault?.();
+    exitAmbient();
+  };
+  ["pointermove", "pointerdown", "keydown", "wheel"].forEach((type) =>
+    document.addEventListener(type, woke, { capture: true, passive: type !== "keydown" && type !== "pointerdown" }));
+  setInterval(() => {
+    const minutes = restMinutes();
+    if (ambient.on || !minutes || document.hidden || somethingRunning()) return;
+    if (Date.now() - ambient.lastInput >= minutes * 60000) enterAmbient();
+  }, 10000);
+  horizonEl("map-rest").addEventListener("click", (event) => {
+    event.stopPropagation();
+    ambient.lastInput = Date.now();
+    enterAmbient();
+  });
 }
 
 function drawStarMap() {
@@ -11160,12 +11588,14 @@ function drawStarMap() {
     field.appendChild(star);
   }
   world.appendChild(field);
+  world.appendChild(svgEl("g", { "aria-hidden": "true" }, "map-sky"));
 
   mapRings().forEach(({ rx, ry }, ring) => {
     world.appendChild(svgEl("ellipse", { cx: MAP_CENTRE.x, cy: MAP_CENTRE.y, rx, ry }, `map-ring ring-${ring}`));
   });
 
   const planets = planetLayout();
+  const kinds = planetKinds(planets.map((pl) => pl.orbit.slug));
   const scene = { planets: [], bridges: [] };
   // Every source reaches the Horizon now, so a hollow moon is rare (a CLI addition the server has
   // not recorded yet); its legend entry shows only while one is drawn.
@@ -11263,9 +11693,10 @@ function drawStarMap() {
     const item = items[i];
     const x = d * Math.cos(angle);
     const y = d * Math.sin(angle);
-    looseRing.appendChild(svgEl("circle", { cx: x, cy: y, r: 2.2 }, moonClass(item) + moonLensClass(item, starMap.lenses)));
-    if (item && isFocusedMoon(item)) looseRing.appendChild(moonMark(x, y));
+    looseRing.appendChild(moonBody(x, y, stableHash(`moon:${item ? item.id : i}`),
+      moonClass(item) + moonLensClass(item, starMap.lenses)));
     if (item) looseRing.appendChild(moonHit(x, y, { kind: "capture", ...item }));
+    if (item && isFocusedMoon(item)) looseRing.appendChild(moonMark(x, y));
   }
   hole.appendChild(looseRing);
   if (starMap.focus && starMap.focus.kind === "horizon") hole.classList.add("is-selected");
@@ -11301,9 +11732,10 @@ function drawStarMap() {
       const d = p.r + 8 + (i % 2) * 5;
       const x = d * Math.cos(angle);
       const y = d * Math.sin(angle);
-      moonRing.appendChild(svgEl("circle", { cx: x, cy: y, r: 2.2 }, moonClass(item) + moonLensClass(item, starMap.lenses)));
-      if (isFocusedMoon(item)) moonRing.appendChild(moonMark(x, y));
+      moonRing.appendChild(moonBody(x, y, stableHash(`moon:${item.id || `${orbit.slug}:${i}`}`),
+        moonClass(item) + moonLensClass(item, starMap.lenses)));
       moonRing.appendChild(moonHit(x, y, { ...item, orbit: orbit.slug }));
+      if (isFocusedMoon(item)) moonRing.appendChild(moonMark(x, y));
     });
     group.appendChild(moonRing);
     // The planet: a lit sphere whose surface bands turn under a fixed shade, so it reads as spinning.
@@ -11311,15 +11743,30 @@ function drawStarMap() {
     const clip = svgEl("clipPath", { id: clipId });
     clip.appendChild(svgEl("circle", { r: p.r }));
     group.appendChild(clip);
-    group.appendChild(svgEl("circle", { r: p.r, fill: "url(#pn-planet)" }, "map-planet-body"));
+    // Its world, from the orbit's name: the same planet every visit, unlike its neighbours.
+    const terrain = planetSurface(p.r, stableHash(`planet:${orbit.slug}`), kinds.get(orbit.slug));
+    if (terrain.paint.atmo) {
+      group.appendChild(svgEl("circle", { r: p.r + 1.6, fill: "none", stroke: terrain.paint.atmo }, "map-planet-atmo"));
+    }
+    group.appendChild(svgEl("circle", { r: p.r, fill: terrain.paint.base }, "map-planet-body"));
     const surface = svgEl("g", { "clip-path": `url(#${clipId})` });
-    const bands = svgEl("g", {}, "map-planet-bands");
-    bands.style.animationDuration = `${28 + (index % 4) * 6}s`;
-    bands.appendChild(svgEl("ellipse", { cx: 0, cy: -p.r * 0.35, rx: p.r * 1.5, ry: p.r * 0.16 }, "map-band"));
-    bands.appendChild(svgEl("ellipse", { cx: p.r * 0.3, cy: p.r * 0.18, rx: p.r * 1.2, ry: p.r * 0.11 }, "map-band"));
-    bands.appendChild(svgEl("circle", { cx: -p.r * 0.45, cy: p.r * 0.5, r: p.r * 0.18 }, "map-band"));
-    surface.appendChild(bands);
+    terrain.surface.setAttribute("class", "map-planet-spin");
+    terrain.surface.style.setProperty("--spin", `${(-2 * p.r).toFixed(2)}px`);
+    terrain.surface.style.animationDuration = `${terrain.spin.toFixed(1)}s`;
+    surface.appendChild(terrain.surface);
+    if (terrain.clouds) {
+      terrain.clouds.setAttribute("class", "map-planet-spin");
+      terrain.clouds.style.setProperty("--spin", `${(-2 * p.r).toFixed(2)}px`);
+      terrain.clouds.style.animationDuration = `${(terrain.spin * 0.6).toFixed(1)}s`;
+      surface.appendChild(terrain.clouds);
+    }
+    // Polar caps on a temperate or icy world: they sit still while the surface turns under them.
+    if (terrain.kind === "terran" || terrain.kind === "ice" || terrain.kind === "jungle") {
+      surface.appendChild(svgEl("ellipse", { cx: 0, cy: -p.r, rx: p.r * 0.7, ry: p.r * 0.22 }, "map-planet-cap"));
+      surface.appendChild(svgEl("ellipse", { cx: 0, cy: p.r, rx: p.r * 0.6, ry: p.r * 0.18 }, "map-planet-cap"));
+    }
     group.appendChild(surface);
+    group.appendChild(svgEl("circle", { r: p.r, fill: "url(#pn-light)" }, "map-planet-light"));
     group.appendChild(svgEl("circle", { r: p.r, fill: "url(#pn-shade)" }, "map-planet-shade"));
     group.appendChild(svgEl("circle", { r: p.r }, "map-planet-rim"));
     group.appendChild(svgText(0, p.r + 30, shortLabel(orbit.title), "map-planet-label"));
@@ -13462,6 +13909,8 @@ initDock();
 initCaptureDock();
 initMascot();
 initGraphCamera();
+initSkyWeather();
+initAmbient();
 initPanels();
 initStarMapCamera();
 initDesktopContextMenu();

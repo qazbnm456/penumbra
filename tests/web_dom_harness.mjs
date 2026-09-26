@@ -1625,6 +1625,25 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     return { out, sameLength: out.length === text.length };
   },
 
+  //: Worlds from a seed: the same orbit gets the same kind every time, and a map's orbits get
+  //: different kinds while there are kinds to go round.
+  planetKinds() {
+    const run = new Function(
+      `${extract("stableHash")}\n${extract("seededRandom")}\n${constant("PLANET_KINDS")}\n` +
+      `${extract("planetKind")}\n${extract("planetKinds")}\nreturn { planetKinds, seededRandom };`
+    )();
+    const slugs = ["coffee", "rust", "sleep", "cfp", "first-orbit", "a", "b"];
+    const one = [...run.planetKinds(slugs)];
+    const two = [...run.planetKinds([...slugs].reverse())];
+    const r1 = run.seededRandom(0.42);
+    const r2 = run.seededRandom(0.42);
+    return {
+      same: JSON.stringify(one) === JSON.stringify(two),
+      distinct: new Set(one.map(([, k]) => k)).size === slugs.length,
+      seeded: r1() === r2() && r1() === r2(),
+    };
+  },
+
   //: A scraped page tidied for reading: blank runs collapse to one, lines lose their indentation,
   //: and the map sends a quote's offsets to the same words.
   tidyText() {
