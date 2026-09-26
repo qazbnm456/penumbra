@@ -9496,61 +9496,20 @@ body:not([data-view="horizon"]) .capture-dock {
   to { opacity: 1; }
 }
 
-.ambient-clock {
-  position: fixed;
-  left: var(--space-11);
-  bottom: var(--space-11);
-  z-index: 3001;
-  color: var(--text);
-  pointer-events: none;
-  animation: rest-in 2.4s ease;
-}
-
-.ambient-time {
-  font-family: var(--serif);
-  font-size: calc(var(--text-2xl) * 4);
-  font-weight: 300;
-  line-height: 1;
-  letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
-}
-
-.ambient-date {
-  margin-top: var(--space-3);
-  font-size: var(--text-lg);
-  color: var(--text-dim);
-}
-
-.ambient-hint {
-  margin-top: var(--space-8);
-  font-size: var(--text-xs);
-  color: var(--text-faint);
-  opacity: 0;
-  animation: rest-hint 6s ease 1s;
-}
-
-@keyframes rest-hint {
-  15%, 70% { opacity: 1; }
-  100% { opacity: 0; }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .map-planet-spin,
   .map-rock-spin,
-  .is-ambient .starmap,
-  .ambient-clock,
-  .ambient-hint {
+  .is-ambient .starmap {
     animation: none;
   }
 }
 
-/* At rest the names recede, so the map reads as a sky first. */
-.is-ambient .map-planet-label,
-.is-ambient .map-planet-sub,
-.is-ambient .map-hole-label,
-.is-ambient .map-hole-sub,
-.is-ambient .map-bridge-label {
-  opacity: 0.45;
+/* At rest there is no text at all, only the sky: names, counts, the Horizon's line and the
+   bridges' entities all go. */
+.is-ambient .starmap-svg text,
+.is-ambient .starmap-empty,
+.is-ambient .starmap-tip {
+  opacity: 0;
   transition: opacity 1.2s ease;
 }
 

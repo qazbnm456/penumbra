@@ -276,7 +276,7 @@ Everything follows from it. The title and the distilled summary are set in the r
 
 **Weather is rare while working and frequent at rest.** `.map-sky` holds meteors, showers from one radiant, comets with a tail and tumbling rocks, each a traveller that moves by its own (--dx, --dy) and removes itself. None runs with reduced motion or while the map is off screen.
 
-**Rest is the map as a wallpaper.** `.is-ambient` fades every control, pins `.starmap` over the window and shows `.ambient-clock`, and in the desktop app asks the shell for simple full screen (`shellWindow`), undone on exit; the camera drifts between wide views every 16 to 24 seconds. Any movement past a few pixels, a key, a click or a wheel ends it. It starts after the idle time chosen in Settings (a preference of the browser, like the interface language) and never while a run, an intake or a summary pass is going, because resting hides their Stop.
+**Rest is the map as a wallpaper.** `.is-ambient` fades every control and every piece of text on the map (names, counts, the Horizon's line, bridge labels), pins `.starmap` over the window, and in the desktop app asks the shell for simple full screen (`shellWindow`), undone on exit; the camera drifts between wide views every 16 to 24 seconds. A key, a click, a wheel or a nudge of the pointer ends it at once; only the first 0.6 seconds of pointer movement are ignored, while the window grows to the screen under the pointer. A clock and a hint were tried and removed: at rest the screen is only the sky. It starts after the idle time chosen in Settings (a preference of the browser, like the interface language) and never while a run, an intake or a summary pass is going, because resting hides their Stop.
 
 ## 14. The window
 
