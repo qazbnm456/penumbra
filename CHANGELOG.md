@@ -150,7 +150,7 @@ Each entry states what the product does now and why. The reasoning behind each r
 
 ### Fixed
 
-- Pressing a tag on the star map lights every orbit that holds it. The lens matched against an orbit's six most common tags, which exist for display, so a tag named once in an orbit carrying more (two captures easily carry twelve) dimmed every planet, the one holding it included. The topology now also returns each orbit's full tag set for the lens.
+- Pressing a tag on the star map lights every orbit that holds it. The lens matched against an orbit's six most common tags, which exist for display, so a tag named once in an orbit carrying more (two captures easily carry twelve) dimmed every planet, the one holding it included. The topology now also returns each orbit's full tag set, and the page carries it into the planet it builds; the first fix changed only the server, and the page dropped the new field while copying the orbit.
 
 These are the few failures that shaped the current design. Smaller fixes are not listed.
 

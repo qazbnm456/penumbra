@@ -1586,6 +1586,29 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     };
   },
 
+  //: A tag lens, from the server's topology to the planet: a tag outside an orbit's top few still
+  //: lights it. The server sent `all_tags` and the page dropped it while building the planet.
+  starMapLens() {
+    const t = (_k, fallback) => fallback;
+    const run = new Function(
+      "t", `${extract("starMapOrbit")}\n${extract("dimmedByLens")}\nreturn { starMapOrbit, dimmedByLens };`
+    )(t);
+    const top = ["a", "b", "c", "d", "e", "f"];
+    const planet = run.starMapOrbit(
+      { id: "cfp", slug: "cfp", title: "cfp", source_count: 2, updated_at: 1 },
+      { captures: 2, undistilled: 0, last_filed_at: 2, entities: [], tags: top,
+        all_tags: [...top, "supply chain security"], moons: [] },
+    );
+    const bare = run.starMapOrbit({ id: "new", slug: "new", title: "", source_count: 0 }, undefined);
+    return {
+      heldTagLit: !run.dimmedByLens(planet, "supply chain security"),
+      otherTagDim: run.dimmedByLens(planet, "cooking"),
+      noLensLit: !run.dimmedByLens(planet, null),
+      emptyOrbitDim: run.dimmedByLens(bare, "a"),
+      displayStillCapped: planet.tags.length === 6,
+    };
+  },
+
   //: The view-mode preference: a stored value outside the allowed pair falls back to the default,
   //: and blocked storage is not an error.
   viewModes() {

@@ -962,3 +962,12 @@ def test_a_summarise_control_claims_only_its_own_pass():
     assert "Summarising 2 of 5" in result["mine"]
     assert "Summarising" not in result["other"], "another orbit claimed progress it is not making"
     assert "A summary pass is running." in result["other"]
+
+
+def test_a_tag_lens_lights_an_orbit_whose_tag_is_outside_its_top_few():
+    """The server's `all_tags` has to survive the page building the planet. It did not, so a tag
+    named once in an orbit carrying twelve dimmed every planet even after the server was fixed."""
+    result = _run("starMapLens")
+    assert result["heldTagLit"], "the planet holding the tag was dimmed by its lens"
+    assert result["otherTagDim"] and result["emptyOrbitDim"], "a lens must still dim what lacks the tag"
+    assert result["noLensLit"] and result["displayStillCapped"]
