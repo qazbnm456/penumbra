@@ -9746,3 +9746,45 @@ button.node-more:hover {
 .view-horizon:not(.is-map) .horizon-inner {
   max-width: calc(var(--chat-measure) + var(--space-13) * 2);
 }
+
+/* On the map, the Horizon's to-dos live in the details column (`renderHorizonTodo`), not as lines
+   under the map. */
+.view-horizon.is-map > .horizon-scroll .pending-note,
+.view-horizon.is-map > .horizon-scroll .suggest,
+.view-horizon.is-map .pending-note,
+.view-horizon.is-map .suggest {
+  display: none;
+}
+
+.todo-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.todo-count {
+  min-width: 1.4em;
+  padding: 0 var(--space-2);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.6;
+  text-align: center;
+  color: var(--accent-text);
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--accent) 16%, transparent);
+}
+
+/* In the narrow column a suggestion stacks: what, why, then its two actions. */
+.todo-suggest .suggest-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.todo-suggest .suggest-actions {
+  justify-self: start;
+  margin-top: var(--space-2);
+}
+
+.todo-run {
+  align-self: flex-start;
+  margin-top: var(--space-3);
+}

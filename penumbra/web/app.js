@@ -8752,6 +8752,7 @@ function updateStreamFoot() {
     });
   }
   renderDistilError();
+  refreshHorizonTodo();
 }
 
 //: The server's count of what summarising would cost, cached briefly per scope so a repaint does
@@ -12896,11 +12897,24 @@ async function fileCapture(nodeId, orbitId, control) {
   return true;
 }
 
+//: What is waiting on the reader in the Horizon: captures in no orbit, filing suggestions, and
+//: captures not summarised yet. The standing card lists all three; the details column is open
+//: only while one of them is non-zero.
+function horizonTodoCount() {
+  const loose = (starMap.data && starMap.data.loose && starMap.data.loose.count) || 0;
+  const running = Boolean(horizonState.distil && horizonState.distil.running);
+  return loose + suggest.items.length + (running ? 0 : horizonState.undistilled || 0);
+}
+
 function renderHorizonCard(card, { standing = false } = {}) {
   const loose = (starMap.data && starMap.data.loose) || { count: 0, items: [] };
   // The standing summary has nothing to close back to.
   if (!standing) mapCardClose(card);
   card.appendChild(elt("p", "card-kicker", t("horizon.home", "Horizon")));
+  if (standing) {
+    renderHorizonTodo(card, loose);
+    return;
+  }
   card.appendChild(elt("h2", "card-title", t("map.loose", `${loose.count} not in an orbit`, { n: loose.count })));
   if (!loose.count) {
     card.appendChild(elt("p", "card-note", t("map.looseNone", "Everything you kept is in an orbit.")));
@@ -12921,6 +12935,62 @@ function renderHorizonCard(card, { standing = false } = {}) {
   if (loose.count > (loose.items || []).length) {
     card.appendChild(elt("p", "card-note", t("map.looseMore", `The newest ${(loose.items || []).length} are shown; the list view has them all.`,
       { n: (loose.items || []).length })));
+  }
+}
+
+//: The standing card: each kind of to-do as its own section with its count, the actions beside
+//: what they act on. This used to be two lines under the map, a sentence and a link, with the
+//: suggestions opening under them and pushing the legend about.
+function renderHorizonTodo(card, loose) {
+  const running = Boolean(horizonState.distil && horizonState.distil.running);
+  const pending = running ? 0 : horizonState.undistilled || 0;
+  if (!horizonTodoCount()) {
+    card.appendChild(elt("h2", "card-title", t("map.todoNone", "Nothing waiting")));
+    card.appendChild(elt("p", "card-note", t("map.looseNone", "Everything you kept is in an orbit.")));
+    return;
+  }
+  card.appendChild(elt("h2", "card-title", t("map.todoTitle", "Waiting for you")));
+  const section = (title, count) => {
+    const head = elt("h3", "card-section todo-head", title);
+    head.appendChild(elt("span", "todo-count", String(count)));
+    card.appendChild(head);
+  };
+  if (loose.count) {
+    section(t("map.todoLoose", "Not in an orbit"), loose.count);
+    card.appendChild(elt("p", "card-note", t("map.looseHelp", "File each into an orbit here, or drag its dot onto a planet.")));
+    const list = elt("ul", "card-list");
+    (loose.items || []).forEach((item) => {
+      const row = elt("li", "card-row");
+      const name = elt("button", "card-row-title", item.title);
+      name.type = "button";
+      name.addEventListener("click", () => openMapFocus({ kind: "capture", ...item, orbit: null }));
+      row.appendChild(name);
+      row.appendChild(filePicker(item.id));
+      list.appendChild(row);
+    });
+    card.appendChild(list);
+  }
+  if (suggest.items.length) {
+    section(t("map.todoSuggest", "Could go in an orbit"), suggest.items.length);
+    const list = elt("ol", "suggest-list todo-suggest");
+    suggest.items.forEach((item) => list.appendChild(suggestionRow(item)));
+    card.appendChild(list);
+  }
+  if (pending) {
+    section(t("map.todoSummarise", "Not summarised yet"), pending);
+    // The heading already carries the count, so only what the list's note adds past it (the
+    // long captures and the matching run, invariant 80) is repeated here.
+    const base = t("horizon.pendingSummaries", `${pending} not summarised yet`, { n: pending });
+    const full = horizonEl("pending-count").textContent || "";
+    const extra = full.startsWith(base) ? full.slice(base.length).replace(/^[\u3002. ]+/, "") : "";
+    if (extra) card.appendChild(elt("p", "card-note", extra));
+    // The same button the list shows, pressed through, so the spend it names and the pass it
+    // starts are one code path (invariant 80).
+    const run = elt("button", "btn todo-run", horizonEl("distil-btn").textContent
+      || t("horizon.distil", `Summarise ${distilBatchSize()}`, { n: distilBatchSize() }));
+    run.type = "button";
+    run.addEventListener("click", () => horizonEl("distil-btn").click());
+    card.appendChild(run);
   }
 }
 
@@ -13187,7 +13257,7 @@ function renderStarMapCard() {
 //: reader's preference and is not remembered. A reader who opens it again keeps it open.
 function settleIdlePanel() {
   if (!mapPanelGrip || viewMode("horizon") !== "map") return;
-  const waiting = (starMap.data && starMap.data.loose && starMap.data.loose.count) || 0;
+  const waiting = horizonTodoCount();
   if (waiting) {
     starMap.keepPanel = false;
     if (starMap.autoCollapsed && mapPanelGrip.isCollapsed()) mapPanelGrip.setCollapsed(false, { persist: false });
@@ -13522,7 +13592,14 @@ function renderSuggestions() {
   head.setAttribute("aria-expanded", suggest.open ? "true" : "false");
   suggestList.hidden = !suggest.open;
   suggestList.textContent = "";
-  suggest.items.forEach((item) => {
+  suggest.items.forEach((item) => suggestList.appendChild(suggestionRow(item)));
+  refreshHorizonTodo();
+}
+
+//: One filing suggestion with its Add and Not this, the same row in the list's strip and in the
+//: star map's details column.
+function suggestionRow(item) {
+  {
     const where = orbitLabelForSlug(item.orbit) || t("suggest.anOrbit", "an orbit");
     const row = elt("li", "suggest-row");
     row.appendChild(elt("span", "suggest-title", item.title));
@@ -13569,8 +13646,16 @@ function renderSuggestions() {
     actions.appendChild(add);
     actions.appendChild(no);
     row.appendChild(actions);
-    suggestList.appendChild(row);
-  });
+    return row;
+  }
+}
+
+//: The map's details column shows the Horizon's to-dos when nothing is chosen; it repaints when
+//: they change, and only then.
+function refreshHorizonTodo() {
+  if (document.body.dataset.view === "horizon" && viewMode("horizon") === "map" && !starMap.focus && !starMap.selected) {
+    renderStarMapCard();
+  }
 }
 
 function initSuggestions() {
