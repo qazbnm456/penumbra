@@ -1008,3 +1008,10 @@ def test_each_orbit_is_the_same_world_every_visit_and_neighbours_differ():
     assert result["distinct"], "while there are kinds to go round, no two planets share one"
     assert result["seeded"], "the generator must be deterministic for a seed"
 
+
+def test_a_resting_screen_shows_the_first_sentence_short_in_any_script():
+    result = _run("restGist")
+    assert result["en"] == "Sleep consolidates memory."
+    width = sum(2 if "\u2e80" <= ch <= "\u9fff" else 1 for ch in result["zh"][:-1])
+    assert result["zh"].endswith("\u2026") and width <= 140, "a CJK gist is cut by width, not by count"
+
