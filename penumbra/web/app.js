@@ -6421,7 +6421,12 @@ function initPanels() {
     cssVar: "--map-panel-w", railVar: "--map-panel-rail", min: 280, max: 640, collapseAt: 200, railPx: 46, initial: 320,
     key: "penumbra-map-panel", others: () => [facets],
   });
-  document.getElementById("map-panel-open").addEventListener("click", () => mapPanelGrip.setCollapsed(false));
+  document.getElementById("map-panel-open").addEventListener("click", () => {
+    starMap.keepPanel = true;
+    mapPanelGrip.setCollapsed(false);
+  });
+  // Opening it by its grip is the reader's choice too.
+  document.getElementById("map-panel-grip").addEventListener("pointerdown", () => { starMap.keepPanel = true; });
   const graphSide = document.getElementById("graph-side");
   const graphGrip = makePanelGrip({
     panel: graphSide, handle: document.getElementById("graph-panel-grip"), side: "left",
@@ -13176,6 +13181,25 @@ function renderStarMapCard() {
   }
 }
 
+//: With nothing chosen and nothing left to file, the details column has nothing to say ("0 not in
+//: an orbit"), so it puts itself away and the map takes the width; it comes back when something is
+//: waiting to be filed, or when the reader chooses anything. Put away this way it is not the
+//: reader's preference and is not remembered. A reader who opens it again keeps it open.
+function settleIdlePanel() {
+  if (!mapPanelGrip || viewMode("horizon") !== "map") return;
+  const waiting = (starMap.data && starMap.data.loose && starMap.data.loose.count) || 0;
+  if (waiting) {
+    starMap.keepPanel = false;
+    if (starMap.autoCollapsed && mapPanelGrip.isCollapsed()) mapPanelGrip.setCollapsed(false, { persist: false });
+    starMap.autoCollapsed = false;
+    return;
+  }
+  if (!starMap.keepPanel && !mapPanelGrip.isCollapsed()) {
+    mapPanelGrip.setCollapsed(true, { persist: false });
+    starMap.autoCollapsed = true;
+  }
+}
+
 function paintStarMapCard(mapCard) {
   mapCard.textContent = "";
   if (starMap.focus && starMap.focus.kind === "horizon") {
@@ -13214,6 +13238,7 @@ function paintStarMapCard(mapCard) {
     // Nothing chosen: the panel shows the Horizon itself, which is where filing starts.
     renderHorizonCard(mapCard, { standing: true });
     mapCard.hidden = false;
+    settleIdlePanel();
     return;
   }
   // Choosing something opens a panel the reader had put away: that is what the click asked to see.
