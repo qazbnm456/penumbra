@@ -8417,6 +8417,19 @@ body.is-resizing .orbit-graph {
   gap: var(--space-3);
 }
 
+/* A loose capture and its picker: the picker goes under the title, so a long title keeps the
+   column's width instead of wrapping beside a fixed-width select. */
+.card-row.is-filing {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  padding-bottom: var(--space-2);
+}
+
+.card-row.is-filing .card-file {
+  max-width: 100%;
+}
+
 .card-row .legend-dot {
   flex: none;
 }

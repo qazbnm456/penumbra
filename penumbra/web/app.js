@@ -13021,7 +13021,7 @@ function renderHorizonCard(card, { standing = false } = {}) {
   card.appendChild(elt("p", "card-note", t("map.looseHelp", "File each into an orbit here, or drag its dot onto a planet.")));
   const list = elt("ul", "card-list");
   (loose.items || []).forEach((item) => {
-    const row = elt("li", "card-row");
+    const row = elt("li", "card-row is-filing");
     const name = elt("button", "card-row-title", item.title);
     name.type = "button";
     name.addEventListener("click", () => openMapFocus({ kind: "capture", ...item, orbit: null }));
@@ -13058,7 +13058,7 @@ function renderHorizonTodo(card, loose) {
     card.appendChild(elt("p", "card-note", t("map.looseHelp", "File each into an orbit here, or drag its dot onto a planet.")));
     const list = elt("ul", "card-list");
     (loose.items || []).forEach((item) => {
-      const row = elt("li", "card-row");
+      const row = elt("li", "card-row is-filing");
       const name = elt("button", "card-row-title", item.title);
       name.type = "button";
       name.addEventListener("click", () => openMapFocus({ kind: "capture", ...item, orbit: null }));
