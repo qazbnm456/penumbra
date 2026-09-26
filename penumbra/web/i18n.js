@@ -195,6 +195,8 @@ const STRINGS = {
     "island.release": "放開，丟進視界",
     "island.swallowed": "已丟進視界",
     "island.swallowedCount": "{n} 樣東西已丟進視界",
+    "island.peekDone": "摘要好了：{n} 則",
+    "island.peekFailed": "摘要好了：{n} 則，{failed} 則沒成功",
     "island.failed": "收不進來",
     "island.pen": "寫一句",
     "island.noteLabel": "寫一句話收進視界",

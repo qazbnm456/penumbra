@@ -86,6 +86,11 @@
       if (state === "note") beginNote();
       else if (state === "listen") beginListen();
       else endNoteFocus();
+      if (state === "peek") {
+        listenHint.textContent = peekLine;
+        live.textContent = peekLine;
+        void glance();
+      }
       if (state !== "hover" && state !== "listen") pen.classList.remove("is-hot");
     },
     // The shell tells the page where the pointer is, because a window in the background gets no
@@ -171,6 +176,39 @@
     clearInterval(glanceTimer);
     glanceTimer = null;
   }
+
+  // --- a pass finished: the one notice that reaches a closed workspace -------------------------------
+  //
+  // Read every few seconds whatever the island is doing, because a pass started from the workspace
+  // or by a capture can end while the workspace is closed and nothing else would say so. When one
+  // ends the ring is brought up to date and the shell is asked to show it briefly (`/__shell/peek`);
+  // it goes back into the notch by itself. Only from rest: a hover, a drop or a note is left alone.
+  let passWasRunning = null;
+  let peekLine = "";
+
+  async function watchPasses() {
+    let status;
+    try {
+      status = await send("/horizon/status", {});
+    } catch {
+      return;
+    }
+    const distil = status.distil || {};
+    const running = Boolean(distil.running || (status.align && status.align.running));
+    const finished = passWasRunning === true && !running;
+    passWasRunning = running;
+    const done = distil.done || 0;
+    const failed = distil.failed || 0;
+    if (!finished || !(done || failed) || document.body.dataset.state !== "collapsed") return;
+    peekLine = failed
+      ? say("island.peekFailed", `${done} summarised, ${failed} could not be`, { n: done, failed })
+      : say("island.peekDone", `${done} summarised`, { n: done });
+    await glance();
+    window.location.href = "/__shell/peek";
+  }
+
+  setInterval(watchPasses, 5000);
+  void watchPasses();
 
   // --- open the workspace --------------------------------------------------------------------------
 

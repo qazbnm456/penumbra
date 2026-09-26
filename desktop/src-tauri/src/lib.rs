@@ -290,8 +290,8 @@ fn island_menu(app: &AppHandle) {
     }
 }
 
-/// The island page's navigations. Its own page stays; the four fixed `/__shell/` paths (open, menu,
-/// rest, note) are acted on and refused as navigations; everything else is refused. None of them
+/// The island page's navigations. Its own page stays; the five fixed `/__shell/` paths (open, menu,
+/// rest, note, peek) are acted on and refused as navigations; everything else is refused. None of them
 /// carries anything: a note's text goes to the server over HTTP with the token, never through here.
 fn island_navigation(app: &AppHandle, url: &url::Url) -> bool {
     let ours = url.host_str() == Some("127.0.0.1") && url.port() == current_port(app);
@@ -308,6 +308,7 @@ fn island_navigation(app: &AppHandle, url: &url::Url) -> bool {
             "menu" => island_menu(&app),
             "rest" => island::request_rest(),
             "note" => island::request_note(),
+            "peek" => island::request_peek(),
             _ => {}
         });
         return false;

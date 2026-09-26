@@ -89,6 +89,9 @@ enum State {
     Swallow,
     Note,
     Listen,
+    /// A summary pass finished: the hover shape for a few seconds, with the ring brought up to date
+    /// and a line saying so, then back into the notch without anyone touching it.
+    Peek,
 }
 
 impl State {
@@ -100,6 +103,7 @@ impl State {
             State::Swallow => "swallow",
             State::Note => "note",
             State::Listen => "listen",
+            State::Peek => "peek",
         }
     }
 }
@@ -122,6 +126,18 @@ static REST_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Set by the page (`/__shell/note`) or the menu: open the one-line field.
 static NOTE_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Set by the page (`/__shell/peek`) when a summary pass has finished.
+static PEEK_REQUESTED: AtomicBool = AtomicBool::new(false);
+/// How long a peek stays out: long enough to read one short line.
+const PEEK_FOR: Duration = Duration::from_millis(4200);
+
+/// The page saw a summary pass finish: show it briefly, the one notice that reaches a reader whose
+/// workspace is closed. Ignored unless the island is at rest, so it never interrupts a hover, a
+/// drop or a note.
+pub fn request_peek() {
+    PEEK_REQUESTED.store(true, Ordering::SeqCst);
+}
 
 /// The page asks for the island to close (after a swallow, or when a note is sent or dismissed).
 /// Picked up by the pointer loop.
@@ -248,7 +264,7 @@ fn tell(app: &AppHandle, state: State, geo: &Geometry) {
         State::Hover => geo.hover,
         State::Armed | State::Swallow => geo.armed,
         State::Note => geo.note,
-        State::Listen => geo.listen,
+        State::Listen | State::Peek => geo.listen,
     };
     if let Some(window) = app.get_webview_window(LABEL) {
         let _ = window.eval(format!(
@@ -276,6 +292,7 @@ fn watch(app: AppHandle) {
     let mut rest_pointer: Option<(f64, f64)> = None;
     let mut away_since: Option<Instant> = None;
     let mut swallow_until: Option<Instant> = None;
+    let mut peek_until: Option<Instant> = None;
     let mut was_dragging = false;
     let mut press: Option<Press> = None;
     let mut measured_at = Instant::now();
@@ -291,6 +308,8 @@ fn watch(app: AppHandle) {
             // mouse-moved events, so the page never saw the pointer move and rest would not end.
             // The shell sees it here and tells the page, the way it tells the island its state.
             tick = Duration::from_millis(50);
+            // No peek over the resting sky: the island is hidden there.
+            PEEK_REQUESTED.store(false, Ordering::SeqCst);
             if let Some(at) = platform::pointer(&app) {
                 match rest_pointer {
                     None => rest_pointer = Some(at),
@@ -327,6 +346,7 @@ fn watch(app: AppHandle) {
 
         let rest_asked = REST_REQUESTED.swap(false, Ordering::SeqCst);
         let note_asked = NOTE_REQUESTED.swap(false, Ordering::SeqCst);
+        let peek_asked = PEEK_REQUESTED.swap(false, Ordering::SeqCst);
         let next = match state {
             _ if rest_asked => State::Rest,
             _ if note_asked => State::Note,
@@ -349,6 +369,17 @@ fn watch(app: AppHandle) {
             // anywhere over the open shape, so the drop still lands.
             _ if dragging && (state == State::Armed || drag_target(&geo).contains(px, py, 0.0)) && geo.armed.contains(px, py, 24.0) => {
                 State::Armed
+            }
+            // A peek becomes an ordinary hover the moment the pointer is on it; otherwise it goes
+            // back in by itself.
+            State::Peek if geo.hover.contains(px, py, 6.0) => State::Hover,
+            State::Peek => match peek_until {
+                Some(until) if now < until => State::Peek,
+                _ => State::Rest,
+            },
+            State::Rest if peek_asked && !pressed => {
+                peek_until = Some(now + PEEK_FOR);
+                State::Peek
             }
             State::Armed | State::Hover | State::Listen => {
                 let region = match state {
@@ -443,6 +474,11 @@ fn watch(app: AppHandle) {
                 if state != State::Listen {
                     take_keyboard(&app);
                 }
+            }
+            State::Peek => {
+                placed = padded(geo.listen, geo.edge);
+                place(&app, placed);
+                tell(&app, State::Peek, &geo);
             }
             // The page already put itself in the swallow state when it received the drop; telling it
             // again would only race its own words.
