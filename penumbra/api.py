@@ -3487,9 +3487,9 @@ def _next_source_guess(orbit: Orbit | None) -> int:
     return max(int(s.id[1:]) for s in orbit.sources if s.id[1:].isdigit()) * 10 + 10
 
 
-def _file_under_cap(node_id: str, target: str) -> bool:
+def _file_under_cap(node_id: str, target: str) -> horizon.NodeMembership | None:
     """File a parsed capture that is in no orbit into an existing orbit, unless that would pass the
-    corpus cap. Returns whether it was filed.
+    corpus cap. Returns the membership it made, or None.
 
     Skipped when the node is already in an orbit (the reader filed it first), when it is not parsed,
     and when the orbit is gone: nothing here creates an orbit behind the reader. The cap check is
@@ -3499,21 +3499,21 @@ def _file_under_cap(node_id: str, target: str) -> bool:
     """
     if slug(target).startswith(HORIZON_ASK_KEY):
         _log.warning("filing target %r uses the reserved Horizon ask handle; not filing", target)
-        return False
+        return None
     node = horizon.get_node(node_id)
     if node is None or node.state not in ("ready", "ready_undistilled"):
-        return False
+        return None
     # Membership in the landing orbit alone (the old automatic first orbit) still counts as unfiled,
     # the same way suggestions count it.
     filed = {m.orbit_id for m in horizon.memberships_for(node_id)}
     if slug(target) in filed or filed - {_landing_slug()}:
-        return False
+        return None
     # One filing at a time: the intake worker and an upload can both finish a node at once, and
     # two filings checked against the same "before" could each pass the cap and together exceed it.
     with _LANDING_LOCK:
         existing = load_orbit(target)
         if existing is None:
-            return False
+            return None
         # The REAL assembled length, markers and separators included (`Corpus.blob`), not the sum
         # of block text: a 50-character paste becomes 68 characters of blob (its marker and a
         # newline), so counting text alone let an orbit pass invariant 8's cap and fail every
@@ -3523,10 +3523,10 @@ def _file_under_cap(node_id: str, target: str) -> bool:
         added = len(Corpus(sources=[source]).blob())
         if held + (2 if held else 0) + added > max_corpus_chars():
             _log.info("not filing %s into %s: it would pass the corpus cap", node_id, target)
-            return False
-        horizon.promote_node(node_id, target, create=False)
+            return None
+        membership = horizon.promote_node(node_id, target, create=False)
     _forget_suggestions()
-    return True
+    return membership
 
 
 def _file_into_landing_orbit(node_id: str) -> None:
@@ -3563,10 +3563,37 @@ def _auto_file_suggested() -> int:
     filed = 0
     for item in found:
         try:
-            filed += _file_under_cap(item["node_id"], item["orbit"])
+            membership = _file_under_cap(item["node_id"], item["orbit"])
         except Exception:  # noqa: BLE001 - one bad filing must not stop the rest
             _log.exception("auto filing: could not file %s", item.get("node_id"))
+            continue
+        if membership is not None:
+            filed += 1
+            _remember_auto_filed(item, membership)
     return filed
+
+
+#: The last automatic filings, newest last, for the workspace to announce (`/horizon/suggestions`).
+#: In memory only: a notice about a filing matters while it is fresh, and a restart forgets it.
+_AUTO_FILED: collections.deque[dict] = collections.deque(maxlen=50)
+_AUTO_FILED_LOCK = threading.Lock()
+_AUTO_FILED_SEQ = {"n": 0}
+
+
+def _remember_auto_filed(item: dict, membership: horizon.NodeMembership) -> None:
+    orbit = load_orbit(membership.orbit_id)
+    orbit_title = (orbit.title or _fallback_name(orbit.sources)) if orbit else membership.orbit_id
+    with _AUTO_FILED_LOCK:
+        _AUTO_FILED_SEQ["n"] += 1
+        _AUTO_FILED.append({
+            "seq": _AUTO_FILED_SEQ["n"], "node_id": item["node_id"], "title": item.get("title", ""),
+            "orbit": membership.orbit_id, "orbit_title": orbit_title, "source_id": membership.source_id,
+        })
+
+
+def _auto_filed_since(since: int) -> tuple[list[dict], int]:
+    with _AUTO_FILED_LOCK:
+        return [dict(e) for e in _AUTO_FILED if e["seq"] > since], _AUTO_FILED_SEQ["n"]
 
 
 def _horizon_queue() -> intake.IntakeQueue:
@@ -4418,11 +4445,14 @@ def _landing_slug() -> str | None:
 
 
 @app.get("/horizon/suggestions")
-async def filing_suggestions() -> dict:
+async def filing_suggestions(since: int = 0) -> dict:
     """Captures that probably belong in an orbit they are not in, by shared entities and tags.
-    Local and free; nothing is filed until the reader accepts one (through `/promote`)."""
+    Local and free; nothing is filed until the reader accepts one (through `/promote`), unless the
+    reader chose automatic filing. The automatic filings after `since` come back too, with the
+    sequence number to ask from next time, so the workspace can announce each one once."""
     found = await asyncio.to_thread(_suggestions_cached)
-    return {"suggestions": found, "count": len(found)}
+    filed, seq = _auto_filed_since(since)
+    return {"suggestions": found, "count": len(found), "auto_filed": filed, "auto_seq": seq}
 
 
 #: Suggestions for a few seconds, computed by one caller at a time. Two pollers ask (the island every

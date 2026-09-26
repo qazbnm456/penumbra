@@ -236,3 +236,29 @@ def test_the_old_first_orbits_fixed_title_is_cleared_so_it_is_named_like_any_orb
     mutate_orbit("first-orbit", lambda o: setattr(o, "title", "My reading"))
     api._untitle_legacy_first_orbit()
     assert load_orbit("first-orbit").title == "My reading"
+
+
+def test_an_automatic_filing_is_announced_once_with_what_undoes_it(client, monkeypatch):
+    _assign(client, monkeypatch)
+    monkeypatch.setenv("PN_FILING_MODE", "manual")
+    node_id = client.post("/horizon", json={"texts": ["waiting"]}).json()["nodes"][0]["id"]
+    _ready(node_id)
+    since = client.get("/horizon/suggestions").json()["auto_seq"]
+    monkeypatch.setattr(api.filing, "suggestions", lambda landing, **kw: [
+        {"node_id": node_id, "orbit": "reading", "title": "waiting", "shared": [], "tags": [], "score": 3},
+    ])
+    monkeypatch.setenv("PN_FILING_MODE", "auto")
+    assert api._auto_file_suggested() == 1
+
+    got = client.get("/horizon/suggestions", params={"since": since}).json()
+    filed = [(e["node_id"], e["orbit"], e["title"]) for e in got["auto_filed"]]
+    assert filed == [(node_id, "reading", "waiting")]
+    source_id = got["auto_filed"][0]["source_id"]
+    assert client.get("/horizon/suggestions", params={"since": got["auto_seq"]}).json()["auto_filed"] == []
+
+    # Undoing it is removing that source, which also declines the pair for next time.
+    assert client.delete(f"/orbits/reading/sources/{source_id}").status_code == 200
+    assert horizon.memberships_for(node_id) == []
+    with horizon._connect() as conn:
+        declined = conn.execute("SELECT node_id, orbit_id FROM filing_dismissed").fetchall()
+    assert (node_id, "reading") in [tuple(r) for r in declined]

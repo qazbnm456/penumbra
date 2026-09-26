@@ -8401,6 +8401,15 @@ const PASTED_SNIPPET_CAP = 60;
 const DANGLING_TAIL =
   /[ ](?:a|an|and|as|at|but|by|for|from|if|in|into|is|it|of|on|or|so|that|the|to|with)$/i;
 
+//: A capture's name as the server sends it in a suggestion or a filing: its title, or, with none,
+//: its origin, which for a paste is `pasted:<text> #<hash>` and for a link a whole URL. Both are
+//: shown the way the list shows them.
+function captureName(name) {
+  const raw = String(name || "");
+  if (raw.startsWith("pasted:")) return pastedExcerpt(raw);
+  return /^https?:\/\//.test(raw) ? originLabel(raw) : raw;
+}
+
 function pastedExcerpt(origin) {
   const raw = origin.slice("pasted:".length).split(" #")[0].trim();
   // Nothing was lost: show it whole, with no mark. `<=`, not `<`: `ingest_pasted_text` is
@@ -13662,7 +13671,8 @@ function distilOrbitControl(slug, count) {
 
 // --- filing suggestions ---------------------------------------------------------------------------
 
-const suggest = { items: [], open: false, lastFetch: 0, inFlight: false, again: false };
+//: `autoSeq` is the last automatic filing already announced; null until the first answer sets it.
+const suggest = { items: [], open: false, lastFetch: 0, inFlight: false, again: false, autoSeq: null };
 
 async function ensureOrbitTitles() {
   if (orbitTitles.size) return;
@@ -13689,7 +13699,7 @@ async function refreshSuggestions({ force = false } = {}) {
   suggest.inFlight = true;
   let data;
   try {
-    data = await api("/horizon/suggestions");
+    data = await api(`/horizon/suggestions?since=${suggest.autoSeq || 0}`);
   } catch {
     return;
   } finally {
@@ -13702,6 +13712,55 @@ async function refreshSuggestions({ force = false } = {}) {
   await ensureOrbitTitles();
   suggest.items = data.suggestions || [];
   renderSuggestions();
+  announceAutoFiled(data);
+}
+
+//: Automatic filings since the last look, each announced once. The first answer after the page
+//: loads only sets the mark: what was filed before the reader was looking is already on the map.
+//: One filing gets a notice that can take it back out; several at once get one notice with the
+//: count, since a single button could not say which to undo.
+function announceAutoFiled(data) {
+  const seq = Number(data.auto_seq || 0);
+  if (suggest.autoSeq === null) {
+    suggest.autoSeq = seq;
+    return;
+  }
+  const fresh = (data.auto_filed || []).filter((entry) => entry.seq > suggest.autoSeq);
+  suggest.autoSeq = Math.max(suggest.autoSeq, seq);
+  if (!fresh.length) return;
+  if (fresh.length > 1) {
+    notify(t("suggest.autoFiledMany", `Filed ${fresh.length} automatically`, { n: fresh.length }),
+      { tone: "ok", timeout: 6000 });
+  } else {
+    const entry = fresh[0];
+    const title = captureName(entry.title);
+    notify(t("suggest.autoFiled", `Filed automatically into ${entry.orbit_title}: ${title}`,
+      { orbit: entry.orbit_title, title }), {
+      tone: "ok",
+      timeout: 6000,
+      action: { label: t("suggest.autoUndo", "Take out"), run: () => void undoAutoFiled(entry) },
+    });
+  }
+  renderFacets();
+  if (viewIsHorizon() && viewMode("horizon") === "map") void renderStarMap();
+}
+
+//: Taking an automatic filing back out is removing that source from the orbit, which the server
+//: also records as "not this orbit", so it is not filed straight back.
+async function undoAutoFiled(entry) {
+  try {
+    await api(`/orbits/${encodeURIComponent(entry.orbit)}/sources/${encodeURIComponent(entry.source_id)}`,
+      { method: "DELETE" });
+  } catch (err) {
+    notify(t("suggest.autoUndoFailed", `Could not take it out: ${err.message}`, { message: err.message }));
+    return;
+  }
+  const title = captureName(entry.title);
+  notify(t("suggest.autoUndone", `Back in the Horizon: ${title}`, { title }),
+    { tone: "ok", timeout: 4000 });
+  renderFacets();
+  void refreshHorizon({ reset: false });
+  void refreshSuggestions({ force: true });
 }
 
 function renderSuggestions() {
@@ -13728,7 +13787,7 @@ function suggestionRow(item) {
   {
     const where = orbitLabelForSlug(item.orbit) || t("suggest.anOrbit", "an orbit");
     const row = elt("li", "suggest-row");
-    row.appendChild(elt("span", "suggest-title", item.title));
+    row.appendChild(elt("span", "suggest-title", captureName(item.title)));
     const why = [...item.shared, ...item.tags.map((tag) => `#${tag}`)].join(t("list.sep", ", "));
     row.appendChild(elt("span", "suggest-why", item.like
       ? t("suggest.like", `Into ${where}: its content is like ${item.like}`, { where, like: item.like })

@@ -1038,3 +1038,15 @@ def test_assign_opens_the_orbit_choice_and_needs_an_orbit_to_offer():
     assert result["keepsChosenOrbit"] == "cfp", "the saved orbit is the one shown"
     assert result["registered"], "the orbit choice must be saved with the rest"
     assert result["assignDisabledWithoutOrbits"], "assign with nowhere to go must not be offered"
+
+
+def test_an_automatic_filing_is_announced_once_and_can_be_taken_out():
+    result = _run("autoFiledNotices")
+    assert result["afterLoad"] == 0, "filings from before the page loaded are already on the map"
+    assert result["one"] == [{"message": "Filed automatically into CFP: gitspawn", "action": True}], (
+        "one filing names its orbit and offers to take it out"
+    )
+    assert result["repeat"] == 0, "the same filing is never announced twice"
+    assert result["many"] == [{"message": "Filed 2 automatically", "action": False}], (
+        "several at once are one counted notice, with no button that could not say which to undo"
+    )
