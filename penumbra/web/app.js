@@ -9137,6 +9137,8 @@ function selectNode(node, row) {
     starMap.focus = { kind: "node", node };
     row.classList.add("is-selected");
     row.querySelector(".node-open")?.setAttribute("aria-pressed", "true");
+    // Opened for this capture, so closing it puts the column away again.
+    starMap.keepPanel = false;
     if (mapPanelGrip && mapPanelGrip.isCollapsed()) mapPanelGrip.setCollapsed(false, { persist: false });
   }
   renderStarMapCard();
@@ -12725,6 +12727,15 @@ function closeMapFocus() {
   starMap.selected = null;
   // Closing a capture opened from the lens card goes back to that card while the lenses are on.
   starMap.focus = starMap.lenses.size ? { kind: "lens" } : null;
+  // The list draws no map, so its column and its selected row are repainted here.
+  if (viewMode("horizon") === "list") {
+    document.querySelectorAll(".node.is-selected").forEach((el) => {
+      el.classList.remove("is-selected");
+      el.querySelector(".node-open")?.setAttribute("aria-pressed", "false");
+    });
+    renderStarMapCard();
+    return;
+  }
   drawStarMap();
   syncStarMapContext();
   cameraHome();
@@ -13390,10 +13401,16 @@ function paintStarMapCard(mapCard) {
     mapCard.hidden = false;
     return;
   }
-  // In the list, with nothing chosen, the column says what it is for.
+  // In the list, with nothing chosen, the column puts itself away and the list takes the width;
+  // choosing a capture opens it again (`selectNode`). Opened by hand, it stays and says what it is
+  // for.
   if (viewMode("horizon") === "list" && !starMap.focus) {
     mapCard.appendChild(elt("p", "card-note node-panel-empty", t("horizon.pickOne", "Choose a capture to read it here.")));
     mapCard.hidden = false;
+    if (mapPanelGrip && !starMap.keepPanel && !mapPanelGrip.isCollapsed()) {
+      mapPanelGrip.setCollapsed(true, { persist: false });
+      starMap.autoCollapsed = true;
+    }
     return;
   }
   if (starMap.focus && starMap.focus.kind === "lens" && starMap.lenses.size) {
