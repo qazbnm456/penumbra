@@ -4573,7 +4573,7 @@ def test_a_cancelled_await_kills_the_worker_rather_than_orphaning_it(monkeypatch
 def test_the_server_reads_the_interface_language_header_the_page_sends():
     """The rename moved the header to `X-Penumbra-Interface-Language` in `app.js` and left the server
     reading `x-rlm-interface-language`: HTTP headers are case-insensitive but a rename script is not.
-    Every notebook's language resolution then silently lost its strongest signal (invariant 69),
+    Every orbit's language resolution then silently lost its strongest signal (invariant 69),
     and the test pinning the server's source text agreed with itself. This ties the two ends."""
     import re
     from pathlib import Path

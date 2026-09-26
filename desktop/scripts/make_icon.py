@@ -11,7 +11,8 @@ night plum), and nothing thin enough to vanish at 32px.
 Every shape is a signed distance, so each pixel's coverage is computed analytically and the edges
 are antialiased without supersampling. No text, no fonts, no dependencies. Regenerate the platform
 icons with `cargo tauri icon ../icon.png` from `desktop/src-tauri`, then delete the `android` and
-`ios` folders it adds.
+`ios` folders and the Windows Store logos (`Square*Logo.png`, `StoreLogo.png`) it adds: the bundle
+lists only the five icons in `tauri.conf.json`.
 """
 
 from __future__ import annotations
