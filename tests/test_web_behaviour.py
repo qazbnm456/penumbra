@@ -1009,9 +1009,10 @@ def test_each_orbit_is_the_same_world_every_visit_and_neighbours_differ():
     assert result["seeded"], "the generator must be deterministic for a seed"
 
 
-def test_a_resting_screen_shows_the_first_sentence_short_in_any_script():
-    result = _run("restGist")
-    assert result["en"] == "Sleep consolidates memory."
-    width = sum(2 if "\u2e80" <= ch <= "\u9fff" else 1 for ch in result["zh"][:-1])
-    assert result["zh"].endswith("\u2026") and width <= 140, "a CJK gist is cut by width, not by count"
-
+def test_a_resting_note_shows_the_whole_summary_a_page_at_a_time():
+    result = _run("restPages")
+    assert result["shortPages"] == ["Sleep consolidates memory. Naps help too."], "short means one page"
+    assert result["longPages"] > 1 and result["fits"], "a long one is paged to fit the column"
+    assert result["whole"], "paging never drops a word"
+    assert result["dwellShort"] == 12000, "never under 12 seconds"
+    assert 12000 < result["dwellLong"] <= 45000, "a full page is held long enough to read"

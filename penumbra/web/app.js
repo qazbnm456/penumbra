@@ -11617,44 +11617,81 @@ function paintAmbientClock() {
   box.querySelector(".ambient-date").textContent = now.toLocaleDateString(uiLang(), { month: "long", day: "numeric", weekday: "long" });
 }
 
-//: The first sentence of a summary, short enough to read at a glance from across the room.
-function gistOf(summary) {
+//: A summary cut into pages that each fit the note's column (about eight lines), at sentence
+//: boundaries, measured in width with a CJK character counting as two. Most summaries are one page;
+//: a long one is read a page at a time rather than cut short.
+const REST_PAGE_UNITS = 440;
+
+function textUnits(text) {
+  let units = 0;
+  for (const ch of text) units += /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(ch) ? 2 : 1;
+  return units;
+}
+
+function notePages(summary) {
   const text = String(summary || "").replace(/\s+/g, " ").trim();
-  const end = text.search(/[\u3002\uff01\uff1f.!?](\s|$)/);
-  const first = end > 0 ? text.slice(0, end + 1) : text;
-  // Measured in width, a CJK character counting as two, so a Chinese gist is as short to read as
-  // an English one: about two lines either way.
-  let width = 0;
-  for (let i = 0; i < first.length; i += 1) {
-    width += /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(first[i]) ? 2 : 1;
-    if (width > 140) return `${first.slice(0, i).trimEnd()}\u2026`;
-  }
-  return first;
+  if (!text) return [];
+  const sentences = text.match(/[^\u3002\uff01\uff1f.!?]+[\u3002\uff01\uff1f.!?]*\s*/g) || [text];
+  const pages = [];
+  let page = "";
+  sentences.forEach((sentence) => {
+    if (page && textUnits(page + sentence) > REST_PAGE_UNITS) {
+      pages.push(page.trim());
+      page = "";
+    }
+    page += sentence;
+  });
+  if (page.trim()) pages.push(page.trim());
+  return pages;
+}
+
+//: How long a page stays: long enough to read it unhurried (about 4 CJK characters or 3 words a
+//: second, plus a third again), never under 12 seconds or over 45.
+function pageDwell(page) {
+  const cjk = (page.match(/[\u2e80-\u9fff\uac00-\ud7af]/g) || []).length;
+  const words = page.replace(/[\u2e80-\u9fff\uac00-\ud7af]/g, " ").split(/\s+/).filter(Boolean).length;
+  const seconds = (cjk / 4 + words / 3) * 1.3;
+  return Math.min(45000, Math.max(12000, seconds * 1000));
 }
 
 //: Something the reader kept, brought back while the map rests: a capture picked at random from
-//: those already summarised, its title and the first sentence of what it says, marked new if it
-//: came in this week and old otherwise, with the orbit it lives in. Passive recall from their own
-//: sky, read from the index; nothing is asked of a model.
-function paintAmbientNote() {
-  const box = document.querySelector("#ambient-clock .ambient-note");
-  if (!box || !ambient.notes.length) return;
+//: those already summarised, read in two layers. At a glance, whether it is new or old, where it
+//: lives and its title; for a reader who stays, its whole summary and what it talks about, a page
+//: at a time, each page held for as long as it takes to read. Read from the index; no model call.
+function showAmbientNote() {
+  const box = document.getElementById("ambient-note");
+  if (!box || !ambient.notes.length || !ambient.on) return;
   const node = ambient.notes[ambient.noteAt % ambient.notes.length];
   ambient.noteAt += 1;
+  const pages = notePages(node.summary);
   const fresh = Date.now() / 1000 - (node.created_at || 0) < 7 * 86400;
   const orbit = (node.orbits || [])[0];
   const where = orbit ? orbitTitles.get(orbit.orbit_id) || "" : "";
   const kicker = [fresh ? t("rest.new", "New to you") : t("rest.old", "From your past"),
-    where ? t("rest.from", `from ${where}`, { name: where }) : "", relativeTime(node.created_at)].filter(Boolean).join(" \u00b7 ");
-  box.classList.remove("is-shown");
-  setTimeout(() => {
-    box.replaceChildren(
-      elt("div", "ambient-note-kicker", kicker),
-      elt("div", "ambient-note-title", node.title || ""),
-      elt("div", "ambient-note-gist", gistOf(node.summary)),
-    );
-    box.classList.add("is-shown");
-  }, motionAllowed() ? 700 : 0);
+    where ? t("rest.from", `from ${where}`, { name: where }) : "", relativeTime(node.created_at)]
+    .filter(Boolean).join(" \u00b7 ");
+  const names = (node.entities || []).slice(0, 4);
+  const paint = (index) => {
+    if (!ambient.on) return;
+    box.classList.remove("is-shown");
+    setTimeout(() => {
+      const body = [elt("div", "ambient-note-kicker", kicker), elt("div", "ambient-note-title", node.title || ""),
+        elt("p", "ambient-note-body", pages[index] || "")];
+      if (names.length) {
+        body.push(elt("div", "ambient-note-names", `${t("rest.about", "About")}  ${names.join(" \u00b7 ")}`));
+      }
+      if (pages.length > 1) {
+        const dots = elt("div", "ambient-note-pages");
+        pages.forEach((_, n) => dots.appendChild(elt("span", n === index ? "ambient-note-dot is-now" : "ambient-note-dot")));
+        body.push(dots);
+      }
+      box.replaceChildren(...body);
+      box.classList.add("is-shown");
+    }, motionAllowed() ? 700 : 0);
+    ambient.noteTimer = setTimeout(() => (index + 1 < pages.length ? paint(index + 1) : showAmbientNote()),
+      pageDwell(pages[index] || "") + 700);
+  };
+  paint(0);
 }
 
 async function loadAmbientNotes() {
@@ -11671,10 +11708,7 @@ async function loadAmbientNotes() {
   }
   ambient.notes = kept;
   ambient.noteAt = 0;
-  if (ambient.on) {
-    paintAmbientNote();
-    ambient.noteTimer = setInterval(paintAmbientNote, 20000);
-  }
+  if (ambient.on) showAmbientNote();
 }
 
 function ambientTourStep() {
@@ -11703,8 +11737,16 @@ function enterAmbient({ fromPress = false } = {}) {
   clock.setAttribute("aria-hidden", "true");
   clock.appendChild(elt("div", "ambient-time", ""));
   clock.appendChild(elt("div", "ambient-date", ""));
-  clock.appendChild(elt("div", "ambient-note", ""));
   document.body.appendChild(clock);
+  // The note sits opposite the clock, bottom right, so the middle of the sky stays clear; a faint
+  // floor of shade under both keeps them readable when a comet or a nebula passes behind.
+  const scrim = elt("div", "ambient-scrim");
+  scrim.id = "ambient-scrim";
+  const note = elt("div", "ambient-note");
+  note.id = "ambient-note";
+  note.setAttribute("aria-hidden", "true");
+  document.body.appendChild(scrim);
+  document.body.appendChild(note);
   paintAmbientClock();
   ambient.clock = setInterval(paintAmbientClock, 15000);
   void loadAmbientNotes();
@@ -11720,8 +11762,8 @@ function exitAmbient() {
   clearTimeout(ambient.tour);
   clearTimeout(ambient.still);
   clearInterval(ambient.clock);
-  clearInterval(ambient.noteTimer);
-  document.getElementById("ambient-clock")?.remove();
+  clearTimeout(ambient.noteTimer);
+  ["ambient-clock", "ambient-note", "ambient-scrim"].forEach((id) => document.getElementById(id)?.remove());
   document.body.classList.remove("is-ambient", "is-ambient-still");
   restLeaveScreen();
   cameraHome();

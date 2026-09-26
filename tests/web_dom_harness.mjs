@@ -1625,12 +1625,23 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     return { out, sameLength: out.length === text.length };
   },
 
-  //: The gist a resting screen shows: the first sentence, cut by width so CJK stays as short.
-  restGist() {
-    const run = new Function(`${extract("gistOf")}\nreturn { gistOf };`)();
+  //: A resting note's pages: whole sentences, each page within the column, and a dwell that
+  //: grows with the words but stays between 12 and 45 seconds.
+  restPages() {
+    const run = new Function(
+      `const REST_PAGE_UNITS = 440;\n${extract("textUnits")}\n${extract("notePages")}\n${extract("pageDwell")}\n` +
+      "return { notePages, pageDwell, textUnits };"
+    )();
+    const short = "Sleep consolidates memory. Naps help too.";
+    const long = "睡眠鞏固記憶，午睡二十分鐘就有效果。".repeat(14);
+    const pages = run.notePages(long);
     return {
-      en: run.gistOf("Sleep consolidates memory. Later sentences are not shown."),
-      zh: run.gistOf("本文件為NCA 2026年度會議的發表演講者招募通知主題聚焦於AI時代的威脅演變以及人員判斷與組織協作的重要性並列出推薦題目與截止日期等等細節內容說明。"),
+      shortPages: run.notePages(short),
+      longPages: pages.length,
+      fits: pages.every((p) => run.textUnits(p) <= 440),
+      whole: pages.join("") === long,
+      dwellShort: run.pageDwell(short),
+      dwellLong: run.pageDwell(pages[0]),
     };
   },
 

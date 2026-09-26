@@ -9531,12 +9531,18 @@ body:not([data-view="horizon"]) .capture-dock {
   color: var(--text-dim);
 }
 
+/* The kept note, opposite the clock: a reading column of about 30 CJK characters or 60 Latin a
+   line, bottom-aligned with the clock, the title for a glance and the whole paragraph for a stay. */
 .ambient-note {
-  margin-top: var(--space-10);
-  padding-left: var(--space-6);
-  border-left: 1px solid color-mix(in oklch, var(--accent) 70%, transparent);
+  position: fixed;
+  right: var(--space-11);
+  bottom: var(--space-11);
+  z-index: 3001;
+  width: clamp(22rem, 34vw, 36rem);
+  color: var(--text);
+  pointer-events: none;
   opacity: 0;
-  transform: translateY(6px);
+  transform: translateY(8px);
   transition: opacity 700ms ease, transform 700ms ease;
 }
 
@@ -9547,29 +9553,73 @@ body:not([data-view="horizon"]) .capture-dock {
 
 .ambient-note-kicker {
   font-size: var(--text-xs);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   color: var(--accent-text);
 }
 
 .ambient-note-title {
-  margin-top: var(--space-2);
+  margin-top: var(--space-3);
   font-family: var(--serif);
-  font-size: var(--text-2xl);
+  font-size: calc(var(--text-2xl) * 1.45);
   font-weight: 600;
-  line-height: 1.35;
+  line-height: 1.3;
+  text-wrap: balance;
 }
 
-.ambient-note-gist {
-  margin-top: var(--space-2);
+.ambient-note-body {
+  margin: var(--space-5) 0 0;
   font-family: var(--serif);
-  font-size: var(--text-lg);
-  line-height: 1.6;
-  color: var(--text-dim);
+  font-size: calc(var(--text-xl) * 1.12);
+  line-height: 1.8;
+  color: color-mix(in oklch, var(--text) 86%, transparent);
+  text-wrap: pretty;
+}
+
+.ambient-note-names {
+  margin-top: var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.ambient-note-pages {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+.ambient-note-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  opacity: 0.5;
+}
+
+.ambient-note-dot.is-now {
+  background: var(--accent);
+  opacity: 1;
+}
+
+/* A floor of shade along the bottom, under the clock and the note. */
+.ambient-scrim {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 48vh;
+  z-index: 3000;
+  pointer-events: none;
+  background: linear-gradient(to top, color-mix(in oklch, var(--bg) 82%, transparent), transparent);
+  animation: rest-in 2.4s ease;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .ambient-clock,
-  .ambient-note {
+  .ambient-note,
+  .ambient-scrim {
     animation: none;
     transition: none;
   }
