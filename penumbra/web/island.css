@@ -90,7 +90,8 @@ body[data-edge="top"] .hole {
 
 /* Hovering: a capsule's lower half, radius = the visible height below the notch over two. */
 body[data-edge="top"][data-state="hover"] .hole,
-body[data-edge="top"][data-state="listen"] .hole {
+body[data-edge="top"][data-state="listen"] .hole,
+body[data-edge="top"][data-state="peek"] .hole {
   border-radius: 0 0 26px 26px;
 }
 
@@ -223,7 +224,8 @@ body[data-busy] .pull {
 }
 
 body[data-state="hover"] .duo,
-body[data-state="listen"] .duo {
+body[data-state="listen"] .duo,
+body[data-state="peek"] .duo {
   opacity: 1;
 }
 
@@ -578,7 +580,8 @@ body[data-busy] .note-send {
 
 /* While listening the shape keeps its hover look, a little taller, with the ring lifted so the
    line fits under it. The line fades in slowly: it arrives as the reader waits, not as they aim. */
-body[data-state="listen"] .hole {
+body[data-state="listen"] .hole,
+body[data-state="peek"] .hole {
   align-items: flex-start;
   padding-top: calc(var(--inset, 0px) + 12px);
 }
@@ -598,10 +601,16 @@ body[data-state="listen"] .hole {
   transition: opacity 180ms ease, transform 180ms ease;
 }
 
-body[data-state="listen"] .listen-hint {
+body[data-state="listen"] .listen-hint,
+body[data-state="peek"] .listen-hint {
   opacity: 1;
   transform: translate(-50%, 0);
   transition: opacity 700ms ease 200ms, transform 700ms ease 200ms;
+}
+
+/* A peek is news, not an invitation: its line has no caret and arrives with the shape. */
+body[data-state="peek"] .listen-hint {
+  transition: opacity 300ms ease 120ms, transform 300ms ease 120ms;
 }
 
 /* A caret-like pulse after the words, so it reads as a place that is listening. */
@@ -624,7 +633,8 @@ body[data-state="listen"] .listen-hint::after {
 
 @media (prefers-reduced-motion: reduce) {
   .listen-hint,
-  body[data-state="listen"] .listen-hint {
+  body[data-state="listen"] .listen-hint,
+  body[data-state="peek"] .listen-hint {
     transition: none;
   }
 
