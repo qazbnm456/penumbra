@@ -13029,7 +13029,7 @@ function renderHorizonCard(card, { standing = false } = {}) {
   const list = elt("ul", "card-list");
   (loose.items || []).forEach((item) => {
     const row = elt("li", "card-row is-filing");
-    const name = elt("button", "card-row-title", item.title);
+    const name = elt("button", "card-row-title", captureName(item.title));
     name.type = "button";
     name.addEventListener("click", () => openMapFocus({ kind: "capture", ...item, orbit: null }));
     row.appendChild(name);
@@ -13066,7 +13066,7 @@ function renderHorizonTodo(card, loose) {
     const list = elt("ul", "card-list");
     (loose.items || []).forEach((item) => {
       const row = elt("li", "card-row is-filing");
-      const name = elt("button", "card-row-title", item.title);
+      const name = elt("button", "card-row-title", captureName(item.title));
       name.type = "button";
       name.addEventListener("click", () => openMapFocus({ kind: "capture", ...item, orbit: null }));
       row.appendChild(name);
@@ -13166,7 +13166,7 @@ function renderBridgeCard(card, focus) {
       const list = elt("ul", "card-list");
       items.forEach((item) => {
         const row = elt("li", "card-row");
-        const name = elt("button", "card-row-title", item.title);
+        const name = elt("button", "card-row-title", captureName(item.title));
         name.type = "button";
         name.addEventListener("click", () => openMapFocus({ kind: "capture", id: item.id, title: item.title, state: "ready", orbit: slugKey }));
         row.appendChild(name);
@@ -13492,7 +13492,7 @@ function paintStarMapCard(mapCard) {
     orbit.moons.forEach((item) => {
       const row = elt("li", "card-row");
       row.appendChild(elt("span", moonClass({ kind: "capture", ...item }).replace("map-dot", "legend-dot"), ""));
-      const name = elt("button", "card-row-title", item.title);
+      const name = elt("button", "card-row-title", captureName(item.title));
       name.type = "button";
       name.addEventListener("click", () => openMapFocus({ kind: "capture", ...item, orbit: orbit.slug }));
       row.appendChild(name);
