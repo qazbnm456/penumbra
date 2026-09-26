@@ -36,6 +36,7 @@ from typing import get_args
 from . import concepts as aliases_store
 from . import horizon
 from .horizon import DEFAULT_HORIZON_DIR
+from .prose import polish
 from .schema import NodeState
 
 _log = logging.getLogger(__name__)
@@ -499,7 +500,7 @@ def lens(tags: list[str], *, limit: int = 40, base_dir: str | Path = DEFAULT_HOR
         except ValueError:
             carried = []
         captures.append({
-            "id": row["id"], "title": _label(row), "summary": row["summary"] or "",
+            "id": row["id"], "title": polish(_label(row)), "summary": polish(row["summary"] or ""),
             "matched": [t for t in carried if t in wanted], "tags": carried,
             "state": row["state"], "created_at": row["created_at"], "orbits": filed[row["id"]],
         })

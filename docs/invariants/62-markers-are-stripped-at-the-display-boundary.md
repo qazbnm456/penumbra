@@ -12,4 +12,6 @@ The prompt asks the model not to write markers into prose as well. The display s
 
 ---
 
+**Model prose is tidied at the same boundary, by fixed rules.** `prose.polish` removes the habits a prompt does not hold back: announcing openings ("本文件為", "This document describes"), empty signposts ("總的來說", "In summary,"), dashes where a comma belongs, and ASCII punctuation between Chinese characters. It never rewrites a sentence and costs no model call. It runs in `api._prose` and on a capture's title and summary on the way out, for the same reason markers are stripped there: stored text stays what the model wrote, so every orbit already on disk reads tidied with no migration and a rule can be withdrawn without touching data. A citation's `answer_span` gets the same polish before it is located, so a highlight still lands on its words; a span that no longer matches loses its highlight and is never matched onto other words.
+
 Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

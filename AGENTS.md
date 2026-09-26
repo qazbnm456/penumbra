@@ -190,7 +190,7 @@ This index does not grow. An entry that has gained a second paragraph has taken 
 
 61. **The cheap `dspy.Predict` callers read `Corpus.excerpt`, never `blob()[:n]`; a prefix is source one, not the orbit.** The blob concatenates sources in order, so a 69,859-character first source hid sources two to four. ([why](docs/invariants/61-cheap-predict-callers-read-an-excerpt.md))
 
-62. **A `[[SRC:...]]` marker is a coordinate for the interface and must never reach the reader. It is stripped at the display boundary, not before storage.** Stripping on the way out means nothing stored is rewritten, and every orbit already on disk is fixed with no migration. ([why](docs/invariants/62-markers-are-stripped-at-the-display-boundary.md))
+62. **A `[[SRC:...]]` marker is a coordinate for the interface and must never reach the reader. It is stripped at the display boundary, not before storage, and model prose is tidied there too (`prose.polish`), with every `answer_span` tidied the same way.** Stripping on the way out means nothing stored is rewritten, and every orbit already on disk is fixed with no migration. ([why](docs/invariants/62-markers-are-stripped-at-the-display-boundary.md))
 
 63. **The podcast has a length, chosen at generation time, and the tiers are numbers rather than adjectives.** "Aim for a natural episode length" did nothing: four measured episodes all landed near three minutes. ([why](docs/invariants/63-the-podcast-has-a-chosen-length.md))
 

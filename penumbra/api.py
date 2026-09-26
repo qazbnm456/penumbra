@@ -167,6 +167,7 @@ from .orbit import (
     slug,
 )
 from .parsers.web import FetchError
+from .prose import polish
 from .schema import (
     FAQ,
     PODCAST_TIMEOUT_FACTOR,
@@ -618,10 +619,25 @@ class CitationResponse(BaseModel):
 
 def _prose(text: str) -> str:
     """Model-authored text as the client should render it: corpus markers removed
-    (`citations.strip_markers`). Every site that emits an artifact's text uses this AND passes the
-    same value to `_citation_responses`, so the string on screen and the string the spans were
-    located in are the same one."""
-    return strip_markers(text or "")
+    (`citations.strip_markers`) and fixed habits tidied (`prose.polish`). Every site that emits an
+    artifact's text uses this AND passes the same value to `_citation_responses`, so the string on
+    screen and the string the spans were located in are the same one."""
+    return polish(strip_markers(text or ""))
+
+
+def _fallback_name(sources) -> str:
+    """An untitled orbit's name, from its first source's own title when it has one."""
+    return fallback_title([s.origin for s in sources], [s.preview.get("title", "") for s in sources])
+
+
+def _node_view(node) -> dict:
+    """A capture as the client renders it: its model-written title and summary tidied the way
+    `_prose` tidies an answer, on the way out, so the stored row stays what the model wrote."""
+    data = node.model_dump()
+    for field in ("title", "summary"):
+        if data.get(field):
+            data[field] = polish(data[field])
+    return data
 
 
 def _citation_responses(citations: list[Citation], corpus, prose: str) -> list[CitationResponse]:
@@ -634,7 +650,12 @@ def _citation_responses(citations: list[Citation], corpus, prose: str) -> list[C
     promising the opposite, found by an independent audit. An empty `prose` now simply locates
     nothing, which is the honest answer for an artifact with no text.
     """
-    located = locate_answer_spans(citations, prose)
+    # The span gets the same polish the prose got, or a tidied sentence would no longer contain it.
+    polished = [
+        c.model_copy(update={"answer_span": polish(strip_markers(c.answer_span))}) if c.answer_span else c
+        for c in citations
+    ]
+    located = locate_answer_spans(polished, prose)
     return [
         CitationResponse(
             source_id=v.citation.source_id,
@@ -919,7 +940,7 @@ async def list_orbits() -> OrbitListResponse:
                 id=nb.id,
                 slug=slug(nb.id),
                 title=nb.title,
-                derived_title=nb.title or fallback_title([s.origin for s in nb.sources]),
+                derived_title=nb.title or _fallback_name(nb.sources),
                 source_count=len(nb.sources),
                 turn_count=len(nb.turns),
                 updated_at=last_modified(nb.id),
@@ -1017,7 +1038,7 @@ def _orbit_response(orbit: Orbit) -> OrbitResponse:
         slug=slug(orbit.id),
         title=orbit.title,
         derived_title=orbit.title
-        or fallback_title([s.origin for s in orbit.sources]),
+        or _fallback_name(orbit.sources),
         sources=[
             {
                 "id": s.id,
@@ -2062,6 +2083,7 @@ async def suggest_title(
         return _orbit_response(orbit)
 
     origins = [s.origin for s in orbit.sources]
+    titles = [s.preview.get("title", "") for s in orbit.sources]
     _require_sources(orbit, "title")
 
     config = _config()
@@ -2082,7 +2104,7 @@ async def suggest_title(
         title = await _run_isolated(
             orbit_id,
             _dotted(SuggestTitle),
-            {"sources": excerpt, "origins": origins, "language": language or ""},
+            {"sources": excerpt, "origins": origins, "language": language or "", "titles": titles},
             config,
             run_id,
         )
@@ -2090,7 +2112,7 @@ async def suggest_title(
         # A failed/timed-out naming run must not deny the caller their orbit — fall back to the
         # deterministic title, the same "never lose what already succeeded" discipline invariant 19
         # applies to a TTS failure after a transcript exists.
-        title = fallback_title(origins)
+        title = fallback_title(origins, titles)
 
     orbit = await _mutate_or_http(
         orbit_id, lambda nb: setattr(nb, "title", nb.title or str(title)), create=False
@@ -3706,7 +3728,7 @@ async def list_horizon(
         # Each node carries the orbits it is in and when it was filed there: the history list shows
         # them beside every capture, and a query per row would be a request per row.
         "nodes": [
-            {**node.model_dump(), "orbits": [m.model_dump() for m in filed.get(node.id, [])]}
+            {**_node_view(node), "orbits": [m.model_dump() for m in filed.get(node.id, [])]}
             for node in nodes
         ],
         "total": total,
@@ -4543,7 +4565,7 @@ async def delete_horizon_ask(ask_id: str) -> dict:
 async def get_horizon_node(node_id: str) -> dict:
     node = await asyncio.to_thread(_node_or_404, node_id)
     memberships = await asyncio.to_thread(horizon.memberships_for, node_id)
-    return {"node": node.model_dump(), "orbits": [m.model_dump() for m in memberships]}
+    return {"node": _node_view(node), "orbits": [m.model_dump() for m in memberships]}
 
 
 @app.get("/horizon/{node_id}/source")

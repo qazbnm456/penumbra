@@ -21,7 +21,16 @@ def test_fallback_reads_a_pasted_origins_snippet_not_its_hash():
 
 
 def test_fallback_shortens_a_url_and_counts_the_rest():
-    assert fallback_title(["https://www.example.com/articles/voyager-1", "x", "y"]) == "voyager-1 (+2)"
+    assert fallback_title(["https://www.example.com/articles/voyager-1", "x", "y"]) == "voyager-1"
+
+
+def test_the_fallback_prefers_the_first_sources_own_name():
+    """An orbit of a conference's call for papers read "cfp (+1)": the URL's last segment and a
+    count, which named nothing. Its page title is what a reader recognises."""
+    origins = ["https://annualconf.nca.gr.jp/cfp/", "https://powerofcommunity.net/"]
+    assert fallback_title(origins, ["発表者募集", "POC"]) == "発表者募集"
+    assert fallback_title(origins, ["", "POC"]) == "cfp", "without a title, the origin still names it"
+    assert fallback_title(["OWASP-Top-10-2026.pdf"]) == "OWASP-Top-10-2026", "a file loses its extension"
 
 
 def test_fallback_is_deterministic_and_never_empty():
