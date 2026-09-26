@@ -654,6 +654,8 @@ const STRINGS = {
     "map.readInList": "閱讀全文",
     "horizon.filedAt": "{when} 歸入",
     "horizon.trail": "軌跡",
+    "horizon.pickOne": "選一則收錄，在這裡閱讀完整內容。",
+    "horizon.moreTags": "顯示全部 {n} 個標籤",
     "horizon.trailCaptured": "收錄",
     "horizon.trailFiled": "歸入「{name}」",
     "horizon.trailSummarised": "摘要完成",

@@ -8566,28 +8566,21 @@ body.is-resizing .panel-grip::before {
 }
 
 @media (min-width: 861px) {
+  /* Both views of the Horizon have the details column: the map's card, and the list's capture. */
   .view-horizon {
-    grid-template-columns: var(--facets-w, 13rem) minmax(0, 1fr);
+    grid-template-columns: var(--facets-w, 13rem) minmax(0, 1fr) var(--map-panel-w, 320px);
     transition: grid-template-columns 180ms ease;
   }
 
-  .view-horizon.is-map {
-    grid-template-columns: var(--facets-w, 13rem) minmax(0, 1fr) var(--map-panel-w, 320px);
-  }
-
   .view-horizon:has(.facets.is-collapsed) {
-    grid-template-columns: var(--facets-rail, 0px) minmax(0, 1fr);
-  }
-
-  .view-horizon.is-map:has(.facets.is-collapsed) {
     grid-template-columns: var(--facets-rail, 0px) minmax(0, 1fr) var(--map-panel-w, 320px);
   }
 
-  .view-horizon.is-map:has(.map-panel.is-collapsed) {
+  .view-horizon:has(.map-panel.is-collapsed) {
     grid-template-columns: var(--facets-w, 13rem) minmax(0, 1fr) var(--map-panel-rail, 2.9rem);
   }
 
-  .view-horizon.is-map:has(.facets.is-collapsed):has(.map-panel.is-collapsed) {
+  .view-horizon:has(.facets.is-collapsed):has(.map-panel.is-collapsed) {
     grid-template-columns: var(--facets-rail, 0px) minmax(0, 1fr) var(--map-panel-rail, 2.9rem);
   }
 }
@@ -8628,8 +8621,11 @@ body.is-resizing .cols {
   background: var(--surface-1);
 }
 
-.view-horizon:not(.is-map) > .map-panel {
-  display: none;
+/* Below the three-column width there is no room for it beside the list. */
+@media (max-width: 860px) {
+  .view-horizon:not(.is-map) > .map-panel {
+    display: none;
+  }
 }
 
 /* The card used to float over the map; in its own column it is the panel's content. */
@@ -9707,4 +9703,46 @@ body:not([data-view="horizon"]) .capture-dock {
   .map-double {
     animation: none;
   }
+}
+
+/* The list's chosen capture: the row it came from stays marked while it is read beside it. */
+.node.is-selected .node-col {
+  border-color: color-mix(in oklch, var(--accent) 55%, var(--border));
+  background: var(--surface-1);
+}
+
+.node.is-selected .node-dot {
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 35%, transparent);
+}
+
+.node-panel-body {
+  margin-top: var(--space-5);
+}
+
+.node-panel-empty {
+  margin-top: var(--space-9);
+}
+
+/* "+3" is a button now: it opens the capture, where every tag is shown. */
+button.node-more {
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  padding: 0 var(--space-3);
+  cursor: pointer;
+}
+
+button.node-more:hover {
+  color: var(--accent-text);
+  border-color: var(--accent-dim);
+}
+
+
+/* Beside the details column the list takes the middle column's width, up to a reading measure a
+   little wider than the thread's; its summaries stay two lines and more of each shows. */
+.view-horizon:not(.is-map) .horizon-inner {
+  max-width: calc(var(--chat-measure) + var(--space-13) * 2);
 }

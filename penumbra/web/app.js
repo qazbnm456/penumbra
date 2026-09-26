@@ -8511,8 +8511,11 @@ function renderNode(node, { isNew = false } = {}) {
   // read, so while a PDF parsed, the 900ms poll snapped every open row shut about once a second.
   // Same family as "a repaint may not delete a run": the reader's state is not the server's to
   // discard.
-  const wasOpen = horizonState.open.has(node.id);
-  if (wasOpen) row.classList.add("is-open");
+  const wasOpen = false;
+  if (starMap.focus && starMap.focus.kind === "node" && starMap.focus.node.id === node.id) {
+    row.classList.add("is-selected");
+    starMap.focus.node = node; // the list's copy is the newer one after a repaint
+  }
 
   // The history: when, to the minute, in its own column beside a timeline rail.
   const time = elt("time", "node-time", clockTime(node.created_at));
@@ -8592,7 +8595,7 @@ function stampTime(epochSeconds) {
 
 //: Where it is and what it is about, under the summary: each orbit it is in, then up to three tags.
 //: A tag narrows the list to it; an orbit opens the orbit.
-function nodeChips(node) {
+function nodeChips(node, { all = false } = {}) {
   const orbits = node.orbits || [];
   const tags = node.tags || [];
   if (!orbits.length && !tags.length) return null;
@@ -8610,7 +8613,8 @@ function nodeChips(node) {
     });
     row.appendChild(chip);
   });
-  tags.slice(0, 3).forEach((tag) => {
+  const shown = all ? tags : tags.slice(0, 3);
+  shown.forEach((tag) => {
     const chip = elt("button", "node-tag", `#${tag}`);
     chip.type = "button";
     chip.addEventListener("click", (event) => {
@@ -8619,7 +8623,18 @@ function nodeChips(node) {
     });
     row.appendChild(chip);
   });
-  if (tags.length > 3) row.appendChild(elt("span", "node-more", `+${tags.length - 3}`));
+  // The rest are one press away, in the details column, not a dead "+3".
+  if (!all && tags.length > 3) {
+    const more = elt("button", "node-more", `+${tags.length - 3}`);
+    more.type = "button";
+    more.setAttribute("aria-label", t("horizon.moreTags", `Show all ${tags.length} tags`, { n: tags.length }));
+    more.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const listRow = event.target.closest(".node");
+      if (listRow) selectNode(node, listRow);
+    });
+    row.appendChild(more);
+  }
   return row;
 }
 
@@ -9033,7 +9048,44 @@ function stopHorizonPolling() {
 
 // --- expand in place ------------------------------------------------------------------------------
 
+//: A capture opens in the details column beside the list, as a message opens beside a mail list:
+//: the whole summary, every tag, what it talks about, its trail and its actions, while the list
+//: stays where it was. Opened inside the row, a long capture pushed every later one down and the
+//: list jumped under the reader's hand; beside it, the list keeps its place and the width is used.
+function selectNode(node, row) {
+  const same = starMap.focus && starMap.focus.kind === "node" && starMap.focus.node.id === node.id;
+  document.querySelectorAll(".node.is-selected").forEach((el) => {
+    el.classList.remove("is-selected");
+    el.querySelector(".node-open")?.setAttribute("aria-pressed", "false");
+  });
+  if (same) {
+    starMap.focus = null;
+  } else {
+    starMap.focus = { kind: "node", node };
+    row.classList.add("is-selected");
+    row.querySelector(".node-open")?.setAttribute("aria-pressed", "true");
+    if (mapPanelGrip && mapPanelGrip.isCollapsed()) mapPanelGrip.setCollapsed(false, { persist: false });
+  }
+  renderStarMapCard();
+}
+
+function renderNodeCard(card, node) {
+  mapCardClose(card);
+  card.appendChild(elt("p", "card-kicker", stampTime(node.created_at)));
+  card.appendChild(elt("h2", "card-title", nodeHeadline(node) || originLabel(node.origin)));
+  if (node.summary) card.appendChild(elt("p", "card-summary", node.summary));
+  const chips = nodeChips(node, { all: true });
+  if (chips) card.appendChild(chips);
+  const inner = elt("div", "node-panel-body");
+  card.appendChild(inner);
+  void fillNodeBody(node, null, inner);
+}
+
 async function toggleNode(node, row) {
+  if (viewMode("horizon") === "list") {
+    selectNode(node, row);
+    return;
+  }
   // `.node-open`, not `.node-head`: the head is a plain div now and `aria-expanded` belongs on the
   // control, not on its container. Left on the div it would have been announced by nothing.
   const open = row.querySelector(".node-open");
@@ -10812,8 +10864,19 @@ function applyViewMode() {
     const map = mode === "map";
     horizonEl("view-horizon").classList.toggle("is-map", map);
     horizonEl("starmap").hidden = !map;
+    // The details column belongs to whichever view is up: a capture chosen in the list is not the
+    // map's card, and the map's card is not the list's.
+    const listFocus = starMap.focus && starMap.focus.kind === "node";
+    if (map && listFocus) starMap.focus = null;
+    if (!map && starMap.focus && !listFocus) {
+      starMap.focus = null;
+      starMap.selected = null;
+    }
     if (map) void renderStarMap();
-    else setAskContext([]);
+    else {
+      setAskContext([]);
+      renderStarMapCard();
+    }
   } else {
     const graph = mode === "graph";
     horizonEl("view-orbit").hidden = graph;
@@ -13053,38 +13116,14 @@ function renderCaptureCard(card, focus) {
     }
     const actions = elt("div", "card-actions");
     actions.appendChild(filePicker(focus.id, [...offer.values()]));
-    const read = elt("button", "btn", t("map.readInList", "Read it"));
+    const read = elt("button", "btn", t("map.readInList", "Read it in full"));
     read.type = "button";
-    read.addEventListener("click", () => revealNode(focus.id));
+    read.addEventListener("click", () => void showNodeReader({ ...node, id: focus.id }));
     actions.appendChild(read);
     detail.appendChild(actions);
   })();
 }
 
-//: Opens one capture where its full text is read: the list, with that row open and in view.
-function revealNode(nodeId) {
-  horizonState.open.add(nodeId);
-  setViewMode("horizon", "list");
-  let tries = 0;
-  const find = () => {
-    const row = document.querySelector(`.node[data-node-id="${CSS.escape(nodeId)}"]`);
-    if (!row) {
-      if ((tries += 1) < 40) {
-        setTimeout(find, 100);
-      } else {
-        horizonState.open.delete(nodeId);
-        notify(t("map.notInList", "That capture is further down the list than it shows at once. Search for it by name there."),
-          { tone: "info" });
-      }
-      return;
-    }
-    const open = row.querySelector(".node-open");
-    if (open && !row.classList.contains("is-open")) open.click();
-    row.scrollIntoView({ block: "center" });
-    if (open) open.focus();
-  };
-  find();
-}
 
 function renderStarMapCard() {
   const mapCard = horizonEl("starmap-card");
@@ -13107,6 +13146,17 @@ function paintStarMapCard(mapCard) {
   }
   if (starMap.focus && starMap.focus.kind === "capture") {
     renderCaptureCard(mapCard, starMap.focus);
+    mapCard.hidden = false;
+    return;
+  }
+  if (starMap.focus && starMap.focus.kind === "node") {
+    renderNodeCard(mapCard, starMap.focus.node);
+    mapCard.hidden = false;
+    return;
+  }
+  // In the list, with nothing chosen, the column says what it is for.
+  if (viewMode("horizon") === "list" && !starMap.focus) {
+    mapCard.appendChild(elt("p", "card-note node-panel-empty", t("horizon.pickOne", "Choose a capture to read it here.")));
     mapCard.hidden = false;
     return;
   }
