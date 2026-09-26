@@ -13384,6 +13384,15 @@ function settleIdlePanel() {
   }
 }
 
+//: The list's rule: with nothing chosen the column puts itself away, unless the reader opened it
+//: by hand (`keepPanel`, cleared again when a capture is chosen).
+function settleListPanel() {
+  if (mapPanelGrip && !starMap.keepPanel && !mapPanelGrip.isCollapsed()) {
+    mapPanelGrip.setCollapsed(true, { persist: false });
+    starMap.autoCollapsed = true;
+  }
+}
+
 function paintStarMapCard(mapCard) {
   mapCard.textContent = "";
   if (starMap.focus && starMap.focus.kind === "horizon") {
@@ -13407,10 +13416,7 @@ function paintStarMapCard(mapCard) {
   if (viewMode("horizon") === "list" && !starMap.focus) {
     mapCard.appendChild(elt("p", "card-note node-panel-empty", t("horizon.pickOne", "Choose a capture to read it here.")));
     mapCard.hidden = false;
-    if (mapPanelGrip && !starMap.keepPanel && !mapPanelGrip.isCollapsed()) {
-      mapPanelGrip.setCollapsed(true, { persist: false });
-      starMap.autoCollapsed = true;
-    }
+    settleListPanel();
     return;
   }
   if (starMap.focus && starMap.focus.kind === "lens" && starMap.lenses.size) {
