@@ -227,11 +227,14 @@ Everything follows from it. The title and the distilled summary are set in the r
 | taking in (after a drop) | the dropped item falls in as a glowing mote; the pull keeps going while the server works |
 | landed | the core swallows once and the ring flares |
 | refused (a file type the server cannot read) | the ring turns red and shakes |
+| listen (the pointer rests 3.5 seconds without dragging) | the hover shape grows a little and a line fades in under the ring, "or just start typing to keep a thought", with a copper caret; the first key opens the note field with it |
 | note (the pen or the menu) | the shape widens into a 30px-cornered capsule, the ring moves to its left end, and a one-line field fills the rest with a Return glyph that turns copper once there is something to send |
 
 **The shape grows out of the hardware.** Its size is set per state and transitioned, anchored at the top centre, so it grows out of the notch and shrinks back into it; the window around it is enlarged first and made small last, so nothing is clipped. Concave shoulders (`.hole::before`, `::after`) join it to the top of the screen the way the notch meets the bezel, the lower corners are deep (a capsule when hovering, a 46px bowl when open), and a soft shadow appears only once it is open. Content stays below `--inset`, the notch's height, because the display has no pixels there.
 
 **The pen and the field.** The hover shape carries a pen (`.pen`) level with the ring on its right, drawn as a thin line in the arc track's grey with no chip behind it, and it is the only way into the note state besides the menu. A filled round button in the corner was tried first and read as a system control pasted onto the shape. The field (`.note`, `.note-input`, `.note-send`) carries the island's one sentence, its placeholder: write a thought, Return keeps it, Esc cancels. It was first left empty to keep the island free of words, and an empty black field with a caret left people unsure what the pen had opened or how to send and leave. Once a word is typed the hint is gone and the only text left is the reader's own. A sent line falls into the ring as a mote, the same picture as a drop.
+
+**Waiting is an intent.** A drag and drop is over within a few seconds, so a pointer that rests on the island longer is waiting for something, and that is the moment to offer typing: the island listens (`.listen-hint`) and takes the keyboard, and moving away puts it back. The pen's hover (`.pen.is-hot`) is decided from the pointer position the shell reports, because a background window never sees `:hover`.
 
 **Motion is transform and opacity only.** A blurred spinning ring and blurred falling motes stuttered in the transparent window, because a filter re-rasterises every frame. The ring's soft edge is a static mask and every moving layer has `will-change`, so each frame is a composited transform.
 

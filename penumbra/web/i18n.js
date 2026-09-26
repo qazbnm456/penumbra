@@ -204,6 +204,7 @@ const STRINGS = {
     "island.noteLabel": "寫一句話收進視界",
     "island.notePlaceholder": "寫下一個念頭，按 Return 收進視界，Esc 取消",
     "island.noted": "收進視界了",
+    "island.listenHint": "或直接打字，記下一個念頭",
     "island.couldNotRead": "這些檔案無法讀取",
     "island.noServer": "Penumbra 沒有回應。在這裡按右鍵可以重新啟動它。",
     "island.tooBig": "檔案太大",
