@@ -896,9 +896,18 @@ pub fn run() {
                 && recall(&handle).get("introduced").and_then(|v| v.as_bool()).unwrap_or(false);
             let nav = handle.clone();
             let dl = handle.clone();
-            WebviewWindowBuilder::new(app, WINDOW, WebviewUrl::App("index.html".into()))
+            let builder = WebviewWindowBuilder::new(app, WINDOW, WebviewUrl::App("index.html".into()))
                 .title("Penumbra")
-                .inner_size(1440.0, 900.0)
+                .inner_size(1440.0, 900.0);
+            // No title bar: the page runs to the top edge and the traffic lights sit inside its
+            // header, centred on it. Dragging the header's empty space moves the window through
+            // the one command the workspace may send (capabilities/workspace-drag.json).
+            #[cfg(target_os = "macos")]
+            let builder = builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true)
+                .traffic_light_position(tauri::LogicalPosition::new(18.0, 26.0));
+            builder
                 .min_inner_size(900.0, 600.0)
                 .visible(!introduced)
                 // Tauri's own file-drop handler swallows the drag before the page sees it, so the

@@ -268,6 +268,10 @@ Everything follows from it. The title and the distilled summary are set in the r
 - The dock is a breathing grip at rest and opens when the pointer reaches the grip, not anywhere along the bottom edge; with it open, no legend text shows through beside it.
 - A scope chip names what the question will read, and Enter on a Horizon scope previews the captures for free before anything is spent.
 
+## 14. The window
+
+**No title bar.** In the desktop app on macOS the header is the top of the window. The shell hides the title and places the traffic lights at 18,26, centred on the 56px header, and `.has-traffic-lights` (set only when the page knows it is in the shell on a Mac) starts the header after them. The header carries `data-tauri-drag-region="deep"`, so its empty space drags the window and a double-click zooms it, while its buttons stay buttons. A browser tab, and the app on other platforms, keep their own chrome.
+
 ## 13. The mascot
 
 **Penny (半影小月) is the brand.** The header carries her as the app icon's tile (`.wordmark-moon`) instead of a wordmark, and she leans in when pointed at. Her story is the product's: half lit and half in shadow, with the soft edge between them the penumbra; a lantern she reads captures by, which is a summary; a thread she ties related captures with, which is a bridge on the star map; and she works only when pressed, which is invariant 80.

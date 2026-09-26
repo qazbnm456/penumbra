@@ -9373,3 +9373,9 @@ body:not([data-view="horizon"]) .capture-dock {
   margin-bottom: var(--space-3);
 }
 
+/* The desktop app on macOS has no title bar: the traffic lights sit at the header's left end
+   (placed by the shell at 18,26, centred on its 56px), so the header starts after them. */
+.has-traffic-lights .header {
+  padding-left: calc(var(--space-12) + var(--space-9));
+}
+

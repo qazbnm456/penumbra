@@ -11861,6 +11861,13 @@ const mapPan = { id: null, start: null, moved: false };
 //: In the desktop app the webview's own context menu offered Reload and Back, which belong to a
 //: browser: Back landed on the shell's splash page. It is kept where it does something for the
 //: reader (a text field, selected text, a link) and dropped everywhere else. A browser tab keeps it.
+//: The desktop app draws no title bar on macOS, so the header makes room for the traffic lights
+//: at its left end. A browser tab, and the app elsewhere, keep their own chrome and need none.
+function initWindowChrome() {
+  const mac = /Mac/.test(navigator.platform || navigator.userAgent || "");
+  document.documentElement.classList.toggle("has-traffic-lights", isDesktopShell() && mac);
+}
+
 function initDesktopContextMenu() {
   document.addEventListener("contextmenu", (event) => {
     if (!isDesktopShell()) return;
@@ -13458,6 +13465,7 @@ initGraphCamera();
 initPanels();
 initStarMapCamera();
 initDesktopContextMenu();
+initWindowChrome();
 initViewModes();
 initSuggestions();
 
