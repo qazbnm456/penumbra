@@ -1942,6 +1942,13 @@ function settingRows() {
       key: "auto_distil",
       label: t("settings.autoDistil", "Summarise new captures automatically"),
       values: ["on", "off"],
+      // Its default is one of its two choices, so the page shows "Off" rather than a third
+      // "Use the default" that means the same thing.
+      noDefault: true,
+      effective: (state_) => {
+        const entry = state_.auto_distil;
+        return (entry && entry.source !== "default" && entry.value) || "off";
+      },
       // LABELLED, not raw. Every other string on this page is translated, and the one row that
       // spends money read "使用預設 / on / off". The VALUE stays `on`/`off` - the wire format
       // `config.auto_distil_enabled` reads - and only the label is localised.

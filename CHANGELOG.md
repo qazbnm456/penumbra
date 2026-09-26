@@ -99,7 +99,7 @@ Each entry states what the product does now and why. The reasoning behind each r
 - An empty orbit offers Paste a link, Paste text and Upload a file as its first move. An answer's references link, steps pill and Regenerate share one footer row. The Studio's tab strip stays pinned while its column scrolls.
 - The source viewer is headed by the page's own title, which the source-detail response now carries.
 - Server-written sentences are translated in the interface: injection-scan flags, a citation's "why unverified" reason and source kinds all follow the interface language, and the steps pill and the missing-audio line follow a live language switch. Markdown `~~strikethrough~~` renders as a deletion. The printed "unverified" tag uses weight instead of a synthesised CJK italic.
-- A settings page covers presentation and behaviour choices only: interface and output language, local relations, podcast voices, the auto-summary toggle and where new captures land. Keys and safety bounds stay in the configuration file or the environment (invariant 41), and in the desktop app the page says so.
+- A settings page covers presentation and behaviour choices only: interface and output language, local relations, podcast voices, the auto-summary toggle and how new captures are filed. A choice whose default is one of its own options (the auto-summary toggle, the filing mode) shows that option instead of "Use the default". Keys and safety bounds stay in the configuration file or the environment (invariant 41), and in the desktop app the page says so.
 
 #### Server, CLI and deployment
 
