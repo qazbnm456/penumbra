@@ -51,11 +51,12 @@ struct ServerState(Mutex<Option<Server>>);
 
 // --- paths -------------------------------------------------------------------------------------
 
+/// The data folder is named after the app, as most apps name theirs (`Application Support/Penumbra`),
+/// not after the bundle identifier, which stays a reverse-DNS name because macOS keys the app on it.
+/// Linux keeps the lowercase name its data directories use.
 fn data_dir(app: &AppHandle) -> PathBuf {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .expect("the OS has no per-user application data directory");
+    let base = app.path().data_dir().expect("the OS has no per-user application data directory");
+    let dir = base.join(if cfg!(target_os = "linux") { "penumbra" } else { "Penumbra" });
     fs::create_dir_all(&dir).ok();
     dir
 }

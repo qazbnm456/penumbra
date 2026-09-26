@@ -27,9 +27,9 @@ A `claude-agent-sdk/…` model runs on your Claude subscription through the Clau
 
 The data folder holds orbits, the Horizon, traces and the server log (**File > Show Data Folder**, **File > Show Server Log**):
 
-- macOS: `~/Library/Application Support/tw.boik.penumbra/`
-- Windows: `%APPDATA%\tw.boik.penumbra\`
-- Linux: `~/.local/share/tw.boik.penumbra/`
+- macOS: `~/Library/Application Support/Penumbra/`
+- Windows: `%APPDATA%\Penumbra\`
+- Linux: `~/.local/share/penumbra/`
 
 Tesseract is not bundled. RapidOCR is the primary OCR engine and is included; tesseract is only its fallback (invariant 7).
 
