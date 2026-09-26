@@ -151,6 +151,10 @@ pub fn show(app: &AppHandle, url: url::Url, on_navigation: impl Fn(&url::Url) ->
             .resizable(false)
             .shadow(false)
             .focused(false)
+            // A click on the island acts at once. Without it macOS spends the first click making
+            // the window key, so opening the workspace took two clicks while the app was in the
+            // background, which is always.
+            .accept_first_mouse(true)
             .visible_on_all_workspaces(true)
             .inner_size(geo.rest.w, geo.rest.h)
             .position(geo.rest.x, geo.rest.y)

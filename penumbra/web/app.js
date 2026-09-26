@@ -6261,6 +6261,13 @@ function initPanels() {
     key: "penumbra-map-panel", others: () => [facets],
   });
   document.getElementById("map-panel-open").addEventListener("click", () => mapPanelGrip.setCollapsed(false));
+  const graphSide = document.getElementById("graph-side");
+  const graphGrip = makePanelGrip({
+    panel: graphSide, handle: document.getElementById("graph-panel-grip"), side: "left",
+    cssVar: "--graph-panel-w", railVar: "--graph-panel-rail", min: 280, max: 640, collapseAt: 200, railPx: 46,
+    initial: 340, key: "penumbra-graph-panel",
+  });
+  document.getElementById("graph-panel-open").addEventListener("click", () => graphGrip.setCollapsed(false));
   makePanelGrip({
     panel: sources, handle: document.getElementById("sources-grip"), side: "right",
     cssVar: "--sources-w", railVar: "--sources-rail", min: 220, max: 480, collapseAt: 150, railPx: 0, initial: 280,
@@ -12543,7 +12550,20 @@ async function renderGraph() {
   const sameOrbit = graphState.slug === slug;
   graphState.slug = slug;
   graphState.data = data;
+  const before = graphState.layout;
   graphState.layout = layoutGraph(data);
+  if (sameOrbit && graphState.moved && before) {
+    // Where the reader dragged things stays where they put it when the data refreshes. The
+    // captures' offsets are taken from the fresh layout first, then follow the kept positions.
+    followCaptures(graphState.layout);
+    before.pos.forEach((point, name) => {
+      if (graphState.layout.pos.has(name)) graphState.layout.pos.set(name, { ...point });
+    });
+    followCaptures(graphState.layout);
+  } else if (!sameOrbit) {
+    graphState.moved = false;
+    resetGraphCamera();
+  }
   graphState.follow = !sameOrbit;
   paintGraphLenses();
   drawGraph();
@@ -12686,6 +12706,13 @@ function drawGraph() {
   const layout = graphState.layout;
   if (!data || !layout) return;
   svg.setAttribute("viewBox", `${layout.box.x} ${layout.box.y} ${layout.box.w} ${layout.box.h}`);
+  // Everything drawn sits in one group the camera moves; `refs` keep each shape so a drag can move
+  // them without rebuilding the drawing.
+  const world = svgEl("g", {}, "graph-world");
+  svg.appendChild(world);
+  graphState.world = world;
+  const refs = { entities: new Map(), edges: [], links: [], captures: [], similar: [] };
+  graphState.refs = refs;
   const count = new Map(data.entities.map((e) => [e.name, e.count]));
   const lenses = graphState.lenses;
   const selected = graphState.selected;
@@ -12715,8 +12742,10 @@ function drawGraph() {
       const p = layout.pos.get(n);
       if (!p) return;
       const lit = litCaptures.has(c.node_id) && litEntities.has(n);
-      edgeLayer.appendChild(svgEl("line", { x1: c.x, y1: c.y, x2: p.x, y2: p.y },
-        `graph-link${lit ? " is-lit" : ""}${focus && !lit ? " is-dim" : ""}`));
+      const line = svgEl("line", { x1: c.x, y1: c.y, x2: p.x, y2: p.y },
+        `graph-link${lit ? " is-lit" : ""}${focus && !lit ? " is-dim" : ""}`);
+      refs.links.push({ line, c, n });
+      edgeLayer.appendChild(line);
     });
   });
   layout.edges.forEach((e) => {
@@ -12726,9 +12755,10 @@ function drawGraph() {
     const line = svgEl("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y },
       `graph-edge${lit ? " is-lit" : ""}${focus && !lit ? " is-dim" : ""}`);
     line.style.strokeWidth = String(1 + Math.min(e.weight, 5) * 1.1);
+    refs.edges.push({ line, a: e.a, b: e.b });
     edgeLayer.appendChild(line);
   });
-  svg.appendChild(edgeLayer);
+  world.appendChild(edgeLayer);
 
   // Local relations: a dashed line between two captures whose text is alike.
   const placed = new Map(layout.captures.map((c) => [c.node_id, c]));
@@ -12736,8 +12766,9 @@ function drawGraph() {
     const a = placed.get(pair.a);
     const b = placed.get(pair.b);
     if (!a || !b) return;
-    edgeLayer.appendChild(svgEl("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y },
-      `graph-similar${focus ? " is-dim" : ""}`));
+    const line = svgEl("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y }, `graph-similar${focus ? " is-dim" : ""}`);
+    refs.similar.push({ line, a, b });
+    edgeLayer.appendChild(line);
   });
 
   layout.captures.forEach((c) => {
@@ -12748,7 +12779,8 @@ function drawGraph() {
     const title = svgEl("title");
     title.textContent = c.title;
     mark.appendChild(title);
-    svg.appendChild(mark);
+    refs.captures.push({ rect: mark, c });
+    world.appendChild(mark);
   });
 
   data.entities.forEach((entity) => {
@@ -12758,10 +12790,15 @@ function drawGraph() {
     const group = svgEl("g", { tabindex: 0, role: "button", "aria-pressed": entity.name === selected ? "true" : "false",
       "aria-label": t("graph.entityLabel", `${entity.name}, in ${entity.count} captures`, { name: entity.name, n: entity.count }) },
     `graph-entity${entity.name === selected ? " is-selected" : ""}${lit ? "" : " is-dim"}`);
-    group.appendChild(svgEl("circle", { cx: p.x, cy: p.y, r }, "graph-entity-body"));
-    group.appendChild(svgText(p.x, p.y + r + 16, shortLabel(entity.name, 16), "graph-entity-label"));
+    const body = svgEl("circle", { cx: p.x, cy: p.y, r }, "graph-entity-body");
+    const label = svgText(p.x, p.y + r + 16, shortLabel(entity.name, 16), "graph-entity-label");
+    group.appendChild(body);
+    group.appendChild(label);
+    refs.entities.set(entity.name, { body, label, r });
     group.dataset.key = `entity:${entity.name}`;
     const pick = () => {
+      // The click that ends a drag is not a pick.
+      if (graphDrag.suppress) return;
       graphState.selected = graphState.selected === entity.name ? null : entity.name;
       graphState.lenses = new Set();
       paintGraphLenses();
@@ -12774,8 +12811,9 @@ function drawGraph() {
         pick();
       }
     });
-    svg.appendChild(group);
+    world.appendChild(group);
   });
+  applyGraphCamera();
 
   if (!data.entities.length) {
     showGraphEmpty(data.captures.length || data.undistilled.length
@@ -12788,6 +12826,271 @@ function drawGraph() {
   renderGraphPending();
   renderGraphPanel(litCaptures);
   syncGraphContext();
+}
+
+// --- handling the graph: a camera, and nodes that can be pulled --------------------------------------
+//
+// The same gestures as the star map: scroll or pinch zooms around the pointer, dragging empty space
+// pans, and + - and return sit in the corner (with + - 0 from the keyboard). A node can be dragged:
+// the entities linked to it follow with a little lag and keep their shape, the captures between them
+// follow their entities, and on release the neighbours settle. Return puts the camera and every
+// node back where the layout placed them.
+
+const graphCam = { x: 500, y: 350, k: 1 };
+const GRAPH_ZOOM = { min: 0.4, max: 4 };
+const graphDrag = { id: null, name: null, start: null, moved: false, from: null, weights: null, suppress: false };
+
+function graphCentre() {
+  const box = graphState.layout ? graphState.layout.box : { x: 0, y: 0, w: 1000, h: 700 };
+  return { x: box.x + box.w / 2, y: box.y + box.h / 2 };
+}
+
+function resetGraphCamera() {
+  const centre = graphCentre();
+  Object.assign(graphCam, { x: centre.x, y: centre.y, k: 1 });
+}
+
+function applyGraphCamera() {
+  if (!graphState.world) return;
+  const centre = graphCentre();
+  graphState.world.setAttribute("transform",
+    `translate(${centre.x} ${centre.y}) scale(${graphCam.k}) translate(${-graphCam.x} ${-graphCam.y})`);
+  const atHome = graphCam.k === 1 && graphCam.x === centre.x && graphCam.y === centre.y && !graphState.moved;
+  horizonEl("graph-zoom-home").disabled = atHome;
+}
+
+function zoomGraph(factor, around) {
+  const centre = graphCentre();
+  const at = around || centre;
+  const k = Math.min(GRAPH_ZOOM.max, Math.max(GRAPH_ZOOM.min, graphCam.k * factor));
+  // The world point under the pointer stays under it.
+  const wx = graphCam.x + (at.x - centre.x) / graphCam.k;
+  const wy = graphCam.y + (at.y - centre.y) / graphCam.k;
+  Object.assign(graphCam, { k, x: wx - (at.x - centre.x) / k, y: wy - (at.y - centre.y) / k });
+  applyGraphCamera();
+}
+
+function graphWorldAt(clientX, clientY) {
+  const view = clientToView(horizonEl("graph-svg"), clientX, clientY);
+  const centre = graphCentre();
+  return { x: graphCam.x + (view.x - centre.x) / graphCam.k, y: graphCam.y + (view.y - centre.y) / graphCam.k };
+}
+
+function graphHome() {
+  if (graphState.moved && graphState.data) {
+    graphState.layout = layoutGraph(graphState.data);
+    graphState.moved = false;
+  }
+  resetGraphCamera();
+  drawGraph();
+}
+
+//: A capture sits among the entities it names; after they move it moves with them, by the offset it
+//: had from their centre when the layout placed it.
+function followCaptures(layout) {
+  layout.captures.forEach((c) => {
+    const points = c.entities.map((n) => layout.pos.get(n)).filter(Boolean);
+    if (!points.length) return;
+    if (!c.offset) {
+      const cx0 = points.reduce((sum, p) => sum + p.x, 0) / points.length;
+      const cy0 = points.reduce((sum, p) => sum + p.y, 0) / points.length;
+      c.offset = { x: c.x - cx0, y: c.y - cy0 };
+      return;
+    }
+    c.x = points.reduce((sum, p) => sum + p.x, 0) / points.length + c.offset.x;
+    c.y = points.reduce((sum, p) => sum + p.y, 0) / points.length + c.offset.y;
+  });
+}
+
+function paintGraphGeometry() {
+  const refs = graphState.refs;
+  const pos = graphState.layout.pos;
+  if (!refs) return;
+  refs.entities.forEach(({ body, label, r }, name) => {
+    const p = pos.get(name);
+    body.setAttribute("cx", p.x);
+    body.setAttribute("cy", p.y);
+    label.setAttribute("x", p.x);
+    label.setAttribute("y", p.y + r + 16);
+  });
+  const line = (el, a, b) => {
+    el.setAttribute("x1", a.x);
+    el.setAttribute("y1", a.y);
+    el.setAttribute("x2", b.x);
+    el.setAttribute("y2", b.y);
+  };
+  refs.edges.forEach(({ line: el, a, b }) => line(el, pos.get(a), pos.get(b)));
+  refs.links.forEach(({ line: el, c, n }) => line(el, c, pos.get(n)));
+  refs.similar.forEach(({ line: el, a, b }) => line(el, a, b));
+  refs.captures.forEach(({ rect, c }) => {
+    rect.setAttribute("x", c.x - 4);
+    rect.setAttribute("y", c.y - 4);
+  });
+}
+
+//: One step of the pull. Every node has a target: where it was when the drag began, moved by the
+//: dragged node's travel times its weight (0.6 one link away, 0.3 two links away, nothing further).
+//: Each step closes part of the gap, so the cluster follows with a little lag and keeps its shape.
+//: Keeping only each neighbour's distance to the dragged node made them all swing to the same side
+//: and pile onto one another.
+function relaxNeighbours(ease) {
+  const { name, from, weights } = graphDrag;
+  const pos = graphState.layout.pos;
+  const at = pos.get(name);
+  const origin = from.get(name);
+  const travel = { x: at.x - origin.x, y: at.y - origin.y };
+  let moving = 0;
+  weights.forEach((weight, other) => {
+    const start = from.get(other);
+    const p = pos.get(other);
+    const tx = start.x + travel.x * weight;
+    const ty = start.y + travel.y * weight;
+    const step = { x: (tx - p.x) * ease, y: (ty - p.y) * ease };
+    moving = Math.max(moving, Math.hypot(step.x, step.y));
+    pos.set(other, { x: p.x + step.x, y: p.y + step.y });
+  });
+  moving = Math.max(moving, separateNodes(name));
+  followCaptures(graphState.layout);
+  return moving;
+}
+
+//: No node may be dropped on top of another: two closer than their radii plus room for a label are pushed
+//: apart, and the one being dragged never moves for it.
+function separateNodes(held) {
+  const pos = graphState.layout.pos;
+  const radius = (key) => (graphState.refs && graphState.refs.entities.get(key)?.r) || 12;
+  const keys = [...pos.keys()];
+  let pushed = 0;
+  for (let i = 0; i < keys.length; i += 1) {
+    for (let j = i + 1; j < keys.length; j += 1) {
+      const a = pos.get(keys[i]);
+      const b = pos.get(keys[j]);
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const d = Math.hypot(dx, dy) || 0.01;
+      // 28px beyond the two radii leaves room for the label drawn under each node.
+      const gap = radius(keys[i]) + radius(keys[j]) + 28 - d;
+      if (gap <= 0) continue;
+      const ux = dx / d;
+      const uy = dy / d;
+      const aHeld = keys[i] === held;
+      const bHeld = keys[j] === held;
+      // Against the held node the other one moves the whole gap; otherwise each moves half. Its
+      // target moves with it, or the pull would drag it straight back on the next step.
+      const share = aHeld || bHeld ? 1 : 0.5;
+      const push = (key, point, sign) => {
+        const shift = { x: sign * ux * gap * share, y: sign * uy * gap * share };
+        pos.set(key, { x: point.x + shift.x, y: point.y + shift.y });
+        const origin = graphDrag.from && graphDrag.from.get(key);
+        if (origin && graphDrag.weights && graphDrag.weights.has(key)) {
+          graphDrag.from.set(key, { x: origin.x + shift.x, y: origin.y + shift.y });
+        }
+      };
+      if (!aHeld) push(keys[i], a, -1);
+      if (!bHeld) push(keys[j], b, 1);
+      pushed = Math.max(pushed, gap * share);
+    }
+  }
+  return pushed;
+}
+
+//: How strongly each node follows a drag of `name`: by how many links away it is.
+function dragWeights(name, edges) {
+  const near = new Map();
+  edges.forEach((e) => {
+    if (e.a === name) near.set(e.b, 0.6);
+    if (e.b === name) near.set(e.a, 0.6);
+  });
+  const second = new Map();
+  edges.forEach((e) => {
+    [[e.a, e.b], [e.b, e.a]].forEach(([one, two]) => {
+      if (near.has(one) && two !== name && !near.has(two)) second.set(two, 0.3);
+    });
+  });
+  return new Map([...second, ...near]);
+}
+
+function initGraphCamera() {
+  const svg = horizonEl("graph-svg");
+  svg.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    const factor = Math.exp(-event.deltaY * (event.ctrlKey ? 0.01 : 0.0015));
+    zoomGraph(factor, clientToView(svg, event.clientX, event.clientY));
+  }, { passive: false });
+  svg.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || !graphState.layout) return;
+    event.preventDefault();
+    const node = event.target.closest(".graph-entity");
+    graphDrag.id = event.pointerId;
+    graphDrag.start = { cx: event.clientX, cy: event.clientY, x: graphCam.x, y: graphCam.y };
+    graphDrag.moved = false;
+    graphDrag.name = node ? node.dataset.key.slice("entity:".length) : null;
+  });
+  svg.addEventListener("pointermove", (event) => {
+    if (graphDrag.id !== event.pointerId || !graphDrag.start) return;
+    const dx = event.clientX - graphDrag.start.cx;
+    const dy = event.clientY - graphDrag.start.cy;
+    if (!graphDrag.moved && Math.hypot(dx, dy) < 4) return;
+    if (!graphDrag.moved) {
+      graphDrag.moved = true;
+      svg.setPointerCapture(event.pointerId);
+      svg.classList.add(graphDrag.name ? "is-dragging" : "is-panning");
+      if (graphDrag.name) {
+        graphDrag.from = new Map([...graphState.layout.pos].map(([key, p]) => [key, { ...p }]));
+        graphDrag.weights = dragWeights(graphDrag.name, graphState.layout.edges);
+        followCaptures(graphState.layout);
+      }
+    }
+    if (graphDrag.name) {
+      graphState.layout.pos.set(graphDrag.name, graphWorldAt(event.clientX, event.clientY));
+      relaxNeighbours(0.22);
+      graphState.moved = true;
+      paintGraphGeometry();
+      applyGraphCamera();
+    } else {
+      const scale = (svg.getScreenCTM() || { a: 1 }).a || 1;
+      graphCam.x = graphDrag.start.x - dx / scale / graphCam.k;
+      graphCam.y = graphDrag.start.y - dy / scale / graphCam.k;
+      applyGraphCamera();
+    }
+  });
+  const end = (event) => {
+    if (graphDrag.id !== event.pointerId) return;
+    const dragged = graphDrag.moved && graphDrag.name;
+    graphDrag.id = null;
+    graphDrag.start = null;
+    svg.classList.remove("is-dragging", "is-panning");
+    if (!graphDrag.moved) return;
+    graphDrag.suppress = true;
+    setTimeout(() => { graphDrag.suppress = false; }, 0);
+    if (!dragged) return;
+    // Released: the neighbours finish settling on their springs, briefly, unless motion is off.
+    if (!motionAllowed()) {
+      for (let i = 0; i < 60 && relaxNeighbours(0.5) > 0.05; i += 1);
+      paintGraphGeometry();
+      return;
+    }
+    const settle = () => {
+      if (graphDrag.id !== null || !graphState.refs) return;
+      const moving = relaxNeighbours(0.14);
+      paintGraphGeometry();
+      if (moving > 0.05) requestAnimationFrame(settle);
+    };
+    requestAnimationFrame(settle);
+  };
+  svg.addEventListener("pointerup", end);
+  svg.addEventListener("pointercancel", end);
+  horizonEl("view-graph").addEventListener("keydown", (event) => {
+    if (event.target.closest("input, select, textarea, button")) return;
+    if (event.key === "+" || event.key === "=") zoomGraph(1.25);
+    else if (event.key === "-" || event.key === "_") zoomGraph(0.8);
+    else if (event.key === "0") graphHome();
+    else return;
+    event.preventDefault();
+  });
+  horizonEl("graph-zoom-in").addEventListener("click", () => zoomGraph(1.25));
+  horizonEl("graph-zoom-out").addEventListener("click", () => zoomGraph(0.8));
+  horizonEl("graph-zoom-home").addEventListener("click", graphHome);
 }
 
 function renderGraphPending() {
@@ -12991,6 +13294,7 @@ initAskH();
 initDock();
 initCaptureDock();
 initMascot();
+initGraphCamera();
 initPanels();
 initStarMapCamera();
 initDesktopContextMenu();

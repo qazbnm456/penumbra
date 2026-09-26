@@ -90,6 +90,7 @@ const STRINGS = {
     "lens.askMany": "對這些標籤亮起的收錄提問",
     "lens.askOne": "對這個標籤亮起的收錄提問",
     "graph.tags": "標籤",
+    "graph.zoomHome": "回到整張圖",
     "app.homeHint": "回到視界。按右鍵認識半影小月",
     "mascot.name": "半影小月",
     "mascot.line1": "嗨，我是半影小月。我一半亮著、一半在影子裡，中間那道模糊的交界叫做半影，Penumbra 這個名字就是從這裡來的。",

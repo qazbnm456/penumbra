@@ -506,6 +506,15 @@
       <div class="lenses" id="graph-lenses" role="group" aria-label="Tags" data-i18n-label="map.lenses"></div>
       <svg class="graph-svg" id="graph-svg" viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid meet"
            role="img" aria-labelledby="graph-title"><title id="graph-title">Knowledge graph</title></svg>
+      <div class="map-camera graph-camera" role="group" aria-label="Zoom" data-i18n-label="map.zoom">
+        <button type="button" class="map-camera-btn" id="graph-zoom-in" aria-label="Zoom in" title="Zoom in"
+                data-i18n-label="map.zoomIn" data-i18n-title="map.zoomIn">+</button>
+        <button type="button" class="map-camera-btn" id="graph-zoom-out" aria-label="Zoom out" title="Zoom out"
+                data-i18n-label="map.zoomOut" data-i18n-title="map.zoomOut">&minus;</button>
+        <button type="button" class="map-camera-btn" id="graph-zoom-home" aria-label="Back to the whole graph"
+                title="Back to the whole graph" data-i18n-label="graph.zoomHome" data-i18n-title="graph.zoomHome"
+                disabled>&#x21BA;</button>
+      </div>
       <p class="graph-empty" id="graph-empty" hidden></p>
       <div class="graph-pending" id="graph-pending" hidden>
         <p class="graph-pending-line" id="graph-pending-line"></p>
@@ -515,7 +524,16 @@
         </div>
       </div>
     </div>
-    <aside class="graph-panel" id="graph-panel" aria-live="polite"></aside>
+    <!-- The details panel resizes and puts away like the map's. The grip lives outside
+         `#graph-panel`, whose contents are rebuilt on every pick. -->
+    <aside class="graph-side" id="graph-side" aria-label="Details" data-i18n-label="panes.details">
+      <div class="panel-grip panel-grip-left" id="graph-panel-grip" role="separator" aria-orientation="vertical"
+           aria-label="Resize the details panel" data-i18n-label="panes.resizeDetails" tabindex="0"
+           aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="studio-grip" aria-hidden="true">⣿</span></div>
+      <button type="button" class="graph-panel-open" id="graph-panel-open" aria-label="Show the details panel"
+              data-i18n-label="panes.showDetails" title="Show the details panel" data-i18n-title="panes.showDetails">&lsaquo;</button>
+      <div class="graph-panel" id="graph-panel" aria-live="polite"></div>
+    </aside>
   </section>
 
   <!-- A SECOND overlay, reusing the `.modal-overlay` CLASS but never the source viewer's element:
