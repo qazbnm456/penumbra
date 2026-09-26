@@ -995,3 +995,9 @@ def test_a_pdf_pages_printed_line_breaks_are_joined_inside_sentences_only():
     assert "中文斷\u200b行" in out, "CJK joins without a visible space"
     assert result["sameLength"], "offsets must not move, or a quote would highlight the wrong words"
 
+
+def test_a_scraped_page_is_tidied_for_reading_and_quotes_still_land():
+    result = _run("tidyText")
+    assert result["shown"] == "Top line\n\n募集にあたって\nさらに、経済\nend"
+    assert result["highlighted"] == "さらに、経済", "the map must send a quote to the same words"
+

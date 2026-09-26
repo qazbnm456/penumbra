@@ -1625,6 +1625,17 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     return { out, sameLength: out.length === text.length };
   },
 
+  //: A scraped page tidied for reading: blank runs collapse to one, lines lose their indentation,
+  //: and the map sends a quote's offsets to the same words.
+  tidyText() {
+    const run = new Function(`${extract("tidyForDisplay")}\nreturn { tidyForDisplay };`)();
+    const text = "Top line\n\n\n\n\n   \n募集にあたって\n\u3000\u3000\u3000さらに、経済\r\nend  ";
+    const { shown, map } = run.tidyForDisplay(text);
+    const q = "さらに、経済";
+    const at = text.indexOf(q);
+    return { shown, highlighted: shown.slice(map[at], map[at + q.length]) };
+  },
+
   //: Dragging a node on the knowledge graph: its neighbours follow at 0.6, theirs at 0.3, the rest
   //: stay put, and a node dropped on another pushes it clear.
   graphDrag() {

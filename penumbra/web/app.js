@@ -1043,19 +1043,60 @@ function reflowPdfLines(text) {
   return out.join("");
 }
 
+//: Text as stored, tidied for reading: a scraped page keeps the markup's blank lines and indentation,
+//: so a heading sat under a screen of empty space and a paragraph started a third of the way in.
+//: Every run of blank lines becomes one, and each line loses its leading and trailing blanks
+//: (including the ideographic space). `map[i]` is where the original's character `i` lands in the
+//: tidied text, so a quote found in the original highlights the same words here.
+function tidyForDisplay(text) {
+  const blank = /[\u0020\u0009\u00a0\u3000\r\u200b]/;
+  const map = new Array(text.length + 1);
+  let out = "";
+  let breaks = 0;
+  let start = 0;
+  while (start <= text.length) {
+    let end = text.indexOf("\n", start);
+    if (end === -1) end = text.length;
+    let a = start;
+    while (a < end && blank.test(text[a])) a += 1;
+    let b = end - 1;
+    while (b >= a && blank.test(text[b])) b -= 1;
+    if (a > b) {
+      for (let i = start; i <= end && i <= text.length; i += 1) map[i] = out.length;
+      if (end < text.length) breaks += 1;
+    } else {
+      if (out && breaks) out += breaks > 1 ? "\n\n" : "\n";
+      for (let i = start; i < a; i += 1) map[i] = out.length;
+      for (let i = a; i <= b; i += 1) {
+        map[i] = out.length;
+        out += text[i];
+      }
+      for (let i = b + 1; i <= end && i <= text.length; i += 1) map[i] = out.length;
+      breaks = end < text.length ? 1 : 0;
+    }
+    start = end + 1;
+  }
+  map[text.length] = out.length;
+  return { shown: out, map };
+}
+
 function renderTextWithOptionalHighlight(text, quote, locator = "") {
   const container = document.createElement("div");
   container.className = "source-block-text";
-  const shown = String(locator).startsWith("page:") ? reflowPdfLines(text) : text;
+  // A PDF's printed line breaks are joined first (same length), then everything is tidied.
+  const joined = String(locator).startsWith("page:") ? reflowPdfLines(text) : text;
+  const { shown, map } = tidyForDisplay(joined);
   if (!quote) {
     container.textContent = shown;
     return container;
   }
-  const at = text.indexOf(quote);
-  if (at === -1) {
+  const found = text.indexOf(quote);
+  if (found === -1) {
     container.textContent = shown;
     return container;
   }
+  const at = map[found];
+  const until = map[found + quote.length];
   container.appendChild(document.createTextNode(shown.slice(0, at)));
   //: `source-quote`, NOT `citation`: a stroke in an answer rests UNMARKED (just its number) and
   //: washes on hover, and this span borrowed that class — so the one thing the reader opened the
@@ -1063,9 +1104,9 @@ function renderTextWithOptionalHighlight(text, quote, locator = "") {
   //: The product's verification loop is "open the citation, see the passage highlighted".
   const mark = document.createElement("mark");
   mark.className = "source-quote";
-  mark.textContent = shown.slice(at, at + quote.length);
+  mark.textContent = shown.slice(at, until);
   container.appendChild(mark);
-  container.appendChild(document.createTextNode(shown.slice(at + quote.length)));
+  container.appendChild(document.createTextNode(shown.slice(until)));
   return container;
 }
 
