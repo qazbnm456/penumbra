@@ -204,7 +204,7 @@ const STRINGS = {
     "settings.filingAuto": "自動",
     "settings.filingAssign": "指派",
     "settings.filingManualHelp": "新收的東西先留在視界，等你在星圖旁「等你處理的」卡片自己歸入。",
-    "settings.filingAutoHelp": "一有歸入建議就直接放進去。建議來自摘要裡共同的實體和標籤，或本機內容相似度，不會呼叫模型。兩者都還沒有的，先留在視界。",
+    "settings.filingAutoHelp": "一有歸入建議就直接放進去。建議來自摘要裡共同的實體和標籤，或本機內容相似度，不會呼叫模型。還沒有建議的，先留在視界。",
     "settings.filingAssignHelp": "每則新收的東西都放進你選的軌道。",
     "settings.filingOrbit": "軌道",
     "island.open": "打開 Penumbra",
