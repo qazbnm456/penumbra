@@ -974,3 +974,10 @@ def test_a_tag_lens_lights_an_orbit_whose_tag_is_outside_its_top_few():
     assert result["unionLit"], "several lenses combine as a union: any of them lights the planet"
     assert result["moonLit"] == " is-lensed" and result["moonFaded"] == " is-faded"
     assert result["localFaded"] == " is-faded" and result["moonPlain"] == ""
+
+
+def test_dragging_a_graph_node_pulls_its_neighbours_by_distance_in_links():
+    result = _run("graphDrag")
+    assert result["B"] == 0.6 and result["E"] == 0.6, "one link away follows most"
+    assert result["C"] == 0.3, "two links away follows less"
+    assert not result["D"] and not result["A"], "further nodes, and the dragged one, are not pulled"

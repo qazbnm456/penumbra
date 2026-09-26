@@ -1616,6 +1616,15 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     };
   },
 
+  //: Dragging a node on the knowledge graph: its neighbours follow at 0.6, theirs at 0.3, the rest
+  //: stay put, and a node dropped on another pushes it clear.
+  graphDrag() {
+    const run = new Function(`${extract("dragWeights")}\nreturn { dragWeights };`)();
+    const edges = [{ a: "A", b: "B" }, { a: "B", b: "C" }, { a: "C", b: "D" }, { a: "A", b: "E" }];
+    const w = run.dragWeights("A", edges);
+    return { B: w.get("B"), E: w.get("E"), C: w.get("C"), D: w.has("D"), A: w.has("A") };
+  },
+
   //: The view-mode preference: a stored value outside the allowed pair falls back to the default,
   //: and blocked storage is not an error.
   viewModes() {
