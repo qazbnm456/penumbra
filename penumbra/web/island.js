@@ -187,6 +187,10 @@
     window.location.href = "/__shell/menu";
   });
   hole.addEventListener("keydown", (event) => {
+    // Keys typed into the note field are the reader's words. They bubbled up to here, so every
+    // Return in the field, including the one that picks a Zhuyin candidate, also opened the
+    // workspace, which took the keyboard away mid-thought.
+    if (event.target.closest(".note")) return;
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       openWorkspace();
@@ -270,9 +274,14 @@
     if (now === "note" || now === "listen") noteInput.focus();
   });
   // Clicking anywhere else takes the keyboard away from this window: that is the reader moving on.
+  // Checked a moment later, not on the event: opening the field and an input method's candidate
+  // window can each bounce key status for an instant, and closing on that lost the line.
   window.addEventListener("blur", () => {
-    const now = document.body.dataset.state;
-    if ((now === "note" && !sendingNote) || now === "listen") putNoteAway();
+    setTimeout(() => {
+      if (document.hasFocus() || composing) return;
+      const now = document.body.dataset.state;
+      if ((now === "note" && !sendingNote) || now === "listen") putNoteAway();
+    }, 250);
   });
   noteInput.addEventListener("input", () => {
     syncNoteLook();
@@ -284,16 +293,29 @@
     }
     keepDraft();
   });
+  // Composition is tracked here rather than read off each key: with Zhuyin, Pinyin or Kana, Return
+  // and Escape belong to the input method until it commits, and WebKit can deliver the committing
+  // Return after `compositionend`, reporting it as keyCode 229 or not at all as composing. A key
+  // within a moment of the end is still the input method's.
+  let composing = false;
+  let composedAt = 0;
+  noteInput.addEventListener("compositionstart", () => { composing = true; });
+  noteInput.addEventListener("compositionend", () => {
+    composing = false;
+    composedAt = Date.now();
+  });
+  const imeOwns = (event) => composing || event.isComposing || event.keyCode === 229
+    || Date.now() - composedAt < 80;
+
   noteInput.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
+      if (imeOwns(event)) return; // it cancels the candidate, not the note
       event.preventDefault();
       putNoteAway();
       return;
     }
     if (document.body.dataset.state === "listen") return;
-    // Return picks a candidate while an input method is composing (Zhuyin, Pinyin, Kana); only a
-    // Return outside composition sends. WebKit reports that Return as keyCode 229.
-    if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229) {
+    if (event.key === "Enter" && !imeOwns(event)) {
       event.preventDefault();
       void sendNote();
     }

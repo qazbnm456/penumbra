@@ -13127,7 +13127,18 @@ function initGraphCamera() {
     graphDrag.id = null;
     graphDrag.start = null;
     svg.classList.remove("is-dragging", "is-panning");
-    if (!graphDrag.moved) return;
+    if (!graphDrag.moved) {
+      // A click on empty space, not the end of a pan, lets go of the entity or tags picked, the
+      // way a click on the star map's empty space closes its card.
+      if (event.type === "pointerup" && !graphDrag.name && !event.target.closest(".graph-entity")
+        && (graphState.selected || graphState.lenses.size)) {
+        graphState.selected = null;
+        graphState.lenses = new Set();
+        paintGraphLenses();
+        drawGraph();
+      }
+      return;
+    }
     graphDrag.suppress = true;
     setTimeout(() => { graphDrag.suppress = false; }, 0);
     if (!dragged) return;

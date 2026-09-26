@@ -133,6 +133,9 @@ Each entry states what the product does now and why. The reasoning behind each r
 
 - Selecting a moon on the star map marks the moon itself, a larger cream-ringed dot with a ping spreading from it, and names its planet only with a faint dashed ring. It used to give the planet the same halo and copper rim as selecting the planet.
 - The capture and ask drawers open only when the pointer reaches the grip bar itself, within a few pixels. A band along the whole edge, and then a zone the size of the grip's button, opened them whenever the reader reached for the tag row, the view switch or the legend.
+- A thought typed with Zhuyin, Pinyin or Kana reaches the Horizon. The field sits inside the island, whose Return opens the workspace, so every Return typed there (the one that picks a candidate included) opened the workspace and took the keyboard mid-thought; the field now keeps its keys, tracks composition itself, and ignores Return and Escape while the input method owns them.
+- When the island puts a thought away it hands the keyboard back to the app that had it. Deactivating alone left no app active, so typing went nowhere until the reader clicked their app; it now remembers that app and, as macOS's cooperative activation asks, yields to it and brings it forward.
+- A click on the knowledge graph's empty space lets go of the entity or tags picked.
 - The knowledge graph no longer makes the whole app scroll. Its grid row was sized by its content, so a details panel longer than the window stretched the page past it.
 - The crumb, its chevron and the orbit's name in the header share one size and line height and sit on one baseline, closer together.
 - The orbit rail lists orbits only. Its Horizon row repeated the screen you were on, and the moon and the crumb in the header already lead home.

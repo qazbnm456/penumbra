@@ -376,7 +376,11 @@ fn watch(app: AppHandle) {
                 placed = padded(geo.note, geo.edge);
                 place(&app, placed);
                 tell(&app, State::Note, &geo);
-                take_keyboard(&app);
+                // From listening it already has the keyboard; focusing again can bounce key status
+                // and read as the reader clicking away.
+                if state != State::Listen {
+                    take_keyboard(&app);
+                }
             }
             // The page already put itself in the swallow state when it received the drop; telling it
             // again would only race its own words.
@@ -397,6 +401,8 @@ fn point(app: &AppHandle, at: (f64, f64)) {
 fn take_keyboard(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
+        // Who had the keyboard, so it can be given back to exactly them.
+        platform::remember_front();
         if let Some(window) = handle.get_webview_window(LABEL) {
             let _ = window.set_focus();
         }
@@ -412,7 +418,7 @@ fn yield_keyboard(app: &AppHandle) {
             .iter()
             .any(|(label, w)| label != LABEL && w.is_visible().unwrap_or(false));
         if !workspace_up {
-            platform::deactivate();
+            platform::give_back();
         }
     });
 }
@@ -446,8 +452,9 @@ fn remeasure(app: &AppHandle, state: State) {
 mod platform {
     use super::{Geometry, Rect};
     use objc2::MainThreadMarker;
+    use std::sync::atomic::{AtomicI32, Ordering};
     use objc2_app_kit::{
-        NSApplication, NSEvent, NSPasteboard, NSPasteboardNameDrag, NSScreen, NSStatusWindowLevel, NSWindow,
+        NSApplication, NSApplicationActivationOptions, NSEvent, NSPasteboard, NSRunningApplication, NSWorkspace, NSPasteboardNameDrag, NSScreen, NSStatusWindowLevel, NSWindow,
         NSWindowCollectionBehavior,
     };
     use tauri::{AppHandle, WebviewWindow};
@@ -539,11 +546,36 @@ mod platform {
         NSEvent::pressedMouseButtons() & 1 == 1
     }
 
-    /// Hand activation back to the app the reader was in before they wrote a note. Hiding would
-    /// take the island with it; deactivating leaves every window where it is.
-    pub fn deactivate() {
-        if let Some(mtm) = MainThreadMarker::new() {
-            NSApplication::sharedApplication(mtm).deactivate();
+    /// The app that was in front when the island took the keyboard, by process id.
+    static FRONT: AtomicI32 = AtomicI32::new(0);
+
+    pub fn remember_front() {
+        let own = std::process::id() as i32;
+        if let Some(front) = NSWorkspace::sharedWorkspace().frontmostApplication() {
+            let pid = front.processIdentifier();
+            if pid != own {
+                FRONT.store(pid, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// Give the keyboard back to the app the reader was in. `deactivate` alone was tried first and
+    /// left no app active: macOS does not pass activation on by itself, so typing went nowhere
+    /// until the reader clicked their app. Since macOS 14 activation is cooperative: the active app
+    /// yields to the other one, which is then asked to come forward.
+    pub fn give_back() {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let pid = FRONT.swap(0, Ordering::SeqCst);
+        let target = if pid > 0 { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) } else { None };
+        match target {
+            Some(other) => {
+                NSApplication::sharedApplication(mtm).yieldActivationToApplication(&other);
+                #[allow(deprecated)]
+                let _ = other.activateWithOptions(NSApplicationActivationOptions::empty());
+            }
+            None => NSApplication::sharedApplication(mtm).deactivate(),
         }
     }
 }
@@ -574,7 +606,9 @@ mod platform {
     pub fn float_above_menu_bar(_app: &AppHandle, _window: &WebviewWindow) {}
 
     /// Elsewhere the window manager moves focus on the next click; nothing to hand back.
-    pub fn deactivate() {}
+    pub fn remember_front() {}
+
+    pub fn give_back() {}
 
     /// No portable drag-session signal here: a press that started off the island and moved is
     /// taken as a drag.
