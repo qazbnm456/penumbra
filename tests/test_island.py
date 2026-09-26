@@ -85,3 +85,16 @@ def test_the_island_asks_the_shell_for_only_the_four_fixed_paths():
     )
     for verb in ("open", "menu", "rest", "note"):
         assert f'"{verb}" =>' in shell, f"the shell does not handle /__shell/{verb}"
+
+
+def test_keys_typed_into_the_note_never_reach_the_islands_own_enter():
+    """The field sits inside the hole, whose Enter opens the workspace. Every Return typed there,
+    including the one that picks a Zhuyin candidate, bubbled up and opened the workspace too, which
+    took the keyboard away mid-thought; and Escape or Return while an input method composes belong
+    to the input method."""
+    hole_keys = JS[JS.index('hole.addEventListener("keydown"'):]
+    hole_keys = hole_keys[: hole_keys.index("});")]
+    assert 'event.target.closest(".note")' in hole_keys
+    assert "compositionstart" in JS and "compositionend" in JS
+    assert "imeOwns(event)" in JS
+
