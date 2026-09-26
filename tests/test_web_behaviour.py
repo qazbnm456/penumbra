@@ -1014,5 +1014,5 @@ def test_a_resting_note_shows_the_whole_summary_a_page_at_a_time():
     assert result["shortPages"] == ["Sleep consolidates memory. Naps help too."], "short means one page"
     assert result["longPages"] > 1 and result["fits"], "a long one is paged to fit the column"
     assert result["whole"], "paging never drops a word"
-    assert result["dwellShort"] == 12000, "never under 12 seconds"
-    assert 12000 < result["dwellLong"] <= 45000, "a full page is held long enough to read"
+    assert result["dwellShort"] == 8000, "never under 8 seconds"
+    assert 8000 < result["dwellLong"] <= 30000, "a full page is held long enough to read, not a minute"

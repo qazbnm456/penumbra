@@ -96,7 +96,6 @@ const STRINGS = {
     "rest.new": "新知",
     "rest.old": "舊知",
     "rest.from": "來自「{name}」",
-    "rest.about": "談到",
     "settings.restOff": "不要",
     "settings.restMinutes": "{n} 分鐘後",
     "settings.restHelp": "停在星圖上一段時間沒操作，介面會退到一旁，讓星圖像動態桌布一樣播放。有工作在跑時不會自動進入。",

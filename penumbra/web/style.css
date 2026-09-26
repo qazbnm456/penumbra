@@ -9576,12 +9576,24 @@ body:not([data-view="horizon"]) .capture-dock {
 }
 
 .ambient-note-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
   margin-top: var(--space-5);
+}
+
+/* A name longer than the whole column is the only thing that shortens, inside its own chip. */
+.ambient-note-name {
+  max-width: 100%;
+  padding: var(--space-0) var(--space-4);
   font-size: var(--text-sm);
-  color: var(--text-faint);
-  white-space: pre;
+  color: var(--accent-text);
+  border: 1px solid color-mix(in oklch, var(--accent) 45%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--accent) 10%, transparent);
+  white-space: nowrap;
   overflow: hidden;
-  text-overflow: clip;
+  text-overflow: ellipsis;
 }
 
 .ambient-note-pages {
