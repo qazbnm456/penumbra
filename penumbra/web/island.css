@@ -243,6 +243,12 @@ body[data-state="listen"] .duo {
   transition: stroke-dasharray 600ms ease;
 }
 
+/* Nothing summarised yet: a zero-length dash with a round cap still paints a copper dot at the
+   arc's start, which reads as "a little done". */
+body[data-none-done] .duo-arc {
+  opacity: 0;
+}
+
 /* A pass running: the arc breathes and grows as each capture is summarised. */
 body[data-summarising] .duo-arc {
   animation: breathe 1.2s ease-in-out infinite;

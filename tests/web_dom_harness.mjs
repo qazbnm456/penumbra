@@ -1738,6 +1738,13 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     return { afterLoad, one, repeat, many };
   },
 
+  //: A page title loses the encyclopedia's appended name and nothing else.
+  pageTitles() {
+    const run = new Function(`${extract("tidyPageTitle")}\nreturn { tidyPageTitle };`)();
+    return ["咖啡 - 維基百科，自由的百科全書", "Aurora - Wikipedia", "睡眠 - 维基百科，自由的百科全书",
+      "Rust - A language | Rust", "Black Hat Cyber Security Conference"].map(run.tidyPageTitle);
+  },
+
   restPages() {
     const run = new Function(
       `const REST_PAGE_UNITS = 440;\n${extract("textUnits")}\n${extract("notePages")}\n${extract("pageDwell")}\n` +
