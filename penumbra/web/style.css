@@ -9378,3 +9378,16 @@ body:not([data-view="horizon"]) .capture-dock {
   max-width: none;
   margin-inline: 0;
 }
+
+/* What is being read stays in view: the facts stick to the top of the viewer's scroller, under its
+   title, so a reader deep in page forty still sees which document it is. They sit flush with the
+   scroller's top edge (the body's own padding is pulled back) on the modal's surface, and the text
+   scrolls beneath them. */
+#source-viewer-body .source-meta {
+  position: sticky;
+  top: calc(var(--space-7) * -1);
+  z-index: 1;
+  margin-top: calc(var(--space-7) * -1);
+  padding-top: var(--space-7);
+  background: var(--surface-1);
+}
