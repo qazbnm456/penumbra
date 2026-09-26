@@ -9081,3 +9081,145 @@ body:not([data-view="horizon"]) .capture-dock {
     animation: none;
   }
 }
+
+/* --- Lenses: several tags at once, and what they light ---------------------------------------- */
+.lens-clear {
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+  background: none;
+  border: 0;
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+
+.lens-clear:hover {
+  color: var(--accent-text);
+}
+
+/* A moon carrying a lensed tag grows and glows; every other moon fades, so the capture that lit a
+   planet is the one thing still bright around it. */
+.map-dot.is-lensed {
+  fill: var(--accent);
+  opacity: 1;
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scale(1.8);
+  filter: drop-shadow(0 0 2px var(--accent));
+}
+
+.map-dot.is-faded {
+  opacity: 0.15;
+}
+
+.map-bridge.is-dim,
+.map-bridge-label.is-dim {
+  opacity: 0.12;
+}
+
+.lens-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 var(--space-4);
+}
+
+.lens-chosen {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--serif);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  color: var(--accent-text);
+  background: color-mix(in oklch, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in oklch, var(--accent) 40%, transparent);
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-4);
+  cursor: pointer;
+}
+
+.lens-chosen-x {
+  font-family: var(--sans);
+  font-size: var(--text-sm);
+  opacity: 0.6;
+}
+
+.lens-chosen:hover .lens-chosen-x {
+  opacity: 1;
+}
+
+.lens-list {
+  list-style: none;
+  margin: var(--space-4) 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* One capture the lens lit: its title, what it says, and why it lit. */
+.lens-item {
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklch, var(--surface-2) 60%, transparent);
+}
+
+.lens-item-title {
+  display: block;
+  width: 100%;
+  padding: 0;
+  font-family: var(--serif);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  text-align: left;
+  color: var(--text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.lens-item-title:hover {
+  color: var(--accent-text);
+}
+
+.lens-item-summary {
+  margin: var(--space-2) 0 var(--space-3);
+  font-size: var(--text-md);
+  line-height: 1.6;
+  color: var(--text-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.lens-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.lens-item-tag,
+.lens-item-orbit {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  padding: 0 var(--space-3);
+  border-radius: 999px;
+}
+
+.lens-item-tag {
+  color: var(--accent-text);
+  border: 1px solid color-mix(in oklch, var(--accent) 40%, transparent);
+}
+
+.lens-item-orbit {
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+.lens-item-orbit.is-loose {
+  border-style: dashed;
+}

@@ -1591,7 +1591,8 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
   starMapLens() {
     const t = (_k, fallback) => fallback;
     const run = new Function(
-      "t", `${extract("starMapOrbit")}\n${extract("dimmedByLens")}\nreturn { starMapOrbit, dimmedByLens };`
+      "t", `${extract("starMapOrbit")}\n${extract("dimmedByLens")}\n${extract("moonLensClass")}\n` +
+        "return { starMapOrbit, dimmedByLens, moonLensClass };"
     )(t);
     const top = ["a", "b", "c", "d", "e", "f"];
     const planet = run.starMapOrbit(
@@ -1600,11 +1601,17 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
         all_tags: [...top, "supply chain security"], moons: [] },
     );
     const bare = run.starMapOrbit({ id: "new", slug: "new", title: "", source_count: 0 }, undefined);
+    const lenses = (...names) => new Set(names);
     return {
-      heldTagLit: !run.dimmedByLens(planet, "supply chain security"),
-      otherTagDim: run.dimmedByLens(planet, "cooking"),
-      noLensLit: !run.dimmedByLens(planet, null),
-      emptyOrbitDim: run.dimmedByLens(bare, "a"),
+      heldTagLit: !run.dimmedByLens(planet, lenses("supply chain security")),
+      otherTagDim: run.dimmedByLens(planet, lenses("cooking")),
+      noLensLit: !run.dimmedByLens(planet, lenses()),
+      emptyOrbitDim: run.dimmedByLens(bare, lenses("a")),
+      unionLit: !run.dimmedByLens(planet, lenses("cooking", "supply chain security")),
+      moonLit: run.moonLensClass({ kind: "capture", tags: ["ai threats"] }, lenses("ai threats", "x")),
+      moonFaded: run.moonLensClass({ kind: "capture", tags: ["rust"] }, lenses("ai threats")),
+      localFaded: run.moonLensClass({ kind: "local" }, lenses("ai threats")),
+      moonPlain: run.moonLensClass({ kind: "capture", tags: ["rust"] }, lenses()),
       displayStillCapped: planet.tags.length === 6,
     };
   },

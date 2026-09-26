@@ -113,7 +113,9 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
             total["count"] += 1
             if row["state"] == "ready":
                 total["distilled"] += 1
-        item = {"id": node_id, "title": _label(row), "state": row["state"], "orbits": filed_in[node_id]}
+        item = {"id": node_id, "title": _label(row), "state": row["state"], "orbits": filed_in[node_id],
+                # So a tag lens can light the moon itself, not only the planet it circles.
+                "tags": _names(row["tags"])}
         if row["orbit_id"] is None:
             loose_items.append((float(row["created_at"] or 0), item))
             loose["count"] += 1

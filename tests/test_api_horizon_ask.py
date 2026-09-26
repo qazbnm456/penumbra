@@ -95,6 +95,44 @@ def test_preview_says_what_would_be_read_and_costs_nothing(client, monkeypatch):
     assert seen == []
 
 
+def test_a_scope_of_several_tags_reads_the_captures_carrying_any_of_them(client, monkeypatch):
+    """A lens of two tags on the star map asks over their union, and the kept ask names both."""
+    _mock_runner(monkeypatch, _answer())
+    a = _capture("https://x.example/a", "sleep and memory", tags=["sleep"])
+    b = _capture("https://x.example/b", "coffee and focus", tags=["coffee"])
+    _capture("https://x.example/c", "rust", tags=["rust"])
+    scope = {"kind": "tag", "values": ["sleep", "coffee", "sleep"]}
+    preview = client.post("/horizon/ask/preview", json={"question": "q", "scope": scope}).json()
+    assert {i["node_id"] for i in preview["items"]} == {a, b} and preview["in_scope"] == 2
+    asked = client.post("/horizon/ask", json={"question": "q", "scope": scope})
+    assert asked.status_code == 200, asked.text
+    kept = client.get("/horizon/asks").json()["asks"][0]["scope"]
+    assert kept["kind"] == "tag" and kept["values"] == ["sleep", "coffee"]
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [{"kind": "entity", "values": ["a", "b"]}, {"kind": "tag", "values": []},
+     {"kind": "tag", "values": [" "]}, {"kind": "tag", "value": "a\x1fb"}],
+)
+def test_a_malformed_several_tag_scope_is_refused(client, scope):
+    resp = client.post("/horizon/ask/preview", json={"question": "q", "scope": scope})
+    assert resp.status_code == 422, resp.text
+
+
+def test_the_lens_lists_why_each_capture_lit_with_its_summary_and_orbits(client):
+    a = _capture("https://x.example/a", "t", tags=["ai threats", "csirt"], summary="A call for papers.",
+                 title="NCA CFP", state="ready")
+    _capture("https://x.example/b", "t", tags=["rust"], state="ready")
+    horizon.promote_node(a, "cfp", create=True)
+    body = client.get("/horizon/lens", params=[("tag", "ai threats"), ("tag", "sleep")]).json()
+    assert body["total"] == 1
+    (item,) = body["captures"]
+    assert item["id"] == a and item["title"] == "NCA CFP" and item["summary"] == "A call for papers."
+    assert item["matched"] == ["ai threats"] and item["orbits"] == ["cfp"]
+    assert client.get("/horizon/lens").status_code == 422
+
+
 def test_ask_reads_the_selection_runs_one_answer_and_keeps_it(client, monkeypatch):
     seen: list = []
     _mock_runner(monkeypatch, _answer(), seen)

@@ -109,7 +109,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -4074,9 +4074,22 @@ class HorizonAskScope(BaseModel):
     #: Narrow it to captures filed into any of several orbits: an entity on the link between two
     #: planets, asked about across both.
     orbits: list[str] | None = Field(default=None, max_length=8)
+    #: Several tags at once, a lens of more than one: the captures carrying any of them. Joined into
+    #: `value` with `search.TAG_SEPARATOR` on the way in, so everything downstream sees one scope.
+    values: list[str] | None = Field(default=None, max_length=8)
 
     @model_validator(mode="after")
     def _value_matches_kind(self):
+        if self.values is not None:
+            if self.kind != "tag":
+                raise ValueError("only a tag scope can name several values")
+            names = list(dict.fromkeys(v.strip() for v in self.values))
+            if not names or any(not v or len(v) > search.SCOPE_VALUE_MAX for v in names):
+                raise ValueError("every tag in a scope needs a name")
+            self.value = search.TAG_SEPARATOR.join(names)
+            self.values = None
+        elif self.value and search.TAG_SEPARATOR in self.value:
+            raise ValueError("a scope value may not contain a control character")
         if self.orbit is not None and not self.orbit.strip():
             raise ValueError("an orbit scope needs an orbit")
         if self.orbits is not None:
@@ -4109,6 +4122,9 @@ def _stored_scope(kind: str, value: str | None, orbit: str | None) -> dict:
     """A kept ask's scope as the page reads it: an orbit list is stored joined by commas."""
     orbits = [o for o in (orbit or "").split(",") if o]
     out = {"kind": kind, "value": value, "orbit": orbits[0] if len(orbits) == 1 else None}
+    if kind == "tag" and value and search.TAG_SEPARATOR in value:
+        out["values"] = value.split(search.TAG_SEPARATOR)
+        out["value"] = out["values"][0]
     if len(orbits) > 1:
         out["orbits"] = orbits
     return out
@@ -4400,6 +4416,18 @@ async def dismiss_suggestion(body: DismissSuggestion) -> dict:
 async def horizon_concepts() -> dict:
     """The tags and entities an ask can be narrowed to, most used first."""
     return await asyncio.to_thread(search.concepts)
+
+
+@app.get("/horizon/lens")
+async def horizon_lens(
+    tag: Annotated[list[str], Query(min_length=1, max_length=8)],
+    limit: int = Query(40, ge=1, le=100),
+) -> dict:
+    """What a tag lens on the star map lights: the captures carrying any of the tags, with their
+    summaries, so the reader sees why a planet lit without opening each capture."""
+    if any(not t.strip() or len(t) > search.SCOPE_VALUE_MAX for t in tag):
+        raise HTTPException(422, "every tag needs a name of at most 200 characters")
+    return await asyncio.to_thread(search.lens, tag, limit=limit)
 
 
 @app.post("/horizon/ask/preview")
