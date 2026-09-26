@@ -1616,6 +1616,15 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     };
   },
 
+  //: A PDF's printed line breaks, joined back inside sentences, kept at list items, blank lines and
+  //: sentence ends, and never changing the length (so a quote's offsets still hold).
+  pdfReflow() {
+    const run = new Function(`${extract("reflowPdfLines")}\nreturn { reflowPdfLines };`)();
+    const text = "Page 2\r\nLicense a line ending in space \nnext line, any purpose, even\ncommercially.\n• Adapt the material\nThe end.\nUnder terms\n\nNext para\n中文斷\n行";
+    const out = run.reflowPdfLines(text);
+    return { out, sameLength: out.length === text.length };
+  },
+
   //: Dragging a node on the knowledge graph: its neighbours follow at 0.6, theirs at 0.3, the rest
   //: stay put, and a node dropped on another pushes it clear.
   graphDrag() {

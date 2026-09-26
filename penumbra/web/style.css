@@ -3186,11 +3186,16 @@ select:hover {
    September 5, 1977. Voyager 2 launched #b2ad719a` — and then the text, with nothing in between.
    A user called it too rough, correctly: an origin is a machine string, not a heading. */
 
+/* The same measure as the blocks under it, centred with them, so the facts and the text share one
+   left edge; at full width the facts started a column left of the prose they describe. */
 .source-meta {
+  max-width: var(--chat-measure);
+  margin-inline: auto;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: var(--space-2) var(--space-6);
-  margin: 0 0 var(--space-7);
+  margin-top: 0;
+  margin-bottom: var(--space-7);
   padding: 0 0 var(--space-7);
   border-bottom: 1px solid var(--border);
   font-size: var(--text-md);
