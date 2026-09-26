@@ -3457,6 +3457,52 @@ function copyButton(getMarkdown) {
   return btn;
 }
 
+//: Keeping an answer as a moon: one press adds it as a note and promotes it at once, so it becomes
+//: a source of this orbit (and so a moon on the map) that later questions can cite. It is the same
+//: two steps invariant 32 asks for, taken together because the reader asked for both.
+function keepAsMoonButton(text) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "keep-as-moon";
+  // A span, not `::before`: the tooltip owns both pseudo-elements of anything with `data-tip`.
+  btn.appendChild(elt("span", "keep-as-moon-mark"));
+  btn.setAttribute("aria-label", t("chat.keepAsMoon", "Keep as a moon"));
+  btn.dataset.tip = t("chat.keepAsMoonHelp",
+    "Make this answer a source of this orbit, a moon on the map. Later questions can then cite it.");
+  btn.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    if (!state.orbitId) return;
+    btn.disabled = true;
+    const orbitId = state.orbitId;
+    try {
+      const before = new Set((state.notes || []).map((n) => n.id));
+      const withNote = await api(`/orbits/${encodeURIComponent(orbitId)}/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const added = (withNote.notes || []).find((n) => !before.has(n.id) && n.text === text);
+      if (!added) throw new Error(t("chat.keepNoNote", "the note was not found after saving it"));
+      const orbit = await api(
+        `/orbits/${encodeURIComponent(orbitId)}/notes/${encodeURIComponent(added.id)}/promote`,
+        { method: "POST" }
+      );
+      if (state.orbitId !== orbitId) return;
+      state.sources = orbit.sources;
+      state.notes = orbit.notes;
+      store.emit("sources:changed", { sources: state.sources });
+      store.emit("notes:changed", { notes: state.notes });
+      btn.classList.add("is-kept");
+      btn.dataset.tip = t("chat.kept", "Kept as a moon of this orbit");
+      notify(t("chat.keptNotice", "Kept as a moon. Later questions can cite it."), { tone: "ok", timeout: 2600 });
+    } catch (err) {
+      notify(t("err.keepAsMoon", `Could not keep it: ${err.message}`, { message: err.message }));
+      btn.disabled = false;
+    }
+  });
+  return btn;
+}
+
 function saveAsNoteButton(text) {
   const btn = document.createElement("button");
   btn.type = "button";
@@ -4185,6 +4231,7 @@ function renderTurn(turn) {
     // same reason: a shared helper the CALL SITE opts into, never a button the shared renderer
     // grows on its own.
     answer.appendChild(saveAsNoteButton(turn.answer));
+    answer.appendChild(keepAsMoonButton(turn.answer));
     //: Beside Save-as-note, because they are the two things a reader does with an answer they
     //: value: keep it here, or take it somewhere else. Only the second existed as a select-and-drag.
     answer.appendChild(
@@ -5978,7 +6025,7 @@ function renderNoteItem(note) {
   const promoteBtn = document.createElement("button");
   promoteBtn.type = "button";
   promoteBtn.className = "btn note-promote";
-  promoteBtn.textContent = t("notes.promote", "→ Promote to source");
+  promoteBtn.textContent = t("notes.promote", "→ Keep as a moon");
   // `data-tip`, not the native `title`: this project's own tooltip is instant and styled, and the
   // native one's ~1s delay is what made hover help feel disconnected from the hover effect.
   promoteBtn.dataset.tip = t(
@@ -10590,7 +10637,7 @@ const MODE_KEYS = { horizon: "penumbra-horizon-mode", orbit: "penumbra-orbit-mod
 const MODE_DEFAULTS = { horizon: "map", orbit: "graph" };
 const MODE_CHOICES = {
   horizon: [["map", () => t("mode.map", "Star map")], ["list", () => t("mode.list", "List")]],
-  orbit: [["graph", () => t("mode.graph", "Knowledge graph")], ["cols", () => t("mode.cols", "Columns")]],
+  orbit: [["graph", () => t("mode.graph", "Knowledge graph")], ["cols", () => t("mode.cols", "Study")]],
 };
 
 function viewMode(view) {
@@ -11272,6 +11319,15 @@ function moonLensClass(item, lenses) {
 
 async function enterOrbit(orbit) {
   await openOrbit(orbit.id);
+}
+
+//: Going in to study an orbit: it opens in the study view (sources, conversation, Studio), where
+//: the AI reads all of it and answers with citations, whatever view the orbit was last shown in.
+async function studyOrbit(orbit) {
+  if (state.orbitId !== orbit.id) await openOrbit(orbit.id);
+  if (state.orbitId !== orbit.id) return;
+  orbitVisit.override = "cols";
+  applyViewMode();
 }
 
 function syncStarMapContext({ follow = true } = {}) {
@@ -12032,6 +12088,16 @@ function renderLensCard(card) {
       detail.appendChild(elt("p", "card-note", t("lens.more", `And ${got.total - got.captures.length} more.`,
         { n: got.total - got.captures.length })));
     }
+    const homes = new Set((got.captures || []).flatMap((item) => item.orbits));
+    const home = homes.size === 1 && got.total === (got.captures || []).length
+      ? starMap.orbits.find((o) => o.slug === [...homes][0]) : null;
+    if (home) {
+      const study = elt("button", "btn card-enter lens-study",
+        t("lens.study", `Study ${home.title}`, { name: home.title }));
+      study.type = "button";
+      study.addEventListener("click", () => void studyOrbit(home));
+      detail.appendChild(study);
+    }
     if (got.total) {
       const ask = elt("button", "btn btn-primary card-enter", names.length > 1
         ? t("lens.askMany", "Ask about everything these tags light")
@@ -12244,9 +12310,10 @@ function paintStarMapCard(mapCard) {
       `${local} not recorded in the Horizon yet, usually because they were added from the command line. They are drawn hollow until the server next starts, which records them.`,
       { n: local })));
   }
-  const enter = elt("button", "btn btn-primary card-enter", t("map.enter", "Open orbit"));
+  const enter = elt("button", "btn btn-primary card-enter", t("map.study", "Study it"));
   enter.type = "button";
-  enter.addEventListener("click", () => void enterOrbit(orbit));
+  enter.dataset.tip = t("map.studyTip", "Open it to read with the AI: it reads every source here and answers with citations.");
+  enter.addEventListener("click", () => void studyOrbit(orbit));
   mapCard.appendChild(enter);
   if (orbit.undistilled) {
     mapCard.appendChild(distilOrbitControl(orbit.slug, orbit.undistilled));
