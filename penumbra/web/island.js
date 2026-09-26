@@ -84,7 +84,17 @@
       if (state === "hover") startGlance();
       else stopGlance();
       if (state === "note") beginNote();
+      else if (state === "listen") beginListen();
       else endNoteFocus();
+      if (state !== "hover" && state !== "listen") pen.classList.remove("is-hot");
+    },
+    // The shell tells the page where the pointer is, because a window in the background gets no
+    // mouse-moved events and `:hover` never matches there. The page decides what is under it.
+    pointer(x, y) {
+      const box = pen.getBoundingClientRect();
+      const pad = 6;
+      pen.classList.toggle("is-hot",
+        x >= box.left - pad && x <= box.right + pad && y >= box.top - pad && y <= box.bottom + pad);
     },
   };
 
@@ -233,6 +243,18 @@
     }, 2000);
   }
 
+  // Listening: the island has the keyboard but keeps its hover shape, with a line saying typing
+  // works. The first character opens the note field, carrying what was typed.
+  const listenHint = document.getElementById("listen-hint");
+
+  function beginListen() {
+    listenHint.textContent = say("island.listenHint", "Or just start typing to keep a thought");
+    announce("island.listenHint", "Or just start typing to keep a thought");
+    noteInput.value = "";
+    noteInput.tabIndex = 0;
+    setTimeout(() => noteInput.focus(), 40);
+  }
+
   function endNoteFocus() {
     noteInput.tabIndex = -1;
     if (document.activeElement === noteInput) noteInput.blur();
@@ -244,21 +266,31 @@
   }
 
   window.addEventListener("focus", () => {
-    if (document.body.dataset.state === "note") noteInput.focus();
+    const now = document.body.dataset.state;
+    if (now === "note" || now === "listen") noteInput.focus();
   });
   // Clicking anywhere else takes the keyboard away from this window: that is the reader moving on.
   window.addEventListener("blur", () => {
-    if (document.body.dataset.state === "note" && !sendingNote) putNoteAway();
+    const now = document.body.dataset.state;
+    if ((now === "note" && !sendingNote) || now === "listen") putNoteAway();
   });
   noteInput.addEventListener("input", () => {
     syncNoteLook();
+    // Typing while listening is the reader choosing to write: the island opens into the field.
+    // Not on each composing keystroke's commit alone; any non-empty value is enough.
+    if (document.body.dataset.state === "listen" && noteInput.value) {
+      window.location.href = "/__shell/note";
+      return;
+    }
     keepDraft();
   });
   noteInput.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
       putNoteAway();
+      return;
     }
+    if (document.body.dataset.state === "listen") return;
     // Return picks a candidate while an input method is composing (Zhuyin, Pinyin, Kana); only a
     // Return outside composition sends. WebKit reports that Return as keyCode 229.
     if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229) {

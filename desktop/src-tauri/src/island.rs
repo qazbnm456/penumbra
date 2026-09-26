@@ -9,6 +9,10 @@
 //! - **armed**: something is being DRAGGED near it (a mouse button is held), so it opens wide
 //!   enough to be an easy target.
 //! - **swallow**: the drag ended over it; the page plays the drop falling in, then it closes.
+//! - **listen**: the pointer has rested on the hover shape for a few seconds without dragging. A
+//!   drop is over by then, so the reader is waiting: a line fades in under the ring saying they can
+//!   type, and the island takes the keyboard. The first key opens the note field with it; moving
+//!   away puts the island to rest and hands the keyboard back.
 //! - **note**: the reader asked to write a thought (the pen on the hover shape, or the menu), so
 //!   it opens into a one-line field and, for this state only, takes the keyboard. It stays until
 //!   the page says it is done, and then hands the keyboard back.
@@ -31,6 +35,9 @@ const TICK: Duration = Duration::from_millis(16);
 /// How long the pointer must rest on the island before it says what it is. Shorter and every trip
 /// to the menu bar flickers it; longer and it feels unresponsive.
 const HOVER_DELAY: Duration = Duration::from_millis(160);
+/// How long the pointer must rest on the hover shape before the island offers to take a typed
+/// thought. A drag and drop is over well within it, so resting this long means waiting, not aiming.
+const DWELL: Duration = Duration::from_millis(3500);
 /// How long it stays open after the pointer leaves, so a drag that wobbles out and back in does not
 /// make it snap shut under the cursor.
 const LEAVE_GRACE: Duration = Duration::from_millis(380);
@@ -70,6 +77,8 @@ pub struct Geometry {
     pub hover: Rect,
     pub armed: Rect,
     pub note: Rect,
+    /// The hover shape with room under the ring for the line that says typing works.
+    pub listen: Rect,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,6 +88,7 @@ enum State {
     Armed,
     Swallow,
     Note,
+    Listen,
 }
 
 impl State {
@@ -89,6 +99,7 @@ impl State {
             State::Armed => "armed",
             State::Swallow => "swallow",
             State::Note => "note",
+            State::Listen => "listen",
         }
     }
 }
@@ -201,6 +212,7 @@ fn tell(app: &AppHandle, state: State, geo: &Geometry) {
         State::Hover => geo.hover,
         State::Armed | State::Swallow => geo.armed,
         State::Note => geo.note,
+        State::Listen => geo.listen,
     };
     if let Some(window) = app.get_webview_window(LABEL) {
         let _ = window.eval(format!(
@@ -219,6 +231,11 @@ fn tell(app: &AppHandle, state: State, geo: &Geometry) {
 fn watch(app: AppHandle) {
     let mut state = State::Rest;
     let mut hover_since: Option<Instant> = None;
+    // When the current hover began, for the dwell that turns it into listening.
+    let mut hovering_since: Option<Instant> = None;
+    // Where the window is, so the pointer can be told to the page in the page's own coordinates.
+    let mut placed = Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
+    let mut last_told: Option<(f64, f64)> = None;
     let mut away_since: Option<Instant> = None;
     let mut swallow_until: Option<Instant> = None;
     let mut was_dragging = false;
@@ -271,11 +288,20 @@ fn watch(app: AppHandle) {
                 State::Swallow
             }
             _ if dragging && geo.armed.contains(px, py, 70.0) => State::Armed,
-            State::Armed | State::Hover => {
-                let region = if state == State::Armed { geo.armed } else { geo.hover };
+            State::Armed | State::Hover | State::Listen => {
+                let region = match state {
+                    State::Armed => geo.armed,
+                    State::Listen => geo.listen,
+                    _ => geo.hover,
+                };
                 if region.contains(px, py, 6.0) {
                     away_since = None;
-                    state
+                    let dwelt = hovering_since.is_some_and(|since| now.duration_since(since) >= DWELL);
+                    if state == State::Hover && dwelt && !pressed {
+                        State::Listen
+                    } else {
+                        state
+                    }
                 } else if away_since.get_or_insert(now).elapsed() >= LEAVE_GRACE {
                     State::Rest
                 } else {
@@ -299,16 +325,27 @@ fn watch(app: AppHandle) {
         // Slow down only when nothing can happen within a frame.
         tick = if next == State::Rest && !pressed && !note_asked && !geo.armed.contains(px, py, 300.0) { IDLE_TICK } else { TICK };
         if next == state {
+            // The page cannot see the pointer while the app is in the background (a background
+            // window gets no mouse-moved events), so what is under it is told from here.
+            if matches!(state, State::Hover | State::Listen) {
+                let at = (px - placed.x, py - placed.y);
+                if last_told.is_none_or(|(x, y)| (x - at.0).abs() + (y - at.1).abs() > 0.5) {
+                    last_told = Some(at);
+                    point(&app, at);
+                }
+            }
             continue;
         }
+        last_told = None;
+        if matches!(state, State::Note | State::Listen) && !matches!(next, State::Note | State::Listen) {
+            yield_keyboard(&app);
+        }
+        hovering_since = if next == State::Hover { Some(now) } else { None };
         away_since = None;
         hover_since = None;
         let epoch = EPOCH.fetch_add(1, Ordering::SeqCst) + 1;
         match next {
             State::Rest => {
-                if state == State::Note {
-                    yield_keyboard(&app);
-                }
                 tell(&app, State::Rest, &geo);
                 let app = app.clone();
                 thread::spawn(move || {
@@ -320,15 +357,24 @@ fn watch(app: AppHandle) {
                 });
             }
             State::Hover => {
-                place(&app, padded(geo.hover, geo.edge));
+                placed = padded(geo.hover, geo.edge);
+                place(&app, placed);
                 tell(&app, State::Hover, &geo);
             }
+            State::Listen => {
+                placed = padded(geo.listen, geo.edge);
+                place(&app, placed);
+                tell(&app, State::Listen, &geo);
+                take_keyboard(&app);
+            }
             State::Armed => {
-                place(&app, padded(geo.armed, geo.edge));
+                placed = padded(geo.armed, geo.edge);
+                place(&app, placed);
                 tell(&app, State::Armed, &geo);
             }
             State::Note => {
-                place(&app, padded(geo.note, geo.edge));
+                placed = padded(geo.note, geo.edge);
+                place(&app, placed);
                 tell(&app, State::Note, &geo);
                 take_keyboard(&app);
             }
@@ -337,6 +383,13 @@ fn watch(app: AppHandle) {
             State::Swallow => {}
         }
         state = next;
+    }
+}
+
+/// Tell the page where the pointer is, in the window's coordinates.
+fn point(app: &AppHandle, at: (f64, f64)) {
+    if let Some(window) = app.get_webview_window(LABEL) {
+        let _ = window.eval(format!("window.island && window.island.pointer && window.island.pointer({}, {})", at.0, at.1));
     }
 }
 
@@ -423,6 +476,8 @@ mod platform {
         let armed_w = (rest.w + 160.0).max(340.0);
         // Wide enough for a sentence to be read back while it is typed.
         let note_w = (rest.w + 260.0).max(460.0);
+        // Wide enough for the typing hint under the ring.
+        let listen_w = (rest.w + 110.0).max(300.0);
         Some(Geometry {
             edge: "top",
             inset: if top > 0.0 { top } else { 0.0 },
@@ -431,6 +486,7 @@ mod platform {
             hover: Rect { x: centre - hover_w / 2.0, y: 0.0, w: hover_w, h: bar + 76.0 },
             armed: Rect { x: centre - armed_w / 2.0, y: 0.0, w: armed_w, h: bar + 118.0 },
             note: Rect { x: centre - note_w / 2.0, y: 0.0, w: note_w, h: bar + 60.0 },
+            listen: Rect { x: centre - listen_w / 2.0, y: 0.0, w: listen_w, h: bar + 116.0 },
         })
     }
 
@@ -511,6 +567,7 @@ mod platform {
             hover: Rect { x: 0.0, y: mid - 60.0, w: 300.0, h: 120.0 },
             armed: Rect { x: 0.0, y: mid - 100.0, w: 400.0, h: 200.0 },
             note: Rect { x: 0.0, y: mid - 30.0, w: 460.0, h: 60.0 },
+            listen: Rect { x: 0.0, y: mid - 75.0, w: 320.0, h: 150.0 },
         })
     }
 
