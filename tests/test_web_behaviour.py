@@ -1001,3 +1001,10 @@ def test_a_scraped_page_is_tidied_for_reading_and_quotes_still_land():
     assert result["shown"] == "Top line\n\n募集にあたって\nさらに、経済\nend"
     assert result["highlighted"] == "さらに、経済", "the map must send a quote to the same words"
 
+
+def test_each_orbit_is_the_same_world_every_visit_and_neighbours_differ():
+    result = _run("planetKinds")
+    assert result["same"], "an orbit's world must not depend on the order orbits arrive in"
+    assert result["distinct"], "while there are kinds to go round, no two planets share one"
+    assert result["seeded"], "the generator must be deterministic for a seed"
+

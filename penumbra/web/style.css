@@ -7528,7 +7528,6 @@ body.is-resizing .orbit-graph {
   .map-disk,
   .map-loose,
   .map-moons,
-  .map-planet-bands,
   .map-star {
     animation: none;
   }
@@ -7702,8 +7701,7 @@ body.is-resizing .orbit-graph {
 }
 
 .map-loose,
-.map-moons,
-.map-planet-bands {
+.map-moons {
   transform-box: view-box;
   transform-origin: 0 0;
   animation: map-spin 90s linear infinite;
@@ -7711,11 +7709,6 @@ body.is-resizing .orbit-graph {
 
 .map-moons {
   animation-duration: 18s;
-}
-
-.map-planet-bands {
-  animation-name: map-drift;
-  animation-duration: 30s;
 }
 
 .map-planet-halo {
@@ -7730,10 +7723,6 @@ body.is-resizing .orbit-graph {
 
 .map-planet.is-selected .map-planet-halo {
   opacity: 1;
-}
-
-.map-band {
-  fill: oklch(92% 0.03 70 / 0.12);
 }
 
 .map-planet-shade {
@@ -7804,19 +7793,6 @@ body.is-resizing .orbit-graph {
 @keyframes map-spin {
   to {
     transform: rotate(1turn);
-  }
-}
-
-/* Surface bands slide across the planet and back, which under the fixed shade reads as rotation. */
-@keyframes map-drift {
-  0% {
-    transform: translateX(-35%);
-  }
-  50% {
-    transform: translateX(35%);
-  }
-  100% {
-    transform: translateX(-35%);
   }
 }
 
@@ -9391,3 +9367,190 @@ body:not([data-view="horizon"]) .capture-dock {
   padding-top: var(--space-7);
   background: var(--surface-1);
 }
+
+/* --- Worlds, weather and rest --------------------------------------------------------------------
+   A planet's surface slides by one period (2r) and loops, which under the fixed light and shade
+   reads as a world turning; clouds turn faster than the ground. */
+.map-planet-spin {
+  transform-box: view-box;
+  animation: planet-turn 60s linear infinite;
+}
+
+@keyframes planet-turn {
+  from {
+    transform: translateX(var(--spin, 0px));
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.map-planet-cap {
+  fill: oklch(96% 0.01 230);
+  opacity: 0.85;
+}
+
+.map-planet-atmo {
+  stroke-width: 2.4;
+  opacity: 0.28;
+  pointer-events: none;
+}
+
+.map-planet-light {
+  pointer-events: none;
+}
+
+.stop-light { stop-color: oklch(100% 0 0); stop-opacity: 0.22; }
+.stop-light-clear { stop-color: oklch(100% 0 0); stop-opacity: 0; }
+.stop-trail { stop-color: oklch(98% 0.02 80); stop-opacity: 0.95; }
+.stop-trail-clear { stop-color: oklch(98% 0.02 80); stop-opacity: 0; }
+.stop-tail { stop-color: oklch(85% 0.08 220); stop-opacity: 0.45; }
+
+/* Weather: each event travels by its own (--dx, --dy) and is removed when it ends. */
+.map-sky {
+  pointer-events: none;
+}
+
+.map-meteor,
+.map-comet,
+.map-rock {
+  animation-name: sky-travel;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+.map-meteor {
+  animation-name: sky-streak;
+  animation-timing-function: cubic-bezier(0.3, 0.1, 0.6, 1);
+}
+
+@keyframes sky-travel {
+  0% { transform: translate(0, 0); opacity: 0; }
+  8% { opacity: 1; }
+  92% { opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)); opacity: 0; }
+}
+
+@keyframes sky-streak {
+  0% { transform: translate(0, 0); opacity: 0; }
+  15% { opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)); opacity: 0; }
+}
+
+.map-comet-head {
+  fill: oklch(97% 0.03 210);
+  filter: drop-shadow(0 0 3px oklch(90% 0.08 210));
+}
+
+.map-rock-body {
+  fill: oklch(52% 0.02 60);
+}
+
+.map-rock-spin {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: map-spin 9s linear infinite;
+}
+
+/* The Rest button sits with the camera's, one gap below them. */
+.map-rest {
+  margin-top: var(--space-2);
+}
+
+/* Resting: everything but the map steps aside, and the map fills the window. */
+.is-ambient .header,
+.is-ambient .facets,
+.is-ambient .map-panel,
+.is-ambient .ask-dock,
+.is-ambient .capture-dock,
+.is-ambient .starmap-legend,
+.is-ambient .lenses,
+.is-ambient .map-camera,
+.is-ambient .notice,
+.is-ambient .intake-strip {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 1.2s ease;
+}
+
+.is-ambient .starmap {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  margin: 0;
+  background: var(--bg);
+  animation: rest-in 1.6s ease;
+}
+
+.is-ambient .starmap-svg {
+  border-radius: 0;
+}
+
+.is-ambient-still,
+.is-ambient-still * {
+  cursor: none !important;
+}
+
+@keyframes rest-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.ambient-clock {
+  position: fixed;
+  left: var(--space-11);
+  bottom: var(--space-11);
+  z-index: 3001;
+  color: var(--text);
+  pointer-events: none;
+  animation: rest-in 2.4s ease;
+}
+
+.ambient-time {
+  font-family: var(--serif);
+  font-size: calc(var(--text-2xl) * 4);
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ambient-date {
+  margin-top: var(--space-3);
+  font-size: var(--text-lg);
+  color: var(--text-dim);
+}
+
+.ambient-hint {
+  margin-top: var(--space-8);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  opacity: 0;
+  animation: rest-hint 6s ease 1s;
+}
+
+@keyframes rest-hint {
+  15%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-planet-spin,
+  .map-rock-spin,
+  .is-ambient .starmap,
+  .ambient-clock,
+  .ambient-hint {
+    animation: none;
+  }
+}
+
+/* At rest the names recede, so the map reads as a sky first. */
+.is-ambient .map-planet-label,
+.is-ambient .map-planet-sub,
+.is-ambient .map-hole-label,
+.is-ambient .map-hole-sub,
+.is-ambient .map-bridge-label {
+  opacity: 0.45;
+  transition: opacity 1.2s ease;
+}
+
