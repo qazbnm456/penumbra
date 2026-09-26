@@ -11135,6 +11135,9 @@ function starMapDefs() {
   radial("pn-halo", {}, [["0.55", "stop-halo"], ["1", "stop-clear"]]);
   radial("pn-hole-glow", {}, [["0.3", "stop-hole-glow"], ["1", "stop-clear"]]);
   radial("pn-light", { cx: "0.34", cy: "0.28", r: "0.7" }, [["0", "stop-light"], ["1", "stop-light-clear"]]);
+  ["violet", "teal", "rose"].forEach((tone) => radial(`pn-nebula-${tone}`, {},
+    [["0", `stop-nebula-${tone}`], ["0.55", `stop-nebula-${tone}-mid`], ["1", "stop-clear"]]));
+  radial("pn-galaxy", {}, [["0", "stop-galaxy"], ["1", "stop-clear"]]);
   const linear = (id, stops) => {
     const g = svgEl("linearGradient", { id, x1: "0", y1: "0", x2: "1", y2: "0" });
     stops.forEach(([offset, cls]) => g.appendChild(svgEl("stop", { offset }, cls)));
@@ -11193,6 +11196,17 @@ const PLANET_KINDS = {
   barren: { base: "#8a847f", crater: "#5d5853", rim: "#aba59f" },
   jungle: { base: "#2b5933", land: ["#3f7a3c", "#5a8f42", "#244a2a"], clouds: true, atmo: "#a8f0b0" },
   toxic: { base: "#8b993a", land: ["#b8c64a", "#a2b13b", "#6f7c2a"], atmo: "#e3ee76" },
+  // The kinds exoplanet surveys name (NASA's planet types; The Planetary Society's field guide).
+  ringed: { base: "#d8c399", bands: ["#c9ad7f", "#e6d4ae", "#b8996c", "#efe0bf"], rings: true },
+  iceGiant: { base: "#3e6ec3", bands: ["#5886d6", "#33609e", "#4a7bcf"], storm: "#1d3777", atmo: "#8fb8ff" },
+  hotJupiter: { base: "#d9663a", bands: ["#b8432a", "#f09a55", "#c9542f", "#e87f45"], atmo: "#ff9a55" },
+  ocean: { base: "#1b4d8c", land: ["#2f6fb4", "#2a62a3"], clouds: true, atmo: "#8fc4ff" },
+  eyeball: { base: "#dce9f1", land: ["#2d6ea8", "#6a8f4a", "#caa56b"], atmo: "#cfe6ff" },
+  carbon: { base: "#1d1c21", land: ["#2b2a31", "#34323a"], glint: "#f4f7ff" },
+  sulfur: { base: "#d8c048", land: ["#c6a738", "#e4d36a"], vent: "#5a1e12", halo: "#e0892f" },
+  cloudy: { base: "#e1d0a4", bands: ["#cdb888", "#efe2c2", "#d8c496"], atmo: "#fff1c9" },
+  red: { base: "#b25734", land: ["#7a3a24", "#94472c", "#c8764a"], crack: "#6a2c1a" },
+  binary: { base: "#000000" },
 };
 
 function planetKind(seed) {
@@ -11308,6 +11322,57 @@ function planetSurface(r, seed, chosen = null) {
         "stroke-width": (size * 0.25).toFixed(2), opacity: 0.8 });
     }
   }
+  if (kind === "ringed" || kind === "iceGiant" || kind === "hotJupiter" || kind === "cloudy") {
+    let top = -r;
+    const wavy = kind === "cloudy";
+    while (top < r) {
+      const h = r * (kind === "iceGiant" ? 0.18 + rnd() * 0.3 : 0.08 + rnd() * 0.2);
+      if (wavy) {
+        let d = `M ${-r} ${(top + h / 2).toFixed(2)}`;
+        for (let k = 1; k <= 6; k += 1) {
+          d += ` Q ${(-r + (k - 0.5) * r / 3).toFixed(2)} ${(top + h / 2 + (k % 2 ? h : -h) * 0.6).toFixed(2)} ${(-r + k * r / 3).toFixed(2)} ${(top + h / 2).toFixed(2)}`;
+        }
+        add("path", { d, fill: "none", stroke: pick(paint.bands), "stroke-width": (h * 0.9).toFixed(2), opacity: 0.7 });
+      } else {
+        add("rect", { x: -r, y: top.toFixed(2), width: 2 * r, height: h.toFixed(2), fill: pick(paint.bands),
+          opacity: kind === "iceGiant" ? 0.5 : 0.85 });
+      }
+      top += h;
+    }
+    if (paint.storm) {
+      add("ellipse", { cx: x().toFixed(2), cy: y(0.4).toFixed(2), rx: (r * 0.2).toFixed(2), ry: (r * 0.1).toFixed(2), fill: paint.storm, opacity: 0.8 });
+    }
+  } else if (kind === "ocean") {
+    for (let i = 0; i < 8; i += 1) {
+      const band = y(0.9);
+      const amp = r * (0.05 + rnd() * 0.1);
+      let d = `M ${-r} ${band.toFixed(2)}`;
+      for (let k = 1; k <= 4; k += 1) {
+        d += ` Q ${(-r + (k - 0.5) * r / 2).toFixed(2)} ${(band + (k % 2 ? amp : -amp)).toFixed(2)} ${(-r + k * r / 2).toFixed(2)} ${band.toFixed(2)}`;
+      }
+      add("path", { d, fill: "none", stroke: pick(paint.land), "stroke-width": (r * 0.04).toFixed(2), opacity: 0.8 });
+    }
+  } else if (kind === "carbon") {
+    for (let i = 0; i < 6; i += 1) add("path", { d: blobPath(x(), y(0.8), r * (0.15 + rnd() * 0.25), rnd), fill: pick(paint.land) });
+    for (let i = 0; i < 18; i += 1) {
+      add("circle", { cx: x().toFixed(2), cy: y(0.9).toFixed(2), r: (r * (0.012 + rnd() * 0.02)).toFixed(2), fill: paint.glint,
+        opacity: (0.5 + rnd() * 0.5).toFixed(2) });
+    }
+  } else if (kind === "sulfur") {
+    for (let i = 0; i < 5; i += 1) add("path", { d: blobPath(x(), y(0.8), r * (0.15 + rnd() * 0.2), rnd), fill: pick(paint.land), opacity: 0.8 });
+    for (let i = 0; i < 7; i += 1) {
+      const cx = x();
+      const cy = y(0.8);
+      const size = r * (0.04 + rnd() * 0.08);
+      add("circle", { cx: cx.toFixed(2), cy: cy.toFixed(2), r: (size * 2.2).toFixed(2), fill: paint.halo, opacity: 0.35 });
+      add("circle", { cx: cx.toFixed(2), cy: cy.toFixed(2), r: size.toFixed(2), fill: paint.vent });
+    }
+  } else if (kind === "red") {
+    for (let i = 0; i < 5; i += 1) add("path", { d: blobPath(x(), y(0.7), r * (0.12 + rnd() * 0.22), rnd, 9, 0.6), fill: pick(paint.land), opacity: 0.8 });
+    const cy = y(0.3);
+    add("path", { d: `M ${(-r * 0.6).toFixed(2)} ${cy.toFixed(2)} Q 0 ${(cy + r * 0.12).toFixed(2)} ${(r * 0.55).toFixed(2)} ${(cy - r * 0.05).toFixed(2)}`,
+      fill: "none", stroke: paint.crack, "stroke-width": (r * 0.05).toFixed(2), opacity: 0.8, "stroke-linecap": "round" });
+  }
   const layer = (items) => {
     const g = svgEl("g");
     [-2 * r, 0, 2 * r].forEach((shift) => {
@@ -11327,7 +11392,50 @@ function planetSurface(r, seed, chosen = null) {
     }
     clouds = layer(puffs);
   }
-  return { kind, paint, surface, clouds, spin: 40 + rnd() * 50 };
+  // Rings: always on a ringed giant, often on the other giants, now and then on anything barren.
+  const ringed = kind === "ringed" || ((kind === "gas" || kind === "iceGiant") && rnd() < 0.5)
+    || ((kind === "barren" || kind === "ice") && rnd() < 0.15);
+  return { kind, paint, surface, clouds, ringed, tilt: -12 - rnd() * 20, ringSeed: rnd(), spin: 40 + rnd() * 50 };
+}
+
+//: A tidally locked world: one face always to the light, a warm eye of sea and shore there and ice
+//: everywhere else. It does not turn, so it is drawn still.
+function eyeballFace(r, paint) {
+  const g = svgEl("g");
+  const cx = -r * 0.28;
+  const cy = -r * 0.22;
+  g.appendChild(svgEl("circle", { cx, cy, r: r * 0.62, fill: paint.land[2], opacity: 0.8 }));
+  g.appendChild(svgEl("circle", { cx, cy, r: r * 0.5, fill: paint.land[1] }));
+  g.appendChild(svgEl("circle", { cx, cy, r: r * 0.36, fill: paint.land[0] }));
+  return g;
+}
+
+//: Rings round a planet, tilted: the far half is drawn behind the body and the near half over it,
+//: so the planet sits inside them.
+function planetRings(r, tilt, seed) {
+  const rnd = seededRandom(seed);
+  const bands = [];
+  let inner = r * (1.3 + rnd() * 0.15);
+  const count = 3 + Math.floor(rnd() * 3);
+  for (let i = 0; i < count; i += 1) {
+    const width = r * (0.08 + rnd() * 0.16);
+    bands.push({ rx: inner + width / 2, width, opacity: 0.25 + rnd() * 0.45, tone: rnd() });
+    inner += width + r * (rnd() < 0.3 ? 0.08 : 0.015);
+  }
+  const make = (half) => {
+    const g = svgEl("g", { transform: `rotate(${tilt.toFixed(1)})` }, `map-ring-half is-${half}`);
+    bands.forEach((band) => {
+      const ry = band.rx * 0.26;
+      // The near half is the arc below the centre line, the far half the arc above it.
+      const sweep = half === "near" ? 0 : 1;
+      g.appendChild(svgEl("path", {
+        d: `M ${(-band.rx).toFixed(2)} 0 A ${band.rx.toFixed(2)} ${ry.toFixed(2)} 0 0 ${sweep} ${band.rx.toFixed(2)} 0`,
+        fill: "none", "stroke-width": (band.width * 0.9).toFixed(2), opacity: band.opacity.toFixed(2),
+      }, band.tone < 0.5 ? "map-planet-ring" : "map-planet-ring is-light"));
+    });
+    return g;
+  };
+  return { far: make("far"), near: make("near") };
 }
 
 //: A moon: a small irregular rock, its own shape from its own seed.
@@ -11456,7 +11564,37 @@ function initSkyWeather() {
 // something is running, because resting hides the Stop that run's reader may need (invariant 47);
 // the Rest button can still start it. With reduced motion it is a still sky and a clock.
 
-const ambient = { on: false, lastInput: Date.now(), tour: 0, clock: 0, enteredAt: null, still: 0 };
+const ambient = { on: false, lastInput: Date.now(), tour: 0, clock: 0, enteredAt: null, still: 0, since: 0, full: null };
+
+//: The one kind of request the workspace may make of the desktop shell: its own window's frame
+//: (capabilities/workspace-drag.json). In a browser there is no shell and this returns null.
+function shellWindow(command, args = {}) {
+  const ipc = window.__TAURI_INTERNALS__;
+  if (!isDesktopShell() || !ipc || typeof ipc.invoke !== "function") return null;
+  return Promise.resolve(ipc.invoke(`plugin:window|${command}`, args)).catch(() => null);
+}
+
+//: Resting fills the screen, and leaving puts the window back as it was. In the desktop app that
+//: is macOS's simple full screen: no new Space and no slide, so the map just grows to the edges,
+//: and the frame is restored on the way out. A browser only allows full screen from a press, so an
+//: idle rest there stays inside the window; the Rest button still takes the whole screen.
+function restFillScreen(fromPress) {
+  const shell = shellWindow("set_simple_fullscreen", { value: true });
+  if (shell) {
+    ambient.full = "shell";
+    return;
+  }
+  const root = document.documentElement;
+  if (fromPress && root.requestFullscreen && !document.fullscreenElement) {
+    root.requestFullscreen().then(() => { ambient.full = "browser"; }).catch(() => {});
+  }
+}
+
+function restLeaveScreen() {
+  if (ambient.full === "shell") shellWindow("set_simple_fullscreen", { value: false });
+  if (ambient.full === "browser" && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  ambient.full = null;
+}
 const AMBIENT_IDLE_KEY = "penumbra-rest-minutes";
 
 function restMinutes() {
@@ -11489,10 +11627,12 @@ function ambientTourStep() {
   ambient.tour = setTimeout(ambientTourStep, 16000 + Math.random() * 8000);
 }
 
-function enterAmbient() {
+function enterAmbient({ fromPress = false } = {}) {
   if (ambient.on || document.body.dataset.view !== "horizon" || viewMode("horizon") !== "map") return;
   ambient.on = true;
   ambient.enteredAt = null;
+  ambient.since = Date.now();
+  restFillScreen(fromPress);
   closeMapFocus();
   document.body.classList.add("is-ambient");
   const clock = elt("div", "ambient-clock");
@@ -11518,6 +11658,7 @@ function exitAmbient() {
   clearTimeout(ambient.still);
   document.body.classList.remove("is-ambient", "is-ambient-still");
   document.getElementById("ambient-clock")?.remove();
+  restLeaveScreen();
   cameraHome();
 }
 
@@ -11525,6 +11666,11 @@ function initAmbient() {
   const woke = (event) => {
     ambient.lastInput = Date.now();
     if (!ambient.on) return;
+    // The window growing to the screen moves the pointer within it; that is not someone coming back.
+    if (event.type === "pointermove" && Date.now() - ambient.since < 1500) {
+      ambient.enteredAt = { x: event.clientX, y: event.clientY };
+      return;
+    }
     // A pointer that drifts a pixel or two is not someone coming back.
     if (event.type === "pointermove") {
       if (!ambient.enteredAt) {
@@ -11546,8 +11692,92 @@ function initAmbient() {
   horizonEl("map-rest").addEventListener("click", (event) => {
     event.stopPropagation();
     ambient.lastInput = Date.now();
-    enterAmbient();
+    enterAmbient({ fromPress: true });
   });
+  // Leaving the browser's full screen (Escape) is leaving the rest too.
+  document.addEventListener("fullscreenchange", () => {
+    if (ambient.on && ambient.full === "browser" && !document.fullscreenElement) {
+      ambient.full = null;
+      exitAmbient();
+    }
+  });
+}
+
+//: The deep sky behind everything: soft nebulae, a far galaxy or two and a few double stars, fixed
+//: per position like the star field. Gradients only, no blur filter, so the camera can move over
+//: them every frame without re-rasterising anything.
+function deepSky() {
+  const deep = svgEl("g", { "aria-hidden": "true" }, "map-deep");
+  const tones = ["violet", "teal", "rose"];
+  for (let i = 0; i < 4; i += 1) {
+    const h = (key) => stableHash(`neb${key}${i}`);
+    deep.appendChild(svgEl("ellipse", {
+      cx: (h("x") * 1000).toFixed(1), cy: (h("y") * 640).toFixed(1),
+      rx: (140 + h("w") * 180).toFixed(1), ry: (70 + h("h") * 110).toFixed(1),
+      transform: `rotate(${(h("a") * 180).toFixed(1)} ${(h("x") * 1000).toFixed(1)} ${(h("y") * 640).toFixed(1)})`,
+      fill: `url(#pn-nebula-${tones[Math.floor(h("tone") * tones.length)]})`,
+    }, "map-nebula"));
+  }
+  for (let i = 0; i < 2; i += 1) {
+    const h = (key) => stableHash(`gal${key}${i}`);
+    const cx = (80 + h("x") * 840).toFixed(1);
+    const cy = (50 + h("y") * 540).toFixed(1);
+    const galaxy = svgEl("g", { transform: `translate(${cx} ${cy}) rotate(${(h("a") * 180).toFixed(1)})` }, "map-galaxy");
+    galaxy.appendChild(svgEl("ellipse", { rx: 22 + h("w") * 14, ry: 5 + h("h") * 4, fill: "url(#pn-galaxy)" }));
+    galaxy.appendChild(svgEl("circle", { r: 1.3 }, "map-galaxy-core"));
+    deep.appendChild(galaxy);
+  }
+  for (let i = 0; i < 6; i += 1) {
+    const h = (key) => stableHash(`dbl${key}${i}`);
+    const x = h("x") * 1000;
+    const y = h("y") * 640;
+    const a = h("a") * Math.PI * 2;
+    const pair = svgEl("g", {}, "map-double");
+    pair.style.animationDelay = `${(h("d") * 5).toFixed(2)}s`;
+    pair.appendChild(svgEl("circle", { cx: x.toFixed(1), cy: y.toFixed(1), r: 1.3 }, "map-double-star"));
+    pair.appendChild(svgEl("circle", { cx: (x + Math.cos(a) * 3.4).toFixed(1), cy: (y + Math.sin(a) * 3.4).toFixed(1), r: 0.9 },
+      "map-double-star is-companion"));
+    deep.appendChild(pair);
+  }
+  return deep;
+}
+
+//: One world into `parent`, centred on its origin: its atmosphere, body, turning surface and cloud,
+//: caps, light and shade, and, if it has them, rings split round it.
+function drawWorld(parent, r, terrain, clipId) {
+  const rings = terrain.ringed ? planetRings(r, terrain.tilt, terrain.ringSeed) : null;
+  if (rings) parent.appendChild(rings.far);
+  const clip = svgEl("clipPath", { id: clipId });
+  clip.appendChild(svgEl("circle", { r }));
+  parent.appendChild(clip);
+  if (terrain.paint.atmo) {
+    parent.appendChild(svgEl("circle", { r: r + 1.6, fill: "none", stroke: terrain.paint.atmo }, "map-planet-atmo"));
+  }
+  parent.appendChild(svgEl("circle", { r, fill: terrain.paint.base }, "map-planet-body"));
+  const surface = svgEl("g", { "clip-path": `url(#${clipId})` });
+  if (terrain.kind === "eyeball") {
+    surface.appendChild(eyeballFace(r, terrain.paint));
+  } else {
+    terrain.surface.setAttribute("class", "map-planet-spin");
+    terrain.surface.style.setProperty("--spin", `${(-2 * r).toFixed(2)}px`);
+    terrain.surface.style.animationDuration = `${terrain.spin.toFixed(1)}s`;
+    surface.appendChild(terrain.surface);
+  }
+  if (terrain.clouds) {
+    terrain.clouds.setAttribute("class", "map-planet-spin");
+    terrain.clouds.style.setProperty("--spin", `${(-2 * r).toFixed(2)}px`);
+    terrain.clouds.style.animationDuration = `${(terrain.spin * 0.6).toFixed(1)}s`;
+    surface.appendChild(terrain.clouds);
+  }
+  // Polar caps on a temperate, icy or dusty world: still while the surface turns under them.
+  if (["terran", "ice", "jungle", "red"].includes(terrain.kind)) {
+    surface.appendChild(svgEl("ellipse", { cx: 0, cy: -r, rx: r * 0.7, ry: r * (terrain.kind === "red" ? 0.14 : 0.22) }, "map-planet-cap"));
+    surface.appendChild(svgEl("ellipse", { cx: 0, cy: r, rx: r * 0.6, ry: r * (terrain.kind === "red" ? 0.1 : 0.18) }, "map-planet-cap"));
+  }
+  parent.appendChild(surface);
+  parent.appendChild(svgEl("circle", { r, fill: "url(#pn-light)" }, "map-planet-light"));
+  parent.appendChild(svgEl("circle", { r, fill: "url(#pn-shade)" }, "map-planet-shade"));
+  if (rings) parent.appendChild(rings.near);
 }
 
 function drawStarMap() {
@@ -11588,6 +11818,7 @@ function drawStarMap() {
     field.appendChild(star);
   }
   world.appendChild(field);
+  world.insertBefore(deepSky(), field);
   world.appendChild(svgEl("g", { "aria-hidden": "true" }, "map-sky"));
 
   mapRings().forEach(({ rx, ry }, ring) => {
@@ -11732,42 +11963,34 @@ function drawStarMap() {
       const d = p.r + 8 + (i % 2) * 5;
       const x = d * Math.cos(angle);
       const y = d * Math.sin(angle);
-      moonRing.appendChild(moonBody(x, y, stableHash(`moon:${item.id || `${orbit.slug}:${i}`}`),
+      moonRing.appendChild(moonBody(x, y, stableHash("moon:" + (item.id || orbit.slug + ":" + i)),
         moonClass(item) + moonLensClass(item, starMap.lenses)));
       moonRing.appendChild(moonHit(x, y, { ...item, orbit: orbit.slug }));
       if (isFocusedMoon(item)) moonRing.appendChild(moonMark(x, y));
     });
     group.appendChild(moonRing);
-    // The planet: a lit sphere whose surface bands turn under a fixed shade, so it reads as spinning.
-    const clipId = `pn-clip-${index}`;
-    const clip = svgEl("clipPath", { id: clipId });
-    clip.appendChild(svgEl("circle", { r: p.r }));
-    group.appendChild(clip);
-    // Its world, from the orbit's name: the same planet every visit, unlike its neighbours.
-    const terrain = planetSurface(p.r, stableHash(`planet:${orbit.slug}`), kinds.get(orbit.slug));
-    if (terrain.paint.atmo) {
-      group.appendChild(svgEl("circle", { r: p.r + 1.6, fill: "none", stroke: terrain.paint.atmo }, "map-planet-atmo"));
+    // Its world, from the orbit's name: the same planet every visit, unlike its neighbours. A
+    // double planet is two worlds turning round each other in the planet's place.
+    const kindHere = kinds.get(orbit.slug);
+    const seed = stableHash(`planet:${orbit.slug}`);
+    if (kindHere === "binary") {
+      const pair = svgEl("g", {}, "map-binary");
+      pair.style.animationDuration = `${(30 + (index % 4) * 8)}s`;
+      const kindsA = Object.keys(PLANET_KINDS).filter((k) => !["binary", "ringed"].includes(k));
+      const rnd = seededRandom(seed + 0.25);
+      [[-0.42, 0.62], [0.66, 0.42]].forEach(([at, size], n) => {
+        const place = svgEl("g", { transform: `translate(${(at * p.r).toFixed(2)} 0)` });
+        const counter = svgEl("g", {}, "map-binary-body");
+        counter.style.animationDuration = pair.style.animationDuration;
+        drawWorld(counter, p.r * size, planetSurface(p.r * size, seed + n * 0.37, kindsA[Math.floor(rnd() * kindsA.length)]),
+          `pn-clip-${index}-${n}`);
+        place.appendChild(counter);
+        pair.appendChild(place);
+      });
+      group.appendChild(pair);
+    } else {
+      drawWorld(group, p.r, planetSurface(p.r, seed, kindHere), `pn-clip-${index}`);
     }
-    group.appendChild(svgEl("circle", { r: p.r, fill: terrain.paint.base }, "map-planet-body"));
-    const surface = svgEl("g", { "clip-path": `url(#${clipId})` });
-    terrain.surface.setAttribute("class", "map-planet-spin");
-    terrain.surface.style.setProperty("--spin", `${(-2 * p.r).toFixed(2)}px`);
-    terrain.surface.style.animationDuration = `${terrain.spin.toFixed(1)}s`;
-    surface.appendChild(terrain.surface);
-    if (terrain.clouds) {
-      terrain.clouds.setAttribute("class", "map-planet-spin");
-      terrain.clouds.style.setProperty("--spin", `${(-2 * p.r).toFixed(2)}px`);
-      terrain.clouds.style.animationDuration = `${(terrain.spin * 0.6).toFixed(1)}s`;
-      surface.appendChild(terrain.clouds);
-    }
-    // Polar caps on a temperate or icy world: they sit still while the surface turns under them.
-    if (terrain.kind === "terran" || terrain.kind === "ice" || terrain.kind === "jungle") {
-      surface.appendChild(svgEl("ellipse", { cx: 0, cy: -p.r, rx: p.r * 0.7, ry: p.r * 0.22 }, "map-planet-cap"));
-      surface.appendChild(svgEl("ellipse", { cx: 0, cy: p.r, rx: p.r * 0.6, ry: p.r * 0.18 }, "map-planet-cap"));
-    }
-    group.appendChild(surface);
-    group.appendChild(svgEl("circle", { r: p.r, fill: "url(#pn-light)" }, "map-planet-light"));
-    group.appendChild(svgEl("circle", { r: p.r, fill: "url(#pn-shade)" }, "map-planet-shade"));
     group.appendChild(svgEl("circle", { r: p.r }, "map-planet-rim"));
     group.appendChild(svgText(0, p.r + 30, shortLabel(orbit.title), "map-planet-label"));
     group.appendChild(svgText(0, p.r + 46, t("map.planetCount", `${orbit.sources} sources`, { n: orbit.sources }),

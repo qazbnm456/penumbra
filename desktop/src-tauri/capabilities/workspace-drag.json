@@ -1,8 +1,18 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "workspace-drag",
-  "description": "The one thing the workspace may ask of the shell: move or zoom its own window when the header's empty space is dragged or double-clicked. Both commands carry no data. Nothing else is granted, and the island window is not listed (invariant 81).",
-  "windows": ["main"],
-  "remote": { "urls": ["http://127.0.0.1:*"] },
-  "permissions": ["core:window:allow-start-dragging", "core:window:allow-internal-toggle-maximize"]
+  "description": "What the workspace may ask of the shell, all about its own window and none carrying data: move or zoom it when the header's empty space is dragged or double-clicked, and fill the screen while the star map rests. Nothing else is granted, and the island window is not listed (invariant 81).",
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:*"
+    ]
+  },
+  "permissions": [
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-set-simple-fullscreen"
+  ]
 }
