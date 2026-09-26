@@ -1625,6 +1625,15 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     return { out, sameLength: out.length === text.length };
   },
 
+  //: The gist a resting screen shows: the first sentence, cut by width so CJK stays as short.
+  restGist() {
+    const run = new Function(`${extract("gistOf")}\nreturn { gistOf };`)();
+    return {
+      en: run.gistOf("Sleep consolidates memory. Later sentences are not shown."),
+      zh: run.gistOf("本文件為NCA 2026年度會議的發表演講者招募通知主題聚焦於AI時代的威脅演變以及人員判斷與組織協作的重要性並列出推薦題目與截止日期等等細節內容說明。"),
+    };
+  },
+
   //: Worlds from a seed: the same orbit gets the same kind every time, and a map's orbits get
   //: different kinds while there are kinds to go round.
   planetKinds() {

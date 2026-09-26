@@ -11564,7 +11564,8 @@ function initSkyWeather() {
 // something is running, because resting hides the Stop that run's reader may need (invariant 47);
 // the Rest button can still start it. With reduced motion it is a still sky and a clock.
 
-const ambient = { on: false, lastInput: Date.now(), tour: 0, enteredAt: null, still: 0, since: 0, full: null };
+const ambient = { on: false, lastInput: Date.now(), tour: 0, enteredAt: null, still: 0, since: 0, full: null,
+  clock: 0, notes: [], noteAt: 0, noteTimer: 0 };
 
 //: The one kind of request the workspace may make of the desktop shell: its own window's frame
 //: (capabilities/workspace-drag.json). In a browser there is no shell and this returns null.
@@ -11608,6 +11609,74 @@ function somethingRunning() {
 }
 
 
+function paintAmbientClock() {
+  const box = document.getElementById("ambient-clock");
+  if (!box) return;
+  const now = new Date();
+  box.querySelector(".ambient-time").textContent = now.toLocaleTimeString(uiLang(), { hour: "2-digit", minute: "2-digit", hour12: false });
+  box.querySelector(".ambient-date").textContent = now.toLocaleDateString(uiLang(), { month: "long", day: "numeric", weekday: "long" });
+}
+
+//: The first sentence of a summary, short enough to read at a glance from across the room.
+function gistOf(summary) {
+  const text = String(summary || "").replace(/\s+/g, " ").trim();
+  const end = text.search(/[\u3002\uff01\uff1f.!?](\s|$)/);
+  const first = end > 0 ? text.slice(0, end + 1) : text;
+  // Measured in width, a CJK character counting as two, so a Chinese gist is as short to read as
+  // an English one: about two lines either way.
+  let width = 0;
+  for (let i = 0; i < first.length; i += 1) {
+    width += /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(first[i]) ? 2 : 1;
+    if (width > 140) return `${first.slice(0, i).trimEnd()}\u2026`;
+  }
+  return first;
+}
+
+//: Something the reader kept, brought back while the map rests: a capture picked at random from
+//: those already summarised, its title and the first sentence of what it says, marked new if it
+//: came in this week and old otherwise, with the orbit it lives in. Passive recall from their own
+//: sky, read from the index; nothing is asked of a model.
+function paintAmbientNote() {
+  const box = document.querySelector("#ambient-clock .ambient-note");
+  if (!box || !ambient.notes.length) return;
+  const node = ambient.notes[ambient.noteAt % ambient.notes.length];
+  ambient.noteAt += 1;
+  const fresh = Date.now() / 1000 - (node.created_at || 0) < 7 * 86400;
+  const orbit = (node.orbits || [])[0];
+  const where = orbit ? orbitTitles.get(orbit.orbit_id) || "" : "";
+  const kicker = [fresh ? t("rest.new", "New to you") : t("rest.old", "From your past"),
+    where ? t("rest.from", `from ${where}`, { name: where }) : "", relativeTime(node.created_at)].filter(Boolean).join(" \u00b7 ");
+  box.classList.remove("is-shown");
+  setTimeout(() => {
+    box.replaceChildren(
+      elt("div", "ambient-note-kicker", kicker),
+      elt("div", "ambient-note-title", node.title || ""),
+      elt("div", "ambient-note-gist", gistOf(node.summary)),
+    );
+    box.classList.add("is-shown");
+  }, motionAllowed() ? 700 : 0);
+}
+
+async function loadAmbientNotes() {
+  let got;
+  try {
+    got = await api("/horizon?limit=200&state=ready");
+  } catch {
+    return;
+  }
+  const kept = (got.nodes || []).filter((n) => n.summary && n.title);
+  for (let i = kept.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [kept[i], kept[j]] = [kept[j], kept[i]];
+  }
+  ambient.notes = kept;
+  ambient.noteAt = 0;
+  if (ambient.on) {
+    paintAmbientNote();
+    ambient.noteTimer = setInterval(paintAmbientNote, 20000);
+  }
+}
+
 function ambientTourStep() {
   if (!ambient.on || !motionAllowed()) return;
   const home = mapHome();
@@ -11627,8 +11696,18 @@ function enterAmbient({ fromPress = false } = {}) {
   ambient.since = Date.now();
   restFillScreen(fromPress);
   closeMapFocus();
-  // Only the sky: no clock, no hint, no label. Coming back needs no instruction.
+  // The sky, the time, and something kept: no labels, no controls, no instructions.
   document.body.classList.add("is-ambient");
+  const clock = elt("div", "ambient-clock");
+  clock.id = "ambient-clock";
+  clock.setAttribute("aria-hidden", "true");
+  clock.appendChild(elt("div", "ambient-time", ""));
+  clock.appendChild(elt("div", "ambient-date", ""));
+  clock.appendChild(elt("div", "ambient-note", ""));
+  document.body.appendChild(clock);
+  paintAmbientClock();
+  ambient.clock = setInterval(paintAmbientClock, 15000);
+  void loadAmbientNotes();
   ambient.still = setTimeout(() => document.body.classList.add("is-ambient-still"), 3000);
   clearTimeout(skyWeather.timer);
   skyWeather.timer = setTimeout(skyTick, 1500);
@@ -11640,6 +11719,9 @@ function exitAmbient() {
   ambient.on = false;
   clearTimeout(ambient.tour);
   clearTimeout(ambient.still);
+  clearInterval(ambient.clock);
+  clearInterval(ambient.noteTimer);
+  document.getElementById("ambient-clock")?.remove();
   document.body.classList.remove("is-ambient", "is-ambient-still");
   restLeaveScreen();
   cameraHome();

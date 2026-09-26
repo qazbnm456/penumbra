@@ -9504,8 +9504,79 @@ body:not([data-view="horizon"]) .capture-dock {
   }
 }
 
-/* At rest there is no text at all, only the sky: names, counts, the Horizon's line and the
-   bridges' entities all go. */
+/* At rest: the time, and below it something the reader kept, over the sky. */
+.ambient-clock {
+  position: fixed;
+  left: var(--space-11);
+  bottom: var(--space-11);
+  z-index: 3001;
+  max-width: min(34rem, calc(100vw - 2 * var(--space-11)));
+  color: var(--text);
+  pointer-events: none;
+  animation: rest-in 2.4s ease;
+}
+
+.ambient-time {
+  font-family: var(--serif);
+  font-size: calc(var(--text-2xl) * 4);
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ambient-date {
+  margin-top: var(--space-3);
+  font-size: var(--text-lg);
+  color: var(--text-dim);
+}
+
+.ambient-note {
+  margin-top: var(--space-10);
+  padding-left: var(--space-6);
+  border-left: 1px solid color-mix(in oklch, var(--accent) 70%, transparent);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 700ms ease, transform 700ms ease;
+}
+
+.ambient-note.is-shown {
+  opacity: 1;
+  transform: none;
+}
+
+.ambient-note-kicker {
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  color: var(--accent-text);
+}
+
+.ambient-note-title {
+  margin-top: var(--space-2);
+  font-family: var(--serif);
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.ambient-note-gist {
+  margin-top: var(--space-2);
+  font-family: var(--serif);
+  font-size: var(--text-lg);
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient-clock,
+  .ambient-note {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* At rest no text belongs to the map: names, counts, the Horizon's line and the bridges'
+   entities all go, leaving the clock and the kept note as the only words. */
 .is-ambient .starmap-svg text,
 .is-ambient .starmap-empty,
 .is-ambient .starmap-tip {
