@@ -132,6 +132,34 @@ def test_default_fetcher_uses_the_guarded_opener_never_plain_urlopen(monkeypatch
 
 
 
+def test_an_address_with_chinese_in_it_is_fetched_percent_encoded(monkeypatch):
+    """A Chinese Wikipedia link is an IRI, and `urllib` refused it with `UnicodeEncodeError` before
+    fetching anything. It goes out percent-encoded as UTF-8; an ASCII address is left as it was."""
+    monkeypatch.setattr(web, "resolved_host_is_safe", lambda *a, **k: True)
+    opened: list = []
+
+    class _Response:
+        headers: ClassVar[dict] = {"content-type": "text/html; charset=utf-8"}
+
+        def read(self, size=-1):
+            return b"<html><body>ok</body></html>"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(web._opener, "open", lambda req, timeout=None: opened.append(req) or _Response())
+    web._default_fetcher("https://zh.wikipedia.org/zh-tw/凍頂烏龍茶?q=茶#段落")
+    assert opened[0].full_url == (
+        "https://zh.wikipedia.org/zh-tw/%E5%87%8D%E9%A0%82%E7%83%8F%E9%BE%8D%E8%8C%B6"
+        "?q=%E8%8C%B6#%E6%AE%B5%E8%90%BD"
+    )
+    assert web._as_uri("https://example.com/a%20b?x=1&y=2") == "https://example.com/a%20b?x=1&y=2"
+    assert web._as_uri("https://例子.測試/路") == "https://xn--fsqu00a.xn--g6w251d/%E8%B7%AF"
+
+
 def test_a_fake_ip_resolver_starves_ingestion_until_the_carve_out_is_set(monkeypatch):
     """`resolved_host_is_safe` resolves the host, and a fake-IP proxy / split-DNS VPN
     (Clash/Mihomo/Surge, default `198.18.0.0/16`) answers EVERY public hostname with a synthetic

@@ -198,6 +198,7 @@ These are the few failures that shaped the current design. Smaller fixes are not
 ### Security
 
 - The SSRF guard is re-checked on every redirect hop, and operators behind a fake-IP resolver can carve out a range with `PN_FETCH_ALLOW_CIDRS` (invariants 2 and 76).
+- A link with Chinese or other non-ASCII characters in it, such as a Chinese Wikipedia page, is fetched percent-encoded; it used to fail before anything was fetched. The capture keeps the address as it was pasted.
 - The chat task has no network tool, `add_sources` accepts only http(s) URLs, and no upload surface can read a server path (invariants 1, 26 and 30).
 - Source previews never reference an image, so a pasted link cannot turn the reader's browser into a beacon (invariant 51).
 - Model-written Markdown is rendered by a DOM builder with no `innerHTML`, and links in answers are shown but not clickable (invariant 55).

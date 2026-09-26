@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from urllib.parse import urlparse
 
@@ -69,6 +70,32 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
 _opener = urllib.request.build_opener(_SafeRedirectHandler)
 
 
+#: What `quote` leaves alone in a path, query or fragment: every reserved and unreserved ASCII
+#: character, and `%`, so a URL that is already percent-encoded passes through unchanged.
+_URI_SAFE = "/%:@!$&'()*+,;=-._~?#[]"
+
+
+def _as_uri(url: str) -> str:
+    """`url` as the ASCII URI a request line can carry. A pasted address is often an IRI: a Chinese
+    Wikipedia link's path is Chinese characters, and `urllib` refused it with `UnicodeEncodeError`
+    before anything was fetched. The path, query and fragment are percent-encoded as UTF-8 and a
+    non-ASCII host is IDNA-encoded; an address that is already ASCII comes back unchanged. The
+    reader's own spelling stays the source's origin (`parse_web`), since that is what they pasted.
+    """
+    parts = urllib.parse.urlsplit(url)
+    netloc = parts.netloc
+    if not netloc.isascii() and parts.hostname:
+        try:
+            host = parts.hostname.encode("idna").decode("ascii")
+        except UnicodeError:
+            host = parts.hostname
+        netloc = host + (f":{parts.port}" if parts.port else "")
+    return urllib.parse.urlunsplit((
+        parts.scheme, netloc, urllib.parse.quote(parts.path, safe=_URI_SAFE),
+        urllib.parse.quote(parts.query, safe=_URI_SAFE), urllib.parse.quote(parts.fragment, safe=_URI_SAFE),
+    ))
+
+
 def _fetch(url: str, *, timeout: float = 15.0) -> tuple[bytes, str]:
     """The bytes and the declared content type, both of which the caller needs.
 
@@ -79,6 +106,7 @@ def _fetch(url: str, *, timeout: float = 15.0) -> tuple[bytes, str]:
     on a path that must work whether or not a model is configured. Read one byte PAST the cap, so
     hitting it is distinguishable from a file that happens to be exactly that size.
     """
+    url = _as_uri(url)
     _check_safe(url)
     cap = max_upload_bytes()
     req = urllib.request.Request(url, headers={"User-Agent": "penumbra/0.1"})
