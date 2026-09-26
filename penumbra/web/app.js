@@ -11646,6 +11646,12 @@ function exitAmbient() {
 }
 
 function initAmbient() {
+  // The desktop shell calls this when the pointer moves while the map rests full screen: the
+  // borderless window gets no pointer events of its own there.
+  window.penumbraWake = () => {
+    ambient.lastInput = Date.now();
+    if (ambient.on && Date.now() - ambient.since > 600) exitAmbient();
+  };
   const woke = (event) => {
     ambient.lastInput = Date.now();
     if (!ambient.on) return;
