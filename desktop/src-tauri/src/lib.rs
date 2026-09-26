@@ -959,6 +959,38 @@ pub fn run() {
                     close_workspace(window.app_handle());
                 }
             }
+            // The star map's rest: the workspace asked for simple full screen. Simple full screen
+            // makes the window borderless, which costs it key status, so keys and pointer moves no
+            // longer reached the page and rest would not end until a click. The shell gives the
+            // keyboard back, puts the island away (it floated over the sky as a black bar) and
+            // hides the pointer until it moves; leaving the frame brings the island back.
+            if let tauri::WindowEvent::Resized(size) = event {
+                if window.label() == WINDOW {
+                    let covers = window
+                        .current_monitor()
+                        .ok()
+                        .flatten()
+                        .is_some_and(|m| m.size().width == size.width && m.size().height == size.height);
+                    let resting = covers && !window.is_fullscreen().unwrap_or(false);
+                    island::suspend(window.app_handle(), resting);
+                    if resting {
+                        // After the style change settles, both the window and its web view take
+                        // the keyboard: key status alone left the page without key or move events.
+                        let app = window.app_handle().clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(Duration::from_millis(150));
+                            let handle = app.clone();
+                            let _ = app.run_on_main_thread(move || {
+                                if let Some(workspace) = handle.get_webview_window(WINDOW) {
+                                    let _ = workspace.set_focus();
+                                    let _ = AsRef::<tauri::Webview>::as_ref(&workspace).set_focus();
+                                }
+                                island::hide_pointer_until_it_moves();
+                            });
+                        });
+                    }
+                }
+            }
         })
         .build(tauri::generate_context!())
         .expect("error while building the Penumbra desktop app");

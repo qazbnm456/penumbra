@@ -129,6 +129,42 @@ pub fn request_rest() {
     REST_REQUESTED.store(true, Ordering::SeqCst);
 }
 
+/// Set while the workspace fills the screen at rest: the island is hidden and the pointer loop
+/// leaves it alone, so the sky has no bar floating over it.
+static SUSPENDED: AtomicBool = AtomicBool::new(false);
+
+pub fn suspend(app: &AppHandle, on: bool) {
+    if SUSPENDED.swap(on, Ordering::SeqCst) == on {
+        return;
+    }
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(window) = handle.get_webview_window(LABEL) else {
+            return;
+        };
+        if on {
+            let _ = window.hide();
+            return;
+        }
+        // Shown again, macOS keeps an ordinary window below the menu bar, which left the island
+        // hanging under it as a black bar. Its level goes back first, then its place in the notch.
+        let _ = window.show();
+        platform::float_above_menu_bar(&handle, &window);
+        // Queued after the level change, which is itself queued on this thread.
+        let again = handle.clone();
+        let _ = handle.run_on_main_thread(move || {
+            if let Some(geo) = geometry() {
+                place(&again, geo.rest);
+                tell(&again, State::Rest, &geo);
+            }
+        });
+    });
+}
+
+pub fn hide_pointer_until_it_moves() {
+    platform::hide_pointer_until_it_moves();
+}
+
 /// Open the island as a field to write a thought in. Picked up by the pointer loop.
 pub fn request_note() {
     NOTE_REQUESTED.store(true, Ordering::SeqCst);
@@ -236,6 +272,8 @@ fn watch(app: AppHandle) {
     // Where the window is, so the pointer can be told to the page in the page's own coordinates.
     let mut placed = Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
     let mut last_told: Option<(f64, f64)> = None;
+    // Where the pointer was when the workspace went to rest, to tell a move from stillness.
+    let mut rest_pointer: Option<(f64, f64)> = None;
     let mut away_since: Option<Instant> = None;
     let mut swallow_until: Option<Instant> = None;
     let mut was_dragging = false;
@@ -248,6 +286,24 @@ fn watch(app: AppHandle) {
             measured_at = Instant::now();
             remeasure(&app, state);
         }
+        if SUSPENDED.load(Ordering::SeqCst) {
+            // At rest the workspace fills the screen borderless, and a borderless window gets no
+            // mouse-moved events, so the page never saw the pointer move and rest would not end.
+            // The shell sees it here and tells the page, the way it tells the island its state.
+            tick = Duration::from_millis(50);
+            if let Some(at) = platform::pointer(&app) {
+                match rest_pointer {
+                    None => rest_pointer = Some(at),
+                    Some(from) if ((at.0 - from.0).powi(2) + (at.1 - from.1).powi(2)).sqrt() > 3.0 => {
+                        rest_pointer = None;
+                        wake_workspace(&app);
+                    }
+                    _ => {}
+                }
+            }
+            continue;
+        }
+        rest_pointer = None;
         let (Some(geo), Some((px, py))) = (geometry(), platform::pointer(&app)) else {
             continue;
         };
@@ -390,6 +446,13 @@ fn watch(app: AppHandle) {
     }
 }
 
+/// The workspace is resting and the pointer moved: the page ends its rest.
+fn wake_workspace(app: &AppHandle) {
+    if let Some(workspace) = app.get_webview_window("main") {
+        let _ = workspace.eval("window.penumbraWake && window.penumbraWake()");
+    }
+}
+
 /// Tell the page where the pointer is, in the window's coordinates.
 fn point(app: &AppHandle, at: (f64, f64)) {
     if let Some(window) = app.get_webview_window(LABEL) {
@@ -454,7 +517,7 @@ mod platform {
     use objc2::MainThreadMarker;
     use std::sync::atomic::{AtomicI32, Ordering};
     use objc2_app_kit::{
-        NSApplication, NSApplicationActivationOptions, NSEvent, NSPasteboard, NSRunningApplication, NSWorkspace, NSPasteboardNameDrag, NSScreen, NSStatusWindowLevel, NSWindow,
+        NSApplication, NSApplicationActivationOptions, NSCursor, NSEvent, NSPasteboard, NSRunningApplication, NSWorkspace, NSPasteboardNameDrag, NSScreen, NSStatusWindowLevel, NSWindow,
         NSWindowCollectionBehavior,
     };
     use tauri::{AppHandle, WebviewWindow};
@@ -546,6 +609,11 @@ mod platform {
         NSEvent::pressedMouseButtons() & 1 == 1
     }
 
+    /// The pointer disappears until the reader moves it: for a screen at rest.
+    pub fn hide_pointer_until_it_moves() {
+        NSCursor::setHiddenUntilMouseMoves(true);
+    }
+
     /// The app that was in front when the island took the keyboard, by process id.
     static FRONT: AtomicI32 = AtomicI32::new(0);
 
@@ -609,6 +677,8 @@ mod platform {
     pub fn remember_front() {}
 
     pub fn give_back() {}
+
+    pub fn hide_pointer_until_it_moves() {}
 
     /// No portable drag-session signal here: a press that started off the island and moved is
     /// taken as a drag.
