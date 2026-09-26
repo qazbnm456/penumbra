@@ -1715,6 +1715,29 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     };
   },
 
+  //: Automatic filings announced once each: the first answer only sets the mark, one filing gets
+  //: a notice that can take it out, several get one counted notice with no button.
+  autoFiledNotices() {
+    const notices = [];
+    const suggest = { autoSeq: null };
+    const run = new Function(
+      "suggest", "notify", "t", "renderFacets", "viewIsHorizon", "viewMode", "renderStarMap", "undoAutoFiled",
+      "captureName",
+      `${extract("announceAutoFiled")}\nreturn { announceAutoFiled };`
+    )(suggest, (message, opts) => notices.push({ message, action: Boolean(opts && opts.action) }),
+      (key, text) => text, () => {}, () => false, () => "list", () => {}, () => {}, (name) => name);
+    const entry = (seq, title) => ({ seq, title, orbit: "cfp", orbit_title: "CFP", source_id: `s${seq}` });
+    run.announceAutoFiled({ auto_seq: 3, auto_filed: [entry(1, "old"), entry(2, "old"), entry(3, "old")] });
+    const afterLoad = notices.length;
+    run.announceAutoFiled({ auto_seq: 4, auto_filed: [entry(4, "gitspawn")] });
+    const one = notices.slice(afterLoad);
+    run.announceAutoFiled({ auto_seq: 4, auto_filed: [entry(4, "gitspawn")] });
+    const repeat = notices.length - afterLoad - one.length;
+    run.announceAutoFiled({ auto_seq: 6, auto_filed: [entry(5, "a"), entry(6, "b")] });
+    const many = notices.slice(afterLoad + one.length);
+    return { afterLoad, one, repeat, many };
+  },
+
   restPages() {
     const run = new Function(
       `const REST_PAGE_UNITS = 440;\n${extract("textUnits")}\n${extract("notePages")}\n${extract("pageDwell")}\n` +

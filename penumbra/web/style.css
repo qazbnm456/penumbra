@@ -8480,6 +8480,9 @@ body.is-resizing .orbit-graph {
   border: 0;
   cursor: pointer;
   padding: 0 var(--space-2);
+  /* A long message beside it must not squeeze a two-character label onto two lines. */
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .card-section {
