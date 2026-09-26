@@ -90,69 +90,6 @@ fn log_path(app: &AppHandle) -> PathBuf {
     dir.join("server.log")
 }
 
-// --- the rename ----------------------------------------------------------------------------------
-
-/// The app was called rlm-notebook, with the identifier `tw.boik.rlm-notebook`, and the OS keys the
-/// data folder on the identifier. Before anything creates the new folder, an old one beside it is
-/// moved into place, and its configuration file is renamed with every `RN_` setting spelled `PN_`.
-/// The server moves the data folders inside it (`notebooks/` to `orbits/`, `inbox/` to `horizon/`)
-/// on its own first start (`penumbra.legacy`). Nothing is merged: if both folders exist, the old
-/// one is left where it is.
-/// Set when the old data folder could not be moved. Boot then shows why instead of starting a
-/// server, because starting one would create an EMPTY new folder: the app would open with none of
-/// the reader's data, and every later launch would skip the move since the new folder now exists.
-static MIGRATION_ERROR: Mutex<Option<String>> = Mutex::new(None);
-
-fn migrate_from_rlm_notebook(app: &AppHandle) {
-    let Ok(new_dir) = app.path().app_data_dir() else {
-        return;
-    };
-    let Some(old_dir) = new_dir.parent().map(|p| p.join("tw.boik.rlm-notebook")) else {
-        return;
-    };
-    if old_dir.is_dir() && !new_dir.exists() {
-        if let Err(error) = fs::rename(&old_dir, &new_dir) {
-            *MIGRATION_ERROR.lock().unwrap_or_else(|p| p.into_inner()) = Some(format!(
-                "{}\n\n{}\n→ {}\n\n{error}",
-                word(
-                    "Your data from rlm-notebook could not be moved. Quit rlm-notebook if it is still running, then open Penumbra again. Nothing has been deleted.",
-                    "無法搬移 rlm-notebook 的資料。如果 rlm-notebook 還開著，請先結束它，再重新打開 Penumbra。沒有任何資料被刪除。",
-                ),
-                old_dir.display(),
-                new_dir.display(),
-            ));
-            return;
-        }
-    }
-    let old_config = new_dir.join("rlm-notebook.env");
-    let new_config = new_dir.join("penumbra.env");
-    if old_config.exists() && !new_config.exists() {
-        if let Ok(text) = fs::read_to_string(&old_config) {
-            let renamed: Vec<String> = text.lines().map(rename_legacy_setting).collect();
-            if fs::write(&new_config, renamed.join("\n") + "\n").is_ok() {
-                let _ = fs::remove_file(&old_config);
-            }
-        }
-    }
-}
-
-/// `RN_X=...` becomes `PN_X=...`, keeping an `export ` prefix or a leading `#` (a commented-out
-/// setting), and every other line exactly as it was.
-fn rename_legacy_setting(line: &str) -> String {
-    let (lead, rest) = match line.find(|c: char| !(c == '#' || c.is_whitespace())) {
-        Some(at) => line.split_at(at),
-        None => return line.to_string(),
-    };
-    let (export, rest) = match rest.strip_prefix("export ") {
-        Some(tail) => ("export ", tail),
-        None => ("", rest),
-    };
-    match rest.strip_prefix("RN_") {
-        Some(tail) => format!("{lead}{export}PN_{tail}"),
-        None => line.to_string(),
-    }
-}
-
 // --- configuration -----------------------------------------------------------------------------
 
 /// Written the first time someone opens the configuration file. Keys stay in this file, never on
@@ -562,11 +499,6 @@ fn boot(app: AppHandle) {
         let Some(window) = app.get_webview_window(WINDOW) else {
             return;
         };
-        let stuck = MIGRATION_ERROR.lock().unwrap_or_else(|p| p.into_inner()).clone();
-        if let Some(message) = stuck {
-            splash_failure(&window, &message);
-            return;
-        }
         if window.url().map(|u| u.scheme() != "tauri" && u.host_str() != Some("tauri.localhost")).unwrap_or(false) {
             let _ = window.navigate(splash_url());
             thread::sleep(Duration::from_millis(300));
@@ -888,12 +820,10 @@ pub fn run() {
         .on_menu_event(|app, event| on_menu(app, event.id().as_ref()))
         .setup(|app| {
             let handle = app.handle().clone();
-            migrate_from_rlm_notebook(&handle);
             island::measure(&handle);
             // The workspace opens by itself only the first time, so the reader meets the app before
             // meeting the island. After that the island IS the app at rest.
-            let introduced = MIGRATION_ERROR.lock().map(|e| e.is_none()).unwrap_or(false)
-                && recall(&handle).get("introduced").and_then(|v| v.as_bool()).unwrap_or(false);
+            let introduced = recall(&handle).get("introduced").and_then(|v| v.as_bool()).unwrap_or(false);
             let nav = handle.clone();
             let dl = handle.clone();
             let builder = WebviewWindowBuilder::new(app, WINDOW, WebviewUrl::App("index.html".into()))
@@ -934,14 +864,10 @@ pub fn run() {
                     true
                 })
                 .build()?;
-            // Not while a failed move is pending: writing the template would create the new folder.
-            let migration_pending = MIGRATION_ERROR.lock().map(|e| e.is_some()).unwrap_or(false);
-            if !migration_pending && !model_configured(&handle) {
+            if !model_configured(&handle) {
                 ensure_config(&handle);
             }
-            if !migration_pending {
-                remember(&handle, "introduced", serde_json::json!(true));
-            }
+            remember(&handle, "introduced", serde_json::json!(true));
             // At rest Penumbra is a background app: the island is its only presence.
             #[cfg(target_os = "macos")]
             if introduced {
@@ -1032,17 +958,6 @@ mod tests {
             ]
         );
         let _ = std::fs::remove_file(&file.0);
-    }
-
-    #[test]
-    fn legacy_settings_are_renamed_and_nothing_else_is() {
-        use super::rename_legacy_setting as r;
-        assert_eq!(r("RN_MAIN_MODEL=x"), "PN_MAIN_MODEL=x");
-        assert_eq!(r("export RN_API_KEY='k'"), "export PN_API_KEY='k'");
-        assert_eq!(r("# RN_SUB_MODEL="), "# PN_SUB_MODEL=");
-        assert_eq!(r("# a comment about RN_ things"), "# a comment about RN_ things");
-        assert_eq!(r("RETURN_X=1"), "RETURN_X=1");
-        assert_eq!(r(""), "");
     }
 
     fn tempfile_path(tag: &str) -> (std::path::PathBuf, std::fs::File) {

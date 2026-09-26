@@ -84,7 +84,7 @@ This index does not grow. An entry that has gained a second paragraph has taken 
 
 9. **`AnswerQuestion` always runs in the `pyodide` sandbox, and `PenumbraConfig.from_env` refuses any other `PN_INTERPRETER` value instead of silently overriding it.** An operator who set `PN_INTERPRETER=local` believes something about the run that a silent correction would make false. ([why](docs/invariants/09-answerquestion-always-runs-in-pyodide.md))
 
-10. **An orbit id is sanitised (`orbit.slug`) before it becomes a filename, and an id the whitelist empties falls back to a content hash instead of being rejected.** An unsanitised id becomes a traversal segment, and the `nb-<sha256>` fallback is what lets an orbit named in Chinese exist at all. ([why](docs/invariants/10-orbit-ids-are-sanitized-filenames.md))
+10. **An orbit id is sanitised (`orbit.slug`) before it becomes a filename, and an id the whitelist empties falls back to a content hash instead of being rejected.** An unsanitised id becomes a traversal segment, and the `orbit-<sha256>` fallback is what lets an orbit named in Chinese exist at all. ([why](docs/invariants/10-orbit-ids-are-sanitized-filenames.md))
 
 11. **`history` (earlier turns) is context only, never a source of facts or citations.** A past answer that was wrong, or a source removed since, must not be inherited by a new answer. ([why](docs/invariants/11-history-is-context-not-a-source.md))
 

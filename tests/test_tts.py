@@ -363,17 +363,17 @@ def test_finding_audio_survives_a_provider_switch(tmp_path):
     every format rather than leaving the stale one beside the new one."""
     from penumbra.orbit import audio_path, clear_audio, find_audio
 
-    mp3 = audio_path("nb", base_dir=tmp_path, suffix=".mp3")
+    mp3 = audio_path("orb", base_dir=tmp_path, suffix=".mp3")
     mp3.parent.mkdir(parents=True, exist_ok=True)
     mp3.write_bytes(b"old-mp3")
-    assert find_audio("nb", base_dir=tmp_path) == mp3
+    assert find_audio("orb", base_dir=tmp_path) == mp3
 
-    clear_audio("nb", base_dir=tmp_path)
-    assert find_audio("nb", base_dir=tmp_path) is None
+    clear_audio("orb", base_dir=tmp_path)
+    assert find_audio("orb", base_dir=tmp_path) is None
 
-    wav = audio_path("nb", base_dir=tmp_path, suffix=".wav")
+    wav = audio_path("orb", base_dir=tmp_path, suffix=".wav")
     wav.write_bytes(b"new-wav")
-    assert find_audio("nb", base_dir=tmp_path) == wav
+    assert find_audio("orb", base_dir=tmp_path) == wav
 
 
 def test_offsets_come_from_any_boundary_event_and_track_each_utterance_separately():

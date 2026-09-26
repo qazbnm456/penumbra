@@ -250,7 +250,6 @@ async def _lifespan(_app: FastAPI):
     # `resume_interrupted` resets both owned states through `horizon.reset_interrupted_states` and
     # re-queues whatever was still waiting (invariants 78/79/80).
     await asyncio.to_thread(_horizon_queue().resume_interrupted)
-    await asyncio.to_thread(_untitle_legacy_first_orbit)
     recorded = await asyncio.to_thread(_backfill_horizon)
     if recorded:
         _log.info("horizon: recorded %d source(s) added inside orbits", recorded)
@@ -942,15 +941,15 @@ async def list_orbits() -> OrbitListResponse:
     return OrbitListResponse(
         orbits=[
             OrbitSummary(
-                id=nb.id,
-                slug=slug(nb.id),
-                title=nb.title,
-                derived_title=nb.title or _fallback_name(nb.sources),
-                source_count=len(nb.sources),
-                turn_count=len(nb.turns),
-                updated_at=last_modified(nb.id),
+                id=orb.id,
+                slug=slug(orb.id),
+                title=orb.title,
+                derived_title=orb.title or _fallback_name(orb.sources),
+                source_count=len(orb.sources),
+                turn_count=len(orb.turns),
+                updated_at=last_modified(orb.id),
             )
-            for nb in orbits
+            for orb in orbits
         ],
         unreadable=unreadable,
     )
@@ -1194,7 +1193,7 @@ async def add_sources(orbit_id: str, body: SourcesRequest) -> OrbitResponse:
     #: asked for the orbit to be gone, and losing one just-added source is a smaller loss than
     #: resurrecting an orbit they deleted.
     orbit = await _mutate_or_http(
-        orbit_id, lambda nb: append_sources(nb, ingested + pasted), create=not existed
+        orbit_id, lambda orb: append_sources(orb, ingested + pasted), create=not existed
     )
     await asyncio.to_thread(_record_in_horizon, orbit)
     return _orbit_response(orbit)
@@ -1244,7 +1243,7 @@ async def add_note_endpoint(orbit_id: str, body: NoteRequest) -> OrbitResponse:
     existed = _orbit_exists(orbit_id)
     try:
         orbit = await _mutate_or_http(
-            orbit_id, lambda nb: add_note(nb, body.text), create=not existed
+            orbit_id, lambda orb: add_note(orb, body.text), create=not existed
         )
     except ValueError as exc:  # blank text — `add_note`'s own guard, not an id problem
         raise HTTPException(422, str(exc)) from exc
@@ -1259,7 +1258,7 @@ async def delete_note_endpoint(orbit_id: str, note_id: str) -> OrbitResponse:
     `_load_orbit_or_404` would have produced, in one read instead of two)."""
     try:
         orbit = await _mutate_or_http(
-            orbit_id, lambda nb: delete_note(nb, note_id), create=False
+            orbit_id, lambda orb: delete_note(orb, note_id), create=False
         )
     except ValueError as exc:  # no such note — including one a concurrent request just deleted
         raise HTTPException(404, str(exc)) from exc
@@ -1285,8 +1284,8 @@ async def clear_turns(orbit_id: str) -> OrbitResponse:
     response is the full ground-truth orbit so a client re-renders from what was actually
     persisted rather than from what it assumed.
     """
-    def _clear(nb: Orbit) -> None:
-        nb.turns.clear()
+    def _clear(orb: Orbit) -> None:
+        orb.turns.clear()
 
     return _orbit_response(await _mutate_or_http(orbit_id, _clear, create=False))
 
@@ -1349,7 +1348,7 @@ async def delete_source_endpoint(orbit_id: str, source_id: str) -> OrbitResponse
     """
     try:
         orbit = await _mutate_or_http(
-            orbit_id, lambda nb: remove_source(nb, source_id), create=False
+            orbit_id, lambda orb: remove_source(orb, source_id), create=False
         )
     except ValueError as exc:  # no such source — including one a concurrent request just removed
         raise HTTPException(404, str(exc)) from exc
@@ -1391,7 +1390,7 @@ async def promote_note_endpoint(orbit_id: str, note_id: str) -> OrbitResponse:
     under the lock anyway, for no gain."""
     try:
         orbit = await _mutate_or_http(
-            orbit_id, lambda nb: promote_note(nb, note_id), create=False
+            orbit_id, lambda orb: promote_note(orb, note_id), create=False
         )
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
@@ -1488,7 +1487,7 @@ async def upload_source(orbit_id: str, request: Request) -> OrbitResponse:
 
     # Same as `add_sources`: a delete that landed while this was OCRing must not be undone here.
     orbit = await _mutate_or_http(
-        orbit_id, lambda nb: append_sources(nb, parsed), create=not existed
+        orbit_id, lambda orb: append_sources(orb, parsed), create=not existed
     )
     await asyncio.to_thread(_record_in_horizon, orbit)
     return _orbit_response(orbit)
@@ -1773,7 +1772,7 @@ async def _resolve_language(
     # `or`-guarded so two concurrent first-artifact requests can't flip an already-resolved value.
     await _mutate_or_http(
         orbit.id,
-        lambda nb: setattr(nb, "output_language", nb.output_language or str(resolved)),
+        lambda orb: setattr(orb, "output_language", orb.output_language or str(resolved)),
         create=False,
     )
     return str(resolved)
@@ -2006,13 +2005,13 @@ async def ask(orbit_id: str, body: AskRequest, request: Request) -> AskResponse:
     # two losses. The 404 above still covers the genuinely-missing case.
     turn = ChatTurn(question=body.question, answer=answer, run_id=run_id)
 
-    def _persist(nb: Orbit) -> None:
+    def _persist(orb: Orbit) -> None:
         # Inside the lock, against the orbit as it is NOW — the snapshot this handler read
         # before the run may be minutes old (the same reasoning the append itself carries).
-        if body.regenerate and nb.turns and nb.turns[-1].question == body.question:
-            nb.turns[-1] = turn
+        if body.regenerate and orb.turns and orb.turns[-1].question == body.question:
+            orb.turns[-1] = turn
         else:
-            nb.turns.append(turn)
+            orb.turns.append(turn)
 
     await _mutate_or_http(orbit_id, _persist, create=False)
 
@@ -2058,7 +2057,7 @@ async def rename_orbit(orbit_id: str, body: RenameRequest) -> OrbitResponse:
     if not title:
         raise HTTPException(422, "title is empty after normalisation")
     orbit = await _mutate_or_http(
-        orbit_id, lambda nb: setattr(nb, "title", title), create=False
+        orbit_id, lambda orb: setattr(orb, "title", title), create=False
     )
     return _orbit_response(orbit)
 
@@ -2120,7 +2119,7 @@ async def suggest_title(
         title = fallback_title(origins, titles)
 
     orbit = await _mutate_or_http(
-        orbit_id, lambda nb: setattr(nb, "title", nb.title or str(title)), create=False
+        orbit_id, lambda orb: setattr(orb, "title", orb.title or str(title)), create=False
     )
     return _orbit_response(orbit)
 
@@ -2200,7 +2199,7 @@ async def generate_overview(
         source_ids=source_ids,
     )
     orbit = await _mutate_or_http(
-        orbit_id, lambda nb: setattr(nb, "overview", overview), create=False
+        orbit_id, lambda orb: setattr(orb, "overview", overview), create=False
     )
     return _orbit_response(orbit)
 
@@ -2383,7 +2382,7 @@ async def audio(
             # orbit no longer had and the UI said there was none. Invariant 42's "replaced on
             # regenerate" has to cover the empty case too.
             await asyncio.to_thread(clear_audio, orbit_id)
-            await _mutate_or_http(orbit_id, lambda nb: setattr(nb, "podcast", None), create=False)
+            await _mutate_or_http(orbit_id, lambda orb: setattr(orb, "podcast", None), create=False)
             return AudioResponse(utterances=[], audio_base64=None)
 
         voice_map = tts_voice_map(config, language, provider)
@@ -2421,7 +2420,7 @@ async def audio(
         )
         try:
             await _mutate_or_http(
-                orbit_id, lambda nb: setattr(nb, "podcast", podcast), create=False
+                orbit_id, lambda orb: setattr(orb, "podcast", podcast), create=False
             )
         except HTTPException:
             #: The orbit went away between `_working_on` and here — the one interleaving the
@@ -2955,7 +2954,7 @@ def _node_or_404(node_id: str) -> Node:
 
     Invariant 27's rule, at Tier 0: a malformed id and a missing one are DIFFERENT answers.
     `horizon.node_blocks_path` raises `ValueError` for anything that is not a minted id (invariant 77's
-    sibling finding: `remove_node("../../orbits/mynb")` once deleted a live orbit file), and
+    sibling finding: `remove_node("../../orbits/myorbit")` once deleted a live orbit file), and
     that must be a 400 rather than escaping. A well-formed id that is simply not here is a 404.
     """
     if not horizon.is_node_id(node_id):
@@ -3503,8 +3502,8 @@ def _file_under_cap(node_id: str, target: str) -> horizon.NodeMembership | None:
     node = horizon.get_node(node_id)
     if node is None or node.state not in ("ready", "ready_undistilled"):
         return None
-    # Membership in the landing orbit alone (the old automatic first orbit) still counts as unfiled,
-    # the same way suggestions count it.
+    # Membership in the assigned orbit alone still counts as unfiled, the same way suggestions
+    # count it.
     filed = {m.orbit_id for m in horizon.memberships_for(node_id)}
     if slug(target) in filed or filed - {_landing_slug()}:
         return None
@@ -4405,43 +4404,14 @@ async def horizon_graph(orbit: str | None = Query(None, max_length=200)) -> dict
     )
 
 
-#: The orbit every capture used to be filed into before `filing_mode` existed. The app filed into
-#: it, not the reader, so membership in it alone still counts as unfiled and its captures keep
-#: getting suggestions.
-_LEGACY_FIRST_ORBIT = "first-orbit"
-
-
-#: The titles the old automatic first orbit was given at creation, never by the reader.
-_LEGACY_FIRST_ORBIT_TITLES = ("First orbit", "第一個軌道")
-
-
-def _untitle_legacy_first_orbit() -> None:
-    """Clear the fixed title the old automatic first orbit was created with, so it is named the
-    way every other orbit is: from its sources until the first model action titles it (invariant
-    37). Only that exact title on that exact handle; a title the reader typed is never touched.
-    Best-effort: a startup tidy never stops the server."""
-    try:
-        existing = load_orbit(_LEGACY_FIRST_ORBIT)
-        if existing is None or existing.title not in _LEGACY_FIRST_ORBIT_TITLES:
-            return
-
-        def _clear(orbit: Orbit) -> None:
-            if orbit.title in _LEGACY_FIRST_ORBIT_TITLES:
-                orbit.title = None
-
-        mutate_orbit(_LEGACY_FIRST_ORBIT, _clear)
-    except Exception:  # noqa: BLE001 - a cosmetic tidy must never block startup
-        _log.warning("could not clear the old first orbit's fixed title")
-
-
 def _landing_slug() -> str | None:
-    """The orbit whose membership alone still counts as unfiled for suggestions: the assigned one,
-    since everything is filed there, or else the old automatic first orbit."""
+    """The assigned orbit's slug, or None unless the mode is `assign`. Membership in it alone still
+    counts as unfiled for suggestions, since everything is filed there."""
     try:
         mode, target = filing_mode()
     except SystemExit:
         return None
-    return slug(target) if mode == "assign" and target else _LEGACY_FIRST_ORBIT
+    return slug(target) if mode == "assign" and target else None
 
 
 @app.get("/horizon/suggestions")
@@ -4709,7 +4679,7 @@ async def promote_horizon_node(node_id: str, body: PromoteRequest) -> dict:
         #: **The picker can name an orbit that is already gone.** Its options come from the list
         #: fetched when the Horizon rendered, so a stale option is enough — no race needed — and
         #: promoting through one re-created the orbit the reader had deleted, holding one source
-        #: and nothing else. `create` is what the CALLER meant: the UI mints a fresh `nb-<uuid8>`
+        #: and nothing else. `create` is what the CALLER meant: the UI mints a fresh `orbit-<uuid8>`
         #: when the reader picks "a new orbit" (invariant 37) and sends an existing id otherwise,
         #: so `create` is exactly "this id is new to me", defaulting False for an API caller that
         #: says nothing.
@@ -4797,7 +4767,7 @@ async def move_horizon_node(node_id: str, body: MoveRequest) -> dict:
         })
     filed = await promote_horizon_node(node_id, PromoteRequest(orbit_id=body.to_orbit, create=False))
     try:
-        await _mutate_or_http(body.from_orbit, lambda nb: remove_source(nb, held.source_id), create=False)
+        await _mutate_or_http(body.from_orbit, lambda orb: remove_source(orb, held.source_id), create=False)
     except (HTTPException, ValueError):
         # Filed into the new orbit but still in the old one: a copy, which is what this used to
         # do anyway. Said rather than hidden, so the reader can take it out by hand.

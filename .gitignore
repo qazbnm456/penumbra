@@ -17,9 +17,6 @@ __pycache__/
 /traces/
 /orbits/
 /horizon/
-# The same data under its pre-rename names, until `penumbra.legacy` moves it on the next start.
-/notebooks/
-/inbox/
 *.jsonl
 
 # Secrets / local env (only .env.example is tracked)

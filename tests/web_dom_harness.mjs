@@ -561,7 +561,7 @@ const SCENARIOS = {
       async () => {}
     );
 
-    return run("nb-real", { push: false, fresh: mode === "404-fresh" }).then((opened) => ({
+    return run("orbit-real", { push: false, fresh: mode === "404-fresh" }).then((opened) => ({
       opened: opened === true,
       // The fabrication: did it install an orbit into `state` at all?
       invented: Object.prototype.hasOwnProperty.call(state, "sources"),
@@ -642,7 +642,7 @@ const SCENARIOS = {
 
     // `runId` is what makes a stroke clickable at all: a turn saved before run ids existed renders
     // plain, non-interactive citations on purpose (invariant 29's graceful degradation).
-    const root = run(answer, citations, mode === "no-run" ? null : "nb-1-abc");
+    const root = run(answer, citations, mode === "no-run" ? null : "orbit-1-abc");
     const strokes = root.querySelectorAll(".citation");
     //: The OPERABLE one — the last fragment, which is where the number goes. A split stroke is one
     //: citation, so it is one tab stop, and this is the span a keyboard reader actually lands on.
@@ -1055,7 +1055,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     const before = { source_id: "s1", locator: "page:1", quote: "alpha", verified: true };
     const after = { ...before, verified: false };
     const state = {
-      orbitId: "nb",
+      orbitId: "orb",
       sources: [{ id: "s1", origin: "a.txt" }, { id: "s2", origin: "b.txt" }],
       overview: null,
       turns: [{ question: "q", answer: "alpha", citations: [before] }],
@@ -1234,7 +1234,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     ] = wide;
     const activeRuns = new Map();
     const recovered = new Set();
-    const state = { orbitId: "nb-1" };
+    const state = { orbitId: "orbit-1" };
     const run = new Function(
       "document", "activeRuns", "state", "t", "recoveredRuns",
       `${constant("RUN_GUARDED")}\n${constant("RUN_GUARDED_ON_RECOVERY")}\n` +
@@ -1245,18 +1245,18 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     run();
     const idle = snap();
     // A run THIS TAB started: the artifact controls lock, the composer does not.
-    activeRuns.set("nb-1", 1);
+    activeRuns.set("orbit-1", 1);
     run();
     const busy = snap();
     // The same run after a RELOAD: `reattachInFlightRuns` marks it recovered.
-    recovered.add("nb-1");
+    recovered.add("orbit-1");
     run();
     const afterReload = snap();
-    recovered.delete("nb-1");
-    activeRuns.delete("nb-1");
+    recovered.delete("orbit-1");
+    activeRuns.delete("orbit-1");
     run();
     const released = snap();
-    activeRuns.set("nb-2", 1);
+    activeRuns.set("orbit-2", 1);
     run();
     return { idle, busy, afterReload, released, otherOrbit: snap() };
   },
@@ -1331,7 +1331,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
         return el;
       },
       (key, fallback) => fallback,
-      () => guardCalls.push(recoveredRuns.has("nb-1")),
+      () => guardCalls.push(recoveredRuns.has("orbit-1")),
       (head, detail) => {
         const el = new El("failure-block");
         el.textContent = `${head}|${detail}`;
@@ -1346,9 +1346,9 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       { emit: (name, payload) => emitted.push([name, payload]) }
     );
 
-    await run.reattachInFlightRuns("nb-1", 0);
+    await run.reattachInFlightRuns("orbit-1", 0);
     const afterMount = {
-      flagged: recoveredRuns.has("nb-1"),
+      flagged: recoveredRuns.has("orbit-1"),
       guardSawFlag: guardCalls.includes(true),
       streams: opened.length,
     };
@@ -1362,7 +1362,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       onCancel();
       return {
         afterMount,
-        flagCleared: !recoveredRuns.has("nb-1"),
+        flagCleared: !recoveredRuns.has("orbit-1"),
         composerResynced: emitted.some(([name, payload]) => name === "chat:pending" && payload.pending === false),
         finished: finished.length,
         ownStreamClosed: opened.every((src) => src.closed),
@@ -1372,7 +1372,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
 
     if (mode === "stale") {
       // A SECOND mount for the same run, exactly what an orbit switch produces...
-      await run.reattachInFlightRuns("nb-1", 0);
+      await run.reattachInFlightRuns("orbit-1", 0);
       const live = opened[opened.length - 1];
       // ...and now the FIRST mount's poll fires with the run gone.
       runsAnswer = [];
@@ -1389,7 +1389,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       await timers[0]();
       return {
         afterMount,
-        flagCleared: !recoveredRuns.has("nb-1"),
+        flagCleared: !recoveredRuns.has("orbit-1"),
         finished: finished.length,
         ownStreamClosed: opened.every((src) => src.closed),
         rendered: history.children.map((e) => `${e.className}:${e.textContent}`),
@@ -1410,7 +1410,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
 
     return {
       afterMount,
-      flagCleared: !recoveredRuns.has("nb-1"),
+      flagCleared: !recoveredRuns.has("orbit-1"),
       finished: finished.length,
       // The mount's OWN stream has to be closed when it ends, or the socket leak this whole
       // mechanism exists to stop is simply back.
@@ -1435,25 +1435,25 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       "#podcast-generate, #guide-regenerate, .chat-starter button, #ask-submit, .turn-regenerate button"
     ] = guarded;
 
-    const state = { orbitId: "nb-1" };
+    const state = { orbitId: "orbit-1" };
     const emitted = [];
     const run = new Function(
       "document", "state", "t", "store", "recoveredRuns",
       `${constant("activeRuns")}\n${constant("RUN_GUARDED")}\n` +
         `${constant("RUN_GUARDED_ON_RECOVERY")}\n${extract("syncRunGuards")}\n` +
         `${extract("noteRunStarted")}\n${extract("noteRunFinished")}\n` +
-        "return { noteRunStarted, noteRunFinished, busy: () => activeRuns.has('nb-1') };"
+        "return { noteRunStarted, noteRunFinished, busy: () => activeRuns.has('orbit-1') };"
     )(doc, state, (k, f) => f, { emit: (name) => emitted.push(name) }, new Set());
 
     const snap = () => ({ busy: run.busy(), off: podcast.disabled });
     const idle = snap();
-    run.noteRunStarted("nb-1");
+    run.noteRunStarted("orbit-1");
     const started = snap();
     // TWO runs on one orbit: the count, not a boolean — one ending must not release the other.
-    run.noteRunStarted("nb-1");
-    run.noteRunFinished("nb-1");
+    run.noteRunStarted("orbit-1");
+    run.noteRunFinished("orbit-1");
     const stillOne = snap();
-    run.noteRunFinished("nb-1");
+    run.noteRunFinished("orbit-1");
     return { idle, started, stillOne, ended: snap(), emitted };
   },
 
@@ -1473,7 +1473,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     doc._all[
       "#podcast-generate, #guide-regenerate, .chat-starter button, #ask-submit, .turn-regenerate button"
     ] = [podcast];
-    const state = { orbitId: "nb-1" };
+    const state = { orbitId: "orbit-1" };
     const stopped = [];
 
     const run = new Function(
@@ -1483,7 +1483,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
         `${constant("RUN_GUARDED_ON_RECOVERY")}\n${extract("syncRunGuards")}\n` +
         `${extract("noteRunStarted")}\n${extract("noteRunFinished")}\n` +
         `${extract("i18nText")}\n${extract("runStatus")}\n` +
-        "return { runStatus, busy: () => activeRuns.has('nb-1') };"
+        "return { runStatus, busy: () => activeRuns.has('orbit-1') };"
     )(
       doc,
       state,
@@ -1498,8 +1498,8 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
 
     const before = { busy: run.busy(), off: podcast.disabled };
     const status = run.runStatus({
-      orbitId: "nb-1",
-      runIds: ["nb-1-abc"],
+      orbitId: "orbit-1",
+      runIds: ["orbit-1-abc"],
       label: "Reading…",
       onCancel: () => {},
     });
@@ -1527,9 +1527,9 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
         "return { openTicker, closeTicker, size: () => tickerSources.size };"
     )(FakeEventSource, (u) => u, new Set(["done", "failed", "not_found"]));
 
-    run.openTicker("nb", "run-1", () => {});
+    run.openTicker("orb", "run-1", () => {});
     const afterFirst = { opened: opened.length, size: run.size() };
-    run.openTicker("nb", "run-1", () => {}); // the same run, a second time
+    run.openTicker("orb", "run-1", () => {}); // the same run, a second time
     const afterSecond = {
       opened: opened.length,
       size: run.size(),
@@ -1836,7 +1836,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       tagHistory: run.askHScopeLabel({ kind: "tag", value: "sleep", orbit: "sleep" }),
       entityChip: run.askHChipLabel({ id: "e", scope: { kind: "entity", value: "REM", orbit: "sleep" } }),
       tagChip: run.askHChipLabel({ id: "t", scope: { kind: "tag", value: "sleep", orbit: "sleep" } }),
-      orbitChip: run.askHChipLabel({ id: "o", orbit: { id: "nb-1", slug: "sleep", title: "Sleep" } }),
+      orbitChip: run.askHChipLabel({ id: "o", orbit: { id: "orbit-1", slug: "sleep", title: "Sleep" } }),
     };
   },
 
@@ -1883,10 +1883,10 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
         `${extract("orbitHasRun")}\n${extract("beginOrbitVisit")}\n` +
         "return { begin: () => { beginOrbitVisit(); return orbitVisit.override; } };"
     );
-    const busy = run({ orbitId: "nb-1", sources: [1] }, new Map([["nb-1", 1]]), new Map()).begin();
-    const recovered = run({ orbitId: "nb-1", sources: [1] }, new Map(), new Map([["nb-1", {}]])).begin();
-    const quiet = run({ orbitId: "nb-1", sources: [1] }, new Map([["nb-2", 1]]), new Map()).begin();
-    const empty = run({ orbitId: "nb-1", sources: [] }, new Map(), new Map()).begin();
+    const busy = run({ orbitId: "orbit-1", sources: [1] }, new Map([["orbit-1", 1]]), new Map()).begin();
+    const recovered = run({ orbitId: "orbit-1", sources: [1] }, new Map(), new Map([["orbit-1", {}]])).begin();
+    const quiet = run({ orbitId: "orbit-1", sources: [1] }, new Map([["orbit-2", 1]]), new Map()).begin();
+    const empty = run({ orbitId: "orbit-1", sources: [] }, new Map(), new Map()).begin();
     return { busy, recovered, quiet, empty };
   },
 
@@ -1900,7 +1900,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       "const askH = { chips: [{ id: 'all', scope: { kind: 'all' } }], chosen: 'all', custom: null };\n" +
         `${extract("askHChosen")}\n${extract("setAskContext")}\nreturn { setAskContext, askH };`
     )(() => dismissed.push(1), () => {});
-    const orbitChip = { id: "orbit:sleep", orbit: { id: "nb-1", slug: "sleep", title: "Sleep" } };
+    const orbitChip = { id: "orbit:sleep", orbit: { id: "orbit-1", slug: "sleep", title: "Sleep" } };
     run.setAskContext([orbitChip]); // the reader picked a planet
     const afterPick = run.askH.chosen;
     run.askH.chosen = "all"; // the reader pressed the Everything chip, then checked a plan

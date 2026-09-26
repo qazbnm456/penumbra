@@ -165,7 +165,7 @@ def node_blocks_path(node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR
     false of ids it RECEIVES.** That is precisely the distinction invariant 10 exists to make, and an
     earlier draft of invariant 78 asserted the opposite — which would have told whoever writes
     `DELETE /horizon/{node_id}` that no guard was needed. It was not theoretical: `remove_node` then
-    unlinked `f"{node_id}.json"` with no check, so `remove_node("../../orbits/mynb")` deleted a
+    unlinked `f"{node_id}.json"` with no check, so `remove_node("../../orbits/myorbit")` deleted a
     live orbit file and returned `False`, and an absolute id discarded the directory entirely
     (`Path("horizon/nodes") / "/etc/x"` is `/etc/x`). Both reproduced before this was written.
 
@@ -249,18 +249,6 @@ _INITIALIZED: set[str] = set()
 _INIT_LOCK = threading.Lock()
 
 
-def _migrate_legacy_schema(conn: sqlite3.Connection) -> None:
-    """The one column the rename to Penumbra changed on disk: `memberships.notebook_id` is
-    `orbit_id` now. A database written before the rename is renamed in place, once, before the
-    schema's `CREATE INDEX ... (orbit_id)` would fail against the old column. Everything else in
-    the file (the node rows, their JSON columns) was never named after a notebook."""
-    columns = [row[1] for row in conn.execute("PRAGMA table_info(memberships)")]
-    if "notebook_id" in columns and "orbit_id" not in columns:
-        conn.execute("ALTER TABLE memberships RENAME COLUMN notebook_id TO orbit_id")
-        conn.execute("DROP INDEX IF EXISTS memberships_notebook")
-        conn.commit()
-
-
 def _initialize(path: Path) -> None:
     """Set WAL and create the schema ONCE per process, not once per connection.
 
@@ -295,7 +283,6 @@ def _initialize(path: Path) -> None:
                 mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
                 if str(mode).lower() != "wal":
                     raise sqlite3.OperationalError(f"journal_mode is {mode!r}, not wal")
-                _migrate_legacy_schema(conn)
                 conn.executescript(_SCHEMA)
             except sqlite3.OperationalError as exc:
                 last = exc
@@ -1098,7 +1085,7 @@ def promote_node(
         # were one orbit on disk and two rows here: removing the source through the file's id
         # left the other row behind claiming the node was still filed, and the next promotion then
         # handed out the same source id to a different node. Two rows, one `s1`, two different
-        # documents. Not reachable through the UI, which mints `nb-<uuid8>` (invariant 37), and
+        # documents. Not reachable through the UI, which mints `orbit-<uuid8>` (invariant 37), and
         # fully reachable over HTTP by any token holder.
         node_id=node_id,
         orbit_id=slug(orbit_id),
@@ -1129,7 +1116,7 @@ def promote_node(
             with contextlib.suppress(ValueError):
                 mutate_orbit(
                     orbit_id,
-                    lambda nb: remove_source(nb, appended_new[0]),
+                    lambda orb: remove_source(orb, appended_new[0]),
                     base_dir=orbits_dir,
                     create=False,
                 )

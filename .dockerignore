@@ -2,14 +2,11 @@
 .venv
 .env
 *.env
-# Run data: orbits, the Horizon (every capture a reader ever made), traces, and the same data under
-# its pre-rename names. None of it belongs in an image.
+# Run data: orbits, the Horizon (every capture a reader ever made) and traces. None of it belongs in
+# an image.
 orbits/
 horizon/
 traces/
-notebooks/
-inbox/
-audio/
 *.mp3
 *.wav
 # The desktop shell is built on its own; its target/ and runtime/ run to gigabytes.

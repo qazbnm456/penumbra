@@ -410,10 +410,10 @@ def test_the_orbit_id_never_appears_in_the_picker():
     # The row is built from the TITLE; the id is only ever a value passed to openOrbit.
     row = js[js.index("function renderOrbitRow(") : js.index("function startRename(")]
 
-    # THROUGH the helper, not only at the call site. The row now renders `facetLabel(nb)`, and an
+    # THROUGH the helper, not only at the call site. The row now renders `facetLabel(orb)`, and an
     # earlier version of that function fell back to the id when a person had chosen a short one -
     # which put the handle back in the picker while satisfying every assertion below, because the
-    # string `nb.id` no longer appeared here. A tripwire a helper can hide behind is not one.
+    # string `orb.id` no longer appeared here. A tripwire a helper can hide behind is not one.
     helper = js[js.index("function facetLabel(") : js.index("async function renderFacets(")]
     assert "book.id" not in helper, "the id is a handle, not a label (invariant 37)"
     assert "book.title" in helper
@@ -460,12 +460,12 @@ def test_the_orbit_id_never_appears_in_the_picker():
         "a derived title can itself be a cut; presenting one as the full name is the defect this "
         "assertion used to prevent by banning it outright"
     )
-    assert "nb.title" in row or "facetLabel(nb)" in row
+    assert "orb.title" in row or "facetLabel(orb)" in row
     # The id may be COMPARED (is this the current orbit?) and PASSED (openOrbit), but it must
     # never be rendered: no assignment of it to any textContent.
     shown = re.findall(r"\.textContent\s*=\s*([^;]+);", row)
     assert shown, row
-    assert not [line for line in shown if "nb.id" in line], shown
+    assert not [line for line in shown if "orb.id" in line], shown
 
 
 def test_no_id_reaches_visible_text_anywhere_in_the_app():
@@ -1735,8 +1735,8 @@ def test_regenerate_replaces_only_a_matching_last_turn():
     )
     src = api_src[api_src.index("async def ask(") :]
     persist = src[src.index("def _persist(") : src.index("await _mutate_or_http(orbit_id, _persist")]
-    assert "body.regenerate" in persist and "nb.turns[-1].question == body.question" in persist, persist
-    assert "nb.turns[-1] = turn" in persist and "nb.turns.append(turn)" in persist, persist
+    assert "body.regenerate" in persist and "orb.turns[-1].question == body.question" in persist, persist
+    assert "orb.turns[-1] = turn" in persist and "orb.turns.append(turn)" in persist, persist
 
 
 def test_the_clear_conversation_control_appears_only_when_there_is_one():

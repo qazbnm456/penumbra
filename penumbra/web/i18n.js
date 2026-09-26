@@ -16,23 +16,6 @@
 //
 // Zero-build, same as the rest of `web/`: a plain script defining globals, loaded before `app.js`.
 
-// **Preferences from before the rename.** The app was rlm-notebook, and its per-reader choices
-// (interface language, theme, panel width, the API token) were stored under `rlmnb-*`. Copied once
-// to `penumbra-*` where the new key is still empty, so a browser user keeps them. This file loads
-// first, so everything that reads a preference already sees the new key. Storage can be blocked,
-// which costs only the carry-over.
-try {
-  for (let i = localStorage.length - 1; i >= 0; i--) {
-    const old = localStorage.key(i);
-    if (old && old.startsWith("rlmnb-")) {
-      const renamed = `penumbra-${old.slice("rlmnb-".length)}`;
-      if (localStorage.getItem(renamed) === null) localStorage.setItem(renamed, localStorage.getItem(old));
-    }
-  }
-} catch {
-  // no storage in this context
-}
-
 const UI_LANGUAGES = [
   // `name` is the ENGLISH name, and is what travels to the server as the language SIGNAL — the
   // model weighing it answers in English language names ("Traditional Chinese"), so sending

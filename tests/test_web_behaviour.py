@@ -486,7 +486,7 @@ def test_a_failed_load_never_invents_an_empty_orbit(mode: str, note: str):
     `openOrbit`'s `catch` was bare, so every failure meant "does not exist yet". Blocking a
     single request to an orbit with four sources and two turns rendered it as: title "Untitled
     orbit", no sources, "Ask a question once you've added a source.", an empty notices rail, and
-    the `?nb=` dropped from the address bar. Four false statements about the reader's own data, no
+    the `?orb=` dropped from the address bar. Four false statements about the reader's own data, no
     error, no retry, and it did not heal when the request started working again — while "Add source"
     from that screen writes into an orbit the reader believes is empty.
 

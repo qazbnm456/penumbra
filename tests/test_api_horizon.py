@@ -225,7 +225,7 @@ def test_the_listing_is_paged_and_reports_what_a_summary_pass_would_cost(client)
 def test_a_malformed_id_is_400_and_a_missing_one_is_404(client):
     """Invariant 27's rule at Tier 0: they are DIFFERENT answers, and neither is a raw 500.
     `horizon.node_blocks_path` raises `ValueError` for anything that is not a minted id — the same
-    guard that stops `remove_node("../../orbits/mynb")` deleting a live orbit file."""
+    guard that stops `remove_node("../../orbits/myorbit")` deleting a live orbit file."""
     for endpoint in ("/horizon/{}", "/horizon/{}/source"):
         assert client.get(endpoint.format("../../secret")).status_code in (400, 404)
         assert client.get(endpoint.format("nd-not-hex")).status_code == 400
@@ -239,12 +239,12 @@ def test_a_malformed_id_is_400_and_a_missing_one_is_404(client):
 
 def test_deleting_a_node_leaves_a_promoted_source_alone(client):
     node = client.post("/horizon", json={"texts": ["keep me"]}).json()["nodes"][0]
-    client.post(f"/horizon/{node['id']}/promote", json={"orbit_id": "mynb", "create": True})
+    client.post(f"/horizon/{node['id']}/promote", json={"orbit_id": "myorbit", "create": True})
 
     assert client.delete(f"/horizon/{node['id']}").json()["removed"] is True
     assert client.get(f"/horizon/{node['id']}").status_code == 404
     # Invariant 12: promotion is a COPY, and tidying a horizon must not reach a cited source.
-    assert len(client.get("/orbits/mynb").json()["sources"]) == 1
+    assert len(client.get("/orbits/myorbit").json()["sources"]) == 1
 
 
 # --- promotion -------------------------------------------------------------------------------------
@@ -269,9 +269,9 @@ def test_promoting_a_node_with_no_text_yet_is_a_clean_400(client):
     """A `queued` node has no blocks file, so `node_source` returns `None` and `promote_node` raises
     `ValueError` BEFORE `mutate_orbit` — no empty orbit is created as a side effect."""
     node = horizon.add_pending_node("https://example.com/waiting", "web")
-    resp = client.post(f"/horizon/{node.id}/promote", json={"orbit_id": "nb", "create": True})
+    resp = client.post(f"/horizon/{node.id}/promote", json={"orbit_id": "orb", "create": True})
     assert resp.status_code == 400
-    assert client.get("/orbits/nb").status_code == 404
+    assert client.get("/orbits/orb").status_code == 404
 
 
 # --- the queue's own surface -------------------------------------------------------------------------
@@ -671,7 +671,7 @@ def test_a_malformed_multipart_body_is_a_400_not_a_raw_500(client):
     """Neither `MultiPartException` nor `MultipartParseError` is an `HTTPException`, so both escaped
     as plain-text `Internal Server Error`. Pre-existing on the orbit uploader, which the Horizon's
     copied — so both are fixed, and both are asserted."""
-    for endpoint in ("/horizon/upload", "/orbits/mynb/sources/upload"):
+    for endpoint in ("/horizon/upload", "/orbits/myorbit/sources/upload"):
         resp = client.post(
             endpoint,
             content=b"--boundary\r\nnot a valid part at all",
@@ -1145,7 +1145,7 @@ def test_the_orbit_upload_refuses_a_malformed_file_too(client):
     """The Tier 1 path had the identical catch and the identical 500 (`Could not add source:
     500: Internal Server Error`). One parser, two endpoints, one rule."""
     reply = client.post(
-        "/orbits/mynb/sources/upload",
+        "/orbits/myorbit/sources/upload",
         files={"file": ("broken.pdf", b"%PDF-1.7 rubbish", "application/pdf")},
     )
     assert reply.status_code == 422, f"expected a named refusal, got {reply.status_code}"
@@ -1226,7 +1226,7 @@ def test_a_membership_is_keyed_on_the_same_thing_the_orbit_file_is(client):
     been removed from, and the next promotion then handed `s1` to a DIFFERENT node. Two rows, one
     source id, two different documents.
 
-    Not reachable through the UI, which mints `nb-<uuid8>` (invariant 37), and fully reachable over
+    Not reachable through the UI, which mints `orbit-<uuid8>` (invariant 37), and fully reachable over
     HTTP by any token holder.
     """
     first = client.post("/horizon", json={"texts": ["the first thing"]}).json()["nodes"][0]
@@ -1419,7 +1419,7 @@ def test_a_source_another_route_added_under_the_same_origin_is_not_shadowed(tmp_
     # The orbit already holds that origin, with DIFFERENT text, from another route.
     mutate_orbit(
         "collide",
-        lambda nb: nb.sources.append(
+        lambda orb: orb.sources.append(
             Source(
                 id="s1",
                 kind="web",
@@ -1566,9 +1566,9 @@ def test_the_orbit_listing_carries_the_key_a_membership_is_written_with(client):
     `GET /orbits`, which carried the id stored INSIDE the file and no slug, so for any orbit
     whose id differs from its slug the two ends could never meet: the node rendered "In a deleted
     orbit" while that orbit sat live in the same row's own picker. Reproduced in a browser
-    with `台灣研究筆記` (slug `nb-<hash>`, invariant 10) and with `Foo Bar` (slug `Foo-Bar`).
+    with `台灣研究筆記` (slug `orbit-<hash>`, invariant 10) and with `Foo Bar` (slug `Foo-Bar`).
 
-    Not reachable from the web UI alone — invariant 37 mints `nb-<uuid8>`, whose slug is itself —
+    Not reachable from the web UI alone — invariant 37 mints `orbit-<uuid8>`, whose slug is itself —
     and reachable from the first `penumbra ask --orbit "reading list"` or any HTTP caller.
     """
     from penumbra import horizon
@@ -1763,7 +1763,7 @@ def test_promoting_into_a_deleted_orbit_does_not_bring_it_back(client):
     and left this one — "fixing the INSTANCE rather than the CLASS", which `_require_sources`' own
     docstring names.
 
-    `create` is what the CALLER meant: the UI mints a fresh `nb-<uuid8>` when the reader picks "a
+    `create` is what the CALLER meant: the UI mints a fresh `orbit-<uuid8>` when the reader picks "a
     new orbit" (invariant 37) and sends an existing id otherwise.
     """
     node = client.post("/horizon", json={"texts": ["worth filing"]}).json()["nodes"][0]
@@ -1771,16 +1771,16 @@ def test_promoting_into_a_deleted_orbit_does_not_bring_it_back(client):
 
     first = client.post(
         f"/horizon/{node['id']}/promote",
-        json={"orbit_id": "nb-abc12345", "create": True},
+        json={"orbit_id": "orbit-abc12345", "create": True},
     )
     assert first.status_code == 200, first.text
-    assert client.delete("/orbits/nb-abc12345").status_code == 200
+    assert client.delete("/orbits/orbit-abc12345").status_code == 200
 
-    stale = client.post(f"/horizon/{node['id']}/promote", json={"orbit_id": "nb-abc12345"})
+    stale = client.post(f"/horizon/{node['id']}/promote", json={"orbit_id": "orbit-abc12345"})
     assert stale.status_code == 404, (
         f"a deleted orbit came back through a stale picker option: {stale.status_code}"
     )
-    assert "nb-abc12345" not in [n["id"] for n in client.get("/orbits").json()["orbits"]]
+    assert "orbit-abc12345" not in [n["id"] for n in client.get("/orbits").json()["orbits"]]
 
 
 def test_a_note_cannot_resurrect_a_orbit_deleted_while_it_was_in_flight(client, monkeypatch):
@@ -1795,10 +1795,10 @@ def test_a_note_cannot_resurrect_a_orbit_deleted_while_it_was_in_flight(client, 
     writing, release = threading.Event(), threading.Event()
     real = api.add_note
 
-    def slow(nb, text):
+    def slow(orb, text):
         writing.set()
         release.wait(10)
-        return real(nb, text)
+        return real(orb, text)
 
     monkeypatch.setattr(api, "add_note", slow)
     result = {}

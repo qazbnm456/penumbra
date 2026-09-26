@@ -68,7 +68,7 @@ def test_slug_never_produces_a_path_separator(raw):
     # all-separator/all-dot input reduces to an empty slug, which `orbit_path` refuses outright
     # rather than silently writing to `base_dir` itself.
     # Since the non-Latin fix, an all-separator/all-dot input no longer reduces to an empty slug —
-    # it falls back to `nb-<hash>`, which is hex and therefore even further from a traversal token
+    # it falls back to `orbit-<hash>`, which is hex and therefore even further from a traversal token
     # than the folded form was. Either way the join stays inside base_dir, which is the property.
     assert orbit_path(raw, base_dir="orbits").parent == Path("orbits")
 
@@ -83,9 +83,9 @@ def test_a_punctuation_only_id_is_now_a_hashed_filename_not_an_error(tmp_path):
     being an error (a user hit `400 … reduces to an empty token` naming an orbit in Chinese),
     there was no principled line left between "punctuation only" and "Chinese only": both are just
     strings outside `[A-Za-z0-9._-]` that a user typed on purpose. Both now hash. The traversal
-    property is strictly BETTER than before, since `".."` becomes `nb-<hash>` rather than being
+    property is strictly BETTER than before, since `".."` becomes `orbit-<hash>` rather than being
     rejected — see `test_slug_never_produces_a_path_separator`."""
-    assert slug("...").startswith("nb-")
+    assert slug("...").startswith("orbit-")
     assert orbit_path("...", base_dir=tmp_path).parent == Path(tmp_path)
 
 
@@ -95,29 +95,29 @@ def test_load_orbit_returns_none_when_missing(tmp_path):
 
 def test_save_then_load_round_trips(tmp_path):
     orbit = Orbit(
-        id="mynb",
+        id="myorbit",
         sources=[_source("s1", "a.txt")],
         turns=[ChatTurn(question="what?", answer=Answer(text="this.", citations=[]))],
     )
     save_orbit(orbit, base_dir=tmp_path)
-    loaded = load_orbit("mynb", base_dir=tmp_path)
+    loaded = load_orbit("myorbit", base_dir=tmp_path)
 
     assert loaded is not None
-    assert loaded.id == "mynb"
+    assert loaded.id == "myorbit"
     assert loaded.sources[0].origin == "a.txt"
     assert loaded.turns[0].question == "what?"
 
 
 def test_save_orbit_creates_base_dir(tmp_path):
     base = tmp_path / "does" / "not" / "exist"
-    orbit = Orbit(id="mynb")
+    orbit = Orbit(id="myorbit")
     save_orbit(orbit, base_dir=base)
-    assert orbit_path("mynb", base_dir=base).exists()
+    assert orbit_path("myorbit", base_dir=base).exists()
 
 
 def test_save_orbit_leaves_no_tmp_file_behind_on_success(tmp_path):
-    save_orbit(Orbit(id="mynb"), base_dir=tmp_path)
-    assert list(tmp_path.iterdir()) == [orbit_path("mynb", base_dir=tmp_path)]
+    save_orbit(Orbit(id="myorbit"), base_dir=tmp_path)
+    assert list(tmp_path.iterdir()) == [orbit_path("myorbit", base_dir=tmp_path)]
 
 
 def test_save_orbit_is_atomic_an_interrupted_write_never_corrupts_the_real_file(tmp_path, monkeypatch):
@@ -127,9 +127,9 @@ def test_save_orbit_is_atomic_an_interrupted_write_never_corrupts_the_real_file(
     interruption by making `os.fsync` raise partway through a save that is EXTENDING an existing,
     previously-saved orbit, and confirms the original file is untouched and no `.tmp` litter is
     left in the directory."""
-    original = Orbit(id="mynb", sources=[_source("s1", "a.txt")])
+    original = Orbit(id="myorbit", sources=[_source("s1", "a.txt")])
     save_orbit(original, base_dir=tmp_path)
-    before = orbit_path("mynb", base_dir=tmp_path).read_bytes()
+    before = orbit_path("myorbit", base_dir=tmp_path).read_bytes()
 
     def _boom(_fd):
         raise OSError("simulated crash mid-write")
@@ -139,8 +139,8 @@ def test_save_orbit_is_atomic_an_interrupted_write_never_corrupts_the_real_file(
     with pytest.raises(OSError, match="simulated crash"):
         save_orbit(updated, base_dir=tmp_path)
 
-    assert orbit_path("mynb", base_dir=tmp_path).read_bytes() == before
-    assert list(tmp_path.iterdir()) == [orbit_path("mynb", base_dir=tmp_path)]  # no .tmp litter
+    assert orbit_path("myorbit", base_dir=tmp_path).read_bytes() == before
+    assert list(tmp_path.iterdir()) == [orbit_path("myorbit", base_dir=tmp_path)]  # no .tmp litter
 
 
 def test_load_orbit_raises_a_clear_error_on_a_corrupted_file(tmp_path):
@@ -148,33 +148,33 @@ def test_load_orbit_raises_a_clear_error_on_a_corrupted_file(tmp_path):
     otherwise externally-corrupted file must still fail with a specific, catchable error rather
     than an assertion or a silent wrong answer. `cli._cmd_ask` catches exactly this (`ValidationError`)
     to print a clear message instead of a raw traceback."""
-    path = orbit_path("mynb", base_dir=tmp_path)
+    path = orbit_path("myorbit", base_dir=tmp_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('{"id": "mynb", "sources": [}', encoding="utf-8")  # truncated JSON
+    path.write_text('{"id": "myorbit", "sources": [}', encoding="utf-8")  # truncated JSON
 
     with pytest.raises(ValidationError):
-        load_orbit("mynb", base_dir=tmp_path)
+        load_orbit("myorbit", base_dir=tmp_path)
 
 
 def test_corpus_of_reflects_orbit_sources():
-    orbit = Orbit(id="mynb", sources=[_source("s1", "a.txt"), _source("s2", "b.txt")])
+    orbit = Orbit(id="myorbit", sources=[_source("s1", "a.txt"), _source("s2", "b.txt")])
     corpus = corpus_of(orbit)
     assert [s.id for s in corpus.sources] == ["s1", "s2"]
 
 
 def test_existing_origins():
-    orbit = Orbit(id="mynb", sources=[_source("s1", "a.txt"), _source("s2", "b.txt")])
+    orbit = Orbit(id="myorbit", sources=[_source("s1", "a.txt"), _source("s2", "b.txt")])
     assert existing_origins(orbit) == {"a.txt", "b.txt"}
 
 
 def test_history_text_empty_conversation():
-    orbit = Orbit(id="mynb")
+    orbit = Orbit(id="myorbit")
     assert "no prior turns" in history_text(orbit)
 
 
 def test_history_text_includes_prior_turns_in_order():
     orbit = Orbit(
-        id="mynb",
+        id="myorbit",
         turns=[
             ChatTurn(question="first?", answer=Answer(text="first answer.")),
             ChatTurn(question="second?", answer=Answer(text="second answer.")),
@@ -187,9 +187,9 @@ def test_history_text_includes_prior_turns_in_order():
 
 
 def test_load_or_create_loads_an_existing_orbit(tmp_path):
-    save_orbit(Orbit(id="mynb", sources=[_source("s1", "a.txt")]), base_dir=tmp_path)
-    orbit = load_or_create("mynb", base_dir=tmp_path)
-    assert orbit.id == "mynb"
+    save_orbit(Orbit(id="myorbit", sources=[_source("s1", "a.txt")]), base_dir=tmp_path)
+    orbit = load_or_create("myorbit", base_dir=tmp_path)
+    assert orbit.id == "myorbit"
     assert orbit.sources[0].origin == "a.txt"
 
 
@@ -206,17 +206,17 @@ def test_load_or_create_returns_an_ephemeral_orbit_when_no_id_given(tmp_path):
 
 
 def test_load_or_create_raises_on_a_corrupted_file(tmp_path):
-    path = orbit_path("mynb", base_dir=tmp_path)
+    path = orbit_path("myorbit", base_dir=tmp_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('{"id": "mynb", "sources": [}', encoding="utf-8")
+    path.write_text('{"id": "myorbit", "sources": [}', encoding="utf-8")
     with pytest.raises(ValidationError):
-        load_or_create("mynb", base_dir=tmp_path)
+        load_or_create("myorbit", base_dir=tmp_path)
 
 
 def test_ingest_then_append_adds_the_source(tmp_path):
     a = tmp_path / "a.txt"
     a.write_text("hello a", encoding="utf-8")
-    orbit = Orbit(id="mynb")
+    orbit = Orbit(id="myorbit")
 
     new_sources = append_sources(orbit, ingest_sources_for(orbit, [str(a)]))
 
@@ -230,7 +230,7 @@ def test_ingest_sources_for_does_not_touch_the_orbit(tmp_path):
     which means it cannot be the thing that mutates the orbit."""
     a = tmp_path / "a.txt"
     a.write_text("hello a", encoding="utf-8")
-    orbit = Orbit(id="mynb")
+    orbit = Orbit(id="myorbit")
 
     ingested = ingest_sources_for(orbit, [str(a)])
 
@@ -243,7 +243,7 @@ def test_append_sources_skips_already_present_origins(tmp_path):
     a.write_text("hello a", encoding="utf-8")
     b = tmp_path / "b.txt"
     b.write_text("hello b", encoding="utf-8")
-    orbit = Orbit(id="mynb", sources=[_source("s1", str(a))])
+    orbit = Orbit(id="myorbit", sources=[_source("s1", str(a))])
 
     new_sources = append_sources(orbit, ingest_sources_for(orbit, [str(a), str(b)]))
 
@@ -253,7 +253,7 @@ def test_append_sources_skips_already_present_origins(tmp_path):
 
 
 def test_ingest_sources_for_appends_nothing_when_ingestion_fails(tmp_path):
-    orbit = Orbit(id="mynb", sources=[_source("s1", "a.txt")])
+    orbit = Orbit(id="myorbit", sources=[_source("s1", "a.txt")])
     with pytest.raises(OSError):
         ingest_sources_for(orbit, [str(tmp_path / "does-not-exist.txt")])
     assert len(orbit.sources) == 1  # unchanged
@@ -265,11 +265,11 @@ def test_append_sources_renumbers_against_the_orbit_it_is_given(tmp_path):
     `append_sources` renumbers against the orbit it's actually appending to."""
     a = tmp_path / "a.txt"
     a.write_text("hello a", encoding="utf-8")
-    snapshot = Orbit(id="mynb")
+    snapshot = Orbit(id="myorbit")
     ingested = ingest_sources_for(snapshot, [str(a)])
     assert ingested[0].id == "s1"  # numbered against the (empty) snapshot
 
-    fresh = Orbit(id="mynb", sources=[_source("s1", "added-by-someone-else")])
+    fresh = Orbit(id="myorbit", sources=[_source("s1", "added-by-someone-else")])
     appended = append_sources(fresh, ingested)
 
     assert appended[0].id == "s2"
@@ -288,42 +288,42 @@ def test_mutate_orbit_applies_to_a_freshly_loaded_orbit_not_the_callers_snapshot
     an OCR pass); something else writes in the meantime; the handler then persists its own delta.
     Before `mutate_orbit`, saving the snapshot destroyed the concurrent write outright —
     reproduced live over HTTP against a real server, not hypothesised."""
-    save_orbit(Orbit(id="mynb", sources=[_source("s1")]), base_dir=tmp_path)
-    stale = load_orbit("mynb", base_dir=tmp_path)  # what a slow handler is holding
+    save_orbit(Orbit(id="myorbit", sources=[_source("s1")]), base_dir=tmp_path)
+    stale = load_orbit("myorbit", base_dir=tmp_path)  # what a slow handler is holding
 
-    concurrent = load_orbit("mynb", base_dir=tmp_path)
+    concurrent = load_orbit("myorbit", base_dir=tmp_path)
     concurrent.notes.append(Note(id="n1", text="written while the handler was busy"))
     save_orbit(concurrent, base_dir=tmp_path)
 
-    result = mutate_orbit("mynb", lambda nb: nb.turns.append(_turn()), base_dir=tmp_path)
+    result = mutate_orbit("myorbit", lambda orb: orb.turns.append(_turn()), base_dir=tmp_path)
 
     assert [n.id for n in result.notes] == ["n1"]  # the concurrent write survived
     assert len(result.turns) == 1  # and so did this one's own delta
-    assert load_orbit("mynb", base_dir=tmp_path).notes[0].text.startswith("written while")
+    assert load_orbit("myorbit", base_dir=tmp_path).notes[0].text.startswith("written while")
     assert stale.turns == []  # the snapshot was never written back
 
 
 def test_mutate_orbit_writes_nothing_when_the_closure_raises(tmp_path):
-    save_orbit(Orbit(id="mynb", sources=[_source("s1")]), base_dir=tmp_path)
+    save_orbit(Orbit(id="myorbit", sources=[_source("s1")]), base_dir=tmp_path)
 
-    def _explode(nb):
-        nb.turns.append(_turn())  # a mutation that must NOT reach disk
+    def _explode(orb):
+        orb.turns.append(_turn())  # a mutation that must NOT reach disk
         raise ValueError("no such note")
 
     with pytest.raises(ValueError, match="no such note"):
-        mutate_orbit("mynb", _explode, base_dir=tmp_path)
+        mutate_orbit("myorbit", _explode, base_dir=tmp_path)
 
-    assert load_orbit("mynb", base_dir=tmp_path).turns == []
+    assert load_orbit("myorbit", base_dir=tmp_path).turns == []
 
 
 def test_mutate_orbit_raises_file_not_found_without_create(tmp_path):
     with pytest.raises(FileNotFoundError):
-        mutate_orbit("nope", lambda nb: None, base_dir=tmp_path)
+        mutate_orbit("nope", lambda orb: None, base_dir=tmp_path)
 
 
 def test_mutate_orbit_creates_when_asked(tmp_path):
     result = mutate_orbit(
-        "fresh", lambda nb: nb.notes.append(Note(id="n1", text="hi")), base_dir=tmp_path, create=True
+        "fresh", lambda orb: orb.notes.append(Note(id="n1", text="hi")), base_dir=tmp_path, create=True
     )
 
     assert result.id == "fresh"
@@ -335,20 +335,20 @@ def test_mutate_orbit_still_rejects_an_id_that_slugs_to_nothing(tmp_path):
     same way through the locked write path as it does through every unlocked reader. Since the
     non-Latin fix, only a genuinely EMPTY id reduces to nothing — `"!!!"` now hashes."""
     with pytest.raises(ValueError):
-        mutate_orbit("   ", lambda nb: None, base_dir=tmp_path, create=True)
+        mutate_orbit("   ", lambda orb: None, base_dir=tmp_path, create=True)
 
 
 def test_the_orbit_lock_does_not_leave_a_json_file_the_listing_would_pick_up(tmp_path):
-    with orbit_lock("mynb", base_dir=tmp_path):
+    with orbit_lock("myorbit", base_dir=tmp_path):
         pass
     assert list_orbit_summaries(base_dir=tmp_path) == ([], [])
-    assert (tmp_path / ".mynb.json.lock").exists()
+    assert (tmp_path / ".myorbit.json.lock").exists()
 
 
 _HOLDS_THE_LOCK = """
 import sys, time
 from penumbra.orbit import orbit_lock
-with orbit_lock("mynb", base_dir=sys.argv[1]):
+with orbit_lock("myorbit", base_dir=sys.argv[1]):
     open(sys.argv[2], "w").write("held")
     time.sleep(1.0)
 """
@@ -373,7 +373,7 @@ def test_the_orbit_lock_serializes_two_real_processes(tmp_path):
             time.sleep(0.02)
 
         started = time.monotonic()
-        with orbit_lock("mynb", base_dir=tmp_path):
+        with orbit_lock("myorbit", base_dir=tmp_path):
             waited = time.monotonic() - started
     finally:
         child.wait(timeout=10)
@@ -394,7 +394,7 @@ def test_list_orbit_summaries_reports_the_stored_id_not_the_slugged_filename(tmp
     orbits, unreadable = list_orbit_summaries(base_dir=tmp_path)
 
     assert unreadable == []
-    assert [nb.id for nb in orbits] == ["My Orbit!"]
+    assert [orb.id for orb in orbits] == ["My Orbit!"]
 
 
 def test_list_orbit_summaries_flags_a_corrupted_file_without_breaking_the_rest(tmp_path):
@@ -403,7 +403,7 @@ def test_list_orbit_summaries_flags_a_corrupted_file_without_breaking_the_rest(t
 
     orbits, unreadable = list_orbit_summaries(base_dir=tmp_path)
 
-    assert [nb.id for nb in orbits] == ["good"]
+    assert [orb.id for orb in orbits] == ["good"]
     assert unreadable == ["broken"]
 
 
@@ -411,7 +411,7 @@ def test_list_orbit_summaries_flags_a_corrupted_file_without_breaking_the_rest(t
 
 
 def test_add_note_appends_and_numbers_sequentially():
-    orbit = Orbit(id="mynb")
+    orbit = Orbit(id="myorbit")
     n1 = add_note(orbit, "first note")
     n2 = add_note(orbit, "second note")
     assert (n1.id, n1.text) == ("n1", "first note")
@@ -420,14 +420,14 @@ def test_add_note_appends_and_numbers_sequentially():
 
 
 def test_add_note_rejects_blank_text():
-    orbit = Orbit(id="mynb")
+    orbit = Orbit(id="myorbit")
     with pytest.raises(ValueError, match="empty"):
         add_note(orbit, "   ")
     assert orbit.notes == []
 
 
 def test_delete_note_removes_by_id():
-    orbit = Orbit(id="mynb")
+    orbit = Orbit(id="myorbit")
     add_note(orbit, "keep me")
     add_note(orbit, "delete me")
     delete_note(orbit, "n2")
@@ -435,7 +435,7 @@ def test_delete_note_removes_by_id():
 
 
 def test_delete_note_raises_on_unknown_id():
-    orbit = Orbit(id="mynb")
+    orbit = Orbit(id="myorbit")
     add_note(orbit, "a note")
     with pytest.raises(ValueError, match="no note 'does-not-exist'"):
         delete_note(orbit, "does-not-exist")
@@ -443,7 +443,7 @@ def test_delete_note_raises_on_unknown_id():
 
 
 def test_promote_note_turns_it_into_a_source_and_removes_it_from_notes():
-    orbit = Orbit(id="mynb")
+    orbit = Orbit(id="myorbit")
     add_note(orbit, "promote this text")
 
     source = promote_note(orbit, "n1")
@@ -456,7 +456,7 @@ def test_promote_note_turns_it_into_a_source_and_removes_it_from_notes():
 
 
 def test_promote_note_numbers_the_new_source_after_existing_sources():
-    orbit = Orbit(id="mynb", sources=[_source("s1", "a.txt")])
+    orbit = Orbit(id="myorbit", sources=[_source("s1", "a.txt")])
     add_note(orbit, "promote this text")
 
     source = promote_note(orbit, "n1")
@@ -471,7 +471,7 @@ def test_promote_note_dedupes_against_an_identical_existing_source_and_returns_n
     the note is still removed from `notes` either way (promotion is a completed action). Adds a
     SECOND, pre-existing source first so the reused note id (see `add_note`'s own docstring: an id
     can be reused after a delete/promote shrinks `notes`) isn't what this test is actually about."""
-    orbit = Orbit(id="mynb", sources=[_source("s1", "a.txt")])
+    orbit = Orbit(id="myorbit", sources=[_source("s1", "a.txt")])
     add_note(orbit, "duplicate text")
     promote_note(orbit, "n1")  # creates s2
     add_note(orbit, "duplicate text")  # same text again, a new note (id reused: also "n1")
@@ -484,7 +484,7 @@ def test_promote_note_dedupes_against_an_identical_existing_source_and_returns_n
 
 
 def test_promote_note_raises_on_unknown_id():
-    orbit = Orbit(id="mynb")
+    orbit = Orbit(id="myorbit")
     with pytest.raises(ValueError, match="no note 'does-not-exist'"):
         promote_note(orbit, "does-not-exist")
 
@@ -492,7 +492,7 @@ def test_promote_note_raises_on_unknown_id():
 def test_add_note_can_reuse_an_id_once_no_live_note_holds_it():
     """Safe id reuse: deleting the note that WAS `"n2"` frees that id for reuse, since no other
     live note holds it afterward."""
-    orbit = Orbit(id="mynb")
+    orbit = Orbit(id="myorbit")
     add_note(orbit, "first")
     add_note(orbit, "second")  # id "n2"
     delete_note(orbit, "n2")
@@ -506,7 +506,7 @@ def test_add_note_never_collides_with_a_still_live_note_after_deleting_an_earlie
     reuse "n2" — colliding with the note that was still alive under that exact id. Confirms the fix
     (`_next_note_id` deriving from the max id actually in use, not the count) never lets that
     happen, regardless of which note gets deleted."""
-    orbit = Orbit(id="mynb")
+    orbit = Orbit(id="myorbit")
     add_note(orbit, "first")  # n1
     add_note(orbit, "second")  # n2
     delete_note(orbit, "n1")  # n2 is still alive
@@ -519,7 +519,7 @@ def test_add_note_never_collides_with_a_still_live_note_after_deleting_an_earlie
 def test_delete_note_removes_only_the_first_matching_note_by_index():
     """Defense in depth, verified directly: even if two notes somehow shared an id (bypassing
     `add_note`'s own now-collision-free scheme), `delete_note` removes exactly one, not both."""
-    orbit = Orbit(id="mynb")
+    orbit = Orbit(id="myorbit")
     orbit.notes = [Note(id="n2", text="first"), Note(id="n2", text="second")]
     delete_note(orbit, "n2")
     assert [n.text for n in orbit.notes] == ["second"]
@@ -527,7 +527,7 @@ def test_delete_note_removes_only_the_first_matching_note_by_index():
 
 def test_promote_note_promotes_only_the_first_matching_note_by_index():
     """Same defense-in-depth guarantee as `delete_note`, for `promote_note`."""
-    orbit = Orbit(id="mynb")
+    orbit = Orbit(id="myorbit")
     orbit.notes = [Note(id="n2", text="first"), Note(id="n2", text="second")]
     source = promote_note(orbit, "n2")
     assert source.blocks[0].text == "first"
@@ -539,7 +539,7 @@ def test_a_non_latin_id_gets_a_stable_hashed_filename_instead_of_failing(tmp_pat
     '模型要睡覺': … reduces to an empty token`. The whitelist strips every non-Latin character, so
     ANY Chinese/Japanese/Korean/Arabic/emoji-only name reduced to nothing and was rejected as
     malformed — with nothing to suggest the NAME was the problem rather than the request."""
-    assert slug("模型要睡覺").startswith("nb-")
+    assert slug("模型要睡覺").startswith("orbit-")
     assert slug("模型要睡覺") == slug("模型要睡覺")  # deterministic: same name, same file
     assert slug("模型要睡覺") != slug("模型要吃飯")  # and distinct names don't collide
     assert orbit_path("模型要睡覺", base_dir=tmp_path).parent == Path(tmp_path)
@@ -557,7 +557,7 @@ def test_a_non_latin_id_round_trips_through_save_and_load(tmp_path):
 
     orbits, unreadable = list_orbit_summaries(base_dir=tmp_path)
     assert unreadable == []
-    assert [nb.id for nb in orbits] == ["模型要睡覺"]
+    assert [orb.id for orb in orbits] == ["模型要睡覺"]
 
 
 def test_a_hashed_id_is_still_filesystem_safe(tmp_path):
@@ -599,7 +599,7 @@ def test_the_same_visible_name_in_nfc_and_nfd_is_one_orbit():
 
     for name in ["한글", "café", "Việt"]:
         nfc, nfd = unicodedata.normalize("NFC", name), unicodedata.normalize("NFD", name)
-        if slug(nfc).startswith("nb-") or slug(nfd).startswith("nb-"):
+        if slug(nfc).startswith("orbit-") or slug(nfd).startswith("orbit-"):
             assert slug(nfc) == slug(nfd), name
 
 

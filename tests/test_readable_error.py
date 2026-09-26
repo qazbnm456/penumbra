@@ -361,7 +361,7 @@ def test_a_run_that_hit_the_time_limit_is_not_reported_as_a_network_fault():
     precisely so they can act; this kept the knob in the raw text and threw away the diagnosis.
     """
     timed_out, refused_provider, page, source_url = _clean(
-        "502: run 'nb-x-abc' timed out after 300.0s and was cancelled (the wall-clock backstop; "
+        "502: run 'orbit-x-abc' timed out after 300.0s and was cancelled (the wall-clock backstop; "
         "raise PN_RUN_TIMEOUT_SECONDS if the model is simply slow)",
         "502: RLMTaskError: ... caused by APIConnectionError: [Errno 61] Connection refused",
         "Failed to produce a valid 'answer' after 1 attempts — caused by <!doctype html> <html> "

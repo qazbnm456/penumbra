@@ -39,8 +39,8 @@ def test_ask_parses_repeated_sources():
 
 def test_ask_parses_orbit_flag():
     parser = build_parser()
-    args = parser.parse_args(["ask", "a question", "--orbit", "mynb"])
-    assert args.orbit == "mynb"
+    args = parser.parse_args(["ask", "a question", "--orbit", "myorbit"])
+    assert args.orbit == "myorbit"
 
 
 def test_cmd_ask_refuses_with_no_sources_and_no_orbit(capsys):
@@ -55,14 +55,14 @@ def test_cmd_ask_refuses_with_no_sources_and_no_orbit(capsys):
 def test_cmd_ask_reports_a_clear_error_on_a_corrupted_orbit_file(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "orbits").mkdir()
-    (tmp_path / "orbits" / "mynb.json").write_text('{"id": "mynb", "sources": [}', encoding="utf-8")
+    (tmp_path / "orbits" / "myorbit.json").write_text('{"id": "myorbit", "sources": [}', encoding="utf-8")
 
     parser = build_parser()
-    args = parser.parse_args(["ask", "a question", "--orbit", "mynb"])
+    args = parser.parse_args(["ask", "a question", "--orbit", "myorbit"])
 
     assert _cmd_ask(args) == 1
     err = capsys.readouterr().err
-    assert "mynb" in err and "not a valid orbit file" in err
+    assert "myorbit" in err and "not a valid orbit file" in err
 
 
 def test_guide_parses_kind_and_source():
@@ -97,14 +97,14 @@ def test_cmd_guide_refuses_with_no_sources_and_no_orbit(capsys):
 def test_cmd_guide_reports_a_clear_error_on_a_corrupted_orbit_file(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "orbits").mkdir()
-    (tmp_path / "orbits" / "mynb.json").write_text('{"id": "mynb", "sources": [}', encoding="utf-8")
+    (tmp_path / "orbits" / "myorbit.json").write_text('{"id": "myorbit", "sources": [}', encoding="utf-8")
 
     parser = build_parser()
-    args = parser.parse_args(["guide", "summary", "--orbit", "mynb"])
+    args = parser.parse_args(["guide", "summary", "--orbit", "myorbit"])
 
     assert _cmd_guide(args) == 1
     err = capsys.readouterr().err
-    assert "mynb" in err and "not a valid orbit file" in err
+    assert "myorbit" in err and "not a valid orbit file" in err
 
 
 def _corpus_with_page1(source_id: str = "s1") -> Corpus:
@@ -447,17 +447,17 @@ def test_cmd_ask_appends_its_turn_without_destroying_a_concurrent_write(tmp_path
     class _StubTask:
         def run(self, **kwargs):
             # Something else writes to the same orbit while the model is "running".
-            mutate_orbit("mynb", lambda nb: add_note(nb, "written during the run"), create=True)
+            mutate_orbit("myorbit", lambda orb: add_note(orb, "written during the run"), create=True)
             return Answer(text="an answer", citations=[])
 
     monkeypatch.setattr(cli, "AnswerQuestion", _StubTask)
     monkeypatch.setattr(cli, "setup", lambda config: config)
     monkeypatch.setattr(cli.PenumbraConfig, "from_env", classmethod(lambda cls: cls()))
 
-    args = build_parser().parse_args(["ask", "what?", "--source", str(src), "--orbit", "mynb"])
+    args = build_parser().parse_args(["ask", "what?", "--source", str(src), "--orbit", "myorbit"])
     assert _cmd_ask(args) == 0
 
-    saved = load_orbit("mynb")
+    saved = load_orbit("myorbit")
     assert [n.text for n in saved.notes] == ["written during the run"], "the concurrent note was destroyed"
     assert len(saved.turns) == 1, "the ask's own turn was lost"
     assert len(saved.sources) == 1
@@ -479,11 +479,11 @@ def test_prepare_persists_ingestion_before_the_model_runs(tmp_path, monkeypatch,
     monkeypatch.setattr(cli, "setup", lambda config: config)
     monkeypatch.setattr(cli.PenumbraConfig, "from_env", classmethod(lambda cls: cls()))
 
-    args = build_parser().parse_args(["ask", "what?", "--source", str(src), "--orbit", "mynb"])
+    args = build_parser().parse_args(["ask", "what?", "--source", str(src), "--orbit", "myorbit"])
     with pytest.raises(RuntimeError, match="the model run died"):
         _cmd_ask(args)
 
-    saved = load_orbit("mynb")
+    saved = load_orbit("myorbit")
     assert saved is not None, "ingestion was discarded when the run failed"
     assert [s.origin for s in saved.sources] == [str(src)]
     assert saved.turns == []
@@ -514,17 +514,17 @@ def test_prepare_hands_the_model_the_ids_that_were_actually_persisted(tmp_path, 
             id="s1", kind="text", origin="added-by-someone-else",
             blocks=[SourceBlock(locator="whole", text="theirs")],
         )
-        mutate_orbit("mynb", lambda nb: append_sources(nb, [other]), create=True)
+        mutate_orbit("myorbit", lambda orb: append_sources(orb, [other]), create=True)
         return ingested
 
     monkeypatch.setattr(cli, "ingest_sources_for", _ingest_then_someone_else_writes)
 
-    args = build_parser().parse_args(["ask", "q", "--source", str(new_src), "--orbit", "mynb"])
+    args = build_parser().parse_args(["ask", "q", "--source", str(new_src), "--orbit", "myorbit"])
     prepared = cli._prepare(args)
     assert prepared is not None
     orbit, corpus = prepared
 
-    persisted = load_orbit("mynb")
+    persisted = load_orbit("myorbit")
     assert [s.origin for s in persisted.sources] == ["added-by-someone-else", str(new_src)]
     assert [s.id for s in persisted.sources] == ["s1", "s2"]
     # What the model is handed must match what is on disk, id for id — otherwise it cites an id
@@ -545,17 +545,17 @@ def test_cmd_guide_does_not_write_a_second_time(tmp_path, monkeypatch, capsys):
 
     class _StubGuide:
         def run(self, **kwargs):
-            mutate_orbit("mynb", lambda nb: add_note(nb, "written during the guide run"), create=True)
+            mutate_orbit("myorbit", lambda orb: add_note(orb, "written during the guide run"), create=True)
             return Summary(text="a summary", citations=[])
 
     monkeypatch.setitem(cli._GUIDE_TASKS, "summary", _StubGuide)
     monkeypatch.setattr(cli, "setup", lambda config: config)
     monkeypatch.setattr(cli.PenumbraConfig, "from_env", classmethod(lambda cls: cls()))
 
-    args = build_parser().parse_args(["guide", "summary", "--source", str(src), "--orbit", "mynb"])
+    args = build_parser().parse_args(["guide", "summary", "--source", str(src), "--orbit", "myorbit"])
     assert _cmd_guide(args) == 0
 
-    saved = load_orbit("mynb")
+    saved = load_orbit("myorbit")
     assert [n.text for n in saved.notes] == ["written during the guide run"]
 
 
@@ -1002,7 +1002,7 @@ def test_the_access_log_never_carries_the_api_token():
 
     record = logging.LogRecord(
         "uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d', (
-            "127.0.0.1:5000", "GET", "/orbits/nb/runs/r1/stream?token=abc123&x=1", "1.1", 200,
+            "127.0.0.1:5000", "GET", "/orbits/orb/runs/r1/stream?token=abc123&x=1", "1.1", 200,
         ), None,
     )
     assert cli.RedactToken().filter(record) is True
