@@ -9732,7 +9732,9 @@ function paintAskHHint(pairs) {
 
 function askHScopeLabel(scope) {
   if (!scope || scope.kind === "all") return t("askH.everything", "Everything");
-  const base = scope.kind === "tag" ? `#${scope.value}` : scope.value || "";
+  const base = scope.kind === "tag"
+    ? (scope.values || [scope.value]).map((name) => `#${name}`).join(" + ")
+    : scope.value || "";
   if (scope.orbits) {
     const names = scope.orbits.map((key) => orbitLabelForSlug(key) || t("suggest.anOrbit", "an orbit"));
     return `${base} \u00b7 ${names.join(" + ")}`;
@@ -10727,23 +10729,53 @@ function shortLabel(text, max = 18) {
 }
 
 //: Tag lenses: pressing one lights up what carries that tag and dims the rest. One at a time.
-function renderLenses(lensRow, tags, active, onPick) {
+//: Tags are lenses, and several can be on at once: a reader is often curious about more than one
+//: thing. They combine as a union (any of them lights), because a lens answers "show me what is
+//: about this", and adding a second interest should show more, not less. `onToggle(name)` flips one;
+//: `onToggle(null)` clears them all.
+function renderLenses(lensRow, tags, active, onToggle) {
   lensRow.textContent = "";
   tags.slice(0, 12).forEach((tag) => {
     const button = elt("button", "lens", `#${tag.name}`);
     button.type = "button";
     button.appendChild(elt("span", "lens-count", String(tag.count)));
-    button.setAttribute("aria-pressed", tag.name === active ? "true" : "false");
-    button.addEventListener("click", () => onPick(tag.name === active ? null : tag.name));
+    button.setAttribute("aria-pressed", active.has(tag.name) ? "true" : "false");
+    button.addEventListener("click", () => onToggle(tag.name));
     lensRow.appendChild(button);
   });
+  if (active.size) {
+    const clear = elt("button", "lens-clear", t("lens.clear", "Clear"));
+    clear.type = "button";
+    clear.addEventListener("click", () => onToggle(null));
+    lensRow.appendChild(clear);
+  }
   lensRow.hidden = !tags.length;
+}
+
+function toggledLenses(lenses, name) {
+  if (name === null) return new Set();
+  const next = new Set(lenses);
+  if (next.has(name)) next.delete(name);
+  else next.add(name);
+  return next;
+}
+
+//: The ask scope a set of lenses means: one tag, or several read as a union.
+function lensScope(lenses, orbit) {
+  const names = [...lenses];
+  const scope = names.length === 1 ? { kind: "tag", value: names[0] } : { kind: "tag", values: names };
+  if (orbit) scope.orbit = orbit;
+  return scope;
+}
+
+function lensChipId(lenses) {
+  return `tag:${[...lenses].join("\u001f")}`;
 }
 
 // --- the star map ---------------------------------------------------------------------------------
 
 //: `focus` is what the card shows when it is not a planet: the Horizon's unfiled list, or one capture.
-const starMap = { data: null, orbits: [], selected: null, lens: null, generation: 0, focus: null, world: null };
+const starMap = { data: null, orbits: [], selected: null, lenses: new Set(), generation: 0, focus: null, world: null };
 
 const MAP_CENTRE = { x: 500, y: 330 };
 //: Rings grow outward as orbits need them. Orbits are placed by how recently each gained something,
@@ -10808,8 +10840,14 @@ async function renderStarMap() {
 //: The lens row is repainted with every pick, so `aria-pressed` and each button's idea of what
 //: is active stay true and a second press turns the lens off.
 function paintStarMapLenses() {
-  renderLenses(horizonEl("starmap-lenses"), starMap.tags || [], starMap.lens, (name) => {
-    starMap.lens = name;
+  renderLenses(horizonEl("starmap-lenses"), starMap.tags || [], starMap.lenses, (name) => {
+    starMap.lenses = toggledLenses(starMap.lenses, name);
+    // Pressing a tag asks what it lights, so the card answers that: the captures behind it.
+    starMap.selected = null;
+    starMap.focus = starMap.lenses.size ? { kind: "lens" } : null;
+    if (starMap.lenses.size && mapPanelGrip && mapPanelGrip.isCollapsed()) {
+      mapPanelGrip.setCollapsed(false, { persist: false });
+    }
     paintStarMapLenses();
     drawStarMap();
     syncStarMapContext();
@@ -11000,11 +11038,14 @@ function drawStarMap() {
   (topo.bridges || []).forEach((bridge) => {
     if (!planets.some((p) => p.orbit.slug === bridge.a) || !planets.some((p) => p.orbit.slug === bridge.b)) return;
     // Thicker for more shared entities; a wide invisible twin makes the thin line easy to point at.
-    const path = svgEl("path", { d: "M 0 0" }, "map-bridge");
+    // Under a lens a bridge stays lit only between two planets the lens lit.
+    const ends = [bridge.a, bridge.b].map((key) => planets.find((p) => p.orbit.slug === key).orbit);
+    const bridgeDim = ends.some((o) => dimmedByLens(o, starMap.lenses));
+    const path = svgEl("path", { d: "M 0 0" }, `map-bridge${bridgeDim ? " is-dim" : ""}`);
     path.style.strokeWidth = String(1.2 + Math.min(bridge.weight || 1, 5) * 0.45);
     const hit = svgEl("path", { d: "M 0 0", tabindex: 0, role: "button" }, "map-bridge-hit");
     const extra = bridge.weight > 1 ? ` +${bridge.weight - 1}` : "";
-    const label = svgText(0, 0, `${shortLabel(bridge.shared[0], 14)}${extra}`, "map-bridge-label");
+    const label = svgText(0, 0, `${shortLabel(bridge.shared[0], 14)}${extra}`, `map-bridge-label${bridgeDim ? " is-dim" : ""}`);
     const titleA = orbitTitles.get(bridge.a) || bridge.a;
     const titleB = orbitTitles.get(bridge.b) || bridge.b;
     hit.setAttribute("aria-label", t("map.bridgeLabel", `${titleA} and ${titleB} both name ${bridge.shared.join(", ")}`,
@@ -11086,7 +11127,7 @@ function drawStarMap() {
     const item = items[i];
     const x = d * Math.cos(angle);
     const y = d * Math.sin(angle);
-    looseRing.appendChild(svgEl("circle", { cx: x, cy: y, r: 2.2 }, moonClass(item)));
+    looseRing.appendChild(svgEl("circle", { cx: x, cy: y, r: 2.2 }, moonClass(item) + moonLensClass(item, starMap.lenses)));
     if (item && isFocusedMoon(item)) looseRing.appendChild(moonMark(x, y));
     if (item) looseRing.appendChild(moonHit(x, y, { kind: "capture", ...item }));
   }
@@ -11104,7 +11145,7 @@ function drawStarMap() {
 
   planets.forEach((p, index) => {
     const { orbit } = p;
-    const dimmed = dimmedByLens(orbit, starMap.lens);
+    const dimmed = dimmedByLens(orbit, starMap.lenses);
     const group = svgEl("g", { tabindex: 0, role: "button", "aria-label":
       t("map.planetLabel", `${orbit.title}, ${orbit.sources} sources`, { name: orbit.title, n: orbit.sources }) },
     `map-planet${planetMark(orbit.slug)}${dimmed ? " is-dim" : ""}`);
@@ -11124,7 +11165,7 @@ function drawStarMap() {
       const d = p.r + 8 + (i % 2) * 5;
       const x = d * Math.cos(angle);
       const y = d * Math.sin(angle);
-      moonRing.appendChild(svgEl("circle", { cx: x, cy: y, r: 2.2 }, moonClass(item)));
+      moonRing.appendChild(svgEl("circle", { cx: x, cy: y, r: 2.2 }, moonClass(item) + moonLensClass(item, starMap.lenses)));
       if (isFocusedMoon(item)) moonRing.appendChild(moonMark(x, y));
       moonRing.appendChild(moonHit(x, y, { ...item, orbit: orbit.slug }));
     });
@@ -11208,10 +11249,18 @@ function starMapOrbit(o, topo) {
   };
 }
 
-//: A tag lens dims the planets none of whose captures carry the tag, matched against every tag the
-//: orbit holds, not only the few it shows.
-function dimmedByLens(planet, lens) {
-  return Boolean(lens) && !(planet.allTags || []).includes(lens);
+//: Lenses dim the planets none of whose captures carry any of the tags, matched against every tag
+//: the orbit holds, not only the few it shows.
+function dimmedByLens(planet, lenses) {
+  return lenses.size > 0 && !(planet.allTags || []).some((tag) => lenses.has(tag));
+}
+
+//: The same question one level down: which moon lit the planet. A moon carrying a lensed tag is
+//: marked, every other moon fades, so the reader sees which capture the tag came from.
+function moonLensClass(item, lenses) {
+  if (!lenses.size) return "";
+  if (item && item.kind !== "local" && (item.tags || []).some((tag) => lenses.has(tag))) return " is-lensed";
+  return " is-faded";
 }
 
 async function enterOrbit(orbit) {
@@ -11225,7 +11274,7 @@ function syncStarMapContext({ follow = true } = {}) {
   const chips = [];
   const orbit = starMap.orbits.find((o) => o.slug === starMap.selected);
   if (orbit) chips.push({ id: `orbit:${orbit.slug}`, orbit: { id: orbit.id, slug: orbit.slug, title: orbit.title } });
-  if (starMap.lens) chips.push({ id: `tag:${starMap.lens}`, scope: { kind: "tag", value: starMap.lens } });
+  if (starMap.lenses.size) chips.push({ id: lensChipId(starMap.lenses), scope: lensScope(starMap.lenses) });
   setAskContext(chips, { follow });
 }
 
@@ -11560,7 +11609,8 @@ function openMapFocus(focus) {
 
 function closeMapFocus() {
   starMap.selected = null;
-  starMap.focus = null;
+  // Closing a capture opened from the lens card goes back to that card while the lenses are on.
+  starMap.focus = starMap.lenses.size ? { kind: "lens" } : null;
   drawStarMap();
   syncStarMapContext();
   cameraHome();
@@ -11898,6 +11948,104 @@ function renderBridgeCard(card, focus) {
   })();
 }
 
+//: What the lenses light, answered without opening anything: every capture carrying one of the
+//: tags, with its summary, which of the tags it carries and the orbits it is in. This is the point
+//: of the product: the reader sees why a planet lit, and what each capture says, at a glance.
+function renderLensCard(card) {
+  const close = elt("button", "card-close", "×");
+  close.type = "button";
+  close.setAttribute("aria-label", t("lens.clearAll", "Clear the tags"));
+  close.title = t("lens.clearAll", "Clear the tags");
+  close.addEventListener("click", () => {
+    starMap.lenses = new Set();
+    starMap.focus = null;
+    paintStarMapLenses();
+    drawStarMap();
+    syncStarMapContext();
+  });
+  card.appendChild(close);
+  const names = [...starMap.lenses];
+  card.appendChild(elt("p", "card-kicker", names.length > 1
+    ? t("lens.kickerMany", "What these tags light")
+    : t("lens.kickerOne", "What this tag lights")));
+  const heading = elt("div", "lens-heading");
+  names.forEach((name) => {
+    const chip = elt("button", "lens-chosen", `#${name}`);
+    chip.type = "button";
+    chip.setAttribute("aria-label", t("lens.remove", `Remove #${name}`, { name }));
+    chip.appendChild(elt("span", "lens-chosen-x", "×"));
+    chip.addEventListener("click", () => {
+      starMap.lenses = toggledLenses(starMap.lenses, name);
+      starMap.focus = starMap.lenses.size ? { kind: "lens" } : null;
+      paintStarMapLenses();
+      drawStarMap();
+      syncStarMapContext();
+    });
+    heading.appendChild(chip);
+  });
+  card.appendChild(heading);
+  const detail = elt("div", "card-detail");
+  detail.appendChild(elt("p", "card-note", t("map.loading", "Loading\u2026")));
+  card.appendChild(detail);
+  const token = (renderLensCard.token = (renderLensCard.token || 0) + 1);
+  void (async () => {
+    let got;
+    try {
+      got = await api(`/horizon/lens?${names.map((n) => `tag=${encodeURIComponent(n)}`).join("&")}`);
+    } catch (err) {
+      if (token === renderLensCard.token) detail.replaceChildren(elt("p", "card-note", readableError(err.message)));
+      return;
+    }
+    if (token !== renderLensCard.token || !detail.isConnected) return;
+    detail.textContent = "";
+    detail.appendChild(elt("p", "card-meta", names.length > 1
+      ? t("lens.countMany", `${got.total} captures carry at least one of them`, { n: got.total })
+      : t("lens.countOne", `${got.total} captures carry it`, { n: got.total })));
+    const list = elt("ul", "lens-list");
+    (got.captures || []).forEach((item) => {
+      const row = elt("li", "lens-item");
+      const title = elt("button", "lens-item-title", item.title);
+      title.type = "button";
+      title.addEventListener("click", () => openMapFocus({
+        kind: "capture", id: item.id, title: item.title, state: item.state, orbit: item.orbits[0] || null,
+      }));
+      row.appendChild(title);
+      row.appendChild(elt("p", "lens-item-summary", item.summary
+        || t("lens.noSummary", "Not summarised yet, so only its tags are known.")));
+      const meta = elt("div", "lens-item-meta");
+      if (names.length > 1) item.matched.forEach((name) => meta.appendChild(elt("span", "lens-item-tag", `#${name}`)));
+      item.orbits.forEach((key) => meta.appendChild(elt("span", "lens-item-orbit",
+        orbitTitles.get(key) || t("suggest.anOrbit", "an orbit"))));
+      if (!item.orbits.length) meta.appendChild(elt("span", "lens-item-orbit is-loose", t("lens.loose", "Not in an orbit")));
+      row.appendChild(meta);
+      list.appendChild(row);
+    });
+    detail.appendChild(list);
+    if (got.total > (got.captures || []).length) {
+      detail.appendChild(elt("p", "card-note", t("lens.more", `And ${got.total - got.captures.length} more.`,
+        { n: got.total - got.captures.length })));
+    }
+    if (got.total) {
+      const ask = elt("button", "btn btn-primary card-enter", names.length > 1
+        ? t("lens.askMany", "Ask about everything these tags light")
+        : t("lens.askOne", "Ask about everything this tag lights"));
+      ask.type = "button";
+      ask.addEventListener("click", () => {
+        askH.custom = { id: "custom", scope: lensScope(starMap.lenses) };
+        askH.chips = askH.chips.filter((chip) => chip.id !== "custom");
+        askH.chips.push(askH.custom);
+        askH.chosen = "custom";
+        renderAskHChips();
+        dismissAskHPlan();
+        syncAskHComposer();
+        openDock();
+        horizonEl("ask-h-input").focus();
+      });
+      detail.appendChild(ask);
+    }
+  })();
+}
+
 //: Sets the dock to the entity across both orbits, writes the question, and opens it. Nothing is
 //: spent: Enter still previews what it would read, free, first (invariant 47).
 function askAcrossBridge(focus, name, titleA, titleB) {
@@ -12013,6 +12161,11 @@ function paintStarMapCard(mapCard) {
   }
   if (starMap.focus && starMap.focus.kind === "capture") {
     renderCaptureCard(mapCard, starMap.focus);
+    mapCard.hidden = false;
+    return;
+  }
+  if (starMap.focus && starMap.focus.kind === "lens" && starMap.lenses.size) {
+    renderLensCard(mapCard);
     mapCard.hidden = false;
     return;
   }
@@ -12368,7 +12521,7 @@ function initSuggestions() {
 
 // --- the knowledge graph --------------------------------------------------------------------------
 
-const graphState = { data: null, slug: null, selected: null, lens: null, generation: 0, layout: null };
+const graphState = { data: null, slug: null, selected: null, lenses: new Set(), generation: 0, layout: null };
 
 async function renderGraph() {
   const slug = state.orbitSlug || state.orbitId;
@@ -12385,7 +12538,7 @@ async function renderGraph() {
   if (generation !== graphState.generation) return;
   if (graphState.slug !== slug) {
     graphState.selected = null;
-    graphState.lens = null;
+    graphState.lenses = new Set();
   }
   const sameOrbit = graphState.slug === slug;
   graphState.slug = slug;
@@ -12399,8 +12552,8 @@ async function renderGraph() {
 
 function paintGraphLenses() {
   const data = graphState.data || { tags: [] };
-  renderLenses(horizonEl("graph-lenses"), data.tags || [], graphState.lens, (name) => {
-    graphState.lens = name;
+  renderLenses(horizonEl("graph-lenses"), data.tags || [], graphState.lenses, (name) => {
+    graphState.lenses = toggledLenses(graphState.lenses, name);
     graphState.selected = null;
     paintGraphLenses();
     drawGraph();
@@ -12534,16 +12687,16 @@ function drawGraph() {
   if (!data || !layout) return;
   svg.setAttribute("viewBox", `${layout.box.x} ${layout.box.y} ${layout.box.w} ${layout.box.h}`);
   const count = new Map(data.entities.map((e) => [e.name, e.count]));
-  const lens = graphState.lens;
+  const lenses = graphState.lenses;
   const selected = graphState.selected;
 
   // What is lit: a lens lights its captures and every entity they name; an entity lights itself and
   // the captures that name it.
   const litCaptures = new Set();
   const litEntities = new Set();
-  if (lens) {
+  if (lenses.size) {
     layout.captures.forEach((c) => {
-      if (c.tags.includes(lens)) {
+      if (c.tags.some((tag) => lenses.has(tag))) {
         litCaptures.add(c.node_id);
         c.entities.forEach((n) => litEntities.add(n));
       }
@@ -12554,7 +12707,7 @@ function drawGraph() {
       if (c.entities.includes(selected)) litCaptures.add(c.node_id);
     });
   }
-  const focus = Boolean(lens || selected);
+  const focus = Boolean(lenses.size || selected);
 
   const edgeLayer = svgEl("g", {}, "graph-edges");
   layout.captures.forEach((c) => {
@@ -12569,7 +12722,7 @@ function drawGraph() {
   layout.edges.forEach((e) => {
     const a = layout.pos.get(e.a);
     const b = layout.pos.get(e.b);
-    const lit = lens ? litEntities.has(e.a) && litEntities.has(e.b) : e.a === selected || e.b === selected;
+    const lit = lenses.size ? litEntities.has(e.a) && litEntities.has(e.b) : e.a === selected || e.b === selected;
     const line = svgEl("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y },
       `graph-edge${lit ? " is-lit" : ""}${focus && !lit ? " is-dim" : ""}`);
     line.style.strokeWidth = String(1 + Math.min(e.weight, 5) * 1.1);
@@ -12610,7 +12763,7 @@ function drawGraph() {
     group.dataset.key = `entity:${entity.name}`;
     const pick = () => {
       graphState.selected = graphState.selected === entity.name ? null : entity.name;
-      graphState.lens = null;
+      graphState.lenses = new Set();
       paintGraphLenses();
       drawGraph();
     };
@@ -12660,9 +12813,9 @@ function renderGraphPanel(litCaptures) {
   let heading;
   let near = [];
   let items;
-  if (graphState.lens) {
-    kicker = t("graph.tag", "Tag");
-    heading = `#${graphState.lens}`;
+  if (graphState.lenses.size) {
+    kicker = graphState.lenses.size > 1 ? t("graph.tags", "Tags") : t("graph.tag", "Tag");
+    heading = [...graphState.lenses].map((name) => `#${name}`).join(" + ");
     items = layout.captures.filter((c) => litCaptures.has(c.node_id));
     near = [...new Set(items.flatMap((c) => c.entities))];
   } else if (graphState.selected) {
@@ -12711,17 +12864,17 @@ function renderGraphPanel(litCaptures) {
     panel.appendChild(merged);
   }
   panel.appendChild(elt("p", "card-meta", t("graph.inCaptures", `${items.length} captures`, { n: items.length })));
-  if ((data.similar || []).length && !graphState.lens && !graphState.selected) {
+  if ((data.similar || []).length && !graphState.lenses.size && !graphState.selected) {
     panel.appendChild(elt("p", "card-note", t("graph.similarNote",
       "Dashed lines join captures with similar content, compared on this computer. Hollow squares are not summarised yet.")));
   }
   const left = (data.omitted && data.omitted.entities) || 0;
-  if (left && !graphState.lens && !graphState.selected) {
+  if (left && !graphState.lenses.size && !graphState.selected) {
     panel.appendChild(elt("p", "card-note", t("graph.omitted",
       `${left} less-named entities are not drawn.`, { n: left })));
   }
   if (near.length) {
-    panel.appendChild(elt("p", "card-kicker", graphState.lens || !graphState.selected
+    panel.appendChild(elt("p", "card-kicker", graphState.lenses.size || !graphState.selected
       ? t("graph.entitiesHere", "Entities here")
       : t("graph.together", "Often named together")));
     const chips = elt("div", "card-chips");
@@ -12731,7 +12884,7 @@ function renderGraphPanel(litCaptures) {
       chip.dataset.key = `chip:${name}`;
       chip.addEventListener("click", () => {
         graphState.selected = name;
-        graphState.lens = null;
+        graphState.lenses = new Set();
         paintGraphLenses();
         drawGraph();
       });
@@ -12747,7 +12900,7 @@ function renderGraphPanel(litCaptures) {
     list.appendChild(row);
   });
   panel.appendChild(list);
-  if (graphState.selected || graphState.lens) {
+  if (graphState.selected || graphState.lenses.size) {
     const ask = elt("button", "btn btn-primary graph-ask", t("graph.ask", "Ask about this"));
     ask.type = "button";
     ask.addEventListener("click", openDock);
@@ -12776,8 +12929,8 @@ function syncGraphContext() {
   }
   if (graphState.selected) {
     chips.push({ id: `entity:${graphState.selected}`, scope: { kind: "entity", value: graphState.selected, orbit: slug } });
-  } else if (graphState.lens) {
-    chips.push({ id: `tag:${graphState.lens}`, scope: { kind: "tag", value: graphState.lens, orbit: slug } });
+  } else if (graphState.lenses.size) {
+    chips.push({ id: lensChipId(graphState.lenses), scope: lensScope(graphState.lenses, slug) });
   }
   setAskContext(chips, { follow: graphState.follow !== false });
 }

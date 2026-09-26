@@ -242,6 +242,10 @@ def search(query: str, *, limit: int = 200, base_dir: str | Path = DEFAULT_HORIZ
 #: orbit, where the answer joins its conversation.
 SCOPE_KINDS = ("all", "tag", "entity")
 
+#: Joins several tags into one tag scope's value: a lens of more than one tag asks over the captures
+#: carrying any of them. The unit separator, because a tag is free text and may hold a comma.
+TAG_SEPARATOR = "\x1f"
+
 #: The longest tag or entity a scope may name. `concepts` offers nothing longer, so the picker never
 #: shows a choice the API would refuse.
 SCOPE_VALUE_MAX = 200
@@ -301,7 +305,8 @@ def _scope_clause(
         # CASE, not `json_valid(...) AND EXISTS(...)`: SQLite does not promise to short-circuit
         # AND, and `json_each` over a malformed column raises instead of matching nothing.
         # An entity scope matches every name alignment folded into it (`concepts.py`).
-        names = aliases_store.names_for(value, base_dir=base_dir) if kind == "entity" else [value]
+        names = (aliases_store.names_for(value, base_dir=base_dir) if kind == "entity"
+                 else [name for name in value.split(TAG_SEPARATOR) if name])
         marks = ", ".join("?" for _ in names)
         sql += (f" AND CASE WHEN json_valid(nodes.{column}) THEN EXISTS "
                 f"(SELECT 1 FROM json_each(nodes.{column}) WHERE json_each.value IN ({marks})) "
@@ -458,3 +463,45 @@ def concepts(*, limit: int = 60, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> 
     ranked = sorted(merged.items(), key=lambda r: (-r[1], r[0]))
     out["entities"] = [{"name": n, "count": c} for n, c in ranked]
     return out
+
+
+def lens(tags: list[str], *, limit: int = 40, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
+    """The captures carrying any of `tags`, newest first, with what the map's lens card shows for
+    each: its title, its summary, which of the tags it carries and the orbits it is in. Read from the
+    index alone, no blocks (invariant 78), and bounded by `limit`; `total` is the full count."""
+    names = [name for name in dict.fromkeys(tags) if name]
+    if not names:
+        return {"captures": [], "total": 0}
+    marks = ", ".join("?" for _ in names)
+    where = (f"CASE WHEN json_valid(nodes.tags) THEN EXISTS (SELECT 1 FROM json_each(nodes.tags) "
+             f"WHERE json_each.value IN ({marks})) ELSE 0 END")
+    with horizon._connect(base_dir) as conn:
+        total = conn.execute(f"SELECT COUNT(*) FROM nodes WHERE {where}", names).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT id, title, origin, preview, summary, tags, state, created_at FROM nodes "
+            f"WHERE {where} ORDER BY created_at DESC, id ASC LIMIT ?",
+            [*names, limit],
+        ).fetchall()
+        ids = [row["id"] for row in rows]
+        filed: dict[str, list[str]] = {node_id: [] for node_id in ids}
+        if ids:
+            id_marks = ", ".join("?" for _ in ids)
+            for m in conn.execute(
+                f"SELECT node_id, orbit_id FROM memberships WHERE node_id IN ({id_marks}) "
+                "ORDER BY promoted_at", ids,
+            ):
+                filed[m["node_id"]].append(m["orbit_id"])
+    wanted = set(names)
+    captures = []
+    for row in rows:
+        try:
+            carried = [t for t in json.loads(row["tags"] or "[]") if isinstance(t, str)]
+        except ValueError:
+            carried = []
+        captures.append({
+            "id": row["id"], "title": _label(row), "summary": row["summary"] or "",
+            "matched": [t for t in carried if t in wanted], "tags": carried,
+            "state": row["state"], "created_at": row["created_at"], "orbits": filed[row["id"]],
+        })
+    return {"captures": captures, "total": total}
+

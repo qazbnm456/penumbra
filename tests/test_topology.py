@@ -144,7 +144,7 @@ def test_each_drawn_moon_and_loose_dot_carries_a_name_newest_first():
     (orbit,) = found["orbits"]
     assert [m["title"] for m in orbit["moons"]] == ["Newer", "Older"]
     assert orbit["moons"][0] == {
-        "id": second, "title": "Newer", "state": "ready_undistilled", "orbits": ["sleep"],
+        "id": second, "title": "Newer", "state": "ready_undistilled", "orbits": ["sleep"], "tags": [],
     }
     assert [i["title"] for i in found["loose"]["items"]] == ["Loose one"]
 

@@ -971,3 +971,6 @@ def test_a_tag_lens_lights_an_orbit_whose_tag_is_outside_its_top_few():
     assert result["heldTagLit"], "the planet holding the tag was dimmed by its lens"
     assert result["otherTagDim"] and result["emptyOrbitDim"], "a lens must still dim what lacks the tag"
     assert result["noLensLit"] and result["displayStillCapped"]
+    assert result["unionLit"], "several lenses combine as a union: any of them lights the planet"
+    assert result["moonLit"] == " is-lensed" and result["moonFaded"] == " is-faded"
+    assert result["localFaded"] == " is-faded" and result["moonPlain"] == ""
