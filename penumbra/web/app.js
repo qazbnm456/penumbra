@@ -1012,7 +1012,7 @@ function closeSourceViewer() {
 function reflowPdfLines(text) {
   const cjk = /[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/;
   const listStart = /^\s*(?:[•·▪◦‣\-*–]|\d+[.)]|[a-z][.)]\s)/;
-  const blank = /[ \t\u00a0]/;
+  const blank = /[\u0020\u0009\u00a0]/; // space, tab, no-break space
   const out = text.split("");
   for (let i = 0; i < text.length; i += 1) {
     if (text[i] !== "\n") continue;
