@@ -1003,28 +1003,69 @@ function closeSourceViewer() {
 // Highlights AT MOST one quote inside one block's text — deliberately simpler than
 // renderAnswerWithCitations's multi-citation overlap handling, since a source block only ever
 // needs one highlight per viewer open.
-function renderTextWithOptionalHighlight(text, quote) {
+//: A PDF's text layer breaks every printed line, and shown as it is that wraps twice: at the
+//: viewer's width and again at the page's, so a sentence ends with one word on a line of its own.
+//: A break inside a sentence is joined back; a blank line, a list item or a line after a sentence
+//: ends stays. Each break becomes exactly one character (a space, or a zero-width space between two
+//: CJK characters, which join without one), so offsets in the reflowed text are the offsets in the
+//: original and a quote found in one highlights the same words in the other.
+function reflowPdfLines(text) {
+  const cjk = /[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/;
+  const listStart = /^\s*(?:[•·▪◦‣\-*–]|\d+[.)]|[a-z][.)]\s)/;
+  const blank = /[ \t\u00a0]/;
+  const out = text.split("");
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== "\n") continue;
+    // A Windows line end is `\r\n`; the `\r` shows as nothing either way.
+    const end = text[i - 1] === "\r" ? i - 1 : i;
+    if (end !== i) out[end] = "\u200b";
+    const after = text[i + 1] === "\r" ? i + 2 : i + 1;
+    if (text[end - 1] === "\n" || text[after] === "\n" || end === 0 || i === text.length - 1) {
+      if (end !== i) out[end] = "\r";
+      continue;
+    }
+    const before = text.slice(0, end).trimEnd();
+    const prev = before.slice(-1);
+    const rest = text.slice(i + 1);
+    if (listStart.test(rest)) {
+      if (end !== i) out[end] = "\r";
+      continue;
+    }
+    const next = rest.trimStart().charAt(0);
+    if (/[.!?:;\u3002\uff01\uff1f\uff1a\uff1b]/.test(prev) && (/[A-Z]/.test(next) || cjk.test(next))) {
+      if (end !== i) out[end] = "\r";
+      continue;
+    }
+    // A line that already ends (or the next begins) with a space needs no second one.
+    const spaced = blank.test(text[end - 1] || "") || blank.test(text[i + 1] || "");
+    out[i] = spaced || (cjk.test(prev) && cjk.test(next)) ? "\u200b" : " ";
+  }
+  return out.join("");
+}
+
+function renderTextWithOptionalHighlight(text, quote, locator = "") {
   const container = document.createElement("div");
   container.className = "source-block-text";
+  const shown = String(locator).startsWith("page:") ? reflowPdfLines(text) : text;
   if (!quote) {
-    container.textContent = text;
+    container.textContent = shown;
     return container;
   }
   const at = text.indexOf(quote);
   if (at === -1) {
-    container.textContent = text;
+    container.textContent = shown;
     return container;
   }
-  container.appendChild(document.createTextNode(text.slice(0, at)));
+  container.appendChild(document.createTextNode(shown.slice(0, at)));
   //: `source-quote`, NOT `citation`: a stroke in an answer rests UNMARKED (just its number) and
   //: washes on hover, and this span borrowed that class — so the one thing the reader opened the
   //: source to find, the cited words, was invisible unless the pointer happened to rest on them.
   //: The product's verification loop is "open the citation, see the passage highlighted".
   const mark = document.createElement("mark");
   mark.className = "source-quote";
-  mark.textContent = text.slice(at, at + quote.length);
+  mark.textContent = shown.slice(at, at + quote.length);
   container.appendChild(mark);
-  container.appendChild(document.createTextNode(text.slice(at + quote.length)));
+  container.appendChild(document.createTextNode(shown.slice(at + quote.length)));
   return container;
 }
 
@@ -1237,7 +1278,7 @@ async function showSourceViewer(sourceId, locator, quote) {
       label.textContent = block.locator;
       section.appendChild(label);
       const matches = locator && block.locator === locator;
-      section.appendChild(renderTextWithOptionalHighlight(block.text, matches ? quote : null));
+      section.appendChild(renderTextWithOptionalHighlight(block.text, matches ? quote : null, block.locator));
       body.appendChild(section);
       if (matches) targetSection = section;
     });
@@ -6806,7 +6847,7 @@ function renderReferenceView() {
         // meta and then nothing at all — the reader gets an empty box for the citation they most
         // wanted to inspect. Fall back to the whole source and let the quote highlight find itself.
         (blocks.length ? blocks : data.blocks || []).forEach((block) => {
-          passage.appendChild(renderTextWithOptionalHighlight(block.text, target));
+          passage.appendChild(renderTextWithOptionalHighlight(block.text, target, block.locator));
         });
         //: Bring the cited words into view INSIDE the passage, which scrolls on its own (24rem):
         //: a quote deep in a long page sat below its fold...
@@ -8543,7 +8584,7 @@ async function showNodeReader(node) {
     (got.source.blocks || []).forEach((block) => {
       const section = elt("div", "source-block");
       section.appendChild(elt("div", "source-block-locator", block.locator));
-      section.appendChild(renderTextWithOptionalHighlight(block.text, null));
+      section.appendChild(renderTextWithOptionalHighlight(block.text, null, block.locator));
       body.appendChild(section);
     });
   } catch (err) {

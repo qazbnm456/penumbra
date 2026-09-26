@@ -981,3 +981,17 @@ def test_dragging_a_graph_node_pulls_its_neighbours_by_distance_in_links():
     assert result["B"] == 0.6 and result["E"] == 0.6, "one link away follows most"
     assert result["C"] == 0.3, "two links away follows less"
     assert not result["D"] and not result["A"], "further nodes, and the dragged one, are not pulled"
+
+
+def test_a_pdf_pages_printed_line_breaks_are_joined_inside_sentences_only():
+    result = _run("pdfReflow")
+    out = result["out"]
+    assert "even commercially." in out, "a break mid-sentence joins with a space"
+    assert "space \u200bnext" in out, "a line already ending in a space gets no second one"
+    assert "Page 2\u200b License" in out, "a Windows line end joins with one visible space"
+    assert "commercially.\n• Adapt" in out, "a list item keeps its line"
+    assert "The end.\nUnder" in out, "a line after a sentence ends keeps its break"
+    assert "terms\n\nNext" in out, "a blank line is a paragraph"
+    assert "中文斷\u200b行" in out, "CJK joins without a visible space"
+    assert result["sameLength"], "offsets must not move, or a quote would highlight the wrong words"
+
