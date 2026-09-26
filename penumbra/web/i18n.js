@@ -92,7 +92,6 @@ const STRINGS = {
     "graph.tags": "標籤",
     "graph.zoomHome": "回到整張圖",
     "map.rest": "休眠：讓星圖當動態桌布",
-    "rest.hint": "移動滑鼠或按任意鍵回來",
     "settings.rest": "閒置時讓星圖休眠",
     "settings.restOff": "不要",
     "settings.restMinutes": "{n} 分鐘後",

@@ -11564,7 +11564,7 @@ function initSkyWeather() {
 // something is running, because resting hides the Stop that run's reader may need (invariant 47);
 // the Rest button can still start it. With reduced motion it is a still sky and a clock.
 
-const ambient = { on: false, lastInput: Date.now(), tour: 0, clock: 0, enteredAt: null, still: 0, since: 0, full: null };
+const ambient = { on: false, lastInput: Date.now(), tour: 0, enteredAt: null, still: 0, since: 0, full: null };
 
 //: The one kind of request the workspace may make of the desktop shell: its own window's frame
 //: (capabilities/workspace-drag.json). In a browser there is no shell and this returns null.
@@ -11607,13 +11607,6 @@ function somethingRunning() {
   return activeRuns.size > 0 || Boolean(distil) || document.querySelector(".intake-strip:not([hidden])") !== null;
 }
 
-function paintAmbientClock() {
-  const box = document.getElementById("ambient-clock");
-  if (!box) return;
-  const now = new Date();
-  box.querySelector(".ambient-time").textContent = now.toLocaleTimeString(uiLang(), { hour: "2-digit", minute: "2-digit", hour12: false });
-  box.querySelector(".ambient-date").textContent = now.toLocaleDateString(uiLang(), { month: "long", day: "numeric", weekday: "long" });
-}
 
 function ambientTourStep() {
   if (!ambient.on || !motionAllowed()) return;
@@ -11634,16 +11627,8 @@ function enterAmbient({ fromPress = false } = {}) {
   ambient.since = Date.now();
   restFillScreen(fromPress);
   closeMapFocus();
+  // Only the sky: no clock, no hint, no label. Coming back needs no instruction.
   document.body.classList.add("is-ambient");
-  const clock = elt("div", "ambient-clock");
-  clock.id = "ambient-clock";
-  clock.setAttribute("aria-hidden", "true");
-  clock.appendChild(elt("div", "ambient-time", ""));
-  clock.appendChild(elt("div", "ambient-date", ""));
-  clock.appendChild(elt("div", "ambient-hint", t("rest.hint", "Move the pointer or press a key to come back")));
-  document.body.appendChild(clock);
-  paintAmbientClock();
-  ambient.clock = setInterval(paintAmbientClock, 15000);
   ambient.still = setTimeout(() => document.body.classList.add("is-ambient-still"), 3000);
   clearTimeout(skyWeather.timer);
   skyWeather.timer = setTimeout(skyTick, 1500);
@@ -11654,10 +11639,8 @@ function exitAmbient() {
   if (!ambient.on) return;
   ambient.on = false;
   clearTimeout(ambient.tour);
-  clearInterval(ambient.clock);
   clearTimeout(ambient.still);
   document.body.classList.remove("is-ambient", "is-ambient-still");
-  document.getElementById("ambient-clock")?.remove();
   restLeaveScreen();
   cameraHome();
 }
@@ -11666,19 +11649,15 @@ function initAmbient() {
   const woke = (event) => {
     ambient.lastInput = Date.now();
     if (!ambient.on) return;
-    // The window growing to the screen moves the pointer within it; that is not someone coming back.
-    if (event.type === "pointermove" && Date.now() - ambient.since < 1500) {
+    // The window growing to the screen moves the pointer within it for a moment; that is not
+    // someone coming back. Anything after that, even a small nudge, is: resting that took a
+    // determined push to leave felt stuck.
+    if (event.type === "pointermove" && Date.now() - ambient.since < 600) {
       ambient.enteredAt = { x: event.clientX, y: event.clientY };
       return;
     }
-    // A pointer that drifts a pixel or two is not someone coming back.
-    if (event.type === "pointermove") {
-      if (!ambient.enteredAt) {
-        ambient.enteredAt = { x: event.clientX, y: event.clientY };
-        return;
-      }
-      if (Math.hypot(event.clientX - ambient.enteredAt.x, event.clientY - ambient.enteredAt.y) < 12) return;
-    }
+    if (event.type === "pointermove" && ambient.enteredAt
+      && Math.hypot(event.clientX - ambient.enteredAt.x, event.clientY - ambient.enteredAt.y) < 3) return;
     event.preventDefault?.();
     exitAmbient();
   };
