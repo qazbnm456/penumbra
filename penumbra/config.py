@@ -646,10 +646,16 @@ _SETTING_PATTERNS = {
     #: here rather than leaving to be re-asked: this looks like a spend lever, and spend levers are
     #: exactly what that invariant keeps off this page. It is not one. `POST /horizon/distil` is
     #: already a spend endpoint any token holder can call, so the toggle changes WHEN calls happen,
-    #: not whether a token holder can cause them. The BOUND stays off the page —
-    #: `PN_AUTO_DISTIL_MAX_PER_BATCH` is environment-only, the same placement invariant 41 gives
-    #: trace retention and the upload cap.
+    #: not whether a token holder can cause them. The batch size sits beside it (`distil_batch`),
+    #: capped at what that endpoint already accepts.
     "auto_distil": _TOGGLE_PATTERN,
+    #: Whether the automatic pass also summarises long captures (`auto_distil_long`), each an RLM run
+    #: of several calls that holds the intake worker meanwhile. Off by default; worth turning on for a
+    #: fast or local model.
+    "auto_distil_long": _TOGGLE_PATTERN,
+    #: How many captures one summary pass takes, automatic or pressed (`distil_batch_size`), at most
+    #: `DISTIL_BATCH_MAX`.
+    "distil_batch": re.compile(r"^(?:[1-9][0-9]?|[1-4][0-9]{2}|500)$"),
     #: How a capture that is in no orbit gets filed (`filing_mode`): `manual` leaves it in the
     #: Horizon for the reader, `auto` accepts the filing suggestion as soon as there is one, and
     #: `assign` files everything into `landing_orbit`. A BEHAVIOUR preference (invariant 41): it
@@ -729,7 +735,7 @@ def auto_distil_enabled(base_dir: str | Path = _DEFAULT_ORBITS_DIR) -> bool:
     **Default OFF, and that default is the invariant.** BYOK means every summary is the reader's
     money, and the interface's whole message is "just throw everything in" — so a 200-bookmark
     import must cost nothing until somebody says otherwise. Turning it on is an explicit, persisted
-    act; `auto_distil_max_per_batch` is what bounds it once it is on.
+    act; `distil_batch_size` is what bounds each pass once it is on.
 
     Same env-over-file ladder as every other setting, and an unparseable value reads as OFF rather
     than raising: this is consulted after a capture has already succeeded, and refusing to finish
@@ -765,18 +771,38 @@ def filing_mode(base_dir: str | Path = _DEFAULT_ORBITS_DIR) -> tuple[str, str | 
     return mode, target if mode == "assign" else None
 
 
-def auto_distil_max_per_batch() -> int:
-    """How many nodes the AUTO path may summarise in one sweep. Environment-only, deliberately.
+#: The most one summary pass may take: the same ceiling `POST /horizon/distil` already accepts from
+#: any token holder, so a batch size on the settings page grants nothing that endpoint did not.
+DISTIL_BATCH_MAX = 500
+_DISTIL_BATCH_DEFAULT = 20
 
-    Invariant 41's placement rule: the behaviour toggle may live on the settings page, the BOUND may
-    not. This is the number that keeps a flipped toggle from turning one dropped folder into an
-    unbounded bill, so it sits where `PN_TRACE_RETENTION_DAYS` and `PN_MAX_UPLOAD_BYTES` sit.
 
-    Read standalone rather than as a `PenumbraConfig` field, for invariant 30's reason: it is
-    consulted on a path that has nothing to do with whether a model is configured. A malformed value
-    refuses startup, the same as those two.
+def distil_batch_size(base_dir: str | Path = _DEFAULT_ORBITS_DIR) -> int:
+    """How many captures one summary pass takes, the automatic one and the pressed one alike.
+
+    Env over the settings file over the default, like every setting. It is on the settings page
+    because it is not a safety bound (invariant 41): `POST /horizon/distil` takes up to
+    `DISTIL_BATCH_MAX` per request from any token holder, and the page cannot exceed that. A fast or
+    local model makes a large batch cheap, which only the operator knows. A malformed
+    `PN_DISTIL_BATCH` refuses startup, like `PN_TRACE_RETENTION_DAYS`; a malformed file value reads
+    as the default, since the file is validated on read.
     """
-    return _env_int("PN_AUTO_DISTIL_MAX_PER_BATCH", 20)
+    env = _env_wins("PN_DISTIL_BATCH")
+    if env is not None:
+        value = _env_int("PN_DISTIL_BATCH", _DISTIL_BATCH_DEFAULT)
+    else:
+        raw = read_settings(base_dir)[0].get("distil_batch")
+        value = int(raw) if raw else _DISTIL_BATCH_DEFAULT
+    return max(1, min(value, DISTIL_BATCH_MAX))
+
+
+def auto_distil_long(base_dir: str | Path = _DEFAULT_ORBITS_DIR) -> bool:
+    """Whether the automatic pass also takes long captures. Off by default: each is several model
+    calls, and the pass runs on the intake worker, so a capture dropped meanwhile waits. With a fast
+    or local model neither matters, which is the operator's call."""
+    stored = read_settings(base_dir)[0].get("auto_distil_long")
+    raw = (_env_wins("PN_AUTO_DISTIL_LONG") or stored or "").strip()
+    return raw.lower() == "on"
 
 
 def settings_state(base_dir: str | Path = _DEFAULT_ORBITS_DIR) -> dict[str, object]:
@@ -791,6 +817,8 @@ def settings_state(base_dir: str | Path = _DEFAULT_ORBITS_DIR) -> dict[str, obje
         "tts_voice_host_a": "PN_TTS_VOICE_HOST_A",
         "tts_voice_host_b": "PN_TTS_VOICE_HOST_B",
         "auto_distil": "PN_AUTO_DISTIL",
+        "auto_distil_long": "PN_AUTO_DISTIL_LONG",
+        "distil_batch": "PN_DISTIL_BATCH",
         "filing_mode": "PN_FILING_MODE",
         "landing_orbit": "PN_LANDING_ORBIT",
     }

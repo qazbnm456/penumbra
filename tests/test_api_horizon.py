@@ -129,10 +129,10 @@ def test_a_malformed_corpus_cap_refuses_STARTUP_rather_than_waiting_for_the_firs
     monkeypatch,
 ):
     """Loud at boot beats a 500 on the default screen — the same choice `_lifespan` already makes
-    for the trace-retention knobs and `auto_distil_max_per_batch`, and for the same reason: the
+    for the trace-retention knobs and `distil_batch_size`, and for the same reason: the
     operator who typed the value is present at startup and long gone by the first request.
 
-    Drives `_lifespan` directly, for the reason the `PN_AUTO_DISTIL_MAX_PER_BATCH` test beside it
+    Drives `_lifespan` directly, for the reason the `PN_DISTIL_BATCH` test beside it
     gives: `TestClient` wraps whatever a lifespan raises in an anyio `ExceptionGroup` and reports
     the cancellation instead, so asserting through that wrapper tests the wrapper.
     """
@@ -350,8 +350,8 @@ def test_distil_is_a_separate_verb_that_names_its_own_number(client, monkeypatch
 
 def test_auto_distillation_is_off_by_default_and_on_when_the_operator_says_so(client, monkeypatch):
     """The toggle the settings page exposes (a BEHAVIOUR preference — `POST /horizon/distil` is
-    already a spend endpoint any token holder can call). Its BOUND,
-    `PN_AUTO_DISTIL_MAX_PER_BATCH`, stays environment-only, which is invariant 41's placement rule.
+    already a spend endpoint any token holder can call). Its batch size, `PN_DISTIL_BATCH`, sits
+    beside it, capped at what that endpoint accepts.
     """
     from penumbra import distill
 
@@ -375,6 +375,46 @@ def test_auto_distillation_is_off_by_default_and_on_when_the_operator_says_so(cl
     assert client.get(f"/horizon/{node['id']}").json()["node"]["title"] == "auto"
 
 
+def test_the_auto_pass_leaves_long_captures_for_a_press_unless_told_otherwise(client, monkeypatch):
+    """A long capture is several model calls and holds the intake worker, so the automatic pass
+    leaves it by default. `PN_AUTO_DISTIL_LONG=on` is for a model fast enough not to care."""
+    from penumbra import api, distill, ingest
+
+    long_text = "word " * (distill.SHORT_LIMIT // 4)
+    monkeypatch.setattr(ingest, "parse_web", lambda url, source_id: Source(
+        id=source_id, kind="web", origin=url, blocks=[SourceBlock(locator="whole", text=long_text)]))
+    runs: list[str] = []
+    monkeypatch.setattr(api, "_run_long_distil", lambda source, language: runs.append(source.origin)
+                        or Distillation(title="long", summary="S", tags=["t"]))
+    monkeypatch.setenv("PN_AUTO_DISTIL", "on")
+
+    left = client.post("/horizon", json={"urls": ["https://example.com/long-a"]}).json()["nodes"][0]
+    _settle(client, left["id"])
+    time.sleep(0.3)
+    assert runs == [], "by default a long capture waits for a press"
+
+    monkeypatch.setenv("PN_AUTO_DISTIL_LONG", "on")
+    taken = client.post("/horizon", json={"urls": ["https://example.com/long-b"]}).json()["nodes"][0]
+    assert _settle(client, taken["id"], want="ready", tries=300) == "ready"
+    assert "https://example.com/long-b" in runs
+
+
+def test_one_batch_size_for_both_passes_from_the_environment_or_the_page(tmp_path, monkeypatch):
+    from penumbra import config
+
+    monkeypatch.delenv("PN_DISTIL_BATCH", raising=False)
+    assert config.distil_batch_size(base_dir=tmp_path) == 20
+    config.write_settings({"distil_batch": "200"}, base_dir=tmp_path)
+    assert config.distil_batch_size(base_dir=tmp_path) == 200
+    monkeypatch.setenv("PN_DISTIL_BATCH", "7")
+    assert config.distil_batch_size(base_dir=tmp_path) == 7, "the environment wins"
+    monkeypatch.setenv("PN_DISTIL_BATCH", "9999")
+    assert config.distil_batch_size(base_dir=tmp_path) == config.DISTIL_BATCH_MAX
+    for refused in ("0", "501", "abc"):
+        with pytest.raises(ValueError):
+            config.write_settings({"distil_batch": refused}, base_dir=tmp_path)
+
+
 def test_the_auto_pass_never_reports_more_done_than_it_said_it_would(client, monkeypatch):
     """**`done` may not climb past `total`, on the one action that spends the reader's money.**
 
@@ -395,7 +435,7 @@ def test_the_auto_pass_never_reports_more_done_than_it_said_it_would(client, mon
     from penumbra.schema import Source, SourceBlock
 
     monkeypatch.setenv("PN_AUTO_DISTIL", "on")
-    monkeypatch.setenv("PN_AUTO_DISTIL_MAX_PER_BATCH", "5")
+    monkeypatch.setenv("PN_DISTIL_BATCH", "5")
 
     calls: list[str] = []
     monkeypatch.setattr(
@@ -873,13 +913,13 @@ def test_a_malformed_auto_distil_bound_refuses_startup(monkeypatch):
     """
     import asyncio
 
-    monkeypatch.setenv("PN_AUTO_DISTIL_MAX_PER_BATCH", "not-an-int")
+    monkeypatch.setenv("PN_DISTIL_BATCH", "not-an-int")
 
     async def enter_and_leave() -> None:
         async with api._lifespan(api.app):
             pass
 
-    with pytest.raises(SystemExit, match="PN_AUTO_DISTIL_MAX_PER_BATCH"):
+    with pytest.raises(SystemExit, match="PN_DISTIL_BATCH"):
         asyncio.run(enter_and_leave())
 
 

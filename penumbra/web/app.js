@@ -1958,6 +1958,31 @@ function settingRows() {
         "Off by default. Each summary is a model call on your own key, so a 200-bookmark import costs nothing until you turn this on."
       ),
     },
+    {
+      key: "auto_distil_long",
+      label: t("settings.autoDistilLong", "Also summarise long captures automatically"),
+      values: ["on", "off"],
+      noDefault: true,
+      effective: (state_) => {
+        const entry = state_.auto_distil_long;
+        return (entry && entry.source !== "default" && entry.value) || "off";
+      },
+      labels: { on: t("settings.on", "On"), off: t("settings.off", "Off") },
+      help: t("settings.autoDistilLongHelp",
+        "A long capture takes several model calls, and while one is summarised a new capture waits. Off, long ones wait for you to press Summarise. Worth turning on with a fast or local model."),
+    },
+    {
+      key: "distil_batch",
+      label: t("settings.distilBatch", "Captures per summary pass"),
+      values: ["5", "10", "20", "50", "100", "200", "500"],
+      noDefault: true,
+      effective: (state_) => {
+        const entry = state_.distil_batch;
+        return (entry && entry.source !== "default" && entry.value) || "20";
+      },
+      help: t("settings.distilBatchHelp",
+        "How many one pass takes, automatic or pressed. 20 by default; each is at least one model call, so a larger number suits a fast or local model."),
+    },
     // Three ways a capture in no orbit gets filed (`config.filing_mode`). The default is manual:
     // the map's to-do card is where the reader files. "Assign" opens a second choice, the orbit,
     // whose VALUE is the orbit's slug, the filename token the server files by, always inside the
@@ -8113,6 +8138,8 @@ const horizonState = {
   //: The ceiling a node must fit under to be usable in an orbit (invariant 8). Reported by the
   //: listing, because the upload cap is six times larger and nothing else would say so.
   corpusCharCap: 0,
+  //: Whether the last poll found a parse or a pass running, so its end can be noticed.
+  wasWorking: false,
 };
 
 const HORIZON_PAGE = 25;
@@ -8865,7 +8892,8 @@ async function distilEstimate(slug) {
 
 //: ONE definition of how many this press will pay for, read by the label and by the request. Two
 //: numbers that have to agree is how the label came to promise 324 and the request to send 50.
-const DISTIL_BATCH_CAP = 50;
+//: The server's batch size (`PN_DISTIL_BATCH` or the settings page), delivered with the listing.
+let DISTIL_BATCH_CAP = 20;
 
 function distilBatchSize() {
   return Math.min(horizonState.undistilled, DISTIL_BATCH_CAP);
@@ -9016,6 +9044,7 @@ async function refreshHorizon({ reset = false, newIds = new Set() } = {}) {
   horizonState.total = data.total;
   horizonState.undistilled = data.undistilled;
   if (data.corpus_char_cap) horizonState.corpusCharCap = data.corpus_char_cap;
+  if (data.distil_batch) DISTIL_BATCH_CAP = data.distil_batch;
   renderStream({ newIds });
   renderFacets();
   // **Ask the SERVER, not the page.** Starting the poll only when a LISTED node looks busy was
@@ -9084,6 +9113,10 @@ async function pollIntake() {
   // stream's contents change - a pass that fails changes no row at all.
   updateStreamFoot();
   const stillWorking = busy || horizonState.nodes.some((node) => HORIZON_BUSY_STATES.has(node.state));
+  // A pass or a parse just ended: that is when automatic filing happens on the server, and nothing
+  // else would ask about it while the reader only watches the window.
+  if (horizonState.wasWorking && !stillWorking) void refreshSuggestions({ force: true });
+  horizonState.wasWorking = stillWorking;
   // Started HERE as well as stopped here, so the single boot/refresh probe above can turn into a
   // running poll without every caller having to remember to.
   if (stillWorking) startHorizonPolling();
@@ -9124,6 +9157,7 @@ async function patchChangedNodes() {
   horizonState.total = data.total;
   horizonState.undistilled = data.undistilled;
   if (data.corpus_char_cap) horizonState.corpusCharCap = data.corpus_char_cap;
+  if (data.distil_batch) DISTIL_BATCH_CAP = data.distil_batch;
   updateStreamFoot();
   // A node appearing or disappearing changes the DATELINE grouping, which no per-row swap can fix.
   if (structural) renderStream({});
@@ -9470,6 +9504,7 @@ async function captureValue(raw) {
   autoGrowCapture();
   await refreshHorizon({ reset: true, newIds: new Set((body.nodes || []).map((n) => n.id)) });
   startHorizonPolling();
+  askAfterCapture();
 }
 
 async function captureFiles(files) {
@@ -9510,6 +9545,7 @@ async function captureFiles(files) {
     showCaptureNote("");
   }
   await refreshHorizon({ reset: true, newIds: new Set((body.nodes || []).map((n) => n.id)) });
+  askAfterCapture();
 }
 
 //: One place for "that did not work", under the capture field. `alert()` was the previous answer
@@ -13600,6 +13636,7 @@ async function pollDistilWatch() {
       notify(`${t("horizon.alignFailed", "New entities were not matched")}: ${readableError(reply.align.error)}`);
     }
     refreshTopologyViews();
+    void refreshSuggestions({ force: true });
   }
 }
 
@@ -13744,6 +13781,12 @@ async function refreshSuggestions({ force = false } = {}) {
   suggest.items = data.suggestions || [];
   renderSuggestions();
   announceAutoFiled(data);
+}
+
+//: A capture's embedding lands a few seconds after it is read, and automatic filing by similarity
+//: happens then, with no request from this page to notice it. Asked twice, while it is likely.
+function askAfterCapture() {
+  [8000, 25000].forEach((delay) => setTimeout(() => void refreshSuggestions({ force: true }), delay));
 }
 
 //: Automatic filings since the last look, each announced once. The first answer after the page

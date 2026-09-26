@@ -125,7 +125,8 @@ from .citations import locate_answer_spans, strip_markers, verify_citations
 from .config import (
     PenumbraConfig,
     auto_distil_enabled,
-    auto_distil_max_per_batch,
+    auto_distil_long,
+    distil_batch_size,
     filing_mode,
     horizon_ask_chars,
     horizon_ask_items,
@@ -232,12 +233,12 @@ async def _lifespan(_app: FastAPI):
     every other bad `PN_*` value (invariant 9): loud beats silently doing something else."""
     trace_retention_seconds()
     max_trace_files()
-    # Read HERE so a malformed value refuses startup, which is what `config.auto_distil_max_per_batch`
+    # Read HERE so a malformed value refuses startup, which is what `config.distil_batch_size`
     # and `.env.example` both promise. Its only other caller is the intake worker's idle hook, and a
     # `SystemExit` raised there ended the worker thread silently — `threading` swallows it without a
     # traceback, so captures just stopped being parsed. Loud at boot beats silent at run time; the
     # same reasoning the trace-retention reads above already use.
-    auto_distil_max_per_batch()
+    distil_batch_size()
     # Same reason once more: `GET /horizon` is the default screen, so a typo here is a 500 on the
     # first thing anyone loads. The handler converts it (invariant 24) — this makes it loud at
     # boot instead, which is the difference between "the server told me the variable is wrong" and
@@ -725,6 +726,10 @@ class SettingsRequest(BaseModel):
     #: settable from the page. A setting that one half of the pair knows about is worse than one
     #: neither does.
     auto_distil: str | None = None
+    #: `"on"` / `"off"`: the automatic pass also takes long captures (`config.auto_distil_long`).
+    auto_distil_long: str | None = None
+    #: Captures per summary pass, 1 to 500 (`config.distil_batch_size`).
+    distil_batch: str | None = None
     #: How a capture in no orbit is filed (`config.filing_mode`): `manual`, `auto` or `assign`.
     filing_mode: str | None = None
     #: The orbit `assign` files into (`config.landing_orbit`).
@@ -3357,9 +3362,9 @@ def _auto_distil_after_intake() -> None:
 
     This lives here and not in `intake.py` on purpose: keeping every model call out of that module
     is what makes invariant 80's default structural rather than merely intended — `intake.py`
-    imports nothing model-related at all. The policy is the API's, and it is bounded by
-    `auto_distil_max_per_batch`, which is environment-only (invariant 41's placement rule: the
-    toggle may be a settings-page setting, the bound may not).
+    imports nothing model-related at all. The policy is the API's, and each batch is bounded by
+    `distil_batch_size`, the same number a pressed pass uses. Long captures are left for a press
+    unless the operator turned `auto_distil_long` on.
 
     **It YIELDS, and that is invariant 47 applied to a batch nobody pressed a button for.** This
     runs on the queue's own worker thread, so while it is summarising, nothing is parsing — a
@@ -3377,7 +3382,8 @@ def _auto_distil_after_intake() -> None:
         return
     queue = intake.shared()
     generation = queue.cancel_generation
-    limit = auto_distil_max_per_batch()
+    limit = distil_batch_size()
+    take_long = auto_distil_long()
 
     # **Through `_DISTIL`, exactly like the manual pass.** This used to call `distil_pending`
     # directly, touching none of the shared state, and the consequences were all the same bug: an
@@ -3391,10 +3397,11 @@ def _auto_distil_after_intake() -> None:
     # yields to a waiting capture, so the honest number is what this batch may spend, not the
     # backlog. `should_stop` keeps both of its existing reasons AND gains the shared cancel flag, so
     # the strip's Stop reaches this pass too.
-    # Only what this pass will actually take: long captures are left for a press (below).
+    # Only what this pass will actually take: long captures are left for a press unless the
+    # operator said otherwise (below).
     pending = sum(
         1 for node in horizon.list_nodes(state="ready_undistilled", limit=100_000, base_dir=queue.base_dir)
-        if node.chars <= distill.SHORT_LIMIT
+        if take_long or node.chars <= distill.SHORT_LIMIT
     )
     total = min(limit, pending)
     # `total` is also what `distil_pending` is CAPPED at below, not just what the strip announces.
@@ -3456,9 +3463,11 @@ def _auto_distil_after_intake() -> None:
             should_stop=should_stop,
             on_node=tick,
             on_error=failed,
-            # Long captures are left for a press: an RLM run can hold this thread, which is the
-            # intake worker, for minutes, and a capture dropped meanwhile would sit at `queued`.
-            defer_long=True,
+            # Long captures are left for a press by default: an RLM run can hold this thread, which
+            # is the intake worker, for minutes, and a capture dropped meanwhile would sit at
+            # `queued`. With a fast or local model that wait is short, so it is the operator's call.
+            defer_long=not take_long,
+            run_long=_run_long_distil if take_long else None,
         )
         # No alignment here, for the same reason: it is an RLM run, and this is the intake worker's
         # thread. Names an automatic pass writes are aligned at the end of the next pass the reader
@@ -3788,6 +3797,8 @@ async def list_horizon(
         "total": total,
         #: Invariant 80: what a summary pass WOULD cost, before anyone asks for one.
         "undistilled": undistilled,
+        #: How many one pass takes, so the button names the number the request will send.
+        "distil_batch": distil_batch_size(),
         #: The ceiling a node has to fit under to be USABLE once it is promoted (invariant 8).
         #: Reported with the listing because the two caps are six times apart: 50MB of bytes may be
         #: uploaded, 8M characters may be assembled into a corpus. A 30MB text file captures fine,

@@ -133,8 +133,10 @@ const CONFIG_TEMPLATE: &str = "\
 # A reasoning model (for example Qwen on vLLM) can think until it hits PN_MAX_TOKENS. Capping its
 # thinking at about half of that keeps it from running away:
 # PN_MAIN_LM_KWARGS={\"extra_body\": {\"thinking_token_budget\": 16384}}
-# How many captures one automatic summary pass may summarise.
-# PN_AUTO_DISTIL_MAX_PER_BATCH=20
+# How many captures one summary pass takes, automatic or pressed (1 to 500).
+# PN_DISTIL_BATCH=20
+# Whether the automatic pass also summarises long captures (several model calls each).
+# PN_AUTO_DISTIL_LONG=on
 #
 # --- Settings page overrides ---
 #
