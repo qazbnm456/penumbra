@@ -9554,3 +9554,65 @@ body:not([data-view="horizon"]) .capture-dock {
   transition: opacity 1.2s ease;
 }
 
+
+/* Rings, double planets and the deep sky. */
+.map-planet-ring {
+  stroke: oklch(80% 0.05 75);
+}
+
+.map-planet-ring.is-light {
+  stroke: oklch(90% 0.03 85);
+}
+
+.map-ring-half {
+  pointer-events: none;
+}
+
+.map-binary,
+.map-binary-body {
+  transform-box: view-box;
+  transform-origin: 0 0;
+  animation: map-spin 36s linear infinite;
+}
+
+/* Each body turns back as the pair turns, so its lit side stays towards the light. */
+.map-binary-body {
+  animation-direction: reverse;
+}
+
+.map-nebula {
+  pointer-events: none;
+}
+
+.map-galaxy-core {
+  fill: oklch(96% 0.03 80);
+  opacity: 0.8;
+}
+
+.map-double {
+  animation: map-twinkle 5s ease-in-out infinite;
+}
+
+.map-double-star {
+  fill: oklch(94% 0.04 230);
+}
+
+.map-double-star.is-companion {
+  fill: oklch(88% 0.08 60);
+}
+
+.stop-nebula-violet { stop-color: oklch(55% 0.14 300); stop-opacity: 0.16; }
+.stop-nebula-violet-mid { stop-color: oklch(50% 0.12 300); stop-opacity: 0.06; }
+.stop-nebula-teal { stop-color: oklch(60% 0.1 200); stop-opacity: 0.14; }
+.stop-nebula-teal-mid { stop-color: oklch(55% 0.09 200); stop-opacity: 0.05; }
+.stop-nebula-rose { stop-color: oklch(62% 0.13 20); stop-opacity: 0.13; }
+.stop-nebula-rose-mid { stop-color: oklch(55% 0.1 20); stop-opacity: 0.05; }
+.stop-galaxy { stop-color: oklch(90% 0.04 70); stop-opacity: 0.35; }
+
+@media (prefers-reduced-motion: reduce) {
+  .map-binary,
+  .map-binary-body,
+  .map-double {
+    animation: none;
+  }
+}
