@@ -449,8 +449,10 @@ class Worker:
     """Embeds new captures in the background, one sync at a time, when the model is installed.
     `nudge()` after a capture lands; the worker coalesces nudges and never blocks the caller."""
 
-    def __init__(self, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> None:
+    def __init__(self, base_dir: str | Path = DEFAULT_HORIZON_DIR, on_synced=None) -> None:
         self.base_dir = Path(base_dir).resolve()
+        #: Called after a sync that embedded something, on this thread; what it raises is logged.
+        self._on_synced = on_synced
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -480,6 +482,8 @@ class Worker:
             try:
                 n = sync(base_dir=self.base_dir, should_stop=self._stop.is_set)
                 self.state.update(embedded=self.state["embedded"] + n, at=time.time())
+                if n and self._on_synced is not None:
+                    self._on_synced()
             except Exception as exc:  # noqa: BLE001 - a background job reports; it never takes the server down
                 self.state["error"] = f"{type(exc).__name__}: {exc}"[:300]
                 _log.warning("vectors: %s", exc)

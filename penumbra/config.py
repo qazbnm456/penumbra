@@ -650,10 +650,13 @@ _SETTING_PATTERNS = {
     #: `PN_AUTO_DISTIL_MAX_PER_BATCH` is environment-only, the same placement invariant 41 gives
     #: trace retention and the upload cap.
     "auto_distil": _TOGGLE_PATTERN,
-    #: Where an uncategorised capture lands once it is parsed: empty for the automatically created
-    #: first orbit, `off` to leave captures in the Horizon only, or an orbit id. A BEHAVIOUR
-    #: preference (invariant 41): it moves the reader's own captures between their own tiers, and
-    #: bounds nothing.
+    #: How a capture that is in no orbit gets filed (`filing_mode`): `manual` leaves it in the
+    #: Horizon for the reader, `auto` accepts the filing suggestion as soon as there is one, and
+    #: `assign` files everything into `landing_orbit`. A BEHAVIOUR preference (invariant 41): it
+    #: moves the reader's own captures between their own tiers, makes no model call and bounds
+    #: nothing.
+    "filing_mode": re.compile(r"^(?:|manual|auto|assign)$"),
+    #: The orbit `assign` files into: an orbit id, or `off` (read as none).
     "landing_orbit": re.compile(r"^(?:|off|[A-Za-z0-9._-]{1,120})$"),
 }
 
@@ -737,14 +740,29 @@ def auto_distil_enabled(base_dir: str | Path = _DEFAULT_ORBITS_DIR) -> bool:
 
 
 def landing_orbit(base_dir: str | Path = _DEFAULT_ORBITS_DIR) -> str | None:
-    """Where an uncategorised capture lands: `None` for the automatic first orbit, `"off"` for
-    nowhere (it stays in the Horizon), or an orbit id. Same env-over-file ladder as every setting;
-    an unparseable value reads as the default rather than raising, for `auto_distil_enabled`'s
-    reason: this runs after a capture has already succeeded."""
+    """The orbit `assign` files into, or `None`. `off` and an unparseable value both read as none
+    rather than raising, for `auto_distil_enabled`'s reason: this runs after a capture has already
+    succeeded."""
     raw = (_env_wins("PN_LANDING_ORBIT") or read_settings(base_dir)[0].get("landing_orbit") or "").strip()
-    if not raw or not _SETTING_PATTERNS["landing_orbit"].match(raw):
+    if not raw or raw == "off" or not _SETTING_PATTERNS["landing_orbit"].match(raw):
         return None
     return raw
+
+
+def filing_mode(base_dir: str | Path = _DEFAULT_ORBITS_DIR) -> tuple[str, str | None]:
+    """`(mode, orbit)`: how a capture in no orbit is filed, and the orbit when the mode is `assign`.
+
+    `manual` is the default: a capture stays in the Horizon, where the map's to-do card offers its
+    suggestion. A `landing_orbit` set without a mode is read as `assign`, so an orbit the reader
+    chose before the mode existed keeps receiving captures. `assign` with no orbit (never chosen,
+    or unparseable) falls back to `manual` rather than filing somewhere the reader did not pick.
+    """
+    raw = (_env_wins("PN_FILING_MODE") or read_settings(base_dir)[0].get("filing_mode") or "").strip().lower()
+    target = landing_orbit(base_dir)
+    mode = raw if raw in ("manual", "auto", "assign") else ("assign" if target else "manual")
+    if mode == "assign" and not target:
+        return "manual", None
+    return mode, target if mode == "assign" else None
 
 
 def auto_distil_max_per_batch() -> int:
@@ -773,6 +791,7 @@ def settings_state(base_dir: str | Path = _DEFAULT_ORBITS_DIR) -> dict[str, obje
         "tts_voice_host_a": "PN_TTS_VOICE_HOST_A",
         "tts_voice_host_b": "PN_TTS_VOICE_HOST_B",
         "auto_distil": "PN_AUTO_DISTIL",
+        "filing_mode": "PN_FILING_MODE",
         "landing_orbit": "PN_LANDING_ORBIT",
     }
     out: dict[str, object] = {"error": error}

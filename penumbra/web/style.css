@@ -7158,8 +7158,15 @@ body.dock-open .pending-note {
   border-top: 1.5px dashed var(--accent);
 }
 
-.legend-note {
-  color: var(--text-faint);
+/* What the rings mean, written on them: the innermost is the most recent, the outermost the
+   oldest. A sentence in the legend asked the reader to carry it back to the rings. */
+.map-ring-label {
+  font-family: var(--sans);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  fill: var(--text-faint);
+  text-anchor: end;
+  dominant-baseline: middle;
 }
 
 .starmap-card {
@@ -9779,7 +9786,11 @@ button.node-more:hover {
   grid-template-columns: minmax(0, 1fr);
 }
 
+/* In the narrow column the buttons go under the reason, not beside it: beside, the reason wrapped
+   to one or two characters a line. */
 .todo-suggest .suggest-actions {
+  grid-column: 1;
+  grid-row: auto;
   justify-self: start;
   margin-top: var(--space-2);
 }
@@ -9787,4 +9798,18 @@ button.node-more:hover {
 .todo-run {
   align-self: flex-start;
   margin-top: var(--space-3);
+}
+
+/* The second choice a setting opens ("Assign" opens the orbit), set under its parent by a hairline
+   so it reads as belonging to that choice rather than as a setting of its own. */
+.setting-sub {
+  margin-top: var(--space-2);
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--border);
+}
+
+.setting-row .setting-sub label {
+  font-weight: 500;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
 }
