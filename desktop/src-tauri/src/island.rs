@@ -343,7 +343,13 @@ fn watch(app: AppHandle) {
                 swallow_until = Some(now + SWALLOW_BACKSTOP);
                 State::Swallow
             }
-            _ if dragging && geo.armed.contains(px, py, 70.0) => State::Armed,
+            // A drag opens the island only when it reaches the notch's own row, a little wider than
+            // the notch. A zone the size of the open shape plus 70 points caught every drag across
+            // the top of the screen: moving a terminal's tab opened it. Once open, it stays open
+            // anywhere over the open shape, so the drop still lands.
+            _ if dragging && (state == State::Armed || drag_target(&geo).contains(px, py, 0.0)) && geo.armed.contains(px, py, 24.0) => {
+                State::Armed
+            }
             State::Armed | State::Hover | State::Listen => {
                 let region = match state {
                     State::Armed => geo.armed,
@@ -484,6 +490,15 @@ fn yield_keyboard(app: &AppHandle) {
             platform::give_back();
         }
     });
+}
+
+/// Where a drag has to reach to open the island: the notch's row, 30 points wider on each side.
+fn drag_target(geo: &Geometry) -> Rect {
+    if geo.edge == "left" {
+        Rect { x: 0.0, y: geo.rest.y - 30.0, w: geo.rest.w + 14.0, h: geo.rest.h + 60.0 }
+    } else {
+        Rect { x: geo.rest.x - 30.0, y: 0.0, w: geo.rest.w + 60.0, h: geo.rest.h.max(24.0) + 14.0 }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -714,6 +729,20 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::Rect;
+
+    #[test]
+    fn a_drag_opens_the_island_only_from_the_notch_row() {
+        let rest = Rect { x: 663.0, y: 0.0, w: 185.0, h: 32.0 };
+        let geo = super::Geometry {
+            edge: "top", inset: 32.0, screen_h: 982.0, rest,
+            hover: rest, armed: Rect { x: 585.0, y: 0.0, w: 340.0, h: 150.0 }, note: rest, listen: rest,
+        };
+        let target = super::drag_target(&geo);
+        assert!(target.contains(755.0, 20.0, 0.0), "the notch itself");
+        assert!(target.contains(640.0, 40.0, 0.0), "just beside and below it");
+        assert!(!target.contains(755.0, 70.0, 0.0), "a tab bar under the menu bar is not the notch");
+        assert!(!target.contains(560.0, 20.0, 0.0), "the menu bar farther out is not the notch");
+    }
 
     #[test]
     fn a_rect_contains_its_margin() {
