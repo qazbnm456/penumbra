@@ -11802,6 +11802,16 @@ function restMinutes() {
   return Number.isFinite(stored) && stored >= 0 && readStored(AMBIENT_IDLE_KEY) !== null ? stored : 5;
 }
 
+//: Whether the idle rest should start now. Only while this window is the one the reader is using:
+//: `document.hidden` stays false for a window behind another app, and time spent working in that
+//: other app counted as idle here, so after the rest delay the map went full screen and the shell,
+//: giving the resting window the keyboard, pulled Penumbra in front of whatever the reader was doing.
+function restDue(now = Date.now()) {
+  const minutes = restMinutes();
+  if (ambient.on || !minutes || document.hidden || !document.hasFocus() || somethingRunning()) return false;
+  return now - ambient.lastInput >= minutes * 60000;
+}
+
 function somethingRunning() {
   const distil = distilWatch.status && distilWatch.status.running;
   return activeRuns.size > 0 || Boolean(distil) || document.querySelector(".intake-strip:not([hidden])") !== null;
@@ -11998,10 +12008,11 @@ function initAmbient() {
   ["pointermove", "pointerdown", "keydown", "wheel"].forEach((type) =>
     document.addEventListener(type, woke, { capture: true, passive: type !== "keydown" && type !== "pointerdown" }));
   setInterval(() => {
-    const minutes = restMinutes();
-    if (ambient.on || !minutes || document.hidden || somethingRunning()) return;
-    if (Date.now() - ambient.lastInput >= minutes * 60000) enterAmbient();
+    if (restDue()) enterAmbient();
   }, 10000);
+  // Coming back to the window is input too: the idle clock starts from the return, not from the
+  // last key pressed before the reader went to another app.
+  window.addEventListener("focus", () => { ambient.lastInput = Date.now(); });
   horizonEl("map-rest").addEventListener("click", (event) => {
     event.stopPropagation();
     ambient.lastInput = Date.now();
