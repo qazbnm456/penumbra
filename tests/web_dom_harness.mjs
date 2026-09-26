@@ -1745,6 +1745,24 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       "Rust - A language | Rust", "Black Hat Cyber Security Conference"].map(run.tidyPageTitle);
   },
 
+  //: The idle rest starts only in the window the reader is using: a window behind another app
+  //: (visible, not focused) must never go full screen and take the keyboard.
+  restDue() {
+    const ambient = { on: false, lastInput: 0 };
+    const doc = { hidden: false, focused: true, hasFocus() { return this.focused; } };
+    const run = new Function(
+      "ambient", "document", "restMinutes", "somethingRunning",
+      `${extract("restDue")}\nreturn { restDue };`
+    )(ambient, doc, () => 5, () => false);
+    const later = 6 * 60000;
+    const focusedIdle = run.restDue(later);
+    doc.focused = false;
+    const behindAnotherApp = run.restDue(later);
+    doc.focused = true;
+    const tooSoon = run.restDue(60000);
+    return { focusedIdle, behindAnotherApp, tooSoon };
+  },
+
   restPages() {
     const run = new Function(
       `const REST_PAGE_UNITS = 440;\n${extract("textUnits")}\n${extract("notePages")}\n${extract("pageDwell")}\n` +

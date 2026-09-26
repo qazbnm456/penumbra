@@ -1055,3 +1055,12 @@ def test_an_automatic_filing_is_announced_once_and_can_be_taken_out():
 def test_a_wikipedia_title_is_shown_without_the_encyclopedias_name():
     assert _run("pageTitles") == ["咖啡", "Aurora", "睡眠", "Rust - A language | Rust",
                                   "Black Hat Cyber Security Conference"]
+
+
+def test_rest_never_starts_in_a_window_behind_another_app():
+    """A window behind another app is not hidden, and time spent in that app looked idle here: the
+    rest went full screen and the shell pulled Penumbra to the front unasked."""
+    result = _run("restDue")
+    assert result["focusedIdle"] is True, "left alone in its own window, the map rests"
+    assert result["behindAnotherApp"] is False, "a window the reader is not using must not rest"
+    assert result["tooSoon"] is False
