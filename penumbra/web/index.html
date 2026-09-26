@@ -39,7 +39,9 @@
 </div>
 
 <div class="layout">
-  <header class="header">
+  <!-- In the desktop app on macOS there is no title bar: the header is the top of the window,
+       its empty space drags it, and the traffic lights sit at its left end. -->
+  <header class="header" data-tauri-drag-region="deep">
     <!-- The brand is the mascot, the half-lit moon. A press goes home; a right click (or the
          context-menu key) lets her introduce herself. -->
     <button type="button" id="new-orbit" class="wordmark" aria-label="Go to the Horizon" data-i18n-label="app.home"
