@@ -203,7 +203,7 @@ const CONFIG_TEMPLATE: &str = "\
 # These are normally set on the settings page. Set here, they win and the page shows them locked.
 # PN_OUTPUT_LANGUAGE=Traditional Chinese
 # PN_AUTO_DISTIL=on
-# PN_LANDING_ORBIT=off
+# PN_FILING_MODE=manual
 #
 # The podcast voice provider. The desktop app includes edge-tts only.
 # PN_TTS_PROVIDER=edge-tts

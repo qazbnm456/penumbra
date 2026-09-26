@@ -1951,21 +1951,42 @@ function settingRows() {
         "Off by default. Each summary is a model call on your own key, so a 200-bookmark import costs nothing until you turn this on."
       ),
     },
-    // Every orbit is a choice, by its title. The VALUE is the orbit's slug, the filename token the
-    // server files by, which is always inside the setting's own pattern even for an orbit named in
-    // Chinese (invariant 10); an id outside that pattern would be refused on Save.
+    // Three ways a capture in no orbit gets filed (`config.filing_mode`). The default is manual:
+    // the map's to-do card is where the reader files. "Assign" opens a second choice, the orbit,
+    // whose VALUE is the orbit's slug, the filename token the server files by, always inside the
+    // setting's own pattern even for an orbit named in Chinese (invariant 10).
     {
-      key: "landing_orbit",
-      label: t("settings.landing", "Where new captures land"),
-      values: ["off", ...settingsOrbits.map((o) => o.slug)],
-      labels: Object.fromEntries([
-        ["off", t("settings.landingOff", "Keep them in the Horizon only")],
-        ...settingsOrbits.map((o) => [o.slug, o.label]),
-      ]),
-      help: t(
-        "settings.landingHelp",
-        "By default, everything you capture is also filed into your first orbit, so you can ask about it right away. It stays in the Horizon either way."
-      ),
+      key: "filing_mode",
+      label: t("settings.filing", "How new captures are filed"),
+      values: ["manual", "auto", "assign"],
+      noDefault: true,
+      // Unset means manual, unless an orbit was chosen before the mode existed: the server reads
+      // that as assign (`config.filing_mode`), so the page must show the same.
+      effective: (state_) => {
+        const mode = state_.filing_mode;
+        if (mode && mode.source !== "default" && mode.value) return mode.value;
+        const orbit = state_.landing_orbit && state_.landing_orbit.value;
+        return orbit && orbit !== "off" ? "assign" : "manual";
+      },
+      labels: {
+        manual: t("settings.filingManual", "Manual"),
+        auto: t("settings.filingAuto", "Automatic"),
+        assign: t("settings.filingAssign", "Assign"),
+      },
+      helps: {
+        manual: t("settings.filingManualHelp",
+          "New captures stay in the Horizon until you file them from the waiting card beside the star map."),
+        auto: t("settings.filingAutoHelp",
+          "A capture is filed as soon as it has a suggestion. Suggestions come from what summaries share, or from local relations, so no model is called. A capture with neither stays in the Horizon."),
+        assign: t("settings.filingAssignHelp", "Every new capture is filed into the orbit you choose."),
+      },
+      sub: {
+        key: "landing_orbit",
+        when: "assign",
+        label: t("settings.filingOrbit", "Orbit"),
+        values: settingsOrbits.map((o) => o.slug),
+        labels: Object.fromEntries(settingsOrbits.map((o) => [o.slug, o.label])),
+      },
     },
   ];
 }
@@ -2154,6 +2175,42 @@ function collectSettingsDraft() {
   return draft;
 }
 
+// The second choice a setting opens for one of its values ("Assign" opens the orbit). Shown only
+// while that value is selected; a value it cannot offer (no orbit exists yet) is disabled in the
+// first choice instead, so the page never offers an assignment with nowhere to go.
+function settingSubChoice(row, parent, state_, inputs) {
+  const sub = row.sub;
+  const entry = state_[sub.key] || { value: null, source: "default", env_var: "" };
+  const box = elt("div", "setting-sub");
+  const label = elt("label", "", sub.label);
+  label.htmlFor = `setting-${sub.key}`;
+  box.appendChild(label);
+  const select = document.createElement("select");
+  select.id = `setting-${sub.key}`;
+  const current = entry.value && entry.value !== "off" ? entry.value : "";
+  const options = !current || sub.values.includes(current) ? sub.values : [current, ...sub.values];
+  options.forEach((value) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = sub.labels[value] || value;
+    option.selected = value === current;
+    select.appendChild(option);
+  });
+  select.disabled = entry.source === "env";
+  if (settingsDraft && sub.key in settingsDraft && !select.disabled
+    && [...select.options].some((o) => o.value === settingsDraft[sub.key])) {
+    select.value = settingsDraft[sub.key];
+  }
+  box.appendChild(select);
+  inputs.set(sub.key, select);
+  const assign = [...parent.options].find((o) => o.value === sub.when);
+  if (assign && !options.length) assign.disabled = true;
+  const sync = () => { box.hidden = parent.value !== sub.when; };
+  parent.addEventListener("change", sync);
+  sync();
+  return box;
+}
+
 function renderSettings(state_) {
   const body = document.getElementById("settings-body");
   body.textContent = "";
@@ -2206,14 +2263,19 @@ function renderSettings(state_) {
     // the SERVER supplies (voices, languages) because it is provider-specific and a second copy
     // would drift. Both end up as a `<select>`; only the source of the list differs.
     const choices = row.values || settingsChoices[row.choicesKey] || [];
-    const current = entry.source === "default" ? "" : entry.value || "";
+    const current = row.effective
+      ? row.effective(state_)
+      : entry.source === "default" ? "" : entry.value || "";
     let input;
     if (choices.length) {
       input = document.createElement("select");
-      const blank = document.createElement("option");
-      blank.value = "";
-      blank.textContent = t("settings.useDefault", "Use the default");
-      input.appendChild(blank);
+      // A setting whose default is one of its own choices shows that choice, not "Use the default".
+      if (!row.noDefault) {
+        const blank = document.createElement("option");
+        blank.value = "";
+        blank.textContent = t("settings.useDefault", "Use the default");
+        input.appendChild(blank);
+      }
       // A value already stored that is NOT in the list (an env var, or a voice from another
       // provider left behind by a switch) still has to be selectable, or opening the page and
       // pressing Save would silently clear it.
@@ -2252,11 +2314,16 @@ function renderSettings(state_) {
 
     const note = document.createElement("div");
     note.className = "setting-source";
+    const helpFor = () => (row.helps ? row.helps[input.value] || "" : row.help);
     note.textContent =
       entry.source === "env"
         ? withShellHint(t("settings.pinnedBy", `Pinned by ${entry.env_var}. Unset it to edit here.`, { env: entry.env_var }))
-        : row.help;
+        : helpFor();
+    if (row.sub) wrap.appendChild(settingSubChoice(row, input, state_, inputs));
     wrap.appendChild(note);
+    if (row.helps && entry.source !== "env") {
+      input.addEventListener("change", () => { note.textContent = helpFor(); });
+    }
 
     body.appendChild(wrap);
   });
@@ -12042,8 +12109,19 @@ function drawStarMap() {
   world.insertBefore(deepSky(), field);
   world.appendChild(svgEl("g", { "aria-hidden": "true" }, "map-sky"));
 
-  mapRings().forEach(({ rx, ry }, ring) => {
+  const rings = mapRings();
+  rings.forEach(({ rx, ry }, ring) => {
     world.appendChild(svgEl("ellipse", { cx: MAP_CENTRE.x, cy: MAP_CENTRE.y, rx, ry }, `map-ring ring-${ring}`));
+  });
+  // The rings say what they mean where the reader is looking: newest on the inner ring, oldest on
+  // the outer, each just outside its ring's left edge, where no planet label sits.
+  [[0, t("map.ringNewest", "Newest")], [rings.length - 1, t("map.ringOldest", "Oldest")]].forEach(([ring, word]) => {
+    const label = svgEl("text", { x: MAP_CENTRE.x - rings[ring].rx - 8, y: MAP_CENTRE.y }, "map-ring-label");
+    label.textContent = word;
+    const hint = svgEl("title");
+    hint.textContent = t("map.legendDistance", "Closer to the centre means more recent.");
+    label.appendChild(hint);
+    world.appendChild(label);
   });
 
   const planets = planetLayout();
@@ -12984,6 +13062,24 @@ function renderHorizonTodo(card, loose) {
     const full = horizonEl("pending-count").textContent || "";
     const extra = full.startsWith(base) ? full.slice(base.length).replace(/^[\u3002. ]+/, "") : "";
     if (extra) card.appendChild(elt("p", "card-note", extra));
+    // Which ones, by name, so the count is not an empty heading. From the list already loaded,
+    // so a capture past its first page is counted but not named, and the remainder says so.
+    const waiting = horizonState.nodes.filter((n) => n.state === "ready_undistilled");
+    if (waiting.length) {
+      const list = elt("ul", "card-list");
+      waiting.slice(0, 8).forEach((node) => {
+        const row = elt("li", "card-row");
+        const name = elt("button", "card-row-title",
+          nodeHeadline(node) || nodeProse(node) || t("horizon.openNode", "Open this item"));
+        name.type = "button";
+        name.addEventListener("click", () => openMapFocus({ kind: "node", node }));
+        row.appendChild(name);
+        list.appendChild(row);
+      });
+      card.appendChild(list);
+      const more = pending - Math.min(waiting.length, 8);
+      if (more > 0) card.appendChild(elt("p", "card-note", t("map.todoMore", `and ${more} more`, { n: more })));
+    }
     // The same button the list shows, pressed through, so the spend it names and the pass it
     // starts are one code path (invariant 80).
     const run = elt("button", "btn todo-run", horizonEl("distil-btn").textContent
@@ -13258,10 +13354,17 @@ function renderStarMapCard() {
 function settleIdlePanel() {
   if (!mapPanelGrip || viewMode("horizon") !== "map") return;
   const waiting = horizonTodoCount();
+  const before = starMap.lastWaiting;
+  starMap.lastWaiting = waiting;
   if (waiting) {
-    starMap.keepPanel = false;
-    if (starMap.autoCollapsed && mapPanelGrip.isCollapsed()) mapPanelGrip.setCollapsed(false, { persist: false });
+    // Something waiting needs the column, whatever was remembered about it: it opens on first
+    // paint and whenever the count rises. A reader who puts it away while the same things wait is
+    // left alone until something new arrives.
+    if (mapPanelGrip.isCollapsed() && (before === undefined || waiting > before || starMap.autoCollapsed)) {
+      mapPanelGrip.setCollapsed(false, { persist: false });
+    }
     starMap.autoCollapsed = false;
+    starMap.keepPanel = false;
     return;
   }
   if (!starMap.keepPanel && !mapPanelGrip.isCollapsed()) {

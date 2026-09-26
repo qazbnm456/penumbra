@@ -126,9 +126,9 @@ from .config import (
     PenumbraConfig,
     auto_distil_enabled,
     auto_distil_max_per_batch,
+    filing_mode,
     horizon_ask_chars,
     horizon_ask_items,
-    landing_orbit,
     max_corpus_chars,
     max_trace_files,
     max_upload_bytes,
@@ -725,8 +725,9 @@ class SettingsRequest(BaseModel):
     #: settable from the page. A setting that one half of the pair knows about is worse than one
     #: neither does.
     auto_distil: str | None = None
-    #: Where an uncategorised capture lands (`config.landing_orbit`): empty for the first orbit,
-    #: `off`, or an orbit id.
+    #: How a capture in no orbit is filed (`config.filing_mode`): `manual`, `auto` or `assign`.
+    filing_mode: str | None = None
+    #: The orbit `assign` files into (`config.landing_orbit`).
     landing_orbit: str | None = None
 
 
@@ -921,6 +922,9 @@ async def put_settings(body: SettingsRequest) -> dict:
         raise HTTPException(422, str(exc)) from exc
     except OSError as exc:
         raise HTTPException(500, f"could not save settings: {exc}") from exc
+    # Switching to `auto` applies it to what is already waiting, not only to later captures.
+    _forget_suggestions()
+    asyncio.get_running_loop().run_in_executor(None, _auto_file_suggested)
     return settings_state()
 
 
@@ -3314,6 +3318,7 @@ def _run_distil_pass(limit: int, language: str, node_ids: list[str] | None = Non
             run_long=_run_long_distil,
         )
         _align_after_pass(_horizon_queue().base_dir)
+        _auto_file_suggested()  # new summaries are what most suggestions come from
     except Exception as exc:  # noqa: BLE001 - the pass itself dying must still reach the page
         # `distil_pending` raising (a corrupt index, a disk error) is not one node failing. Without
         # this the thread dies, `running` is cleared by the `finally`, and the page sees a pass that
@@ -3459,6 +3464,7 @@ def _auto_distil_after_intake() -> None:
         # thread. Names an automatic pass writes are aligned at the end of the next pass the reader
         # presses.
         _vector_worker().nudge()  # new summaries change what a capture is embedded from
+        _auto_file_suggested()
     except Exception as exc:  # noqa: BLE001 - same contract as the manual pass
         with _DISTIL_GUARD:
             _DISTIL["error"] = f"{type(exc).__name__}: {exc}"[:300]
@@ -3466,15 +3472,6 @@ def _auto_distil_after_intake() -> None:
     finally:
         with _DISTIL_GUARD:
             _DISTIL.update({"running": False, "cancel": False})
-
-
-#: The orbit an uncategorised capture falls into when the reader has not chosen one. A fixed handle,
-#: so it is the same orbit every time; its TITLE is what the reader sees (invariant 37).
-FIRST_ORBIT_ID = "first-orbit"
-_FIRST_ORBIT_TITLES = {"zh": "第一個軌道", "en": "First orbit"}
-#: The interface language the last capture arrived with, so the first orbit is titled in the
-#: reader's language even though it is created on the intake worker thread, far from any request.
-_CAPTURE_LANGUAGE = {"name": ""}
 
 
 _LANDING_LOCK = threading.Lock()
@@ -3489,57 +3486,86 @@ def _next_source_guess(orbit: Orbit | None) -> int:
     return max(int(s.id[1:]) for s in orbit.sources if s.id[1:].isdigit()) * 10 + 10
 
 
-def _file_into_landing_orbit(node_id: str) -> None:
-    """File a freshly parsed capture into the landing orbit, unless the reader turned that off.
+def _file_under_cap(node_id: str, target: str) -> bool:
+    """File a parsed capture that is in no orbit into an existing orbit, unless that would pass the
+    corpus cap. Returns whether it was filed.
 
-    **Everything lands somewhere you can ask about.** The Horizon stays the index of everything
-    captured (invariant 78), and the node is copied, never moved, so it can still be filed
-    elsewhere. Skipped when the node is already in an orbit (it was filed by hand first), when it
-    is not parsed, and when filing it would push the landing orbit past the corpus cap: invariant 8
-    fails a whole question loudly past that cap, and quietly growing one orbit toward it with
-    every capture would turn "just throw everything in" into an orbit you can no longer ask. Such a
-    node stays in the Horizon, where it always was.
-
-    When no orbit is chosen, a deleted first orbit is re-created by the next capture: deleting it
-    clears what it held, not the rule that captures land there. The setting's `off` stops that.
+    Skipped when the node is already in an orbit (the reader filed it first), when it is not parsed,
+    and when the orbit is gone: nothing here creates an orbit behind the reader. The cap check is
+    invariant 8's: it fails a whole question loudly past the cap, and quietly growing one orbit
+    toward it with every capture would turn "just throw everything in" into an orbit nobody can
+    ask. Such a node stays in the Horizon, where it always was (invariant 78: filing copies).
     """
-    choice = landing_orbit()
-    if choice == "off":
-        return
+    if slug(target).startswith(HORIZON_ASK_KEY):
+        _log.warning("filing target %r uses the reserved Horizon ask handle; not filing", target)
+        return False
     node = horizon.get_node(node_id)
     if node is None or node.state not in ("ready", "ready_undistilled"):
-        return
-    if horizon.memberships_for(node_id):
-        return
-    target = choice or FIRST_ORBIT_ID
-    if slug(target).startswith(HORIZON_ASK_KEY):
-        _log.warning("landing orbit %r uses the reserved Horizon ask handle; not filing", target)
-        return
+        return False
+    # Membership in the landing orbit alone (the old automatic first orbit) still counts as unfiled,
+    # the same way suggestions count it.
+    filed = {m.orbit_id for m in horizon.memberships_for(node_id)}
+    if slug(target) in filed or filed - {_landing_slug()}:
+        return False
     # One filing at a time: the intake worker and an upload can both finish a node at once, and
     # two filings checked against the same "before" could each pass the cap and together exceed it.
     with _LANDING_LOCK:
         existing = load_orbit(target)
-        if existing is None and choice is not None:
-            return  # a chosen orbit that has since been deleted is not re-created behind the reader
+        if existing is None:
+            return False
         # The REAL assembled length, markers and separators included (`Corpus.blob`), not the sum
         # of block text: a 50-character paste becomes 68 characters of blob (its marker and a
-        # newline), so counting text alone let the first orbit pass invariant 8's cap and fail
-        # every question after.
+        # newline), so counting text alone let an orbit pass invariant 8's cap and fail every
+        # question after.
         source = horizon.node_source(node_id).model_copy(update={"id": f"s{_next_source_guess(existing)}"})
-        held = len(corpus_of(existing).blob()) if existing and existing.sources else 0
+        held = len(corpus_of(existing).blob()) if existing.sources else 0
         added = len(Corpus(sources=[source]).blob())
         if held + (2 if held else 0) + added > max_corpus_chars():
             _log.info("not filing %s into %s: it would pass the corpus cap", node_id, target)
-            return
-        horizon.promote_node(node_id, target, create=existing is None)
-    if existing is None:
-        lang = "zh" if "chinese" in _CAPTURE_LANGUAGE["name"].lower() else "en"
+            return False
+        horizon.promote_node(node_id, target, create=False)
+    _forget_suggestions()
+    return True
 
-        def _title(orbit: Orbit) -> None:
-            if not orbit.title:
-                orbit.title = _FIRST_ORBIT_TITLES[lang]
 
-        mutate_orbit(target, _title)
+def _file_into_landing_orbit(node_id: str) -> None:
+    """File a freshly parsed capture the way the reader chose (`config.filing_mode`).
+
+    `manual`, the default, files nothing: the capture stays in the Horizon and the map's to-do card
+    offers its suggestion. `assign` files it into the chosen orbit. `auto` files it once a filing
+    suggestion exists, which for a fresh capture is usually later, after its summary or its
+    embedding; `_auto_file_suggested` runs at those points too.
+    """
+    mode, target = filing_mode()
+    if mode == "assign" and target:
+        _file_under_cap(node_id, target)
+    elif mode == "auto":
+        _auto_file_suggested()
+
+
+def _auto_file_suggested() -> int:
+    """In `auto` mode, accept every current filing suggestion for a capture that is in no orbit.
+    Returns how many were filed.
+
+    The same suggestions the to-do card shows (`filing.suggestions`: shared entities and tags, or
+    local similarity), so no model call is made. A capture the reader takes out of an orbit is
+    recorded as declined for that orbit (`_forget_removed_source`), so it is never filed straight
+    back. Best-effort: filing is a convenience on top of captures that already landed.
+    """
+    try:
+        if filing_mode()[0] != "auto":
+            return 0
+        found = filing.suggestions(_landing_slug(), similar=_matches_or_none())
+    except Exception:  # noqa: BLE001 - an automatic convenience never fails what called it
+        _log.exception("auto filing: could not compute suggestions")
+        return 0
+    filed = 0
+    for item in found:
+        try:
+            filed += _file_under_cap(item["node_id"], item["orbit"])
+        except Exception:  # noqa: BLE001 - one bad filing must not stop the rest
+            _log.exception("auto filing: could not file %s", item.get("node_id"))
+    return filed
 
 
 def _horizon_queue() -> intake.IntakeQueue:
@@ -3569,7 +3595,8 @@ def _vector_worker() -> vectors.Worker:
     with _VECTORS_LOCK:
         worker = _VECTORS["worker"]
         if worker is None:
-            worker = vectors.Worker(_horizon_queue_base())
+            # New embeddings are what an unsummarised capture's suggestion comes from.
+            worker = vectors.Worker(_horizon_queue_base(), on_synced=_auto_file_suggested)
             worker.start()
             _VECTORS["worker"] = worker
         return worker
@@ -3935,8 +3962,6 @@ async def upload_into_horizon(request: Request) -> dict:
         cap = max_upload_bytes()
     except SystemExit as exc:
         raise _misconfigured(exc) from exc
-    # The first orbit is titled in the reader's language, and it is often created by an upload.
-    _CAPTURE_LANGUAGE["name"] = request.headers.get("x-penumbra-interface-language", "")
     content_length = request.headers.get("content-length")
     if content_length is None:
         raise HTTPException(411, "Content-Length header is required for file uploads")
@@ -4042,7 +4067,6 @@ async def capture_into_horizon(body: CaptureRequest, request: Request) -> dict:
                 "(AGENTS.md invariant 26) — upload the file's bytes to /horizon/upload instead.",
             )
 
-    _CAPTURE_LANGUAGE["name"] = request.headers.get("x-penumbra-interface-language", "")
     queue = _horizon_queue()
     # A new capture is the reader asking for the automatic summary pass again — see
     # `_resume_auto_distil`, and `_auto_distil_after_intake` for why a Stop suppresses it until then.
@@ -4353,16 +4377,20 @@ async def horizon_graph(orbit: str | None = Query(None, max_length=200)) -> dict
     )
 
 
+#: The orbit every capture used to be filed into before `filing_mode` existed. The app filed into
+#: it, not the reader, so membership in it alone still counts as unfiled and its captures keep
+#: getting suggestions.
+_LEGACY_FIRST_ORBIT = "first-orbit"
+
+
 def _landing_slug() -> str | None:
-    """The landing orbit's slug, or None when captures land nowhere. Membership in it alone still
-    counts as unfiled for suggestions."""
+    """The orbit whose membership alone still counts as unfiled for suggestions: the assigned one,
+    since everything is filed there, or else the old automatic first orbit."""
     try:
-        choice = landing_orbit()
+        mode, target = filing_mode()
     except SystemExit:
         return None
-    if choice == "off":
-        return None
-    return slug(choice or FIRST_ORBIT_ID)
+    return slug(target) if mode == "assign" and target else _LEGACY_FIRST_ORBIT
 
 
 @app.get("/horizon/suggestions")

@@ -2333,8 +2333,9 @@ def test_no_safety_bound_or_credential_is_readable_or_writable(client, monkeypat
         # token holder can call, so this changes WHEN summaries happen, not whether someone can
         # cause them. Its bound is the next line down, and stays off the page.
         "auto_distil",
-        # Also a BEHAVIOUR preference: it decides which of the reader's own tiers a capture lands
-        # in, and bounds nothing.
+        # Also BEHAVIOUR preferences: they decide which of the reader's own tiers a capture lands
+        # in, make no model call, and bound nothing.
+        "filing_mode",
         "landing_orbit",
     }
 
