@@ -10791,19 +10791,9 @@ async function renderStarMap() {
   const bySlug = new Map((topo.orbits || []).map((o) => [o.slug, o]));
   orbitTitles.clear();
   starMap.orbits = (listed.orbits || []).map((o) => {
-    const title = o.title || o.derived_title || t("app.untitled", "Untitled orbit");
-    orbitTitles.set(o.slug, title);
-    const filed = bySlug.get(o.slug) || { captures: 0, undistilled: 0, last_filed_at: 0, entities: [], tags: [] };
-    return {
-      id: o.id, slug: o.slug, title,
-      sources: o.source_count,
-      captures: filed.captures,
-      undistilled: filed.undistilled,
-      entities: filed.entities,
-      tags: filed.tags,
-      moons: filed.moons || [],
-      recency: Math.max(o.updated_at || 0, filed.last_filed_at || 0),
-    };
+    const planet = starMapOrbit(o, bySlug.get(o.slug));
+    orbitTitles.set(o.slug, planet.title);
+    return planet;
   }).sort((a, b) => b.recency - a.recency);
   starMap.data = topo;
   starMap.tags = concepts.tags || [];
@@ -11114,8 +11104,7 @@ function drawStarMap() {
 
   planets.forEach((p, index) => {
     const { orbit } = p;
-    // `all_tags`, not `tags`: the latter is only the orbit's most common few, for display.
-    const dimmed = starMap.lens && !(orbit.all_tags || orbit.tags || []).includes(starMap.lens);
+    const dimmed = dimmedByLens(orbit, starMap.lens);
     const group = svgEl("g", { tabindex: 0, role: "button", "aria-label":
       t("map.planetLabel", `${orbit.title}, ${orbit.sources} sources`, { name: orbit.title, n: orbit.sources }) },
     `map-planet${planetMark(orbit.slug)}${dimmed ? " is-dim" : ""}`);
@@ -11197,6 +11186,32 @@ function drawStarMap() {
   startMapMotion();
   restoreFocus(svg, keepFocus);
   renderStarMapCard();
+}
+
+//: One planet from an orbit in `/orbits` and its entry in `/horizon/topology`. Every field the map
+//: reads has to be carried here: this copied `tags` (the top few, for display) and not `all_tags`,
+//: so the lens fix on the server changed nothing on screen and pressing a tag still dimmed the
+//: planet that held it.
+function starMapOrbit(o, topo) {
+  const filed = topo || { captures: 0, undistilled: 0, last_filed_at: 0, entities: [], tags: [], all_tags: [] };
+  return {
+    id: o.id, slug: o.slug,
+    title: o.title || o.derived_title || t("app.untitled", "Untitled orbit"),
+    sources: o.source_count,
+    captures: filed.captures,
+    undistilled: filed.undistilled,
+    entities: filed.entities,
+    tags: filed.tags,
+    allTags: filed.all_tags || filed.tags || [],
+    moons: filed.moons || [],
+    recency: Math.max(o.updated_at || 0, filed.last_filed_at || 0),
+  };
+}
+
+//: A tag lens dims the planets none of whose captures carry the tag, matched against every tag the
+//: orbit holds, not only the few it shows.
+function dimmedByLens(planet, lens) {
+  return Boolean(lens) && !(planet.allTags || []).includes(lens);
 }
 
 async function enterOrbit(orbit) {
