@@ -140,7 +140,7 @@ Each entry states what the product does now and why. The reasoning behind each r
 - A PDF page reads as prose in the source viewer and the reader. Its text layer breaks every printed line, so it wrapped twice and ended sentences with one word on a line; a break inside a sentence is now joined for display, while list items, blank lines and breaks after a sentence stay, and the offsets are unchanged so a citation still highlights the same words. The facts above the text share its measure and left edge.
 - A click on the knowledge graph's empty space lets go of the entity or tags picked.
 - The knowledge graph no longer makes the whole app scroll. Its grid row was sized by its content, so a details panel longer than the window stretched the page past it.
-- The crumb, its chevron and the orbit's name in the header share one size and line height and sit on one baseline, closer together.
+- The header no longer shows "Horizon ›" before an orbit's name: the moon at its left end goes home from anywhere, and it now shows at every width so there is always a way back.
 - The orbit rail lists orbits only. Its Horizon row repeated the screen you were on, and the moon and the crumb in the header already lead home.
 - An orbit chip in the history is marked with a small ring and planet. It was `◐`, the theme toggle's glyph, and read as a setting.
 
