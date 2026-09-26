@@ -250,6 +250,7 @@ async def _lifespan(_app: FastAPI):
     # `resume_interrupted` resets both owned states through `horizon.reset_interrupted_states` and
     # re-queues whatever was still waiting (invariants 78/79/80).
     await asyncio.to_thread(_horizon_queue().resume_interrupted)
+    await asyncio.to_thread(_untitle_legacy_first_orbit)
     recorded = await asyncio.to_thread(_backfill_horizon)
     if recorded:
         _log.info("horizon: recorded %d source(s) added inside orbits", recorded)
@@ -4381,6 +4382,29 @@ async def horizon_graph(orbit: str | None = Query(None, max_length=200)) -> dict
 #: it, not the reader, so membership in it alone still counts as unfiled and its captures keep
 #: getting suggestions.
 _LEGACY_FIRST_ORBIT = "first-orbit"
+
+
+#: The titles the old automatic first orbit was given at creation, never by the reader.
+_LEGACY_FIRST_ORBIT_TITLES = ("First orbit", "第一個軌道")
+
+
+def _untitle_legacy_first_orbit() -> None:
+    """Clear the fixed title the old automatic first orbit was created with, so it is named the
+    way every other orbit is: from its sources until the first model action titles it (invariant
+    37). Only that exact title on that exact handle; a title the reader typed is never touched.
+    Best-effort: a startup tidy never stops the server."""
+    try:
+        existing = load_orbit(_LEGACY_FIRST_ORBIT)
+        if existing is None or existing.title not in _LEGACY_FIRST_ORBIT_TITLES:
+            return
+
+        def _clear(orbit: Orbit) -> None:
+            if orbit.title in _LEGACY_FIRST_ORBIT_TITLES:
+                orbit.title = None
+
+        mutate_orbit(_LEGACY_FIRST_ORBIT, _clear)
+    except Exception:  # noqa: BLE001 - a cosmetic tidy must never block startup
+        _log.warning("could not clear the old first orbit's fixed title")
 
 
 def _landing_slug() -> str | None:
