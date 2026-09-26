@@ -3091,6 +3091,64 @@ select:hover {
   max-width: 16rem;
 }
 
+/* Keep as a moon: left of the star on an answer, in the same box, marked with the orbit glyph the
+   history's chips use (a planet on its ring), because what it does is put the answer in the orbit. */
+.keep-as-moon {
+  position: absolute;
+  top: 0.35rem;
+  right: calc(0.35rem + 1.75rem + var(--space-1));
+  margin: 0;
+  padding: 0;
+  width: 1.75rem;
+  height: 1.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.keep-as-moon-mark {
+  display: block;
+  width: 17px;
+  height: 11px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 12'%3E%3Cellipse cx='8' cy='6.5' rx='6.2' ry='2.4' transform='rotate(-20 8 6.5)' fill='none' stroke='%23000' stroke-width='1.1'/%3E%3Ccircle cx='8' cy='6.5' r='1.3'/%3E%3Ccircle cx='14.2' cy='4.3' r='2.5'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 12'%3E%3Cellipse cx='8' cy='6.5' rx='6.2' ry='2.4' transform='rotate(-20 8 6.5)' fill='none' stroke='%23000' stroke-width='1.1'/%3E%3Ccircle cx='8' cy='6.5' r='1.3'/%3E%3Ccircle cx='14.2' cy='4.3' r='2.5'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.turn-answer:hover .keep-as-moon,
+.turn-answer:focus-within .keep-as-moon,
+.keep-as-moon:focus-visible,
+.keep-as-moon.is-kept {
+  opacity: 1;
+}
+
+.keep-as-moon:hover,
+.keep-as-moon.is-kept {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.keep-as-moon:disabled {
+  cursor: default;
+}
+
+.keep-as-moon[data-tip]::after {
+  right: 0;
+  max-width: 16rem;
+}
+
+/* On an answer Copy moves one more box left, past the moon. */
+.turn-answer > .copy-artifact {
+  right: calc(0.35rem + 2 * (1.75rem + var(--space-1))) !important;
+}
+
 /* Copy sits immediately LEFT of the star wherever both exist: same box, same top line. The two were
    specified at overlapping offsets (right 0.9rem at 1.5rem wide against 0.35rem at 1.75rem), and
    only never collided because Copy had fallen into the flow — see `:where([data-tip])`. */
@@ -3115,10 +3173,11 @@ select:hover {
   padding-right: calc(var(--space-2) + var(--card-control) * 2 + var(--space-1));
 }
 
+/* An answer carries three controls (Copy, keep as a moon, the star), so its corner is wider. */
 .turn-answer:not(.is-pending):not(.is-failed)::before {
   content: "";
   float: right;
-  width: 3.4rem;
+  width: calc(0.35rem + 3 * 1.75rem + 2 * var(--space-1));
   height: 1.5rem;
 }
 
@@ -6705,6 +6764,7 @@ body[data-view="horizon"] .orbit-picker {
   .orbit-row-delete,
   .src-remove,
   .save-as-note,
+  .keep-as-moon,
   .copy-artifact {
     opacity: 1;
   }
@@ -9302,3 +9362,9 @@ body:not([data-view="horizon"]) .capture-dock {
 .graph-svg.is-dragging .graph-entity:active .graph-entity-body {
   filter: drop-shadow(0 4px 8px rgb(0 0 0 / 0.5));
 }
+
+/* The way into studying, beside the ask: secondary, so asking stays the one primary action. */
+.lens-study {
+  margin-bottom: var(--space-3);
+}
+

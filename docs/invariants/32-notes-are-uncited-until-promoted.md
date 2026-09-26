@@ -12,4 +12,6 @@ Saving as a note is offered by call sites that opt in, never by the shared `rend
 
 ---
 
+**Keeping an answer as a moon is the same two steps in one press.** An answer's keep button adds its text as a note and promotes it at once, so it becomes a source of the orbit, and through `_record_in_horizon` a capture filed there and a moon on the map. Nothing about the rule changes: the note is still uncited and the source is still text the reader chose to keep, re-verified like any other; the press only spares the reader the second click when they already mean both.
+
 Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)
