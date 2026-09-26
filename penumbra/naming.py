@@ -58,12 +58,20 @@ Rules:
 """
 
 
-def fallback_title(origins: list[str]) -> str:
+def fallback_title(origins: list[str], titles: list[str] | None = None) -> str:
     """A title with no model involved — used when the model call fails, and by any caller that
     wants one without paying for a request. Deterministic, so the same orbit always gets the
-    same fallback rather than a different one on each retry."""
+    same fallback rather than a different one on each retry.
+
+    The first source's own name when it has one (`titles`, its scraped page title), because that is
+    what a reader recognises. Only without one does it fall back to the origin: a pasted snippet, a
+    file name without its extension, or a URL's last segment. It used to be that last segment plus a
+    count, so an orbit of a conference's call for papers read "cfp (+1)", which named nothing."""
     if not origins:
         return "Untitled orbit"
+    named = normalize_title((titles or [""])[0] if titles else "")
+    if named:
+        return named
     first = origins[0]
     # A pasted-text origin already carries a readable snippet (`ingest.ingest_pasted_text`); a path
     # or URL is more useful as its last meaningful segment than in full.
@@ -71,10 +79,8 @@ def fallback_title(origins: list[str]) -> str:
         first = first[len("pasted:") :].split(" #")[0]
     else:
         first = re.sub(r"^https?://(www\.)?", "", first).rstrip("/").split("/")[-1] or first
+        first = re.sub(r"\.(pdf|txt|md)$", "", first, flags=re.IGNORECASE)
     title = first.strip() or "Untitled orbit"
-    extra = len(origins) - 1
-    if extra:
-        title = f"{title} (+{extra})"
     return title[:_MAX_TITLE_CHARS]
 
 
@@ -101,11 +107,11 @@ def normalize_title(raw: str) -> str:
     return title[:_MAX_TITLE_CHARS]
 
 
-def clean_title(raw: str, origins: list[str]) -> str:
+def clean_title(raw: str, origins: list[str], titles: list[str] | None = None) -> str:
     """Normalise whatever the model returned into something a switcher row can show. Falls back
     rather than displaying an empty or absurd string — the model is unsupervised here (no schema
     validation, unlike every `RLMTask` output in this project), so this is the only guard."""
-    return normalize_title(raw) or fallback_title(origins)
+    return normalize_title(raw) or fallback_title(origins, titles)
 
 
 _LANGUAGE_INSTRUCTIONS = """\
@@ -186,12 +192,13 @@ class SuggestTitle:
     """
 
     async def arun(
-        self, *, sources: str = "", origins: list[str] | None = None, language: str = ""
+        self, *, sources: str = "", origins: list[str] | None = None, language: str = "",
+        titles: list[str] | None = None,
     ) -> str:
         origins = origins or []
         excerpt = (sources or "")[:_EXCERPT_CHARS]
         if not excerpt.strip():
-            return fallback_title(origins)
+            return fallback_title(origins, titles)
         try:
             import dspy
 
@@ -199,6 +206,6 @@ class SuggestTitle:
                 dspy.Signature("sources: str, language: str -> title: str", _INSTRUCTIONS)
             )
             result = await predictor.acall(sources=excerpt, language=language or "")
-            return clean_title(getattr(result, "title", ""), origins)
+            return clean_title(getattr(result, "title", ""), origins, titles)
         except Exception:  # noqa: BLE001 — a title is never worth failing the request that wanted it
-            return fallback_title(origins)
+            return fallback_title(origins, titles)

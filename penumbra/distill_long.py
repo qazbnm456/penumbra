@@ -32,7 +32,8 @@ parts of `sources` with Python (`.find()`, slicing); do not try to print the who
 Write:
 - title: a short, specific label. Name the actual subject, not the document type.
 - summary: two or three sentences on what the whole document says and why someone kept it, not
-  only its opening. No preamble.
+  only its opening. Start with the subject itself: no preamble in any language ("This
+  document...", "本文件為", "本文介紹"), no closing "In summary" or "總的來說", and no dashes (— or –).
 - tags: up to 6 lowercase broad subjects a person would search by (sleep, memory, coffee).
 - entities: up to 6 specific things the document is ABOUT: people, organisations, products,
   places, and named concepts such as a theory, a method, a condition, a stage or a part of the body.

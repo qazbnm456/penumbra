@@ -73,8 +73,10 @@ forgotten the words it used.
 Write:
 - title: a short, specific label. Name the actual subject, not the document type. Never "Article"
   or "PDF document".
-- summary: two or three sentences on what this says and why someone kept it. No preamble, no "This
-  document...".
+- summary: two or three sentences on what this says and why someone kept it. Start with the
+  subject itself. No preamble in any language: not "This document...", "This article...", not
+  "本文件為", "本文介紹", "這份文件", and no closing "In summary" or "總的來說". No dashes (— or –);
+  use a comma or a full stop.
 - tags: up to 6 lowercase topic labels, reusable across other documents. Broad subjects a person
   would search by (sleep, memory, coffee), not phrases unique to this text.
 - entities: up to 6 specific things this is ABOUT: people, organisations, products, places, and
