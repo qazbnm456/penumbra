@@ -11645,13 +11645,14 @@ function notePages(summary) {
   return pages;
 }
 
-//: How long a page stays: long enough to read it unhurried (about 4 CJK characters or 3 words a
-//: second, plus a third again), never under 12 seconds or over 45.
+//: How long a page stays: long enough to read it at an easy pace (about 6 CJK characters or 4
+//: words a second, plus a little), never under 8 seconds or over 30. A slower pace held a long
+//: note on screen for most of a minute, which felt stuck.
 function pageDwell(page) {
   const cjk = (page.match(/[\u2e80-\u9fff\uac00-\ud7af]/g) || []).length;
   const words = page.replace(/[\u2e80-\u9fff\uac00-\ud7af]/g, " ").split(/\s+/).filter(Boolean).length;
-  const seconds = (cjk / 4 + words / 3) * 1.3;
-  return Math.min(45000, Math.max(12000, seconds * 1000));
+  const seconds = (cjk / 6 + words / 4) * 1.15;
+  return Math.min(30000, Math.max(8000, seconds * 1000));
 }
 
 //: Something the reader kept, brought back while the map rests: a capture picked at random from
@@ -11677,8 +11678,12 @@ function showAmbientNote() {
     setTimeout(() => {
       const body = [elt("div", "ambient-note-kicker", kicker), elt("div", "ambient-note-title", node.title || ""),
         elt("p", "ambient-note-body", pages[index] || "")];
+      // What it talks about, as copper chips that wrap to a second line rather than run off the
+      // column: the colour says what they are, so no label is needed.
       if (names.length) {
-        body.push(elt("div", "ambient-note-names", `${t("rest.about", "About")}  ${names.join(" \u00b7 ")}`));
+        const row = elt("div", "ambient-note-names");
+        names.forEach((name) => row.appendChild(elt("span", "ambient-note-name", name)));
+        body.push(row);
       }
       if (pages.length > 1) {
         const dots = elt("div", "ambient-note-pages");
