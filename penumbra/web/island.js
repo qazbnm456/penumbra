@@ -135,12 +135,17 @@
     const total = (topo.total && topo.total.count) || 0;
     const done = (topo.total && topo.total.distilled) || 0;
     document.body.style.setProperty("--done", String(total ? Math.round((done / total) * 100) : 0));
+    if (done) delete document.body.dataset.noneDone;
+    else document.body.dataset.noneDone = "";
     const distil = status.distil || {};
     if (distil.running || (status.align && status.align.running)) document.body.dataset.summarising = "";
     else delete document.body.dataset.summarising;
     if (status.current || status.pending) document.body.dataset.reading = "";
     else delete document.body.dataset.reading;
-    const lit = Math.min(4, suggested.count || 0);
+    // What waits to be filed, the same thing the map's waiting card counts: captures in no orbit,
+    // or, when an orbit is assigned, the suggestions for captures only in it.
+    const toFile = Math.max((topo.loose && topo.loose.count) || 0, suggested.count || 0);
+    const lit = Math.min(4, toFile);
     dots.forEach((dot, i) => {
       dot.classList.toggle("is-lit", i < lit);
       dot.classList.toggle("is-new", i < lit && i >= litBefore);
@@ -148,11 +153,11 @@
     litBefore = lit;
     // The glyph says nothing a screen reader can see, so its facts are spoken instead, and only
     // when they change: a live region repeated every four seconds is noise.
-    const spoken = `${done}/${total}/${suggested.count || 0}`;
+    const spoken = `${done}/${total}/${toFile}`;
     if (spoken !== lastSpoken) {
       lastSpoken = spoken;
-      announce("island.glance", `${done} of ${total} summarised, ${suggested.count || 0} to file`,
-        { done, total, n: suggested.count || 0 });
+      announce("island.glance", `${done} of ${total} summarised, ${toFile} to file`,
+        { done, total, n: toFile });
     }
   }
 

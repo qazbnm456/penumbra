@@ -8430,6 +8430,13 @@ body.is-resizing .orbit-graph {
   max-width: 100%;
 }
 
+/* The waiting card's lists are not boxes of their own: the column already scrolls, and a nested
+   260px scroller hid half the loose captures with nothing to say it could scroll. */
+.starmap-card .todo-list {
+  max-height: none;
+  overflow: visible;
+}
+
 .card-row .legend-dot {
   flex: none;
 }
@@ -9059,13 +9066,11 @@ body:not([data-view="horizon"]) .capture-dock {
   transition: transform 260ms var(--ib-ease);
 }
 
+/* A lift, not a tilt: the moon sits on a square tile, and a rotated tile reads as a broken icon. */
 .wordmark:hover .wordmark-moon,
-.wordmark:focus-visible .wordmark-moon {
-  transform: rotate(-10deg) scale(1.06);
-}
-
+.wordmark:focus-visible .wordmark-moon,
 .wordmark[aria-expanded="true"] .wordmark-moon {
-  transform: rotate(-10deg) scale(1.06);
+  transform: translateY(-1px) scale(1.05);
 }
 
 .npc {

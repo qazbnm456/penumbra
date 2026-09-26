@@ -8414,7 +8414,7 @@ const DANGLING_TAIL =
 function captureName(name) {
   const raw = String(name || "");
   if (raw.startsWith("pasted:")) return pastedExcerpt(raw);
-  return /^https?:\/\//.test(raw) ? originLabel(raw) : raw;
+  return /^https?:\/\//.test(raw) ? originLabel(raw) : tidyPageTitle(raw);
 }
 
 function pastedExcerpt(origin) {
@@ -8469,10 +8469,17 @@ function nodeErrorBlock(message) {
 //: ten saved articles from one site were ten identical rows reading `en.wikipedia.org`. The title
 //: was in hand the whole way (`preview.title`, scraped from html already fetched - invariant 51,
 //: metadata never an image), and the orbit's source list already used it.
+//: A page's own title without the encyclopedia's name the page appends to it: "咖啡 - 維基百科，
+//: 自由的百科全書" is "咖啡". Only that suffix, in the scripts Wikipedia writes it in; other sites'
+//: suffixes vary too much to cut without cutting a real title.
+function tidyPageTitle(title) {
+  return String(title || "").replace(/\s+[-\u2013\u2014|]\s*(?:Wikipedia|維基百科|维基百科)[^-\u2013\u2014|]*$/u, "").trim();
+}
+
 function nodeHeadline(node) {
-  if (node.title) return node.title;
+  if (node.title) return tidyPageTitle(node.title);
   const preview = node.preview || {};
-  if (preview.title) return preview.title;
+  if (preview.title) return tidyPageTitle(preview.title);
   const origin = node.origin || "";
   if (origin.startsWith("pasted:")) return "";
   return originLabel(origin);
@@ -13046,6 +13053,9 @@ function renderHorizonCard(card, { standing = false } = {}) {
 //: The standing card: each kind of to-do as its own section with its count, the actions beside
 //: what they act on. This used to be two lines under the map, a sentence and a link, with the
 //: suggestions opening under them and pushing the legend about.
+//: How many rows each section of the waiting card names before it says how many more there are.
+const TODO_SHOWN = 8;
+
 function renderHorizonTodo(card, loose) {
   const running = Boolean(horizonState.distil && horizonState.distil.running);
   const pending = running ? 0 : horizonState.undistilled || 0;
@@ -13063,8 +13073,9 @@ function renderHorizonTodo(card, loose) {
   if (loose.count) {
     section(t("map.todoLoose", "Not in an orbit"), loose.count);
     card.appendChild(elt("p", "card-note", t("map.looseHelp", "File each into an orbit here, or drag its dot onto a planet.")));
-    const list = elt("ul", "card-list");
-    (loose.items || []).forEach((item) => {
+    const list = elt("ul", "card-list todo-list");
+    const shown = (loose.items || []).slice(0, TODO_SHOWN);
+    shown.forEach((item) => {
       const row = elt("li", "card-row is-filing");
       const name = elt("button", "card-row-title", captureName(item.title));
       name.type = "button";
@@ -13074,6 +13085,8 @@ function renderHorizonTodo(card, loose) {
       list.appendChild(row);
     });
     card.appendChild(list);
+    const moreLoose = loose.count - shown.length;
+    if (moreLoose > 0) card.appendChild(elt("p", "card-note", t("map.todoMore", `and ${moreLoose} more`, { n: moreLoose })));
   }
   if (suggest.items.length) {
     section(t("map.todoSuggest", "Could go in an orbit"), suggest.items.length);
@@ -13093,8 +13106,8 @@ function renderHorizonTodo(card, loose) {
     // so a capture past its first page is counted but not named, and the remainder says so.
     const waiting = horizonState.nodes.filter((n) => n.state === "ready_undistilled");
     if (waiting.length) {
-      const list = elt("ul", "card-list");
-      waiting.slice(0, 8).forEach((node) => {
+      const list = elt("ul", "card-list todo-list");
+      waiting.slice(0, TODO_SHOWN).forEach((node) => {
         const row = elt("li", "card-row");
         const name = elt("button", "card-row-title",
           nodeHeadline(node) || nodeProse(node) || t("horizon.openNode", "Open this item"));
@@ -13104,7 +13117,7 @@ function renderHorizonTodo(card, loose) {
         list.appendChild(row);
       });
       card.appendChild(list);
-      const more = pending - Math.min(waiting.length, 8);
+      const more = pending - Math.min(waiting.length, TODO_SHOWN);
       if (more > 0) card.appendChild(elt("p", "card-note", t("map.todoMore", `and ${more} more`, { n: more })));
     }
     // The same button the list shows, pressed through, so the spend it names and the pass it

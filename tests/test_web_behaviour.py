@@ -1050,3 +1050,8 @@ def test_an_automatic_filing_is_announced_once_and_can_be_taken_out():
     assert result["many"] == [{"message": "Filed 2 automatically", "action": False}], (
         "several at once are one counted notice, with no button that could not say which to undo"
     )
+
+
+def test_a_wikipedia_title_is_shown_without_the_encyclopedias_name():
+    assert _run("pageTitles") == ["咖啡", "Aurora", "睡眠", "Rust - A language | Rust",
+                                  "Black Hat Cyber Security Conference"]
