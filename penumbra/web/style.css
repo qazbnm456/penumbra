@@ -6457,10 +6457,8 @@ textarea::placeholder {
   white-space: nowrap;
 }
 
-body[data-view="orbit"] .crumb,
-body[data-view="orbit"] .crumb-sep {
-  display: inline-block;
-}
+/* The crumb is no longer shown: the moon at the header's left end goes home from anywhere, so
+   "Horizon ›" before the orbit's name repeated it. The moon is kept at every width for that reason. */
 
 /* **In the Horizon there is no current orbit, so the picker does not name one.** It kept showing
    the last orbit's title while the Horizon was on screen, which reads as "you are in that
@@ -6493,11 +6491,7 @@ body[data-view="horizon"] .orbit-picker {
   }
 }
 
-@media (max-width: 860px) {
-  .crumb {
-    display: inline-block;
-  }
-}
+
 
 /* The separator only exists when there are two places to sit between. It is `aria-hidden` in the
    markup: the crumb and the picker are each a real control, and a chevron between them is texture. */
@@ -6547,10 +6541,6 @@ body[data-view="horizon"] .orbit-picker {
 
      The brand is what gives way. On a phone-width window of a local-first app the wordmark is the
      least useful thing in the row: you already know which application you opened. */
-  .wordmark {
-    display: none;
-  }
-
   .header {
     gap: var(--space-4);
     padding: 0 var(--space-5);
