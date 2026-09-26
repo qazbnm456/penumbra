@@ -45,6 +45,18 @@ def test_orbits_carry_their_filed_captures_and_top_entities():
     assert found["total"] == {"count": 3, "distilled": 2}
 
 
+def test_a_lens_can_match_every_tag_an_orbit_carries_not_only_its_top_few():
+    """`tags` is the orbit's most common few, for display. The map's lens matched against it, so a
+    tag named once in an orbit carrying more than six was never lit: pressing it dimmed every
+    planet, including the one that held it."""
+    many = [f"t{i}" for i in range(topology.TOP_PER_ORBIT)] + ["supply chain security"]
+    _file(_capture("https://x.example/many", tags=many), "sec")
+    (orbit,) = topology.star_map(base_dir=BASE)["orbits"]
+    assert "supply chain security" not in orbit["tags"], "the display list is still capped"
+    assert "supply chain security" in orbit["all_tags"]
+    assert sorted(orbit["all_tags"]) == sorted(many)
+
+
 def test_loose_captures_are_counted_apart_from_orbits():
     _capture("https://x.example/a", state="ready_undistilled")
     horizon.add_pending_node("https://x.example/q", "web", base_dir=BASE)
