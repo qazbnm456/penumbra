@@ -1763,6 +1763,27 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     return { focusedIdle, behindAnotherApp, tooSoon };
   },
 
+  //: Studying the orbit just left from opens it again: going home keeps `state.orbitId`, and a
+  //: guard on the id alone never reached `openOrbit`, the only way into the orbit's view.
+  studyAfterHome() {
+    const state = { orbitId: null };
+    const document = { body: { dataset: { view: "horizon" } } };
+    const orbitVisit = { override: null };
+    let opened = 0;
+    const openOrbit = async (id) => { opened += 1; state.orbitId = id; document.body.dataset.view = "orbit"; };
+    const run = new Function(
+      "state", "document", "orbitVisit", "openOrbit", "applyViewMode",
+      `${extract("studyOrbit")}\nreturn { studyOrbit };`
+    )(state, document, orbitVisit, openOrbit, () => {});
+    return (async () => {
+      await run.studyOrbit({ id: "A" });
+      const first = document.body.dataset.view;
+      document.body.dataset.view = "horizon"; // the brand button: home, orbitId kept
+      await run.studyOrbit({ id: "A" });
+      return { first, again: document.body.dataset.view, opened };
+    })();
+  },
+
   restPages() {
     const run = new Function(
       `const REST_PAGE_UNITS = 440;\n${extract("textUnits")}\n${extract("notePages")}\n${extract("pageDwell")}\n` +

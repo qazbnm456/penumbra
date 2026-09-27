@@ -10751,7 +10751,9 @@ async function reattachAskH() {
 //: A question about one orbit goes into that orbit's conversation, in the three columns, where
 //: its answer joins the thread and later questions can follow it up.
 async function askInOrbit(orbit, question) {
-  if (state.orbitId !== orbit.id) await openOrbit(orbit.id);
+  // As in `studyOrbit`: the orbit on screen, not the last one opened, or a question about the orbit
+  // just left from was asked out of sight.
+  if (state.orbitId !== orbit.id || document.body.dataset.view !== "orbit") await openOrbit(orbit.id);
   if (state.orbitId !== orbit.id) return; // the orbit could not be opened; openOrbit said why
   orbitVisit.override = "cols";
   applyViewMode();
@@ -12515,7 +12517,10 @@ async function enterOrbit(orbit) {
 //: Going in to study an orbit: it opens in the study view (sources, conversation, Studio), where
 //: the AI reads all of it and answers with citations, whatever view the orbit was last shown in.
 async function studyOrbit(orbit) {
-  if (state.orbitId !== orbit.id) await openOrbit(orbit.id);
+  // Opened unless it is the orbit ON SCREEN, not merely the last one opened: going home keeps
+  // `state.orbitId`, and a guard on the id alone skipped `openOrbit` (the only way to the orbit's
+  // view), so studying the orbit just left from did nothing.
+  if (state.orbitId !== orbit.id || document.body.dataset.view !== "orbit") await openOrbit(orbit.id);
   if (state.orbitId !== orbit.id) return;
   orbitVisit.override = "cols";
   applyViewMode();

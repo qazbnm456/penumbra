@@ -1064,3 +1064,12 @@ def test_rest_never_starts_in_a_window_behind_another_app():
     assert result["focusedIdle"] is True, "left alone in its own window, the map rests"
     assert result["behindAnotherApp"] is False, "a window the reader is not using must not rest"
     assert result["tooSoon"] is False
+
+
+def test_studying_the_orbit_just_left_from_opens_it_again():
+    """Home keeps `state.orbitId`; the study button's guard read only the id, so the orbit just
+    left from could not be entered again from the map."""
+    result = _run("studyAfterHome")
+    assert result["first"] == "orbit"
+    assert result["again"] == "orbit", "the second press left the reader on the map"
+    assert result["opened"] == 2
