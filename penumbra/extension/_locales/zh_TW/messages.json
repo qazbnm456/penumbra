@@ -1,0 +1,75 @@
+{
+  "extName": {
+    "message": "Penumbra"
+  },
+  "extDescription": {
+    "message": "把正在看的網頁、一段文字或一個連結，收進這台電腦上的 Penumbra。"
+  },
+  "actionTitle": {
+    "message": "把這頁收進 Penumbra"
+  },
+  "commandCapture": {
+    "message": "把這頁收進 Penumbra"
+  },
+  "menuRoot": {
+    "message": "Penumbra"
+  },
+  "menuHorizon": {
+    "message": "收進視界"
+  },
+  "menuOrbit": {
+    "message": "放進「$VALUE$」",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
+  },
+  "menuConnect": {
+    "message": "連接 Penumbra…"
+  },
+  "done": {
+    "message": "已收進 Penumbra"
+  },
+  "failed": {
+    "message": "沒收進去"
+  },
+  "errorNotPaired": {
+    "message": "這個瀏覽器還沒連接 Penumbra。"
+  },
+  "errorUnpaired": {
+    "message": "Penumbra 不再接受這個瀏覽器，請在它的設定頁再按一次「連接瀏覽器」。"
+  },
+  "errorServer": {
+    "message": "Penumbra 沒有回應，它有開著嗎？"
+  },
+  "errorRestricted": {
+    "message": "這個頁面不允許擴充功能讀取。"
+  },
+  "optionsTitle": {
+    "message": "Penumbra"
+  },
+  "statusUnpaired": {
+    "message": "還沒連接"
+  },
+  "statusPaired": {
+    "message": "已連接到 $VALUE$ 的 Penumbra",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
+  },
+  "pairHow": {
+    "message": "在 Penumbra 打開設定，按「連接瀏覽器」。這個瀏覽器會打開一頁，自動完成連接。"
+  },
+  "useHow": {
+    "message": "在網頁、選取的文字或連結上按右鍵，選 Penumbra；按工具列的按鈕或快捷鍵，收下整頁。"
+  },
+  "unpair": {
+    "message": "解除連接"
+  },
+  "shortcutHow": {
+    "message": "快捷鍵可以在 chrome://extensions/shortcuts 修改。"
+  }
+}

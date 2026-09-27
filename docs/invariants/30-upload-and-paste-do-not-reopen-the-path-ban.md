@@ -20,6 +20,8 @@ Batch upload lives on `POST /horizon/upload`, where the Horizon's drop target ma
 
 Word, Slides and Docs native formats are deliberately not parsed.
 
+`POST /extension/capture` is another upload surface and follows the same two rules. Its size is checked from `Content-Length` before the body is parsed, against the same `max_upload_bytes()`. It carries text and HTML the browser already rendered, never a path, and the page address it names must be http(s): a page the browser shows from `file://` is refused, since that would be a local path arriving by another route.
+
 ---
 
 Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

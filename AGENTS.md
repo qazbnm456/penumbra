@@ -32,6 +32,7 @@ What exists:
 - `horizon.py`, Tier 0: a global capture Horizon (a SQLite index plus `horizon/nodes/<id>.json`) whose nodes are filed into orbits (invariant 78). `intake.py` is its serial capture queue (79), and `distill.py` is the separate summary pass (80). All three are reachable at `/horizon/*` and from the web UI, where the Horizon is the default screen.
 - A Horizon ask: a question over everything kept, a tag or an entity. `search.py` is its full-text index (character pairs for CJK) and its selection, `asks.py` its history, and it is reachable at `/horizon/ask*` and from the ask dock at the foot of the screen.
 - A star map of the Horizon and a knowledge graph of each orbit, drawn from summaries' entities and tags (`topology.py`, `/horizon/topology`, `/horizon/graph`).
+- A browser extension (`penumbra/extension/`, Chromium MV3) that captures a rendered page, a selected passage with its page, or a link, into the Horizon or a chosen orbit. It pairs from the settings page (`pair.html`) and holds a capture-only key (`auth.capture_token`), not the API token.
 - Local relations (`vectors.py`): a downloaded embedding model and a `sqlite-vec` index in the Horizon's database, drawn as similarity lines in the graph and used for filing suggestions.
 - Summaries split by length: one call for a short capture, `DistillLongDocument` (`distill_long.py`) for a long one. Concept alignment (`align.py`) merges entity names into an alias table (`concepts.py`) that every reader applies, and filing suggestions (`filing.py`) are computed locally from shared entities and tags.
 
@@ -48,7 +49,7 @@ Still unbuilt. Do not assume any of these exist because a design discussion ment
 - The API has one shared token and no accounts, sessions or per-user authorization (25, 77).
 - `cli.py` cannot reach the Horizon (78, 79, 80), and it has no orbit-management verbs: no list, rename or delete. The API and the web UI have all three.
 - Folders and archives cannot be captured, because invariant 26 keeps local paths out of the API and the desktop shell does not supply them.
-- The browser extension is unbuilt, so every capture is a paste, a drop or an upload into the web UI, or a drop on the desktop app's island in the notch.
+- The browser extension is Chromium-only (Chrome, Arc, Brave, Edge), installed unpacked; there is no Firefox or Safari build and no store listing.
 - The desktop installers are not signed with a developer identity: macOS builds carry an ad-hoc signature, Windows and Linux builds none.
 - Slides, Google Docs and legacy `.doc` files are not parsed (Word `.docx` is), and full audio transcription is not done. YouTube captions do ship.
 
@@ -124,7 +125,7 @@ This index does not grow. An entry that has gained a second paragraph has taken 
 
 29. **The web UI (`penumbra/web/`) is a real end-user product, not a replay-only trace console like the sibling projects' `studio/`.** It rests on five rules for the live trace stream and on never using `innerHTML`, and its assets must live under `penumbra/web/` or they vanish from the wheel. ([why](docs/invariants/29-the-web-ui-is-a-product-surface.md))
 
-30. **No upload surface reopens invariant 26's local-path ban: not `sources/upload`, not `add_sources`'s `texts`, not `/horizon/upload`, not the fetch inside `parse_web`.** The size cap is checked before FastAPI parses the body, and `max_upload_bytes()` is deliberately not a `PenumbraConfig` field. ([why](docs/invariants/30-upload-and-paste-do-not-reopen-the-path-ban.md))
+30. **No upload surface reopens invariant 26's local-path ban: not `sources/upload`, not `add_sources`'s `texts`, not `/horizon/upload`, not `/extension/capture`, not the fetch inside `parse_web`.** The size cap is checked before FastAPI parses the body, and `max_upload_bytes()` is deliberately not a `PenumbraConfig` field. ([why](docs/invariants/30-upload-and-paste-do-not-reopen-the-path-ban.md))
 
 31. **An endpoint that returns a whole document is a deliberate decision, stated openly. There are three: `sources/{source_id}`, the trace pair (29) and `/horizon/{node_id}/source`.** Before the first one, no caller could read more of a source than a citation's short `quote`. ([why](docs/invariants/31-the-source-text-endpoint-is-a-new-exposure.md))
 
@@ -220,7 +221,7 @@ This index does not grow. An entry that has gained a second paragraph has taken 
 
 76. **The SSRF guard's DNS check accepts an operator-supplied carve-out (`PN_FETCH_ALLOW_CIDRS`), resolved in one place (`web.allow_nets`) that both host-side fetchers read.** A fake-IP resolver answers every public hostname with a reserved address, so full strictness refuses every ingestion on that machine. The guard is not wrong; it cannot see that the operator's own resolver is lying to it. ([why](docs/invariants/76-the-ssrf-carve-out-for-fake-ip-resolvers.md))
 
-77. **Every request needs the API token (`auth.py`), the static assets are the only exception, and a `Host` header that is a DNS name is refused.** Being reachable only from this machine is not the same as being reachable only by this app: every browser the user runs is on this machine too. ([why](docs/invariants/77-the-local-api-token.md))
+77. **Every request needs the API token (`auth.py`), the static assets are the only exception, the paired browser extension's capture key opens only its three `/extension` capture routes, and a `Host` header that is a DNS name is refused.** Being reachable only from this machine is not the same as being reachable only by this app: every browser the user runs is on this machine too. ([why](docs/invariants/77-the-local-api-token.md))
 
 78. **The Horizon (`horizon.py`) is an index, not a corpus: nothing at Tier 0 assembles a blob over the Horizon, only a Horizon ask over a selection `search.select_for_ask` has bounded, and every write to it is a SQL delta (`update_node`; there is deliberately no `save_node`).** The 8,000,000-character cap governs an orbit (8), and a Horizon meant to hold thousands of nodes can coexist with it only by never building one over all of them. ([why](docs/invariants/78-the-horizon-is-an-index-not-a-corpus.md))
 

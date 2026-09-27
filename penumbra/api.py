@@ -167,7 +167,7 @@ from .orbit import (
     remove_source,
     slug,
 )
-from .parsers.web import FetchError
+from .parsers.web import FetchError, page_source, selection_source
 from .prose import polish
 from .schema import (
     FAQ,
@@ -375,7 +375,12 @@ async def _require_api_token(request: Request, call_next):
                 )
             },
         )
-    if not auth.token_matches(_presented_token(request)):
+    presented = _presented_token(request)
+    # The paired browser extension's key opens its three capture routes and nothing else.
+    extension = auth.is_capture_route(request.method, request.url.path) and auth.capture_token_matches(
+        presented, _horizon_queue_base()
+    )
+    if not extension and not auth.token_matches(presented):
         return JSONResponse(
             status_code=401,
             content={
@@ -3686,9 +3691,21 @@ def _horizon_queue() -> intake.IntakeQueue:
     return queue
 
 
+#: Links the browser extension captured into a chosen orbit, filed there once they are read instead
+#: of the way `filing_mode` says. Guarded by `_FILE_ON_READY_LOCK`.
+_FILE_ON_READY: dict[str, str] = {}
+_FILE_ON_READY_LOCK = threading.Lock()
+
+
 def _on_capture_ready(node_id: str) -> None:
-    """A capture finished parsing: file it into the landing orbit, and wake the local embedder."""
-    _file_into_landing_orbit(node_id)
+    """A capture finished parsing: file it where it was asked to go, or into the landing orbit, and
+    wake the local embedder."""
+    with _FILE_ON_READY_LOCK:
+        target = _FILE_ON_READY.pop(node_id, None)
+    if target:
+        _file_under_cap(node_id, target)
+    else:
+        _file_into_landing_orbit(node_id)
     _vector_worker().nudge()
 
 
@@ -4215,6 +4232,136 @@ async def capture_into_horizon(body: CaptureRequest, request: Request) -> dict:
     # account, and the auto-summary hook would never see it. See `IntakeQueue.nudge`.
     queue.nudge()
     return {"nodes": [node.model_dump() for node in nodes]}
+
+
+# --- the browser extension -------------------------------------------------------------------------
+#
+# The extension captures what the reader's browser shows: a whole rendered page (so a page behind a
+# login or drawn by JavaScript reads as they saw it), a selected passage with the page it came
+# from, or a link. It holds the capture key (`auth.capture_token`), which opens only the three
+# routes marked below. Pairing is done from the workspace with the full token.
+
+
+class ExtensionCapture(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["page", "selection", "link"]
+    url: str = Field(min_length=1, max_length=8192)
+    title: str = Field(default="", max_length=2000)
+    #: The rendered page (`page`), and its visible text as the fallback when no article is found.
+    html: str | None = None
+    #: The page's visible text (`page`) or the selected passage (`selection`).
+    text: str | None = None
+    #: File the capture into this orbit instead of the way `filing_mode` says.
+    orbit: str | None = Field(default=None, max_length=200)
+
+
+@app.get("/extension/status")
+async def extension_status() -> dict:
+    """Capture key: whether the paired server is here, for the extension's health check."""
+    return {"ok": True, "app": "Penumbra"}
+
+
+@app.get("/extension/orbits")
+async def extension_orbits() -> dict:
+    """Capture key: the orbits' ids and names, and nothing else, for the extension's menu."""
+    orbits, _unreadable = await asyncio.to_thread(list_orbit_summaries)
+    return {"orbits": [{"id": o.id, "title": o.title or _fallback_name(o.sources)} for o in orbits]}
+
+
+@app.post("/extension/capture")
+async def extension_capture(request: Request) -> dict:
+    """Capture key: one page, passage or link into the Horizon, and into an orbit when one is named.
+
+    The body is size-checked before it is parsed (invariant 30), and the address must be http(s):
+    a page the browser shows from `file://` would be a local path by another route (invariant 26).
+    A rendered page or a passage is parsed here, like an upload; a link goes through the intake
+    queue like any captured URL, and is filed once it has been read.
+    """
+    try:
+        cap = max_upload_bytes()
+    except SystemExit as exc:
+        raise _misconfigured(exc) from exc
+    try:
+        declared = int(request.headers.get("content-length") or "")
+    except ValueError:
+        raise HTTPException(411, "Content-Length header is required") from None
+    if declared > cap:
+        raise HTTPException(413, f"the capture declares {declared} bytes, exceeding the {cap}-byte limit")
+    raw = await request.body()
+    if len(raw) > cap:
+        raise HTTPException(413, f"the capture is {len(raw)} bytes, exceeding the {cap}-byte limit")
+    try:
+        body = ExtensionCapture.model_validate_json(raw)
+    except ValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not is_url(body.url):
+        raise HTTPException(422, "only web pages can be captured (http or https)")
+    target = None
+    if body.orbit:
+        target = (await asyncio.to_thread(_load_orbit_or_404, body.orbit)).id
+    _resume_auto_distil()
+    queue = _horizon_queue()
+
+    if body.kind == "link":
+        node = await asyncio.to_thread(queue.submit, body.url)
+        if target:
+            with _FILE_ON_READY_LOCK:
+                _FILE_ON_READY[node.id] = target
+            # Read before it was registered: file it now instead of waiting for a hook already run.
+            current = await asyncio.to_thread(horizon.get_node, node.id)
+            if current is not None and current.state in ("ready", "ready_undistilled"):
+                with _FILE_ON_READY_LOCK:
+                    pending = _FILE_ON_READY.pop(node.id, None)
+                if pending:
+                    await asyncio.to_thread(_file_under_cap, node.id, pending)
+        return {"node": node.model_dump(), "queued": True}
+
+    def _store():
+        if body.kind == "page":
+            source = page_source(body.html or "", body.url, "s0", title=body.title, text=body.text or "")
+        else:
+            source = selection_source(body.text or "", body.url, "s0", title=body.title)
+        node = horizon.add_node(with_injection_flags(source))
+        filed = None
+        if target:
+            _vector_worker().nudge()
+            filed = _file_under_cap(node.id, target) is not None
+        else:
+            _file_quietly(node.id)
+        return node, filed
+
+    try:
+        node, filed = await _abandonable(_store)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    queue.nudge()
+    return {"node": node.model_dump(), "filed": filed}
+
+
+#: The unpacked extension, shipped inside the package so the desktop app carries it too. Its path
+#: is shown on the settings page, for the browser's "Load unpacked"; nothing is read from it here.
+_EXTENSION_DIR = Path(__file__).parent / "extension"
+
+
+@app.get("/extension/pairing")
+async def extension_pairing_state() -> dict:
+    return {"paired": auth.capture_token(_horizon_queue_base()) is not None, "folder": str(_EXTENSION_DIR)}
+
+
+@app.post("/extension/pairing")
+async def extension_pair(request: Request) -> dict:
+    """Mint a capture key for the extension and the page that hands it over (`pair.html`), which
+    the workspace opens in the reader's browser. Pairing again replaces the old key, which un-pairs
+    whatever held it. The key travels in the address's fragment, which is never sent to a server."""
+    token = await asyncio.to_thread(auth.mint_capture_token, _horizon_queue_base())
+    return {"pair_url": f"{request.base_url}pair.html#code={token}"}
+
+
+@app.delete("/extension/pairing")
+async def extension_unpair() -> dict:
+    await asyncio.to_thread(auth.revoke_capture_token, _horizon_queue_base())
+    return {"paired": False}
 
 
 # --- Asking the Horizon ----------------------------------------------------------------------------

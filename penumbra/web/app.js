@@ -2026,6 +2026,86 @@ function settingRows() {
 // Local relations: the one setting that is a download rather than a value. Its model is fetched
 // once, on a press, with its size stated beside the button; removing it deletes the model and every
 // stored vector. No model call and no money, so it is not a safety bound (invariant 41).
+// The browser extension: whether one is paired, how to install it (the folder to load, shown
+// with a copy button because a browser's "Load unpacked" needs a path), and Connect. Connect mints
+// a capture key and opens the pairing page in the reader's browser; in the desktop app a new window
+// opens in the system browser, which is where the extension lives.
+function renderExtensionRow(body) {
+  const wrap = elt("div", "setting-row ext-row");
+  const head = elt("div", "vec-head");
+  head.appendChild(elt("label", "", t("settings.extension", "Browser extension")));
+  const pill = elt("span", "vec-pill", "");
+  head.appendChild(pill);
+  wrap.appendChild(head);
+  wrap.appendChild(elt("div", "setting-source", t("settings.extensionHelp",
+    "Keeps the page you are reading, a selected passage with its source, or a link, straight from Chrome, Arc, Brave or Edge. Pages behind a login are kept as you see them.")));
+  const steps = elt("ol", "ext-steps");
+  const folderLine = elt("li", "");
+  folderLine.appendChild(document.createTextNode(t("settings.extensionStep1",
+    "In the browser, open the extensions page, turn on Developer mode, press Load unpacked and choose this folder:")));
+  const folder = elt("div", "ext-folder");
+  const path = elt("code", "ext-path", "");
+  const copy = elt("button", "btn ext-copy", t("settings.extensionCopy", "Copy"));
+  copy.type = "button";
+  folder.appendChild(path);
+  folder.appendChild(copy);
+  folderLine.appendChild(folder);
+  steps.appendChild(folderLine);
+  steps.appendChild(elt("li", "", t("settings.extensionStep2",
+    "Press Connect browser below. A page opens in your browser and pairs it.")));
+  wrap.appendChild(steps);
+  const actions = elt("div", "ext-actions");
+  const connect = elt("button", "btn btn-primary", t("settings.extensionConnect", "Connect browser"));
+  connect.type = "button";
+  const unpair = elt("button", "btn", t("settings.extensionUnpair", "Disconnect"));
+  unpair.type = "button";
+  actions.appendChild(connect);
+  actions.appendChild(unpair);
+  wrap.appendChild(actions);
+  body.appendChild(wrap);
+
+  async function paint() {
+    let state = { paired: false, folder: "" };
+    try {
+      state = await api("/extension/pairing");
+    } catch {
+      // The row still offers Connect; the press says what went wrong.
+    }
+    pill.textContent = state.paired ? t("settings.extensionPaired", "Connected") : t("settings.extensionUnpaired", "Not connected");
+    pill.classList.toggle("is-on", Boolean(state.paired));
+    path.textContent = state.folder || "";
+    unpair.hidden = !state.paired;
+  }
+  copy.addEventListener("click", () => {
+    navigator.clipboard?.writeText(path.textContent).then(
+      () => notify(t("settings.extensionCopied", "Folder path copied."), { tone: "ok", timeout: 2400 }),
+      () => {}
+    );
+  });
+  connect.addEventListener("click", async () => {
+    connect.disabled = true;
+    try {
+      const { pair_url: url } = await api("/extension/pairing", { method: "POST" });
+      window.open(url, "_blank");
+      notify(t("settings.extensionOpened", "The pairing page opened in your browser."), { tone: "ok", timeout: 4000 });
+    } catch (err) {
+      notify(readableError(err.message));
+    } finally {
+      connect.disabled = false;
+      void paint();
+    }
+  });
+  unpair.addEventListener("click", async () => {
+    try {
+      await api("/extension/pairing", { method: "DELETE" });
+    } catch (err) {
+      notify(readableError(err.message));
+    }
+    void paint();
+  });
+  void paint();
+}
+
 function renderVectorsRow(body) {
   const wrap = elt("div", "setting-row vec-row");
   const head = elt("div", "vec-head");
@@ -2275,6 +2355,7 @@ function renderSettings(state_) {
   renderUiLanguageRow(body);
   renderRestRow(body);
   renderVectorsRow(body);
+  renderExtensionRow(body);
 
   settingRows().forEach((row) => {
     const entry = state_[row.key] || { value: null, source: "default", env_var: "" };

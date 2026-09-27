@@ -269,6 +269,55 @@ def parse_web(url: str, source_id: str, *, fetcher=None) -> Source:
     return _from_html(raw.decode("utf-8", errors="replace"), url, source_id)
 
 
+def page_source(html: str, url: str, source_id: str, *, title: str = "", text: str = "") -> Source:
+    """A page as the reader's browser rendered it, sent by the browser extension: the same
+    extraction as a fetched page (`trafilatura`) over the rendered HTML, so a page behind a login or
+    drawn by JavaScript reads as the reader saw it. When extraction finds no article (an app-like
+    page), the page's visible text is used instead. Nothing is fetched: the HTML is in hand."""
+    extracted = trafilatura.extract(html, url=url) if html else None
+    body = extracted if extracted and extracted.strip() else (text or "").strip()
+    if not body:
+        raise ValueError(f"no readable text on {url!r}")
+    preview = extract_preview(html) if html else {}
+    if title.strip() and "title" not in preview:
+        preview["title"] = " ".join(title.split())[:300]
+    return Source(id=source_id, kind="web", origin=url,
+                  blocks=[SourceBlock(locator="whole", text=body)], preview=preview)
+
+
+#: How many words of a selection name its start and end in the text fragment that points back at it.
+_FRAGMENT_WORDS = 5
+_FRAGMENT_CHARS = 12
+
+
+def selection_source(text: str, url: str, source_id: str, *, title: str = "") -> Source:
+    """A passage the reader selected, with the page it came from. The origin is the page's address
+    with a text fragment (`#:~:text=start,end`), so following it scrolls to the passage in a browser
+    that supports fragments and still opens the page in one that does not, and two passages from one
+    page are two captures."""
+    passage = text.strip()
+    if not passage:
+        raise ValueError("the selection is empty")
+    words = passage.split()
+    if len(words) > 2:
+        start = " ".join(words[:_FRAGMENT_WORDS])
+        end = " ".join(words[-_FRAGMENT_WORDS:]) if len(words) > 2 * _FRAGMENT_WORDS else ""
+    else:
+        # A script written without spaces (Chinese, Japanese) is one "word" a paragraph long, which
+        # put the whole passage in the address. Characters stand in for words there.
+        flat = "".join(words)
+        start = flat[:_FRAGMENT_CHARS]
+        end = flat[-_FRAGMENT_CHARS:] if len(flat) > 2 * _FRAGMENT_CHARS else ""
+    fragment = urllib.parse.quote(start, safe="") + ("," + urllib.parse.quote(end, safe="") if end else "")
+    page = urllib.parse.urlsplit(url)._replace(fragment="").geturl()
+    preview = {"site": urllib.parse.urlsplit(url).hostname or ""}
+    if title.strip():
+        preview["title"] = " ".join(title.split())[:300]
+    return Source(id=source_id, kind="web", origin=f"{page}#:~:text={fragment}",
+                  blocks=[SourceBlock(locator="selection", text=passage)],
+                  preview={k: v for k, v in preview.items() if v})
+
+
 def _from_html(html: str, url: str, source_id: str) -> Source:
     text = trafilatura.extract(html, url=url)
     if not text or not text.strip():

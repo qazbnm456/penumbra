@@ -8,7 +8,7 @@ The project was called rlm-notebook.
 
 ## What it does
 
-- **Capture** into the Horizon by pasting, uploading, dropping a file anywhere on the window, or dropping it on the island in the notch. Text, web pages, PDFs (with local OCR for scanned pages), Word documents and YouTube captions are read. A capture always lands, and a failed one keeps its reason.
+- **Capture** into the Horizon by pasting, uploading, dropping a file anywhere on the window, dropping it on the island in the notch, or from the browser extension. Text, web pages, PDFs (with local OCR for scanned pages), Word documents and YouTube captions are read. A capture always lands, and a failed one keeps its reason.
 - **See how it connects**: a star map of your orbits, a knowledge graph per orbit with tags as lenses, and, once you download the local model, lines between captures with similar content.
 - **Ask** from the dock at the bottom edge, over everything, a tag, an orbit or an entity. The first press shows for free what the question would read; only the second one runs the model. Inside an orbit, the chat is persistent and multi-turn, and every citation is re-verified against the orbit's current sources.
 - **Summaries, when you turn them on**: a title, summary, tags and entities per capture, a long document read in sections, entity names in two languages merged into one, and suggestions for which orbit a capture belongs in. Each summary is a model call on your key, so it is off by default.
@@ -34,6 +34,8 @@ cd desktop/src-tauri && cargo tauri build        # Penumbra.app and a .dmg in ta
 The app carries an ad-hoc signature, not a developer identity, so it runs on the Mac that built it, and another Mac asks once in System Settings > Privacy & Security. The same code builds for Windows and Linux, but those builds have not been run yet. `desktop/README.md` covers where data lives, signing and developing the shell.
 
 **To configure a model**, choose File > Open Configuration File… in the workspace, or right-click the island. It opens `penumbra.env` in the app's data folder, a template that lists every setting an error message can name. Set `PN_MAIN_MODEL` and `PN_API_KEY`, then choose File > Restart Server. To use your Claude Pro or Max subscription instead of a key, install Claude Code, run `claude` once in a terminal to log in, and set `PN_MAIN_MODEL=claude-agent-sdk/claude-sonnet-5`; the app recognises the prefix and needs nothing else. Capturing, the star map, search and local relations work without a model; asking, summaries, the Guide and the podcast need one. The Chatterbox voice needs an extra only a source install has.
+
+**The browser extension** keeps what your browser shows: the whole page as you see it (a page behind a login, or one drawn by JavaScript, which the server cannot fetch itself), a selected passage together with the page it came from, or a link, into the Horizon or straight into an orbit. It works in Chrome, Arc, Brave and Edge. Settings > Browser extension shows the folder to load with the browser's Load unpacked (Developer mode on), then Connect browser opens a page in your browser that pairs it. The extension holds a key that can only add captures and list the orbits' names, not the API token.
 
 ## Running from source
 
@@ -252,7 +254,7 @@ Every run shows that it is running, with elapsed time and a Stop, and the Trajec
 
 - There is no in-app place to enter a model or a key. Model settings are the `PN_*` variables, in the desktop app's configuration file or your environment; `rlm-harness`'s own `RLM_*` variables are not read.
 - There is no Video Overview, no ingestion of uploaded audio or video files, and no audio transcription. YouTube captions are supported, but only captions.
-- There is no browser extension, so every capture is a paste, a drop or an upload.
+- The browser extension is for Chromium browsers only and installs unpacked; there is no Firefox or Safari build.
 - There are no accounts and no authorization on the HTTP API. One shared token authenticates the app, and everyone who holds it has full access.
 - There is no published installer, and the desktop app is not signed with a developer identity yet (see `desktop/README.md`).
 

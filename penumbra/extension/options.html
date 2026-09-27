@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Penumbra</title>
+<link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main>
+    <h1 data-msg="optionsTitle">Penumbra</h1>
+    <p class="status" id="status"></p>
+    <section id="unpaired" hidden>
+      <p data-msg="pairHow">In Penumbra, open Settings and press Connect browser. A page opens in this browser and pairs it.</p>
+    </section>
+    <section id="paired" hidden>
+      <p data-msg="useHow">Right-click a page, a selection or a link and choose Penumbra, press the toolbar button to keep the whole page, or use the shortcut.</p>
+      <button type="button" id="unpair" data-msg="unpair">Disconnect</button>
+    </section>
+    <p class="note" data-msg="shortcutHow">Change the shortcut at chrome://extensions/shortcuts.</p>
+  </main>
+<script src="options.js"></script>
+</body>
+</html>

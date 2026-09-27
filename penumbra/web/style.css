@@ -8109,6 +8109,42 @@ body.is-resizing .orbit-graph {
 }
 
 /* --- Local relations, in settings ---------------------------------------------------------------- */
+/* The browser extension row: the install steps, the folder to load with its copy button, and
+   Connect. The path is shown whole and may wrap; it is read once and pasted. */
+.ext-steps {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-6);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.ext-folder {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 var(--space-2);
+}
+
+.ext-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--text);
+}
+
+.ext-copy {
+  flex: none;
+}
+
+.ext-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
 .vec-head {
   display: flex;
   align-items: center;

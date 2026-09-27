@@ -169,3 +169,63 @@ def host_is_allowed(host_header: str | None) -> bool:
     except ValueError:
         return False
     return True
+
+
+# --- the browser extension's capture key ---------------------------------------------------------
+#
+# The extension cannot read the launch token: it is minted per launch and handed only to the
+# shell's own windows. So pairing gives it a SECOND key, kept on disk so it survives restarts, and
+# scoped to capturing: it opens the three routes below and nothing else. A leaked capture key can
+# add captures and read the orbits' names; it cannot read a source, delete anything or change a
+# setting, which is what the full token can do (invariant 77).
+
+#: The only routes the capture key opens, by method and path.
+CAPTURE_ROUTES = frozenset({
+    ("GET", "/extension/status"),
+    ("GET", "/extension/orbits"),
+    ("POST", "/extension/capture"),
+})
+
+_CAPTURE_TOKEN_FILE = ".capture-token"
+
+
+def _capture_token_path(base_dir: str | Path) -> Path:
+    return Path(base_dir) / _CAPTURE_TOKEN_FILE
+
+
+def capture_token(base_dir: str | Path) -> str | None:
+    """The paired extension's key, or None when no extension is paired."""
+    try:
+        value = _capture_token_path(base_dir).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return value or None
+
+
+def mint_capture_token(base_dir: str | Path) -> str:
+    """A fresh capture key, replacing any earlier one: pairing again un-pairs the old extension.
+    Written readable by this user only, and atomically, so a half-written key never matches."""
+    token = secrets.token_urlsafe(32)
+    path = _capture_token_path(base_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(token)
+    os.replace(tmp, path)
+    return token
+
+
+def revoke_capture_token(base_dir: str | Path) -> None:
+    _capture_token_path(base_dir).unlink(missing_ok=True)
+
+
+def is_capture_route(method: str, path: str) -> bool:
+    return (method.upper(), path) in CAPTURE_ROUTES
+
+
+def capture_token_matches(presented: str | None, base_dir: str | Path) -> bool:
+    expected = capture_token(base_dir)
+    if not presented or not expected:
+        return False
+    return secrets.compare_digest(presented.encode("utf-8"), expected.encode("utf-8"))

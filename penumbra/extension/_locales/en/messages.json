@@ -1,0 +1,75 @@
+{
+  "extName": {
+    "message": "Penumbra"
+  },
+  "extDescription": {
+    "message": "Keep the page you are reading, a passage or a link in the Penumbra running on this computer."
+  },
+  "actionTitle": {
+    "message": "Keep this page in Penumbra"
+  },
+  "commandCapture": {
+    "message": "Keep this page in Penumbra"
+  },
+  "menuRoot": {
+    "message": "Penumbra"
+  },
+  "menuHorizon": {
+    "message": "Keep in the Horizon"
+  },
+  "menuOrbit": {
+    "message": "Into “$VALUE$”",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
+  },
+  "menuConnect": {
+    "message": "Connect Penumbra…"
+  },
+  "done": {
+    "message": "Kept in Penumbra"
+  },
+  "failed": {
+    "message": "Not kept"
+  },
+  "errorNotPaired": {
+    "message": "This browser is not connected to Penumbra yet."
+  },
+  "errorUnpaired": {
+    "message": "Penumbra no longer accepts this browser. Press Connect browser in its settings again."
+  },
+  "errorServer": {
+    "message": "Penumbra is not answering. Is it running?"
+  },
+  "errorRestricted": {
+    "message": "This page cannot be read by extensions."
+  },
+  "optionsTitle": {
+    "message": "Penumbra"
+  },
+  "statusUnpaired": {
+    "message": "Not connected"
+  },
+  "statusPaired": {
+    "message": "Connected to Penumbra at $VALUE$",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
+  },
+  "pairHow": {
+    "message": "In Penumbra, open Settings and press Connect browser. A page opens in this browser and pairs it."
+  },
+  "useHow": {
+    "message": "Right-click a page, a selection or a link and choose Penumbra, press the toolbar button to keep the whole page, or use the shortcut."
+  },
+  "unpair": {
+    "message": "Disconnect"
+  },
+  "shortcutHow": {
+    "message": "Change the shortcut at chrome://extensions/shortcuts."
+  }
+}

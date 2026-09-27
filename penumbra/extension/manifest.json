@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "__MSG_extName__",
+  "description": "__MSG_extDescription__",
+  "version": "0.1.0",
+  "default_locale": "en",
+  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "action": { "default_title": "__MSG_actionTitle__", "default_icon": { "16": "icons/16.png", "32": "icons/32.png" } },
+  "background": { "service_worker": "background.js" },
+  "permissions": ["contextMenus", "storage", "scripting", "activeTab", "alarms"],
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "content_scripts": [
+    { "matches": ["http://127.0.0.1/pair.html*", "http://localhost/pair.html*"], "js": ["pair.js"], "run_at": "document_idle" }
+  ],
+  "commands": {
+    "capture-page": { "suggested_key": { "default": "Alt+Shift+P" }, "description": "__MSG_commandCapture__" }
+  },
+  "options_page": "options.html"
+}

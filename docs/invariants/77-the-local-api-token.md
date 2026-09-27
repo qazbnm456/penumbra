@@ -41,6 +41,12 @@ The allowlist is computed at import, which is exact for a packaged wheel; in dev
 
 `TestClient`'s default `base_url` is `http://testserver`, a DNS name the `Host` check refuses. The fix is to point tests at a literal address (`test_api.py::_authed_client`), never to allow `testserver` in the guard; a test hostname inside a security control is how the control stops being one.
 
+## The browser extension's capture key
+
+The extension cannot hold the API token: it is minted per launch and handed only to the shell's own windows. Pairing gives it a second key instead (`auth.capture_token`, `horizon/.capture-token`, readable by this user only), kept on disk so it survives restarts. That key opens exactly three routes, matched by method and path (`auth.CAPTURE_ROUTES`): `GET /extension/status`, `GET /extension/orbits` (ids and names only) and `POST /extension/capture`. A leaked capture key can add captures and read the orbits' names; it cannot read a source, delete anything, change a setting or pair again, all of which need the API token.
+
+Pairing is started from the workspace with the API token (`POST /extension/pairing`), which mints a fresh key, replacing and so un-pairing any earlier one, and returns the address of `pair.html` with the key in its fragment. The workspace opens that address in the reader's browser; a fragment is never sent to a server, and the page removes it from the address bar once the extension's content script has read it. The content script accepts a key only from a page on `127.0.0.1` or `localhost`, and the extension keeps it only after the server answers `/extension/status` with it. `DELETE /extension/pairing` revokes it.
+
 ---
 
 Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

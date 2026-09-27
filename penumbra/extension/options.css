@@ -1,0 +1,9 @@
+:root { color-scheme: light dark; --copper: #d9853b; }
+body { margin: 0; font: 14px/1.6 -apple-system, BlinkMacSystemFont, "PingFang TC", "Segoe UI", sans-serif; }
+main { max-width: 34rem; padding: 2rem; }
+h1 { font-size: 1.4rem; margin: 0 0 0.5rem; }
+.status { font-weight: 600; }
+.status.is-ok { color: var(--copper); }
+.note { opacity: 0.7; font-size: 0.9em; }
+button { font: inherit; padding: 0.35rem 0.9rem; border-radius: 8px; border: 1px solid currentColor; background: none; cursor: pointer; }
+[hidden] { display: none !important; }

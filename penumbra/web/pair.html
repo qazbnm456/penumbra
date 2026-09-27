@@ -1,0 +1,24 @@
+<!doctype html>
+<!-- Pairing the browser extension. The workspace opens this page in the reader's own browser with
+     a capture key in the fragment (`#code=...`), which is never sent to any server. The extension's
+     content script reads it, keeps it, and says so; this page only shows what happened. Without
+     the extension installed nothing reads the fragment and the page says how to install it. -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Penumbra</title>
+<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="pair.css" />
+</head>
+<body>
+  <main class="pair">
+    <img class="pair-moon" src="/favicon.svg" alt="" width="56" height="56" />
+    <h1 class="pair-title" data-i18n="pair.title">Connect the Penumbra extension</h1>
+    <p class="pair-status" id="pair-status" role="status" aria-live="polite" data-i18n="pair.waiting">Connecting…</p>
+    <p class="pair-help" id="pair-help" hidden></p>
+  </main>
+<script src="i18n.js"></script>
+<script src="pair.js"></script>
+</body>
+</html>
