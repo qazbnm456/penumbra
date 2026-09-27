@@ -66,6 +66,7 @@ Each entry states what the product does now and why. The reasoning behind each r
 #### Orbits and grounded chat
 
 - Ingestion covers text, web pages, PDFs (including scans, through local hybrid OCR that ships on by default) and YouTube captions. Ingestion runs on the host and one source at a time, because PDFium is not thread-safe: four PDFs ingested concurrently crashed the process (invariants 3, 7 and 33).
+- A YouTube capture is named by the video's title and channel from the moment its captions are read, taken from the same lookup that finds them, with the start of its description as the preview; no thumbnail is shown (invariant 51).
 - OCR reads two-column scans in reading order, and a garbled PDF text layer is detected by comparing it with OCR rather than by a threshold, since no threshold separated good pages from mis-decoded ones (invariants 73 and 74).
 - An orbit is one JSON file. Every write re-reads it inside a per-orbit lock and applies a delta, which fixed a real case of concurrent writes silently dropping data (invariant 34). Source ids are never reused, so a saved citation can never start pointing at different text after a source is removed (invariants 12 and 50).
 - Questions are answered by an RLM run in an isolated subprocess and a Pyodide sandbox, with the previous turns as context only, never as a source of facts (invariants 9, 11 and 21).

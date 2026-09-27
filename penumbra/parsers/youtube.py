@@ -190,11 +190,13 @@ def _fetch_caption_track(caption_url: str, *, timeout: float = 15.0) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def _default_downloader(url: str) -> str:
+def _default_downloader(url: str) -> dict:
     """Real `yt-dlp`-backed caption fetch: resolve available caption tracks for `url` (NO video/
     audio download — `skip_download: True`), prefer official subtitles over auto-generated,
     prefer the video's own detected language, and return the raw WebVTT text of whichever track
-    was selected. Raises `CaptionError` if the video has no captions in either category."""
+    was selected, with the video's title, channel and description from the same lookup (`vtt`,
+    `title`, `channel`, `description`). Raises `CaptionError` if the video has no captions in
+    either category."""
     ydl_opts = {"skip_download": True, "quiet": True, "no_warnings": True}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -213,7 +215,28 @@ def _default_downloader(url: str) -> str:
     fmt = next((f for f in chosen[lang] if f.get("ext") == "vtt"), None)
     if fmt is None:
         raise CaptionError(f"no vtt-format caption track available for {url!r} in language {lang!r}")
-    return _fetch_caption_track(fmt["url"])
+    return {
+        "vtt": _fetch_caption_track(fmt["url"]),
+        "title": info.get("title") or "",
+        "channel": info.get("channel") or info.get("uploader") or "",
+        "description": info.get("description") or "",
+    }
+
+
+#: How much of a video's description the preview keeps: a Sources row shows a line or two.
+_DESCRIPTION_CHARS = 280
+
+
+def _preview(meta: dict) -> dict[str, str]:
+    """A video's display metadata in the shape `Source.preview` has for a web page, so the capture
+    is named by its title from the moment it is read rather than as "youtube.com" until a summary
+    exists. Words only: the thumbnail is never referenced (invariant 51)."""
+    title = str(meta.get("title") or "").strip()
+    channel = str(meta.get("channel") or "").strip()
+    description = " ".join(str(meta.get("description") or "").split())[:_DESCRIPTION_CHARS]
+    site = f"YouTube · {channel}" if channel else "YouTube"
+    preview = {"title": title, "site": site, "description": description}
+    return {key: value for key, value in preview.items() if value}
 
 
 def parse_youtube(url: str, source_id: str, *, downloader=None) -> Source:
@@ -222,8 +245,10 @@ def parse_youtube(url: str, source_id: str, *, downloader=None) -> Source:
     mirroring `parse_web`'s `fetcher` parameter exactly: the default resolves and fetches a real
     caption track; a test-injected fake returns canned WebVTT text with no network access at all.
     """
-    raw_vtt = (downloader or _default_downloader)(url)
-    cues = _dedupe_consecutive(_parse_vtt(raw_vtt))
+    got = (downloader or _default_downloader)(url)
+    # A test fake may still return the WebVTT text alone; the real downloader adds the metadata.
+    meta = got if isinstance(got, dict) else {"vtt": got}
+    cues = _dedupe_consecutive(_parse_vtt(meta.get("vtt") or ""))
     if not cues:
         raise CaptionError(f"caption track for {url!r} parsed to no usable text")
-    return Source(id=source_id, kind="youtube", origin=url, blocks=_chunk(cues))
+    return Source(id=source_id, kind="youtube", origin=url, blocks=_chunk(cues), preview=_preview(meta))

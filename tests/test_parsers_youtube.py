@@ -250,6 +250,21 @@ def test_parse_youtube_end_to_end_with_the_real_auto_caption_dump():
     assert source.blocks[0].text == "[Music] We're no strangers to love. You know the rules and so do"
 
 
+def test_a_video_is_named_by_its_title_from_the_moment_it_is_read():
+    """The same lookup that finds the captions knows the title and channel; without them a video
+    read as "youtube.com" everywhere until a summary existed. No thumbnail (invariant 51)."""
+    def downloader(url: str) -> dict:
+        return {"vtt": _AUTO_VTT, "title": "Never Gonna Give You Up", "channel": "Rick Astley",
+                "description": "The official video.\n\nListen on every platform. " + "x" * 400}
+
+    source = parse_youtube("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "s1", downloader=downloader)
+    assert source.preview["title"] == "Never Gonna Give You Up"
+    assert source.preview["site"] == "YouTube · Rick Astley"
+    assert source.preview["description"].startswith("The official video. Listen on every platform.")
+    assert len(source.preview["description"]) <= 280
+    assert not any("image" in key or "thumb" in key for key in source.preview)
+
+
 def test_parse_youtube_raises_caption_error_when_downloader_yields_no_usable_text():
     def empty_downloader(url: str) -> str:
         return "WEBVTT\n"
