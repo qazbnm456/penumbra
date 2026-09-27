@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 from .injection_scan import scan_source
+from .parsers.docx import parse_docx
 from .parsers.pdf import parse_pdf
 from .parsers.text import parse_text
 from .parsers.web import parse_web
@@ -19,7 +20,7 @@ from .schema import Source
 #: Suffixes `ingest_uploaded_file` will parse — anything else is refused loudly (a 422 naming this
 #: set), not guessed at. Word/Slides/Docs native formats would need new parser dependencies and
 #: aren't attempted here; this only wires up the two parsers that already exist.
-_ALLOWED_UPLOAD_SUFFIXES = {".pdf", ".txt", ".md"}
+_ALLOWED_UPLOAD_SUFFIXES = {".pdf", ".txt", ".md", ".docx"}
 
 
 def is_url(value: str) -> bool:
@@ -58,6 +59,8 @@ def kind_for(value: str) -> str:
         return "web"
     if Path(value).suffix.lower() == ".pdf":
         return "pdf"
+    if Path(value).suffix.lower() == ".docx":
+        return "docx"
     return "text"
 
 
@@ -81,6 +84,8 @@ def ingest_one(value: str, source_id: str) -> Source:
     path = Path(value)
     if kind == "pdf":
         return parse_pdf(str(path), source_id)
+    if kind == "docx":
+        return parse_docx(path.read_bytes(), source_id, origin=str(path))
     return parse_text(path.read_text(encoding="utf-8"), source_id, origin=str(path))
 
 
@@ -142,6 +147,9 @@ def ingest_uploaded_file(data: bytes, filename: str, source_id: str) -> Source:
         finally:
             tmp_path.unlink(missing_ok=True)
         return source.model_copy(update={"origin": filename})
+    if suffix == ".docx":
+        # From the bytes in memory: unlike PDFium, the zip reader needs no file on disk.
+        return parse_docx(data, source_id, origin=filename)
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:

@@ -946,7 +946,7 @@ def test_a_batch_upload_keeps_every_file_it_can_and_names_the_rest(client):
     """**Dropping a file the reader chose is the one thing a capture surface must never do
     quietly** — the handler's own comment, which the handler was not honouring.
 
-    Dropping `good-a.md`, `bad.docx` and `good-b.md` together stored the first, raised on the
+    Dropping `good-a.md`, `bad.csv` and `good-b.md` together stored the first, raised on the
     second, and lost the THIRD with no record anywhere, under a 422 that named neither the file
     that survived nor the one that vanished. An independent review reproduced it: the horizon total
     went up by one and `good-b.md` was simply gone.
@@ -958,7 +958,7 @@ def test_a_batch_upload_keeps_every_file_it_can_and_names_the_rest(client):
         "/horizon/upload",
         files=[
             ("file", ("good-a.md", b"the first note", "text/markdown")),
-            ("file", ("bad.docx", b"PK\x03\x04 not really", "application/octet-stream")),
+            ("file", ("bad.csv", b"a,b\n1,2", "text/csv")),
             ("file", ("good-b.md", b"the third note, after the bad one", "text/markdown")),
         ],
     )
@@ -970,16 +970,16 @@ def test_a_batch_upload_keeps_every_file_it_can_and_names_the_rest(client):
     assert any("good-b" in origin for origin in stored), "the file AFTER the failure is the one lost"
 
     refused = body["refused"]
-    assert [item["filename"] for item in refused] == ["bad.docx"]
-    assert "docx" in refused[0]["error"]
+    assert [item["filename"] for item in refused] == ["bad.csv"]
+    assert "csv" in refused[0]["error"]
 
     # And the whole batch failing is still a 422 - a request where nothing landed has no success to
     # report, and the reader would otherwise get an empty stream and a 200.
     only_bad = client.post(
-        "/horizon/upload", files=[("file", ("x.docx", b"nope", "application/octet-stream"))]
+        "/horizon/upload", files=[("file", ("x.csv", b"nope", "text/csv"))]
     )
     assert only_bad.status_code == 422
-    assert "docx" in only_bad.json()["detail"]
+    assert "csv" in only_bad.json()["detail"]
 
 def test_the_listing_reports_the_ceiling_a_node_has_to_fit_under(client, monkeypatch):
     """**The two caps are six times apart and nothing said so.** 50MB of bytes may be uploaded

@@ -508,7 +508,7 @@
   // The file types the server reads today. Anything else is refused HERE, with a sentence that
   // says so, instead of reaching the server and coming back as a bare "could not take that in".
   // The same list the server accepts (`ingest._ALLOWED_UPLOAD_SUFFIXES`).
-  const ACCEPTED = /\.(pdf|txt|md)$/i;
+  const ACCEPTED = /\.(pdf|txt|md|docx)$/i;
 
   // **The page decides when the island closes after a drop, not the shell.** The shell used to
   // infer "that was a drop" from the mouse button being released over the island, and during a
@@ -533,7 +533,7 @@
     item.files = item.files.filter((f) => ACCEPTED.test(f.name));
     if (unsupported.length && !item.files.length) {
       result("bad");
-      announce("island.unsupported", "Only PDF, TXT and Markdown files for now");
+      announce("island.unsupported", "Only PDF, Word, TXT and Markdown files for now");
       settle(startedAt);
       return;
     }

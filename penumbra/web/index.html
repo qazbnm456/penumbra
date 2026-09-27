@@ -157,7 +157,7 @@
            misleading affordance on the screen whose promise is "throw anything in". It also
            disagreed with `#source-file` one panel over, which had the right list. -->
       <input type="file" id="capture-file" class="sr-only" tabindex="-1" multiple
-             accept=".txt,.md,.pdf" />
+             accept=".txt,.md,.pdf,.docx" />
 
       <!-- "That did not work", under the field it belongs to — which is the CAPTURE field. It was
            rendered below the FIND field, two elements past the thing whose failures it reports, so
@@ -333,11 +333,11 @@
              reasons: a raw `<input type="file">` renders the BROWSER's control, whose button text
              comes from the OS locale - it read 選擇檔案 inside an English interface - and it is the
              one native-chrome element left in a product that replaced every other one. -->
-        <input type="file" id="source-file" class="sr-only" tabindex="-1" accept=".pdf,.txt,.md" />
+        <input type="file" id="source-file" class="sr-only" tabindex="-1" accept=".pdf,.txt,.md,.docx" />
         <button type="button" class="capture-pick" id="source-file-pick"
                 data-i18n="sources.choose">Choose a file…</button>
         <span class="hint" id="source-file-name"></span>
-          <p class="hint" data-i18n="sources.file.hint">PDF, TXT or Markdown, one file at a time.</p>
+          <p class="hint" data-i18n="sources.file.hint">PDF, Word, TXT or Markdown, one file at a time.</p>
         </div>
 
         <button type="submit" class="btn btn-primary btn-block" data-i18n="sources.add">Add source</button>

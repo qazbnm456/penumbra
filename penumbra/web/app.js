@@ -1176,9 +1176,9 @@ function readableReason(reason, name) {
 }
 
 // A source's KIND as a reader-facing word. The values are the schema's (`web`, `pdf`, `text`,
-// `youtube`), which read as code in a Chinese interface; an unknown kind shows as stored.
+// `youtube`, `docx`), which read as code in a Chinese interface; an unknown kind shows as stored.
 function kindLabel(kind) {
-  const labels = { web: "web", pdf: "pdf", text: "text", youtube: "youtube" };
+  const labels = { web: "web", pdf: "pdf", text: "text", youtube: "youtube", docx: "Word" };
   return kind in labels ? t(`kind.${kind}`, labels[kind]) : kind;
 }
 
@@ -2774,7 +2774,7 @@ function readableError(text) {
       : t("err.noSuchModelPlain", "Your provider does not have that model. Check PN_MAIN_MODEL and restart the server."));
   }
   if (BAD_FILE_TYPE.test(raw)) {
-    return t("err.badFileType", "That file type is not supported. PDF, TXT and Markdown work.");
+    return t("err.badFileType", "That file type is not supported. PDF, Word, TXT and Markdown work.");
   }
   if (BAD_PDF.test(raw)) {
     return t("err.badPdf", "That PDF could not be read. It may be damaged, or not really a PDF.");

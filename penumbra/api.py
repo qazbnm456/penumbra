@@ -5,7 +5,7 @@ request can be reliably cancelled (`killpg` on the whole process group) — see 
 execution-model invariant. `cli.py`'s synchronous in-process invocation is completely unaffected.
 
 Endpoints: `GET /orbits` (list), `POST /orbits/{id}/sources` (create/extend — URLs and/or
-pasted text), `POST /orbits/{id}/sources/upload` (a `.pdf`/`.txt`/`.md` file's raw bytes),
+pasted text), `POST /orbits/{id}/sources/upload` (a `.pdf`/`.docx`/`.txt`/`.md` file's raw bytes),
 `GET /orbits/{id}`, `GET /orbits/{id}/sources/{source_id}` (one source's full text, every
 block — the web UI's source viewer), `POST /orbits/{id}/notes` (create a note),
 `DELETE /orbits/{id}/notes/{note_id}`, `POST /orbits/{id}/notes/{note_id}/promote` (turn a
@@ -1405,7 +1405,7 @@ async def promote_note_endpoint(orbit_id: str, note_id: str) -> OrbitResponse:
 
 @app.post("/orbits/{orbit_id}/sources/upload", response_model=OrbitResponse)
 async def upload_source(orbit_id: str, request: Request) -> OrbitResponse:
-    """Upload a file's raw bytes (`.pdf`/`.txt`/`.md`) as a new source — safe unlike a local-path
+    """Upload a file's raw bytes (`.pdf`/`.docx`/`.txt`/`.md`) as a new source — safe unlike a local-path
     string (invariant 26): the server only ever receives opaque bytes the caller already had, never
     a path it reads from its own filesystem.
 
@@ -4079,7 +4079,7 @@ async def upload_into_horizon(request: Request) -> dict:
         payloads.append((data, upload.filename or "upload"))
 
     # **Every file is attempted, and the failures are REPORTED rather than thrown.** The first
-    # version let the first `ValueError` abort the loop: dropping `good-a.md`, `bad.docx` and
+    # version let the first `ValueError` abort the loop: dropping `good-a.md`, `bad.csv` and
     # `good-b.md` together stored the first, raised on the second, and lost the third with no record
     # anywhere - under a 422 naming neither the file that survived nor the one that vanished. The
     # comment directly above says dropping a file the reader chose is the one thing a capture

@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-SourceKind = Literal["text", "web", "pdf", "youtube"]
+SourceKind = Literal["text", "web", "pdf", "youtube", "docx"]
 
 #: Where a Tier 0 node is in the intake pipeline (`horizon.py`). `ready_undistilled` is a REAL state,
 #: not a degraded `ready`: distillation is a model call and can fail or be cancelled, and the whole

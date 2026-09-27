@@ -24,7 +24,7 @@ This file is the index of the rulebook: one entry per invariant, stating what mu
 
 What exists:
 
-- Ingestion of text, web pages, PDFs (with local hybrid OCR) and YouTube captions.
+- Ingestion of text, web pages, PDFs (with local hybrid OCR), Word documents (`.docx`) and YouTube captions.
 - Citation-grounded chat over a persistent multi-turn `Orbit`, stored as one JSON file with no database.
 - An Orbit Guide (`guide.py`: summary, FAQ, timeline, insight) and an Audio Overview (the `audio.py` script plus `tts.py` synthesis).
 - An HTTP API (`api.py`, the `api` extra) with a live reasoning-trace stream and a Trajectory drawer.
@@ -50,7 +50,7 @@ Still unbuilt. Do not assume any of these exist because a design discussion ment
 - Folders and archives cannot be captured, because invariant 26 keeps local paths out of the API and the desktop shell does not supply them.
 - The browser extension is unbuilt, so every capture is a paste, a drop or an upload into the web UI, or a drop on the desktop app's island in the notch.
 - The desktop installers are not signed with a developer identity: macOS builds carry an ad-hoc signature, Windows and Linux builds none.
-- Word, Slides and Docs native formats are not parsed, and full audio transcription is not done. YouTube captions do ship.
+- Slides, Google Docs and legacy `.doc` files are not parsed (Word `.docx` is), and full audio transcription is not done. YouTube captions do ship.
 
 ## Invariants: do not break
 

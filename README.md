@@ -1,6 +1,6 @@
 # Penumbra
 
-Penumbra is a personal knowledge hub that runs on your own machine. You throw things at it (links, text, PDFs including scanned ones, YouTube captions), it keeps them and reads them, and you ask questions grounded in them with citations you can check against the original text. The reading and answering is done by an RLM ([`rlm-harness`](https://github.com/qazbnm456/rlm-harness)).
+Penumbra is a personal knowledge hub that runs on your own machine. You throw things at it (links, text, PDFs including scanned ones, Word documents, YouTube captions), it keeps them and reads them, and you ask questions grounded in them with citations you can check against the original text. The reading and answering is done by an RLM ([`rlm-harness`](https://github.com/qazbnm456/rlm-harness)).
 
 **Everything crosses the Horizon first.** Throw anything in, a link, a thought or a dropped file, without deciding where it goes. Each capture lands at once as a *node*, whether or not it could be parsed, and waits there until you file it, unless you set it to be filed automatically or into one orbit. The Horizon opens as a star map: the Horizon is the black hole at the centre, each orbit is a planet and its captures are its moons. A separate, opt-in pass distils each node into a title, a summary, tags and entities, so you can find it again months later by describing it. Nodes that belong together live in an **Orbit**, which opens as a knowledge graph of the entities its captures name, and is where the grounded chat, the Guide and the Audio Overview live.
 
@@ -8,7 +8,7 @@ The project was called rlm-notebook.
 
 ## What it does
 
-- **Capture** into the Horizon by pasting, uploading, dropping a file anywhere on the window, or dropping it on the island in the notch. Text, web pages, PDFs (with local OCR for scanned pages) and YouTube captions are read. A capture always lands, and a failed one keeps its reason.
+- **Capture** into the Horizon by pasting, uploading, dropping a file anywhere on the window, or dropping it on the island in the notch. Text, web pages, PDFs (with local OCR for scanned pages), Word documents and YouTube captions are read. A capture always lands, and a failed one keeps its reason.
 - **See how it connects**: a star map of your orbits, a knowledge graph per orbit with tags as lenses, and, once you download the local model, lines between captures with similar content.
 - **Ask** from the dock at the bottom edge, over everything, a tag, an orbit or an entity. The first press shows for free what the question would read; only the second one runs the model. Inside an orbit, the chat is persistent and multi-turn, and every citation is re-verified against the orbit's current sources.
 - **Summaries, when you turn them on**: a title, summary, tags and entities per capture, a long document read in sections, entity names in two languages merged into one, and suggestions for which orbit a capture belongs in. Each summary is a model call on your key, so it is off by default.
