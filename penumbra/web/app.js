@@ -2693,7 +2693,7 @@ function readableError(text) {
   if (RUN_TIMED_OUT.test(raw)) {
     return withShellHint(t(
       "err.runTimedOut",
-      "This run hit the time limit and was stopped. A long podcast can need more time: raise PN_RUN_TIMEOUT_SECONDS and restart the server."
+      "This run hit the time limit and was stopped. If it needs longer, raise PN_RUN_TIMEOUT_SECONDS and restart the server."
     ));
   }
   if (HTML_BODY.test(raw)) {
@@ -8907,6 +8907,36 @@ function distilBatchSize() {
 //: reason the chat surface already shows its own: this is a single-operator, BYOK tool, and
 //: "PN_MAIN_MODEL is not set" is the sentence that tells them what to do. "Something went wrong"
 //: would be shorter and useless.
+//: A failed summary's reason in a few words, for a row beside its name. The full sentence (with
+//: what to change) is said once for the rows it applies to, not repeated on each.
+function summaryFailure(raw) {
+  if (RUN_TIMED_OUT.test(raw || "")) return t("horizon.failTimeout", "Ran out of time");
+  const sentence = readableError(raw || "");
+  const first = sentence.split(/(?<=[.\u3002])\s*/)[0];
+  return first || sentence;
+}
+
+async function retryFailedSummaries(ids, button) {
+  button.disabled = true;
+  try {
+    const reply = await api("/horizon/distil", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ limit: ids.length, node_ids: ids }),
+    });
+    if (reply && reply.started === false) {
+      await refreshHorizon({ reset: true });
+      return;
+    }
+  } catch (err) {
+    notify(readableError(err.message));
+    button.disabled = false;
+    return;
+  }
+  startHorizonPolling();
+  await pollIntake();
+}
+
 function renderDistilError() {
   const errline = horizonEl("distil-error");
   const distil = horizonState.distil || {};
@@ -8934,7 +8964,35 @@ function renderDistilError() {
       ? t("horizon.distilFailedCount", `${failed} could not be summarised`, { n: failed })
       : t("horizon.distilNoStart", "The summary pass could not start");
     errline.appendChild(elt("span", "distil-error-count", lead));
-    if (distil.error) errline.appendChild(elt("span", "distil-error-why", readableError(distil.error)));
+    const failures = distil.failures || [];
+    if (failures.length) {
+      // Which ones, each with its own short reason, instead of the last reason alone: two captures
+      // can fail for two reasons, and "which ones?" was the reader's first question.
+      const list = elt("ul", "distil-fail-list");
+      failures.forEach((f) => {
+        const row = elt("li", "distil-fail-row");
+        row.appendChild(elt("span", "distil-fail-name", captureName(f.title)));
+        row.appendChild(elt("span", "distil-fail-why", summaryFailure(f.error)));
+        list.appendChild(row);
+      });
+      errline.appendChild(list);
+      if (failed > failures.length) {
+        const more = failed - failures.length;
+        errline.appendChild(elt("p", "distil-fail-hint", t("map.todoMore", `and ${more} more`, { n: more })));
+      }
+      // One line on what to do, once, for the cause they share.
+      if (failures.some((f) => RUN_TIMED_OUT.test(f.error))) {
+        errline.appendChild(elt("p", "distil-fail-hint", withShellHint(t("horizon.distilTimeoutHint",
+          "Long documents already get more time by their length. If one still runs out, raise PN_RUN_TIMEOUT_SECONDS in the configuration file and restart the server."))));
+      }
+      // They are waiting again, unsummarised, so trying again costs one press and only them.
+      const retry = elt("button", "btn distil-retry", t("horizon.distilRetry", "Try these again"));
+      retry.type = "button";
+      retry.addEventListener("click", () => void retryFailedSummaries(failures.map((f) => f.id), retry));
+      errline.appendChild(retry);
+    } else if (distil.error) {
+      errline.appendChild(elt("span", "distil-error-why", readableError(distil.error)));
+    }
   }
   //: **A dismiss, because this was otherwise IMMORTAL.** The error is process state on the server
   //: and only the START of the next pass ever cleared it, so one failed batch installed this
@@ -8960,7 +9018,10 @@ function renderDistilError() {
     }
     renderDistilError();
   });
-  errline.appendChild(dismiss);
+  // Beside the heading, top right, where a card's close sits; the rows and the retry wrap below.
+  const heading = errline.querySelector(".distil-error-count");
+  if (heading && heading.nextSibling) errline.insertBefore(dismiss, heading.nextSibling);
+  else errline.appendChild(dismiss);
 }
 
 function renderStream({ append = false, newIds = new Set() } = {}) {
@@ -9357,8 +9418,15 @@ async function nodeActions(node, detail) {
       fresh.value = "__new__";
       picker.appendChild(fresh);
     }
+    appendTakeOutOptions(picker, memberships);
     picker.addEventListener("change", () => {
       if (!picker.value) return;
+      if (picker.value.startsWith(TAKE_OUT)) {
+        const from = decodeURIComponent(picker.value.slice(TAKE_OUT.length));
+        picker.value = "";
+        void unfileCapture(node.id, from);
+        return;
+      }
       if (!here) {
         void promoteNode(node, picker);
         return;
@@ -12996,17 +13064,73 @@ function mapCardClose(card) {
 }
 
 //: "File into…" for one capture. Only orbits it is not already in are offered.
-function filePicker(nodeId, orbits = starMap.orbits, { also = false } = {}) {
+function filePicker(nodeId, orbits = starMap.orbits, { also = false, memberships = [] } = {}) {
   const picker = document.createElement("select");
   picker.className = "card-file";
   const label = also ? t("horizon.alsoFile", "Also file into…") : t("map.fileInto", "File into…");
   picker.setAttribute("aria-label", label);
   picker.appendChild(new Option(label, ""));
   orbits.forEach((o) => picker.appendChild(new Option(o.title, o.id)));
+  appendTakeOutOptions(picker, memberships);
   picker.addEventListener("change", () => {
-    if (picker.value) void fileCapture(nodeId, picker.value, picker);
+    if (!picker.value) return;
+    if (picker.value.startsWith(TAKE_OUT)) {
+      const from = decodeURIComponent(picker.value.slice(TAKE_OUT.length));
+      picker.value = "";
+      void unfileCapture(nodeId, from);
+      return;
+    }
+    void fileCapture(nodeId, picker.value, picker);
   });
   return picker;
+}
+
+//: The value prefix of a picker option that takes the capture out of an orbit rather than into one.
+const TAKE_OUT = "__out__:";
+
+//: "Take out of X", one per orbit the capture is in, after the orbits it could go into: the undo
+//: for a filing into the wrong orbit, which used to mean opening that orbit's study columns and
+//: deleting the source there. Memberships name an orbit by its key, only looked up (invariant 37).
+function appendTakeOutOptions(picker, memberships) {
+  (memberships || []).forEach((m) => {
+    const name = orbitTitles.get(m.orbit_id) || t("suggest.anOrbit", "an orbit");
+    // The option's VALUE carries the key, encoded as the URL segment the request will use.
+    picker.appendChild(new Option(t("horizon.takeOut", `Take out of ${name}`, { name }),
+      TAKE_OUT + encodeURIComponent(m.orbit_id)));
+  });
+}
+
+//: Out of one orbit, back to the Horizon if it is in no other. Saved citations of it would be left
+//: unverified, so the server asks first when there are any, as a move does.
+async function unfileCapture(nodeId, orbitKey, { confirm = false } = {}) {
+  const name = orbitTitles.get(orbitKey) || t("suggest.anOrbit", "an orbit");
+  try {
+    await api(`/horizon/${encodeURIComponent(nodeId)}/unfile`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orbit: orbitKey, confirm }),
+    });
+  } catch (err) {
+    if (err.status === 409 && !confirm) {
+      const n = Number((String(err.message).match(/(\d+) saved citations/) || [])[1] || 0);
+      const ok = await confirmAction(t("map.unfileCited",
+        `${n} saved citations in ${name} point at this. Taking it out leaves them unverified. Take it out anyway?`,
+        { n, from: name }));
+      if (ok) await unfileCapture(nodeId, orbitKey, { confirm: true });
+      return;
+    }
+    notify(readableError(err.message));
+    return;
+  }
+  renderCaptureCard.cache = null;
+  const orbit = starMap.orbits.find((o) => o.slug === orbitKey);
+  notify(t("map.unfiled", `Taken out of ${name}.`, { name }), {
+    tone: "good",
+    timeout: 8000,
+    action: orbit ? { label: t("map.undo", "Undo"), run: () => void fileCapture(nodeId, orbit.id) } : null,
+  });
+  void refreshHorizon().then(() => renderStarMapCard());
+  void renderStarMap();
 }
 
 async function fileCapture(nodeId, orbitId, control) {
@@ -13412,7 +13536,7 @@ function renderCaptureCard(card, focus) {
       detail.appendChild(elt("p", "card-meta", t("map.filedIn", `In ${joined}`, { where: joined })));
     }
     const actions = elt("div", "card-actions");
-    actions.appendChild(filePicker(focus.id, [...offer.values()], { also: memberships.length > 0 }));
+    actions.appendChild(filePicker(focus.id, [...offer.values()], { also: memberships.length > 0, memberships }));
     const read = elt("button", "btn", t("map.readInList", "Read it in full"));
     read.type = "button";
     read.addEventListener("click", () => void showNodeReader({ ...node, id: focus.id }));
@@ -13631,10 +13755,11 @@ async function pollDistilWatch() {
   distilWatch.polling = false;
   distilWatch.slug = null;
   if (wasRunning) {
-    if (distilWatch.status.error) notify(readableError(distilWatch.status.error));
-    else if (reply.align && reply.align.error) {
-      notify(`${t("horizon.alignFailed", "New entities were not matched")}: ${readableError(reply.align.error)}`);
-    }
+    // Failures are shown once, on the Horizon's failure card with their names and a retry; a toast
+    // repeating the same sentence under it was the second copy.
+    horizonState.distil = distilWatch.status;
+    horizonState.align = reply.align || horizonState.align;
+    renderDistilError();
     refreshTopologyViews();
     void refreshSuggestions({ force: true });
   }

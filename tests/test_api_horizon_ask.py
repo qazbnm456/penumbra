@@ -605,7 +605,7 @@ def test_a_pass_run_whose_reply_could_not_be_read_is_tried_once_more(monkeypatch
     monkeypatch.setitem(api._DISTIL, "cancel", False)
     calls = []
 
-    def flaky(dotted, kwargs, prefix, config):
+    def flaky(dotted, kwargs, prefix, config, timeout_factor=1.0):
         calls.append(prefix)
         if len(calls) == 1:
             raise runner.RunError("Failed to produce a valid 'merges' after 1 attempts")

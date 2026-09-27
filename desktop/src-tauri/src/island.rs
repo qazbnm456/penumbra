@@ -593,12 +593,15 @@ mod platform {
         // Icons only, so the hover shape only has to fit the status glyph below the notch (the
         // ring, the arc around it and the four dots under it); the armed one stays wide because it
         // is a drop target, and a bigger target is easier to hit.
-        let hover_w = rest.w + 40.0;
+        // Wide enough for the typing hint under the ring.
+        let listen_w = (rest.w + 110.0).max(300.0);
+        // As wide as listening, so the dwell that turns a hover into listening only grows the shape
+        // downwards. A narrower hover made that change re-centre the window sideways while the ring
+        // moved up, and the whole island visibly shook.
+        let hover_w = listen_w;
         let armed_w = (rest.w + 160.0).max(340.0);
         // Wide enough for a sentence to be read back while it is typed.
         let note_w = (rest.w + 260.0).max(460.0);
-        // Wide enough for the typing hint under the ring.
-        let listen_w = (rest.w + 110.0).max(300.0);
         Some(Geometry {
             edge: "top",
             inset: if top > 0.0 { top } else { 0.0 },

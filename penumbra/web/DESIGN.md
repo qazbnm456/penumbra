@@ -227,7 +227,7 @@ Everything follows from it. The title and the distilled summary are set in the r
 | taking in (after a drop) | the dropped item falls in as a glowing mote; the pull keeps going while the server works |
 | landed | the core swallows once and the ring flares |
 | refused (a file type the server cannot read) | the ring turns red and shakes |
-| listen (the pointer rests 3.5 seconds without dragging) | the hover shape grows a little and a line fades in under the ring, "or just start typing to keep a thought", with a copper caret; the first key opens the note field with it |
+| listen (the pointer rests 3.5 seconds without dragging) | the hover shape grows downwards, keeping its width and the ring and pen where they were, and a line fades in under the ring, "or just start typing to keep a thought", with a copper caret; the first key opens the note field with it |
 | note (the pen or the menu) | the shape widens into a 30px-cornered capsule, the ring moves to its left end, and a one-line field fills the rest with a Return glyph that turns copper once there is something to send |
 
 **The shape grows out of the hardware.** Its size is set per state and transitioned, anchored at the top centre, so it grows out of the notch and shrinks back into it; the window around it is enlarged first and made small last, so nothing is clipped. Concave shoulders (`.hole::before`, `::after`) join it to the top of the screen the way the notch meets the bezel, the lower corners are deep (a capsule when hovering, a 46px bowl when open), and a soft shadow appears only once it is open. Content stays below `--inset`, the notch's height, because the display has no pixels there.

@@ -430,7 +430,9 @@ body[data-result="bad"] .accretion {
 .pen {
   position: absolute;
   right: 14px;
-  top: calc(var(--inset, 0px) + (100% - var(--inset, 0px)) / 2 - 16px);
+  /* Level with the ring's centre (12px padding plus half its 40px), not a share of the height:
+     as a share it slid down whenever the shape grew into listening. */
+  top: calc(var(--inset, 0px) + 16px);
   width: 32px;
   height: 32px;
   display: grid;
@@ -578,8 +580,10 @@ body[data-busy] .note-send {
 
 /* --- listening: the invitation to type -------------------------------------------------------- */
 
-/* While listening the shape keeps its hover look, a little taller, with the ring lifted so the
-   line fits under it. The line fades in slowly: it arrives as the reader waits, not as they aim. */
+/* Hovering, listening and peeking share one width and one ring position, so turning a hover into
+   listening only lengthens the shape downwards, with the line fading in under a ring that stays
+   put. The line arrives slowly: it comes as the reader waits, not as they aim. */
+body[data-state="hover"] .hole,
 body[data-state="listen"] .hole,
 body[data-state="peek"] .hole {
   align-items: flex-start;

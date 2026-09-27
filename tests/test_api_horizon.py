@@ -286,7 +286,7 @@ def test_status_and_cancel_report_what_is_actually_happening(client):
         "running": False,
         "current": None,
         "pending": 0,
-        "distil": {"running": False, "done": 0, "total": 0, "failed": 0, "error": ""},
+        "distil": {"running": False, "done": 0, "total": 0, "failed": 0, "error": "", "failures": []},
         "align": {"running": False, "error": ""},
     }
     body = client.post("/horizon/cancel").json()
@@ -337,6 +337,7 @@ def test_distil_is_a_separate_verb_that_names_its_own_number(client, monkeypatch
         # could only ever describe success, which is what it did over a feature that never ran.
         "failed": 0,
         "error": "",
+        "failures": [],
     }
 
     for _ in range(200):
@@ -1113,6 +1114,44 @@ def test_a_second_summary_pass_is_refused_while_one_is_running(client, monkeypat
         if not client.get("/horizon/status").json()["distil"]["running"]:
             break
         time.sleep(0.02)
+
+
+def test_a_failed_summary_is_named_and_can_be_retried_on_its_own(client, monkeypatch):
+    """The failure card names the captures that failed and retries exactly those."""
+    from penumbra import distill
+
+    class Unreachable:
+        async def arun(self, **kwargs):
+            raise RuntimeError("the summariser is unreachable")
+
+    monkeypatch.setattr(distill, "DistillNode", Unreachable)
+    ids = [
+        client.post("/horizon", json={"texts": [f"doomed {n}"]}).json()["nodes"][0]["id"] for n in range(2)
+    ]
+    client.post("/horizon/distil", json={"limit": 2})
+    for _ in range(200):
+        distil = client.get("/horizon/status").json()["distil"]
+        if not distil["running"]:
+            break
+        time.sleep(0.02)
+    assert sorted(f["id"] for f in distil["failures"]) == sorted(ids)
+    assert all(f["title"] and "unreachable" in f["error"] for f in distil["failures"])
+
+    retried = client.post("/horizon/distil", json={"limit": 50, "node_ids": [ids[0]]}).json()
+    assert retried["total"] == 1, "only the named capture is taken"
+    for _ in range(200):
+        if not client.get("/horizon/status").json()["distil"]["running"]:
+            break
+        time.sleep(0.02)
+    assert client.post("/horizon/distil/dismiss").json()["failures"] == []
+
+
+def test_a_long_document_is_given_time_in_proportion_to_its_length():
+    from penumbra import api
+
+    assert api._long_distil_timeout_factor(15_000) == 1.0
+    assert api._long_distil_timeout_factor(120_000) == 3.0
+    assert api._long_distil_timeout_factor(1_000_000) == api._LONG_DISTIL_TIMEOUT_MAX
 
 
 def test_a_failed_node_is_counted_and_its_reason_reported(client, monkeypatch):
@@ -1935,6 +1974,29 @@ def test_a_move_that_would_orphan_citations_asks_first(client):
     assert len(client.get("/orbits/cited").json()["sources"]) == 1, "nothing moved before the answer"
     done = client.post(f"/horizon/{node['id']}/move", json={**body, "confirm": True})
     assert done.status_code == 200 and done.json()["removed"] == sid
+
+
+def test_a_capture_filed_into_the_wrong_orbit_can_be_taken_out(client):
+    """The move without a destination: out of the orbit, back to the Horizon only, and declined for
+    that orbit so no suggestion puts it straight back. Cited, it asks first, as a move does."""
+    from penumbra import orbit as ob
+    from penumbra.schema import Answer, ChatTurn, Citation
+
+    node = client.post("/horizon", json={"texts": ["filed by mistake"]}).json()["nodes"][0]
+    sid = client.post(
+        f"/horizon/{node['id']}/promote", json={"orbit_id": "wrong", "create": True}
+    ).json()["membership"]["source_id"]
+    cite = Citation(source_id=sid, locator="whole", quote="filed by mistake")
+    ob.mutate_orbit("wrong", lambda o: o.turns.append(
+        ChatTurn(question="q", answer=Answer(text="a", citations=[cite]))), create=False)
+    refused = client.post(f"/horizon/{node['id']}/unfile", json={"orbit": "wrong"})
+    assert refused.status_code == 409 and refused.json()["cited"] == 1
+    done = client.post(f"/horizon/{node['id']}/unfile", json={"orbit": "wrong", "confirm": True})
+    assert done.status_code == 200 and done.json()["removed"] == sid
+    assert client.get(f"/horizon/{node['id']}").json()["orbits"] == []
+    assert client.get("/orbits/wrong").json()["sources"] == []
+    missing = client.post(f"/horizon/{node['id']}/unfile", json={"orbit": "wrong"})
+    assert missing.status_code == 404
 
 
 def test_the_listing_says_which_orbits_each_capture_is_in(client):

@@ -6335,6 +6335,44 @@ textarea::placeholder {
   flex-wrap: wrap;
 }
 
+/* The failed captures, one row each: the name, then a few words of why. The list takes the card's
+   full width under the count, so a long title wraps inside its row instead of beside the heading. */
+.distil-fail-list {
+  flex: 1 0 100%;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.distil-fail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.distil-fail-name {
+  min-width: 0;
+  color: var(--text);
+}
+
+.distil-fail-why {
+  flex: none;
+  color: var(--text-dim);
+}
+
+.distil-fail-hint {
+  flex: 1 0 100%;
+  margin: 0;
+  color: var(--text-dim);
+}
+
+.distil-retry {
+  align-self: flex-start;
+}
+
 /* The count leads and the server's sentence follows it, on one wrapped line rather than two
    stacked blocks: the count is the summary and the reason is the detail. */
 .distil-error-count {

@@ -3016,6 +3016,8 @@ class DistilRequest(BaseModel):
     #: Summarise only the captures filed into this orbit (the star map's per-orbit button). The
     #: number is still the caller's, and the count the page showed is what `total` reports.
     orbit_id: str | None = Field(default=None, max_length=200)
+    #: Summarise exactly these captures (the failure card's "Try again"), any not waiting skipped.
+    node_ids: list[str] | None = Field(default=None, max_length=500)
 
 
 #: The summary pass's own visible, stoppable state. Invariant 47 says every long-running action
@@ -3042,9 +3044,27 @@ _DISTIL: dict[str, object] = {
     "total": 0,
     "failed": 0,
     "error": "",
+    #: Which captures failed in the last pass, and why: `{id, title, error}`, at most
+    #: `_DISTIL_FAILURES_KEPT`, so the page can name them and retry exactly those.
+    "failures": [],
     "cancel": False,
 }
 _DISTIL_GUARD = threading.Lock()
+_DISTIL_FAILURES_KEPT = 20
+
+
+def _record_failure(node_id: str, exc: Exception) -> None:
+    """Count a capture that failed in the running pass and keep its name and reason. The caller
+    holds `_DISTIL_GUARD`."""
+    reason = f"{type(exc).__name__}: {exc}"[:300]
+    _DISTIL["failed"] = int(_DISTIL["failed"]) + 1
+    _DISTIL["error"] = reason
+    failures = list(_DISTIL["failures"])
+    if len(failures) < _DISTIL_FAILURES_KEPT:
+        node = horizon.get_node(node_id)
+        title = (node.title or node.preview.get("title") or node.origin) if node else node_id
+        failures.append({"id": node_id, "title": title, "error": reason})
+        _DISTIL["failures"] = failures
 
 
 #: Whether this PROCESS has an LM configured. Distillation is the only model call the API makes
@@ -3112,6 +3132,7 @@ def _distil_snapshot() -> dict:
         "total": int(_DISTIL["total"]),
         "failed": int(_DISTIL["failed"]),
         "error": str(_DISTIL["error"]),
+        "failures": [dict(f) for f in _DISTIL["failures"]],
     }
 
 
@@ -3135,7 +3156,7 @@ _DEFAULT_DISTIL_LANGUAGE = "the language the document is written in"
 _REPLY_SHAPE_FAILURE = ("AdapterParseError", "Expected to find output fields", "Failed to produce a valid")
 
 
-def _run_pass_task(dotted: str, kwargs: dict, prefix: str) -> object:
+def _run_pass_task(dotted: str, kwargs: dict, prefix: str, *, timeout_factor: float = 1.0) -> object:
     """Run one `RLMTask` in a worker subprocess (invariant 21) from the summary pass's own thread,
     registered in `_DISTIL_RUN` so the pass's Stop ends it at once. Raises on failure, after one
     fresh attempt (new run id, new trace) when the failure was the shape of the model's reply."""
@@ -3144,17 +3165,19 @@ def _run_pass_task(dotted: str, kwargs: dict, prefix: str) -> object:
     except SystemExit as exc:
         raise RuntimeError(f"server misconfigured: {exc}") from exc
     try:
-        return _run_pass_once(dotted, kwargs, prefix, config)
+        return _run_pass_once(dotted, kwargs, prefix, config, timeout_factor)
     except runner.RunError as exc:
         with _DISTIL_GUARD:
             stopped = bool(_DISTIL["cancel"])
         if stopped or not any(mark in str(exc) for mark in _REPLY_SHAPE_FAILURE):
             raise
         _log.warning("%s: the model's reply could not be read, trying once more: %s", prefix, exc)
-        return _run_pass_once(dotted, kwargs, prefix, config)
+        return _run_pass_once(dotted, kwargs, prefix, config, timeout_factor)
 
 
-def _run_pass_once(dotted: str, kwargs: dict, prefix: str, config: PenumbraConfig) -> object:
+def _run_pass_once(
+    dotted: str, kwargs: dict, prefix: str, config: PenumbraConfig, timeout_factor: float = 1.0
+) -> object:
     run_id = f"{prefix}-{uuid.uuid4().hex[:12]}"
 
     async def go():
@@ -3166,7 +3189,7 @@ def _run_pass_once(dotted: str, kwargs: dict, prefix: str, config: PenumbraConfi
         if stopped:
             run.cancel()
         try:
-            return await runner.wait_result(run, timeout=config.run_timeout_seconds)
+            return await runner.wait_result(run, timeout=config.run_timeout_seconds * timeout_factor)
         finally:
             with _DISTIL_GUARD:
                 _DISTIL_RUN["run"] = None
@@ -3187,8 +3210,21 @@ def _run_long_distil(source, language: str):
             "output_language": language or _DEFAULT_DISTIL_LANGUAGE,
         },
         "horizon-distil",
+        timeout_factor=_long_distil_timeout_factor(distill.text_length(doc)),
     )
     return distill.from_long(LongDistillation.model_validate(result), doc)
+
+
+#: Characters a long-document summary is given one `PN_RUN_TIMEOUT_SECONDS` for, and the most that
+#: time is multiplied by. Invariant 68's rule for the podcast, applied here: a 230,000-character PDF
+#: read section by section cannot finish in the time a 15,000-character page needs, and it failed
+#: with the default until the operator raised the global limit for every run.
+_LONG_DISTIL_CHARS_PER_TIMEOUT = 40_000
+_LONG_DISTIL_TIMEOUT_MAX = 5.0
+
+
+def _long_distil_timeout_factor(chars: int) -> float:
+    return max(1.0, min(_LONG_DISTIL_TIMEOUT_MAX, chars / _LONG_DISTIL_CHARS_PER_TIMEOUT))
 
 
 #: Concept alignment's own visible state, beside the summary pass's (invariant 60: a status line
@@ -3295,8 +3331,7 @@ def _run_distil_pass(limit: int, language: str, node_ids: list[str] | None = Non
                 # Stop killed the node's worker: that is what the reader asked for, not a crash to
                 # report (invariant 60). The node goes back to waiting, like any unsummarised one.
                 return
-            _DISTIL["failed"] = int(_DISTIL["failed"]) + 1
-            _DISTIL["error"] = f"{type(exc).__name__}: {exc}"[:300]
+            _record_failure(node_id, exc)
         _log.warning("distil: %s failed: %s", node_id, exc)
 
     try:
@@ -3430,7 +3465,7 @@ def _auto_distil_after_intake() -> None:
         if _DISTIL["cancel"]:
             return
         _DISTIL.update(
-            {"running": True, "done": 0, "total": total, "failed": 0, "error": ""}
+            {"running": True, "done": 0, "total": total, "failed": 0, "error": "", "failures": []}
         )
 
     def tick() -> None:
@@ -3441,8 +3476,7 @@ def _auto_distil_after_intake() -> None:
         with _DISTIL_GUARD:
             if _DISTIL["cancel"]:
                 return  # stopped, not failed (see the manual pass)
-            _DISTIL["failed"] = int(_DISTIL["failed"]) + 1
-            _DISTIL["error"] = f"{type(exc).__name__}: {exc}"[:300]
+            _record_failure(node_id, exc)
         _log.warning("auto-distil: %s failed: %s", node_id, exc)
 
     def should_stop() -> bool:
@@ -3927,6 +3961,7 @@ async def dismiss_distil_error() -> dict:
             raise HTTPException(409, "a summary pass is running")
         _DISTIL["error"] = ""
         _DISTIL["failed"] = 0
+        _DISTIL["failures"] = []
         # Alignment's failure sits on the same line and is just as immortal otherwise: nothing
         # clears it until another alignment starts, which after a give-up may be never.
         _ALIGN["error"] = ""
@@ -3947,6 +3982,12 @@ async def distil_horizon(body: DistilRequest, request: Request) -> dict:
     language = request.headers.get("x-penumbra-interface-language", "")
 
     node_ids: list[str] | None = None
+    if body.node_ids is not None:
+        def _waiting() -> list[str]:
+            nodes = (horizon.get_node(i) for i in body.node_ids)
+            return [n.id for n in nodes if n is not None and n.state == "ready_undistilled"]
+
+        node_ids = await asyncio.to_thread(_waiting)
     if body.orbit_id is not None and not body.orbit_id.strip():
         raise HTTPException(400, "an orbit needs a value")
     if body.orbit_id is not None:
@@ -3956,6 +3997,7 @@ async def distil_horizon(body: DistilRequest, request: Request) -> dict:
             return [n.id for n in nodes if n is not None and n.state == "ready_undistilled"]
 
         node_ids = await asyncio.to_thread(_in_orbit)
+    if node_ids is not None:
         pending = len(node_ids)
     else:
         pending = await asyncio.to_thread(horizon.count_nodes, state="ready_undistilled")
@@ -3971,7 +4013,8 @@ async def distil_horizon(body: DistilRequest, request: Request) -> dict:
         # ends one: a reader needs the reason to survive the pass that produced it, or the page has
         # a fraction of a second to notice it in.
         _DISTIL.update(
-            {"running": True, "done": 0, "total": total, "failed": 0, "error": "", "cancel": False}
+            {"running": True, "done": 0, "total": total, "failed": 0, "error": "", "failures": [],
+             "cancel": False}
         )
 
     # Started, not awaited. Fifty sequential model calls inside a request is a request that times
@@ -4788,6 +4831,42 @@ async def move_horizon_node(node_id: str, body: MoveRequest) -> dict:
         return {**filed, "removed": None, "from_orbit": body.from_orbit}
     await asyncio.to_thread(_forget_removed_source, body.from_orbit, held.source_id)
     return {**filed, "removed": held.source_id, "from_orbit": body.from_orbit}
+
+
+class UnfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    orbit: str
+    #: Set after the reader was told how many citations in `orbit` point at this source.
+    confirm: bool = False
+
+
+@app.post("/horizon/{node_id}/unfile")
+async def unfile_horizon_node(node_id: str, body: UnfileRequest) -> dict:
+    """Take a capture out of one orbit, back to being only in the Horizon if it was in no other.
+
+    The move without a destination, for a capture filed into the wrong orbit: the reader used to
+    have to open that orbit's study columns and delete the source there. It is the same removal, so
+    it has the same guard: saved citations of the source would be left unverified (invariant 50),
+    and when there are any the first call answers 409 with the count. Removal also records the pair
+    as declined, so a suggestion or automatic filing does not put it straight back.
+    """
+    if not body.orbit.strip():
+        raise HTTPException(400, "unfiling needs an orbit")
+    memberships = await asyncio.to_thread(horizon.memberships_for, node_id)
+    held = next((m for m in memberships if m.orbit_id == slug(body.orbit)), None)
+    if held is None:
+        raise HTTPException(404, f"{node_id!r} is not in {body.orbit!r}")
+    orbit = await asyncio.to_thread(_load_orbit_or_404, body.orbit)
+    cited = _citations_of(orbit, held.source_id)
+    if cited and not body.confirm:
+        return JSONResponse(status_code=409, content={
+            "detail": f"{cited} saved citations in {body.orbit!r} point at this source",
+            "cited": cited,
+        })
+    await _mutate_or_http(body.orbit, lambda orb: remove_source(orb, held.source_id), create=False)
+    await asyncio.to_thread(_forget_removed_source, body.orbit, held.source_id)
+    return {"removed": held.source_id, "orbit": held.orbit_id}
 
 
 app.mount("/", _RevalidatingStatics(directory=Path(__file__).parent / "web", html=True), name="web")
