@@ -635,3 +635,15 @@ def test_a_pass_run_whose_reply_could_not_be_read_is_tried_once_more(monkeypatch
     with pytest.raises(runner.RunError):
         api._run_pass_task("m:T", {}, "horizon-align")
     assert calls == ["bad"], "a stopped pass was retried"
+
+    def unreachable(*a):
+        calls.append("unreachable")
+        raise runner.RunError("RLMTaskError: Failed to produce a valid 'distillation' after 1 attempts"
+                              " — caused by ConnectError:")
+
+    calls.clear()
+    monkeypatch.setitem(api._DISTIL, "cancel", False)
+    monkeypatch.setattr(api, "_run_pass_once", unreachable)
+    with pytest.raises(runner.RunError):
+        api._run_pass_task("m:T", {}, "horizon-distil")
+    assert calls == ["unreachable"], "a model that could not be reached was retried as a bad reply"

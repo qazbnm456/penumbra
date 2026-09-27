@@ -8499,8 +8499,19 @@ function nodeErrorBlock(message) {
 //: A page's own title without the encyclopedia's name the page appends to it: "咖啡 - 維基百科，
 //: 自由的百科全書" is "咖啡". Only that suffix, in the scripts Wikipedia writes it in; other sites'
 //: suffixes vary too much to cut without cutting a real title.
+//: The few HTML entities a page's title or description can still carry when it was stored before
+//: the server decoded them (`&#039;`, `&amp;`), decoded as text, never through markup.
+function decodeEntities(text) {
+  const named = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: "\u00a0" };
+  return String(text || "").replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (whole, code) => {
+    if (code[0] !== "#") return named[code.toLowerCase()] ?? whole;
+    const n = code[1] === "x" || code[1] === "X" ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
+    return Number.isFinite(n) && n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : whole;
+  });
+}
+
 function tidyPageTitle(title) {
-  return String(title || "").replace(/\s+[-\u2013\u2014|]\s*(?:Wikipedia|維基百科|维基百科)[^-\u2013\u2014|]*$/u, "").trim();
+  return decodeEntities(title).replace(/\s+[-\u2013\u2014|]\s*(?:Wikipedia|維基百科|维基百科)[^-\u2013\u2014|]*$/u, "").trim();
 }
 
 function nodeHeadline(node) {
@@ -8907,13 +8918,74 @@ function distilBatchSize() {
 //: reason the chat surface already shows its own: this is a single-operator, BYOK tool, and
 //: "PN_MAIN_MODEL is not set" is the sentence that tells them what to do. "Something went wrong"
 //: would be shorter and useless.
-//: A failed summary's reason in a few words, for a row beside its name. The full sentence (with
-//: what to change) is said once for the rows it applies to, not repeated on each.
-function summaryFailure(raw) {
-  if (RUN_TIMED_OUT.test(raw || "")) return t("horizon.failTimeout", "Ran out of time");
-  const sentence = readableError(raw || "");
-  const first = sentence.split(/(?<=[.\u3002])\s*/)[0];
-  return first || sentence;
+//: A model server that did not answer: httpx, the OpenAI client and litellm each say it their way.
+const MODEL_UNREACHABLE = /ConnectError|ConnectTimeout|Connection error|APIConnectionError|Connection refused/;
+const REPLY_UNREADABLE = /Failed to produce a valid|AdapterParseError|Expected to find output fields/;
+
+//: What a failed summary's reason MEANS, as a heading and one line on what to do. The raw text is
+//: the server's; the reader needs the cause, and several captures usually share one.
+function failureCause(raw) {
+  const text = raw || "";
+  if (RUN_TIMED_OUT.test(text)) {
+    return { key: "timeout", label: t("horizon.causeTimeout", "Ran out of time"),
+      hint: withShellHint(t("horizon.distilTimeoutHint",
+        "Long documents already get more time by their length. If one still runs out, raise PN_RUN_TIMEOUT_SECONDS in the configuration file and restart the server.")) };
+  }
+  if (MODEL_UNREACHABLE.test(text)) {
+    return { key: "unreachable", label: t("horizon.causeUnreachable", "Could not reach the model"),
+      hint: t("horizon.causeUnreachableHint",
+        "The model server did not answer. Check that it is running and reachable (its address, the network or a proxy), then try again.") };
+  }
+  if (REPLY_UNREADABLE.test(text)) {
+    return { key: "reply", label: t("horizon.causeReply", "The model's reply could not be read"),
+      hint: t("horizon.causeReplyHint", "A model sometimes answers out of shape. Trying again usually works.") };
+  }
+  const sentence = readableError(text);
+  const first = sentence.split(/(?<=[.\u3002])\s*/)[0] || sentence;
+  return { key: `other:${first}`, label: first, hint: "" };
+}
+
+function failureGroups(failures) {
+  const groups = new Map();
+  failures.forEach((f) => {
+    const cause = failureCause(f.error);
+    if (!groups.has(cause.key)) groups.set(cause.key, { ...cause, items: [] });
+    groups.get(cause.key).items.push(f);
+  });
+  return [...groups.values()].sort((a, b) => b.items.length - a.items.length);
+}
+
+//: One cause: its name and count, what to do, the first three captures by name, and the rest
+//: behind a native disclosure so a long list never pushes the card off the screen.
+const FAILURE_NAMES_SHOWN = 3;
+
+function failureGroupView(group) {
+  const box = elt("div", "distil-fail-group");
+  const head = elt("div", "distil-fail-head");
+  head.appendChild(elt("span", "distil-fail-cause", group.label));
+  head.appendChild(elt("span", "todo-count", String(group.items.length)));
+  box.appendChild(head);
+  if (group.hint) box.appendChild(elt("p", "distil-fail-hint", group.hint));
+  const names = (items) => {
+    const list = elt("ul", "distil-fail-names");
+    items.forEach((f) => {
+      const name = captureName(f.title);
+      const row = elt("li", "", name);
+      row.title = name;
+      list.appendChild(row);
+    });
+    return list;
+  };
+  box.appendChild(names(group.items.slice(0, FAILURE_NAMES_SHOWN)));
+  const rest = group.items.slice(FAILURE_NAMES_SHOWN);
+  if (rest.length) {
+    const more = document.createElement("details");
+    more.className = "distil-fail-more";
+    more.appendChild(elt("summary", "", t("map.todoMore", `and ${rest.length} more`, { n: rest.length })));
+    more.appendChild(names(rest));
+    box.appendChild(more);
+  }
+  return box;
 }
 
 async function retryFailedSummaries(ids, button) {
@@ -8949,6 +9021,7 @@ function renderDistilError() {
   }
   errline.hidden = false;
   errline.textContent = "";
+  errline.classList.remove("has-groups");
   if (!failed && !distil.error) {
     // Only alignment failed: the summaries are saved, and the line says what did not happen. It
     // takes the same dismiss below, which clears both on the server.
@@ -8966,27 +9039,22 @@ function renderDistilError() {
     errline.appendChild(elt("span", "distil-error-count", lead));
     const failures = distil.failures || [];
     if (failures.length) {
-      // Which ones, each with its own short reason, instead of the last reason alone: two captures
-      // can fail for two reasons, and "which ones?" was the reader's first question.
-      const list = elt("ul", "distil-fail-list");
-      failures.forEach((f) => {
-        const row = elt("li", "distil-fail-row");
-        row.appendChild(elt("span", "distil-fail-name", captureName(f.title)));
-        row.appendChild(elt("span", "distil-fail-why", summaryFailure(f.error)));
-        list.appendChild(row);
-      });
-      errline.appendChild(list);
+      // Grouped by cause: sixteen rows each repeating "Connection error" said one thing sixteen
+      // times and cut off the reason. A cause is a heading with its count and what to do, once,
+      // and the captures it hit are named under it, three at a time.
+      if (distil.stopped_unreachable) {
+        errline.appendChild(elt("p", "distil-fail-stopped", t("horizon.distilStoppedUnreachable",
+          "The model could not be reached three times in a row, so the pass stopped. The rest are still waiting; nothing is lost.")));
+      }
+      errline.classList.add("has-groups");
+      failureGroups(failures).forEach((group) => errline.appendChild(failureGroupView(group)));
       if (failed > failures.length) {
         const more = failed - failures.length;
         errline.appendChild(elt("p", "distil-fail-hint", t("map.todoMore", `and ${more} more`, { n: more })));
       }
-      // One line on what to do, once, for the cause they share.
-      if (failures.some((f) => RUN_TIMED_OUT.test(f.error))) {
-        errline.appendChild(elt("p", "distil-fail-hint", withShellHint(t("horizon.distilTimeoutHint",
-          "Long documents already get more time by their length. If one still runs out, raise PN_RUN_TIMEOUT_SECONDS in the configuration file and restart the server."))));
-      }
       // They are waiting again, unsummarised, so trying again costs one press and only them.
-      const retry = elt("button", "btn distil-retry", t("horizon.distilRetry", "Try these again"));
+      const retry = elt("button", "btn distil-retry",
+        t("horizon.distilRetryN", `Try these ${failures.length} again`, { n: failures.length }));
       retry.type = "button";
       retry.addEventListener("click", () => void retryFailedSummaries(failures.map((f) => f.id), retry));
       errline.appendChild(retry);

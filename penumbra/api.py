@@ -3047,16 +3047,49 @@ _DISTIL: dict[str, object] = {
     #: Which captures failed in the last pass, and why: `{id, title, error}`, at most
     #: `_DISTIL_FAILURES_KEPT`, so the page can name them and retry exactly those.
     "failures": [],
+    #: Failures in a row that never reached the model (`_is_connection_failure`), and the failure
+    #: count at the last node, to tell a success (which ends the streak) from another failure.
+    "unreachable": 0,
+    "failed_seen": 0,
     "cancel": False,
 }
 _DISTIL_GUARD = threading.Lock()
 _DISTIL_FAILURES_KEPT = 20
 
 
+#: What a failure to reach the model looks like, from httpx, the OpenAI client and litellm. Nothing
+#: about the capture or the reply is wrong, so retrying the node is pointless and so is going on.
+_CONNECTION_FAILURE = (
+    "ConnectError", "ConnectTimeout", "Connection error", "APIConnectionError", "Connection refused",
+)
+#: Captures in a row that could not reach the model before a pass stops: the model server is down
+#: or unreachable, and every later capture would fail the same way, one timeout at a time.
+_UNREACHABLE_STOP = 3
+
+
+def _is_connection_failure(text: str) -> bool:
+    return any(mark in text for mark in _CONNECTION_FAILURE)
+
+
+def _tick_node() -> None:
+    """One node attempted; a node that did not add a failure ends a run of unreachable ones. The
+    caller holds `_DISTIL_GUARD`."""
+    _DISTIL["done"] = int(_DISTIL["done"]) + 1
+    if int(_DISTIL["failed"]) == int(_DISTIL["failed_seen"]):
+        _DISTIL["unreachable"] = 0
+    _DISTIL["failed_seen"] = int(_DISTIL["failed"])
+
+
+def _model_unreachable() -> bool:
+    """The caller holds `_DISTIL_GUARD`."""
+    return int(_DISTIL["unreachable"]) >= _UNREACHABLE_STOP
+
+
 def _record_failure(node_id: str, exc: Exception) -> None:
     """Count a capture that failed in the running pass and keep its name and reason. The caller
     holds `_DISTIL_GUARD`."""
     reason = f"{type(exc).__name__}: {exc}"[:300]
+    _DISTIL["unreachable"] = int(_DISTIL["unreachable"]) + 1 if _is_connection_failure(reason) else 0
     _DISTIL["failed"] = int(_DISTIL["failed"]) + 1
     _DISTIL["error"] = reason
     failures = list(_DISTIL["failures"])
@@ -3133,6 +3166,7 @@ def _distil_snapshot() -> dict:
         "failed": int(_DISTIL["failed"]),
         "error": str(_DISTIL["error"]),
         "failures": [dict(f) for f in _DISTIL["failures"]],
+        "stopped_unreachable": _model_unreachable(),
     }
 
 
@@ -3169,7 +3203,10 @@ def _run_pass_task(dotted: str, kwargs: dict, prefix: str, *, timeout_factor: fl
     except runner.RunError as exc:
         with _DISTIL_GUARD:
             stopped = bool(_DISTIL["cancel"])
-        if stopped or not any(mark in str(exc) for mark in _REPLY_SHAPE_FAILURE):
+        # A reply that could not be read is worth one fresh attempt; a model that could not be
+        # reached is not, and the RLM wraps both in the same "Failed to produce a valid" sentence.
+        text = str(exc)
+        if stopped or _is_connection_failure(text) or not any(mark in text for mark in _REPLY_SHAPE_FAILURE):
             raise
         _log.warning("%s: the model's reply could not be read, trying once more: %s", prefix, exc)
         return _run_pass_once(dotted, kwargs, prefix, config, timeout_factor)
@@ -3219,7 +3256,7 @@ def _run_long_distil(source, language: str):
 #: time is multiplied by. Invariant 68's rule for the podcast, applied here: a 230,000-character PDF
 #: read section by section cannot finish in the time a 15,000-character page needs, and it failed
 #: with the default until the operator raised the global limit for every run.
-_LONG_DISTIL_CHARS_PER_TIMEOUT = 40_000
+_LONG_DISTIL_CHARS_PER_TIMEOUT = 15_000
 _LONG_DISTIL_TIMEOUT_MAX = 5.0
 
 
@@ -3315,11 +3352,11 @@ def _run_distil_pass(limit: int, language: str, node_ids: list[str] | None = Non
     """
     def should_stop() -> bool:
         with _DISTIL_GUARD:
-            return bool(_DISTIL["cancel"])
+            return bool(_DISTIL["cancel"]) or _model_unreachable()
 
     def tick() -> None:
         with _DISTIL_GUARD:
-            _DISTIL["done"] = int(_DISTIL["done"]) + 1
+            _tick_node()
 
     def failed(node_id: str, exc: Exception) -> None:
         # The message reaches the reader verbatim. This is a self-hosted, BYOK tool with one
@@ -3357,7 +3394,10 @@ def _run_distil_pass(limit: int, language: str, node_ids: list[str] | None = Non
             node_ids=node_ids,
             run_long=_run_long_distil,
         )
-        _align_after_pass(_horizon_queue().base_dir)
+        with _DISTIL_GUARD:
+            unreachable = _model_unreachable()
+        if not unreachable:  # alignment is a model call too, and the model is not answering
+            _align_after_pass(_horizon_queue().base_dir)
         _auto_file_suggested()  # new summaries are what most suggestions come from
     except Exception as exc:  # noqa: BLE001 - the pass itself dying must still reach the page
         # `distil_pending` raising (a corrupt index, a disk error) is not one node failing. Without
@@ -3465,12 +3505,13 @@ def _auto_distil_after_intake() -> None:
         if _DISTIL["cancel"]:
             return
         _DISTIL.update(
-            {"running": True, "done": 0, "total": total, "failed": 0, "error": "", "failures": []}
+            {"running": True, "done": 0, "total": total, "failed": 0, "error": "", "failures": [],
+             "unreachable": 0, "failed_seen": 0}
         )
 
     def tick() -> None:
         with _DISTIL_GUARD:
-            _DISTIL["done"] = int(_DISTIL["done"]) + 1
+            _tick_node()
 
     def failed(node_id: str, exc: Exception) -> None:
         with _DISTIL_GUARD:
@@ -3481,7 +3522,7 @@ def _auto_distil_after_intake() -> None:
 
     def should_stop() -> bool:
         with _DISTIL_GUARD:
-            stopped = bool(_DISTIL["cancel"])
+            stopped = bool(_DISTIL["cancel"]) or _model_unreachable()
         return stopped or queue.has_pending_work() or queue.cancel_generation != generation
 
     try:
@@ -3962,6 +4003,7 @@ async def dismiss_distil_error() -> dict:
         _DISTIL["error"] = ""
         _DISTIL["failed"] = 0
         _DISTIL["failures"] = []
+        _DISTIL["unreachable"] = 0
         # Alignment's failure sits on the same line and is just as immortal otherwise: nothing
         # clears it until another alignment starts, which after a give-up may be never.
         _ALIGN["error"] = ""
@@ -4014,7 +4056,7 @@ async def distil_horizon(body: DistilRequest, request: Request) -> dict:
         # a fraction of a second to notice it in.
         _DISTIL.update(
             {"running": True, "done": 0, "total": total, "failed": 0, "error": "", "failures": [],
-             "cancel": False}
+             "unreachable": 0, "failed_seen": 0, "cancel": False}
         )
 
     # Started, not awaited. Fifty sequential model calls inside a request is a request that times

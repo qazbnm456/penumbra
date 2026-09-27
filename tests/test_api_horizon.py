@@ -79,7 +79,8 @@ def _fresh_queue():
     intake._SHARED = None
     with api._DISTIL_GUARD:
         api._DISTIL.update(
-            {"running": False, "done": 0, "total": 0, "failed": 0, "error": "", "cancel": False}
+            {"running": False, "done": 0, "total": 0, "failed": 0, "error": "", "failures": [],
+             "unreachable": 0, "failed_seen": 0, "cancel": False}
         )
 
 
@@ -286,7 +287,8 @@ def test_status_and_cancel_report_what_is_actually_happening(client):
         "running": False,
         "current": None,
         "pending": 0,
-        "distil": {"running": False, "done": 0, "total": 0, "failed": 0, "error": "", "failures": []},
+        "distil": {"running": False, "done": 0, "total": 0, "failed": 0, "error": "", "failures": [],
+                   "stopped_unreachable": False},
         "align": {"running": False, "error": ""},
     }
     body = client.post("/horizon/cancel").json()
@@ -338,6 +340,7 @@ def test_distil_is_a_separate_verb_that_names_its_own_number(client, monkeypatch
         "failed": 0,
         "error": "",
         "failures": [],
+        "stopped_unreachable": False,
     }
 
     for _ in range(200):
@@ -1146,11 +1149,32 @@ def test_a_failed_summary_is_named_and_can_be_retried_on_its_own(client, monkeyp
     assert client.post("/horizon/distil/dismiss").json()["failures"] == []
 
 
+def test_a_pass_stops_when_the_model_cannot_be_reached_three_times_in_a_row(client, monkeypatch):
+    """Every later capture would fail the same way; the rest stay waiting for when it answers."""
+    from penumbra import distill
+
+    class Unreachable:
+        async def arun(self, **kwargs):
+            raise RuntimeError("litellm.InternalServerError: OpenAIException - Connection error.")
+
+    monkeypatch.setattr(distill, "DistillNode", Unreachable)
+    for n in range(6):
+        client.post("/horizon", json={"texts": [f"waiting {n}"]})
+    client.post("/horizon/distil", json={"limit": 6})
+    for _ in range(200):
+        distil = client.get("/horizon/status").json()["distil"]
+        if not distil["running"]:
+            break
+        time.sleep(0.02)
+    assert distil["failed"] == 3 and distil["stopped_unreachable"] is True
+    assert client.get("/horizon").json()["undistilled"] == 6, "nothing was lost, only not attempted"
+
+
 def test_a_long_document_is_given_time_in_proportion_to_its_length():
     from penumbra import api
 
     assert api._long_distil_timeout_factor(15_000) == 1.0
-    assert api._long_distil_timeout_factor(120_000) == 3.0
+    assert api._long_distil_timeout_factor(45_000) == 3.0
     assert api._long_distil_timeout_factor(1_000_000) == api._LONG_DISTIL_TIMEOUT_MAX
 
 

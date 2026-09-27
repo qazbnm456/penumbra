@@ -12,6 +12,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from html import unescape as _unescape
 from urllib.parse import urlparse
 
 import trafilatura
@@ -194,7 +195,9 @@ def extract_preview(html: str) -> dict[str, str]:
         key = (match.group(1) or match.group(4) or "").strip().lower()
         value = match.group(2) if match.group(1) else match.group(3)
         if key and value and key not in tags:
-            tags[key] = " ".join(value.split())
+            # An attribute value is HTML-escaped: `WOOT &#039;26` and `Examples &amp; Prevention`
+            # were shown to the reader exactly like that.
+            tags[key] = " ".join(_unescape(value).split())
 
     for field, candidates in _PREVIEW_META.items():
         for candidate in candidates:
@@ -205,7 +208,7 @@ def extract_preview(html: str) -> dict[str, str]:
     if "title" not in found:
         match = _TITLE_TAG.search(window)
         if match:
-            title = " ".join(re.sub(r"<[^>]+>", "", match.group(1)).split())
+            title = " ".join(_unescape(re.sub(r"<[^>]+>", "", match.group(1))).split())
             if title:
                 found["title"] = title[:300]
     return found

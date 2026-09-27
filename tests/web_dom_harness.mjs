@@ -1740,9 +1740,10 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
 
   //: A page title loses the encyclopedia's appended name and nothing else.
   pageTitles() {
-    const run = new Function(`${extract("tidyPageTitle")}\nreturn { tidyPageTitle };`)();
+    const run = new Function(`${extract("decodeEntities")}\n${extract("tidyPageTitle")}\nreturn { tidyPageTitle };`)();
     return ["咖啡 - 維基百科，自由的百科全書", "Aurora - Wikipedia", "睡眠 - 维基百科，自由的百科全书",
-      "Rust - A language | Rust", "Black Hat Cyber Security Conference"].map(run.tidyPageTitle);
+      "Rust - A language | Rust", "Black Hat Cyber Security Conference", "WOOT &#039;26 Call for Papers",
+      "Examples &amp; Prevention", "Not what you&#39;ve signed up for"].map(run.tidyPageTitle);
   },
 
   //: The idle rest starts only in the window the reader is using: a window behind another app

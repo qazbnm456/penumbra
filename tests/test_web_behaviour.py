@@ -1054,7 +1054,8 @@ def test_an_automatic_filing_is_announced_once_and_can_be_taken_out():
 
 def test_a_wikipedia_title_is_shown_without_the_encyclopedias_name():
     assert _run("pageTitles") == ["咖啡", "Aurora", "睡眠", "Rust - A language | Rust",
-                                  "Black Hat Cyber Security Conference"]
+                                  "Black Hat Cyber Security Conference", "WOOT '26 Call for Papers",
+                                  "Examples & Prevention", "Not what you've signed up for"]
 
 
 def test_rest_never_starts_in_a_window_behind_another_app():

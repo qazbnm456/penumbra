@@ -303,6 +303,16 @@ def test_attribute_order_inside_a_meta_tag_does_not_matter():
     assert web.extract_preview(html)["title"] == "Reversed order"
 
 
+def test_a_preview_decodes_the_html_entities_in_its_values():
+    page = (
+        '<html><head><title>WOOT &#039;26 Call for Papers</title>'
+        '<meta property="og:description" content="Examples &amp; Prevention"></head></html>'
+    )
+    found = web.extract_preview(page)
+    assert found["title"] == "WOOT '26 Call for Papers"
+    assert found["description"] == "Examples & Prevention"
+
+
 def test_a_preview_never_carries_an_image():
     """`og:image` is deliberately absent. Rendering one makes the READER's browser fetch a URL the
     page author chose, handing that third party an IP and a request to log — every pasted link

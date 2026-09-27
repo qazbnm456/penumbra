@@ -6335,42 +6335,102 @@ textarea::placeholder {
   flex-wrap: wrap;
 }
 
-/* The failed captures, one row each: the name, then a few words of why. The list takes the card's
-   full width under the count, so a long title wraps inside its row instead of beside the heading. */
-.distil-fail-list {
-  flex: 1 0 100%;
+/* Grouped, the card is a two-column grid: the count and the close share the top row and every
+   group spans the card below them. It never shrinks under its content (on the map it sits in a
+   column of fixed height, and shrinking overlapped its rows); a long one scrolls inside instead. */
+.distil-error.has-groups {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  flex-shrink: 0;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.distil-error.has-groups[hidden] {
+  display: none;
+}
+
+.distil-error.has-groups > * {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.distil-error.has-groups > .distil-error-count {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.distil-error.has-groups > .distil-error-dismiss {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.distil-error.has-groups > .distil-retry {
+  justify-self: start;
+}
+
+/* A failure card is grouped by cause: a heading with its count, one line on what to do, the first
+   captures by name and the rest behind a disclosure. Each group spans the card, under the count. */
+.distil-fail-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-top: var(--space-3);
+  border-top: 1px solid color-mix(in oklch, var(--bad) 20%, var(--border));
+}
+
+.distil-fail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.distil-fail-cause {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.distil-fail-names {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-}
-
-.distil-fail-row {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
-.distil-fail-name {
-  min-width: 0;
+  gap: var(--space-0);
   color: var(--text);
 }
 
-.distil-fail-why {
-  flex: none;
+/* One line per capture: a title can be a sentence, and wrapped it stacked into a narrow column. */
+.distil-fail-names li {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.distil-fail-more summary {
+  cursor: pointer;
   color: var(--text-dim);
 }
 
-.distil-fail-hint {
+.distil-fail-more .distil-fail-names {
+  margin-top: var(--space-1);
+}
+
+.distil-fail-hint,
+.distil-fail-stopped {
   flex: 1 0 100%;
   margin: 0;
   color: var(--text-dim);
 }
 
+.distil-fail-stopped {
+  color: var(--text);
+}
+
 .distil-retry {
   align-self: flex-start;
+  margin-top: var(--space-2);
 }
 
 /* The count leads and the server's sentence follows it, on one wrapped line rather than two
