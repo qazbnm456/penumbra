@@ -3388,8 +3388,9 @@ _ORGANIZE_ROUNDS = 3
 
 
 def _organize_after_pass(language: str = "", should_stop=None) -> None:
-    """`should_stop` is the automatic pass's own: it runs on the intake worker's thread, and a
-    capture dropped meanwhile must not wait behind up to three model calls (invariant 47's yield)."""
+    """`should_stop` is the automatic pass's own: it runs on the intake worker's thread, so it is
+    checked before each round and each call, and a capture dropped meanwhile waits for at most the
+    one call already in flight (invariant 47's yield)."""
     for _round in range(_ORGANIZE_ROUNDS):
         if should_stop is not None and should_stop():
             return
@@ -3451,7 +3452,10 @@ def _organize_round(language: str = "", should_stop=None) -> bool:
         # Left is everything not actually filed, not everything the plan did not name: a capture
         # the plan sent to a declined orbit, or past the corpus cap, would otherwise be sent to the
         # model again at the end of every pass.
-        organize.remember_left({c["id"] for c in captures if c["id"] not in filed}, signature, base_dir=base)
+        # A Stop partway through the plan left the rest unfiled, not decided: those go again.
+        if not _stop_requested():
+            unfiled = {c["id"] for c in captures if c["id"] not in filed}
+            organize.remember_left(unfiled, signature, base_dir=base)
         return opened > 0 and len(filed) < len(captures)
     except Exception as exc:  # noqa: BLE001 - reported on the page; the captures stay where they are
         with _DISTIL_GUARD:
