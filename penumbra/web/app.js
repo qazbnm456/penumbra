@@ -11806,8 +11806,13 @@ function placeStarMap() {
 
 //: Planets on different rings turn at different speeds, so two will pass each other. Two drawn
 //: over each other at full strength are both unreadable; one must win. The nearer one wins (lower
-//: on the screen, which on these tilted orbits is the near side) and is drawn on top, and the one
-//: behind fades until they part. The planet picked or pointed at always wins.
+//: on the screen, which on these tilted orbits is the near side) and the one behind fades until
+//: they part. The planet picked or pointed at always wins.
+//:
+//: The winner is NOT moved to the top of the drawing order. Re-appending planets whenever their
+//: order changed happened every six seconds or so with nine orbits, and each move restarted the
+//: moved planet's moon animation and cost WebKit a restyle of the map: the orbit hitched on that
+//: beat. Faded to under a fifth, the one behind reads as behind wherever it is drawn.
 //:
 //: Only a real touch counts: a planet's body with its moons is a circle, and its name and count a
 //: box under it, and two planets overlap when either part of one meets either part of the other.
@@ -11842,12 +11847,6 @@ function settleOverlaps(scene, at) {
     order.push(entry);
   });
   order.sort((a, b) => (a.first - b.first) || (a.parts.y - b.parts.y));
-  let key = "";
-  for (let i = 0; i < order.length; i += 1) key += `${order[i].p.orbit.slug}|`;
-  if (key !== scene.order) {
-    scene.order = key;
-    order.forEach((entry) => entry.group.parentNode && entry.group.parentNode.appendChild(entry.group));
-  }
   const behind = overlapScratch.behind;
   behind.clear();
   for (let i = 0; i < order.length; i += 1) {
@@ -12753,9 +12752,8 @@ function drawStarMap() {
 
   const planets = planetLayout();
   const kinds = planetKinds(planets.map((pl) => pl.orbit.slug));
-  const scene = { planets: [], bridges: [], order: "" };
-  // Planets have a layer of their own, so the nearer one can be drawn over the farther by
-  // reordering them alone (`settleOverlaps`).
+  const scene = { planets: [], bridges: [] };
+  // Planets have a layer of their own, above the rings, bridges and weather.
   const planetLayer = svgEl("g", {}, "map-planets");
   // Every source reaches the Horizon now, so a hollow moon is rare (a CLI addition the server has
   // not recorded yet); its legend entry shows only while one is drawn.

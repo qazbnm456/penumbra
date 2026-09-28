@@ -3455,3 +3455,18 @@ def test_no_css_negates_a_custom_property_with_a_bare_minus():
     css = _strip_css_comments((WEB / "style.css").read_text(encoding="utf-8"))
     bare = re.findall(r"(?<![\w-])-var\(", css)
     assert not bare, f"{len(bare)} declaration(s) negate var() with a bare minus; use calc(-1 * var(...))"
+
+
+def test_the_star_maps_frame_loop_never_moves_a_node():
+    """`settleOverlaps` and `placeStarMap` run on every frame. Re-appending planets there, to draw
+    the nearer one on top, happened every six seconds or so with nine orbits and made the orbit
+    hitch on that beat in WebKit (each move restarts the planet's moon animation and restyles the
+    map). They may set attributes and classes; they may not insert, move or remove a node."""
+    js = (WEB / "app.js").read_text(encoding="utf-8")
+    for name in ("settleOverlaps", "placeStarMap", "stepSky"):
+        start = js.index(f"function {name}(")
+        body = js[start:js.index("\n}\n", start)]
+        moves = [call for call in ("appendChild(", "insertBefore(", "prepend(", "append(") if call in body]
+        if name == "stepSky":
+            moves = [m for m in moves if m != "append("]  # it removes finished weather, nothing more
+        assert not moves, f"{name} moves nodes every frame: {moves}"
