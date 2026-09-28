@@ -37,9 +37,19 @@ def test_the_plan_keeps_only_what_it_was_shown():
 
 
 def test_the_plan_opens_a_bounded_number_of_new_orbits():
-    raw = {"placements": [{"capture": str(n), "new_orbit": f"subject {n}"} for n in range(8)]}
-    plan = organize.plan_from(raw, captures={str(n) for n in range(8)}, orbits={}, max_new=3)
-    assert [name for _c, _k, name in plan] == ["subject 0", "subject 1", "subject 2"]
+    raw = {"placements": [{"capture": str(n), "new_orbit": f"subject {n // 2}"} for n in range(16)]}
+    plan = organize.plan_from(raw, captures={str(n) for n in range(16)}, orbits={}, max_new=3)
+    assert [name for _c, _k, name in plan] == ["subject 0"] * 2 + ["subject 1"] * 2 + ["subject 2"] * 2
+
+
+def test_a_new_orbit_needs_two_captures():
+    raw = {"placements": [
+        {"capture": "a", "new_orbit": "Spaced repetition"},
+        {"capture": "b", "new_orbit": "Baking"},
+        {"capture": "c", "new_orbit": "baking"},
+    ]}
+    plan = organize.plan_from(raw, captures={"a", "b", "c"}, orbits={})
+    assert plan == [("b", "new", "Baking"), ("c", "new", "Baking")], "a subject of one waits for a second"
 
 
 def test_a_reply_that_does_not_parse_places_nothing():
@@ -158,10 +168,12 @@ def test_a_declined_orbit_is_never_the_answer(client, monkeypatch):
 
 def test_a_new_orbit_nothing_could_go_into_is_not_left_behind(client, monkeypatch):
     a = _summarised(client, "big", ["X"])
+    b = _summarised(client, "bigger", ["X"])
     monkeypatch.setattr(api, "max_corpus_chars", lambda: 5)
-    _fake_model(monkeypatch, {"placements": [{"capture": a, "new_orbit": "Too big"}]})
+    _fake_model(monkeypatch, {"placements": [{"capture": a, "new_orbit": "Too big"},
+                                             {"capture": b, "new_orbit": "Too big"}]})
     api._organize_after_pass()
-    assert horizon.memberships_for(a) == []
+    assert horizon.memberships_for(a) == [] and horizon.memberships_for(b) == []
     assert list_orbit_summaries()[0] == []
 
 
@@ -189,9 +201,10 @@ def test_a_stopped_pass_does_not_organise(client, monkeypatch):
 
 def test_a_round_that_opened_orbits_is_followed_by_one_over_what_it_left(client, monkeypatch):
     a = _summarised(client, "rockets", ["Rocket"])
+    c = _summarised(client, "probes", ["Probe"])
     b = _summarised(client, "moons", ["Moon"])
     replies = iter([
-        {"placements": [{"capture": a, "new_orbit": "Space"}]},
+        {"placements": [{"capture": a, "new_orbit": "Space"}, {"capture": c, "new_orbit": "Space"}]},
         {"placements": [{"capture": b, "orbit": "PLACEHOLDER"}]},
     ])
 
@@ -209,3 +222,15 @@ def test_a_round_that_opened_orbits_is_followed_by_one_over_what_it_left(client,
     assert b in seen[1]["captures"] and a not in seen[1]["captures"]
     space = horizon.memberships_for(a)[0].orbit_id
     assert [m.orbit_id for m in horizon.memberships_for(b)] == [space]
+
+
+def test_what_was_left_goes_again_when_something_new_arrives(client, monkeypatch):
+    a = _summarised(client, "spaced repetition", ["Memory"])
+    seen = _fake_model(monkeypatch, {"placements": [{"capture": a, "new_orbit": "Learning"}]})
+    api._organize_after_pass()
+    assert horizon.memberships_for(a) == [], "a subject of one is left"
+    api._organize_after_pass()
+    assert len(seen) == 1, "nothing new: the left capture is not sent again"
+    b = _summarised(client, "zettelkasten", ["Notes"])
+    api._organize_after_pass()
+    assert len(seen) == 2 and a in seen[1]["captures"] and b in seen[1]["captures"]

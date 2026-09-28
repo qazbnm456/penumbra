@@ -31,6 +31,8 @@ from .horizon import DEFAULT_HORIZON_DIR
 MAX_NEW_ORBITS = 10
 #: The most captures one call sees; the rest wait for the next pass.
 MAX_CAPTURES = 40
+#: The fewest captures a new orbit opens with.
+MIN_NEW_ORBIT = 2
 _NAME_CHARS = 60
 _SUMMARY_CHARS = 400
 _HELD_TITLES = 6
@@ -43,7 +45,10 @@ entities. `orbits` is a JSON list of the orbits that exist, each with an id, a t
 
 For each capture decide one of:
 - put it into an existing orbit whose subject it belongs to (use that orbit's id);
-- put it into a NEW orbit, when no existing orbit fits. Captures on one new subject share one new orbit. A \
+- put it into a NEW orbit, when no existing orbit fits and at least one other capture here shares its \
+subject. Captures on one new subject share one new orbit. A capture whose subject no other capture shares \
+goes into the closest existing orbit if it reasonably fits, and is otherwise left: it gets an orbit once a \
+second capture on its subject arrives. A \
 new orbit's name is short (2 to 6 words), names the subject broadly enough to hold more captures like \
 it, and is written in `language` when one is given, otherwise in the language most captures are written in;
 - leave it, only when it is too thin to place at all.
@@ -97,13 +102,24 @@ def plan_from(
 
     Only a capture it was shown, and each at most once; only an orbit that exists (`orbits` maps id
     to title); a new name equal to an existing orbit's title files into that orbit; new names are
-    cut to a sensible length, and past `max_new` distinct new names the rest are dropped rather
-    than opened.
+    cut to a sensible length; a new name only one capture was given is not opened
+    (`MIN_NEW_ORBIT`); and past `max_new` distinct new names the rest are dropped rather than
+    opened.
     """
     by_title = {_key(title): orbit_id for orbit_id, title in orbits.items() if title}
     seen: set[str] = set()
     new_names: dict[str, str] = {}
     out: list[tuple[str, str, str]] = []
+    # A new orbit needs two captures: one alone would be an orbit of one source, and the next pass
+    # can open it once a second capture on its subject arrives.
+    wanted: dict[str, set[str]] = {}
+    for item in raw.get("placements") or []:
+        if not isinstance(item, dict) or str(item.get("orbit") or "") in orbits:
+            continue
+        capture = str(item.get("capture") or "")
+        name = _key(" ".join(str(item.get("new_orbit") or "").split())[:_NAME_CHARS])
+        if capture in captures and name and name not in by_title:
+            wanted.setdefault(name, set()).add(capture)
     for item in raw.get("placements") or []:
         if not isinstance(item, dict):
             continue
@@ -121,6 +137,8 @@ def plan_from(
                 out.append((capture, "orbit", by_title[_key(name)]))
                 continue
             key = _key(name)
+            if len(wanted.get(key, ())) < MIN_NEW_ORBIT:
+                continue
             if key not in new_names:
                 if len(new_names) >= max_new:
                     continue

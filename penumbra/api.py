@@ -3419,6 +3419,10 @@ def _organize_round(language: str = "") -> bool:
     captures, held = organize.gather(_landing_slug(), skip=skip, base_dir=base)
     if not captures:
         return False
+    if skip:
+        # Something new arrived, so what was left before goes again beside it: a capture left
+        # because its subject was its alone gets its orbit when the second one comes.
+        captures, held = organize.gather(_landing_slug(), base_dir=base)
     with _DISTIL_GUARD:
         _ORGANIZE.update({"running": True, "error": ""})
     try:
