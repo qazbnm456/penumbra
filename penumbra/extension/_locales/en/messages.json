@@ -170,7 +170,7 @@
     "message": "Keep another copy"
   },
   "autoFilingNote": {
-    "message": "Filing is automatic: it goes into the orbit that fits once it has a suggestion, usually after its summary."
+    "message": "Filing is automatic: after its summary it goes into the orbit that fits, or a new one."
   },
   "autoWontMove": {
     "message": "Automatic filing will not move it."

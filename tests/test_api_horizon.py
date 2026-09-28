@@ -290,6 +290,7 @@ def test_status_and_cancel_report_what_is_actually_happening(client):
         "distil": {"running": False, "done": 0, "total": 0, "failed": 0, "error": "", "failures": [],
                    "stopped_unreachable": False},
         "align": {"running": False, "error": ""},
+        "organize": {"running": False, "error": ""},
     }
     body = client.post("/horizon/cancel").json()
     assert body["dropped"] == 0

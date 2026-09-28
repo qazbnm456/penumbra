@@ -128,6 +128,7 @@ from . import (
     filing,
     horizon,
     intake,
+    organize,
     runner,
     search,
     topology,
@@ -3352,6 +3353,114 @@ def _align_after_pass(base_dir) -> None:
             _ALIGN["running"] = False
 
 
+#: Organising's own visible state, beside alignment's (invariant 60). Guarded by `_DISTIL_GUARD`.
+#: `left` holds the captures the model saw and chose to leave, for the orbit set it saw them
+#: against, so they are not sent again at the end of every pass until a new orbit could take them.
+_ORGANIZE: dict[str, object] = {"running": False, "error": "", "left": set(), "orbits": frozenset()}
+
+
+def _organize_after_pass(language: str = "") -> None:
+    """In `auto` filing, the end of a summary pass sends the summarised captures still in no orbit
+    to one model call (`organize.OrganizeCaptures`) and files each where it says: an orbit that
+    exists, or a new orbit it names (at most `organize.MAX_NEW_ORBITS` a pass).
+
+    Runs after `_auto_file_suggested`, so the free local matches are taken first and the model only
+    sees what they could not place. Only in `auto` mode, which the reader chose knowing it calls
+    the model; never after a stopped pass or while the model is not answering. Every filing goes
+    through `_file_status`, so the corpus cap and "the reader already chose" hold as for any
+    automatic filing, and a pair the reader declined is never filed.
+    """
+    try:
+        if filing_mode()[0] != "auto":
+            return
+    except SystemExit:
+        return
+    with _DISTIL_GUARD:
+        if _DISTIL["cancel"] or _model_unreachable():
+            return
+    base = _horizon_queue().base_dir
+    orbits, _unreadable = list_orbit_summaries()
+    titles = {orb.id: orb.title or _fallback_name(orb.sources) for orb in orbits}
+    with _DISTIL_GUARD:
+        if _ORGANIZE["orbits"] != frozenset(titles):
+            _ORGANIZE.update({"left": set(), "orbits": frozenset(titles)})
+        skip = set(_ORGANIZE["left"])
+    captures, held = organize.gather(_landing_slug(), skip=skip, base_dir=base)
+    if not captures:
+        return
+    with _DISTIL_GUARD:
+        _ORGANIZE.update({"running": True, "error": ""})
+    try:
+        raw = _run_pass_task(
+            _dotted(organize.OrganizeCaptures),
+            {
+                "captures": json.dumps(captures, ensure_ascii=False),
+                "orbits": json.dumps(organize.orbit_listing(titles, held), ensure_ascii=False),
+                "language": output_language() or language,
+                "max_new_orbits": organize.MAX_NEW_ORBITS,
+            },
+            "horizon-organize",
+        )
+        plan = organize.plan_from(
+            raw if isinstance(raw, dict) else {}, captures={c["id"] for c in captures}, orbits=titles
+        )
+        _apply_organize_plan(plan, {c["id"]: c["title"] for c in captures}, base)
+        placed = {capture for capture, _kind, _where in plan}
+        with _DISTIL_GUARD:
+            left = set(_ORGANIZE["left"]) | {c["id"] for c in captures if c["id"] not in placed}
+            _ORGANIZE["left"] = left
+    except Exception as exc:  # noqa: BLE001 - reported on the page; the captures stay where they are
+        with _DISTIL_GUARD:
+            if not _DISTIL["cancel"]:
+                _ORGANIZE["error"] = f"{type(exc).__name__}: {exc}"[:300]
+        _log.warning("organize: %s", exc)
+    finally:
+        with _DISTIL_GUARD:
+            _ORGANIZE["running"] = False
+
+
+def _apply_organize_plan(plan: list[tuple[str, str, str]], titles: dict[str, str], base) -> None:
+    """File what `organize.plan_from` allowed. A new orbit is made only when its first capture is
+    about to go in, and removed again if nothing could be filed into it."""
+    with horizon._connect(base) as conn:
+        filing._ensure(conn)
+        declined = {(r[0], r[1]) for r in conn.execute("SELECT node_id, orbit_id FROM filing_dismissed")}
+    made: dict[str, str] = {}
+    for capture, kind, where in plan:
+        if _stop_requested():
+            return
+        target = where
+        if kind == "new":
+            target = made.get(where) or ""
+            if not target:
+                target = f"orbit-{uuid.uuid4().hex[:8]}"
+
+                def _title(orb: Orbit, name: str = where) -> None:
+                    orb.title = name
+
+                mutate_orbit(target, _title, create=True)
+                made[where] = target
+        if (capture, slug(target)) in declined:
+            continue
+        try:
+            membership = _file_status(capture, target)[1]
+        except Exception:  # noqa: BLE001 - one bad filing must not stop the rest
+            _log.exception("organize: could not file %s", capture)
+            continue
+        if membership is not None:
+            _remember_auto_filed(
+                {"node_id": capture, "title": titles.get(capture, ""), "new_orbit": kind == "new"}, membership
+            )
+    for target in made.values():
+        if not horizon.nodes_in_orbit(target, base_dir=base):
+            delete_orbit(target)
+
+
+def _stop_requested() -> bool:
+    with _DISTIL_GUARD:
+        return bool(_DISTIL["cancel"])
+
+
 def _stop_long_distil() -> None:
     """End the long-document worker the pass is waiting on, if there is one."""
     with _DISTIL_GUARD:
@@ -3418,6 +3527,8 @@ def _run_distil_pass(limit: int, language: str, node_ids: list[str] | None = Non
         if not unreachable:  # alignment is a model call too, and the model is not answering
             _align_after_pass(_horizon_queue().base_dir)
         _auto_file_suggested()  # new summaries are what most suggestions come from
+        if not unreachable:
+            _organize_after_pass(language)
     except Exception as exc:  # noqa: BLE001 - the pass itself dying must still reach the page
         # `distil_pending` raising (a corrupt index, a disk error) is not one node failing. Without
         # this the thread dies, `running` is cleared by the `finally`, and the page sees a pass that
@@ -3568,6 +3679,11 @@ def _auto_distil_after_intake() -> None:
         # presses.
         _vector_worker().nudge()  # new summaries change what a capture is embedded from
         _auto_file_suggested()
+        # Organising is one short call, unlike alignment, and without it an automatic pass would
+        # never place anything the local matches cannot. Not while captures are still arriving:
+        # the pass after the last of them sees them all at once.
+        if not should_stop():
+            _organize_after_pass()
     except Exception as exc:  # noqa: BLE001 - same contract as the manual pass
         with _DISTIL_GUARD:
             _DISTIL["error"] = f"{type(exc).__name__}: {exc}"[:300]
@@ -3704,6 +3820,7 @@ def _remember_auto_filed(item: dict, membership: horizon.NodeMembership) -> None
         _AUTO_FILED.append({
             "seq": _AUTO_FILED_SEQ["n"], "node_id": item["node_id"], "title": item.get("title", ""),
             "orbit": membership.orbit_id, "orbit_title": orbit_title, "source_id": membership.source_id,
+            "new_orbit": bool(item.get("new_orbit")),
         })
 
 
@@ -3936,7 +4053,8 @@ async def horizon_status() -> dict:
     and a single "busy" would let the page claim one while the other was true (invariant 60)."""
     with _DISTIL_GUARD:
         align = {"running": bool(_ALIGN["running"]), "error": str(_ALIGN["error"])}
-    return {**_horizon_queue().status(), "distil": _distil_status(), "align": align}
+        organizing = {"running": bool(_ORGANIZE["running"]), "error": str(_ORGANIZE["error"])}
+    return {**_horizon_queue().status(), "distil": _distil_status(), "align": align, "organize": organizing}
 
 
 @app.post("/horizon/cancel")
@@ -4052,6 +4170,7 @@ async def dismiss_distil_error() -> dict:
         # Alignment's failure sits on the same line and is just as immortal otherwise: nothing
         # clears it until another alignment starts, which after a give-up may be never.
         _ALIGN["error"] = ""
+        _ORGANIZE["error"] = ""
         return {"dismissed": True, **_distil_snapshot()}
 
 

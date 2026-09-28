@@ -2009,7 +2009,7 @@ function settingRows() {
         manual: t("settings.filingManualHelp",
           "New captures stay in the Horizon until you file them from the waiting card beside the star map."),
         auto: t("settings.filingAutoHelp",
-          "A capture is filed as soon as it has a suggestion. Suggestions come from what summaries share, or from local relations, so no model is called. A capture with neither stays in the Horizon."),
+          "A capture goes into an orbit on its own. Once summaries are written, the ones that clearly match an orbit are filed without a model call, and the model places the rest: into an orbit that fits, or into a new orbit it names when none does."),
         assign: t("settings.filingAssignHelp", "Every new capture is filed into the orbit you choose."),
       },
       sub: {
@@ -9108,7 +9108,8 @@ function renderDistilError() {
   const distil = horizonState.distil || {};
   const failed = Number(distil.failed || 0);
   const alignError = (horizonState.align && horizonState.align.error) || "";
-  if ((!failed && !distil.error && !alignError) || distil.running) {
+  const organizeError = (horizonState.organize && horizonState.organize.error) || "";
+  if ((!failed && !distil.error && !alignError && !organizeError) || distil.running) {
     errline.hidden = true;
     errline.textContent = "";
     return;
@@ -9122,6 +9123,12 @@ function renderDistilError() {
     errline.appendChild(elt("span", "distil-error-count",
       t("horizon.alignFailed", "New entities were not matched")));
     errline.appendChild(elt("span", "distil-error-why", readableError(alignError)));
+  }
+  if (!failed && !distil.error && !alignError && organizeError) {
+    // Only organising failed: the summaries are saved and the captures wait in the Horizon.
+    errline.appendChild(elt("span", "distil-error-count",
+      t("horizon.organizeFailed", "New captures were not put into orbits")));
+    errline.appendChild(elt("span", "distil-error-why", readableError(organizeError)));
   }
   // TWO different sentences, because they are two different facts. A pass that ran and lost some
   // nodes has a COUNT; a pass that could not start has none, and saying "1 could not be summarised"
@@ -9172,6 +9179,7 @@ function renderDistilError() {
       const reply = await api("/horizon/distil/dismiss", { method: "POST" });
       horizonState.distil = reply;
       horizonState.align = { running: false, error: "" };
+      horizonState.organize = { running: false, error: "" };
     } catch {
       // A pass started in another tab owns these fields (409). Leave the line alone and let the
       // next poll say what is true now.
@@ -9296,6 +9304,7 @@ async function pollIntake() {
   const distil = status.distil || { running: false, done: 0, total: 0, failed: 0, error: "" };
   horizonState.distil = distil;
   horizonState.align = status.align || { running: false, error: "" };
+  horizonState.organize = status.organize || { running: false, error: "" };
   const parsing = Boolean(status.current) || status.pending > 0;
   const busy = parsing || distil.running;
   strip.hidden = !busy;
@@ -9313,9 +9322,11 @@ async function pollIntake() {
         ? t("horizon.pending", `${status.pending} waiting`, { n: status.pending })
         : "";
     } else {
-      horizonEl("intake-what").textContent = horizonState.align && horizonState.align.running
-        ? t("map.aligning", "Matching new entities to known ones")
-        : t("horizon.summarising", "Summarising");
+      horizonEl("intake-what").textContent = horizonState.organize && horizonState.organize.running
+        ? t("map.organizing", "Putting new captures into orbits")
+        : horizonState.align && horizonState.align.running
+          ? t("map.aligning", "Matching new entities to known ones")
+          : t("horizon.summarising", "Summarising");
       // Failures are counted IN THE STRIP too, not only after the pass. A pass where every call is
       // failing should look different at node three from one that is working, rather than reading
       // as progress right up until it disappears.
@@ -13926,6 +13937,7 @@ async function pollDistilWatch() {
     // repeating the same sentence under it was the second copy.
     horizonState.distil = distilWatch.status;
     horizonState.align = reply.align || horizonState.align;
+    horizonState.organize = reply.organize || horizonState.organize;
     renderDistilError();
     refreshTopologyViews();
     void refreshSuggestions({ force: true });
@@ -14094,7 +14106,11 @@ function announceAutoFiled(data) {
   const fresh = (data.auto_filed || []).filter((entry) => entry.seq > suggest.autoSeq);
   suggest.autoSeq = Math.max(suggest.autoSeq, seq);
   if (!fresh.length) return;
-  if (fresh.length > 1) {
+  const opened = new Set(fresh.filter((entry) => entry.new_orbit).map((entry) => entry.orbit)).size;
+  if (fresh.length > 1 && opened) {
+    notify(t("suggest.autoFiledNew", `Filed ${fresh.length} automatically, opening ${opened} new orbits`,
+      { n: fresh.length, m: opened }), { tone: "ok", timeout: 8000 });
+  } else if (fresh.length > 1) {
     notify(t("suggest.autoFiledMany", `Filed ${fresh.length} automatically`, { n: fresh.length }),
       { tone: "ok", timeout: 6000 });
   } else {
