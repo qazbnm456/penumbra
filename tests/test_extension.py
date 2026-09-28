@@ -180,3 +180,31 @@ def test_the_card_can_file_or_take_back_only_what_this_browser_just_captured(cli
     assert client.post("/extension/undo", headers=key, json={"node_id": seed}).status_code == 404
     refused = client.post("/extension/file", headers=key, json={"node_id": seed, "orbit": "reading"})
     assert refused.status_code == 404
+
+
+def test_the_readers_choice_is_filed_even_after_automatic_filing_put_it_elsewhere(client):
+    """Automatic filing had already put the capture into its suggested orbit, and the card's choice
+    was refused and shown as "that orbit is full". A choice the reader makes is honoured."""
+    key = _pair(client)
+    for orbit in ("suggested", "chosen"):
+        made = client.post("/horizon", headers=_full(), json={"texts": [f"seed {orbit}"]})
+        seed = made.json()["nodes"][0]["id"]
+        client.post(f"/horizon/{seed}/promote", headers=_full(), json={"orbit_id": orbit, "create": True})
+    body = {"kind": "selection", "url": "https://example.com/p", "title": "P", "text": "filed twice"}
+    node_id = client.post("/extension/capture", headers=key, json=body).json()["node"]["id"]
+    client.post(f"/horizon/{node_id}/promote", headers=_full(), json={"orbit_id": "suggested"})
+
+    got = client.post("/extension/file", headers=key, json={"node_id": node_id, "orbit": "chosen"}).json()
+    assert got["filed"] is True and got["outcome"] == "filed"
+    assert sorted(m.orbit_id for m in horizon.memberships_for(node_id)) == ["chosen", "suggested"]
+
+
+def test_a_real_cap_says_so_with_the_number(client, monkeypatch):
+    key = _pair(client)
+    seed = client.post("/horizon", headers=_full(), json={"texts": ["seed"]}).json()["nodes"][0]["id"]
+    client.post(f"/horizon/{seed}/promote", headers=_full(), json={"orbit_id": "small", "create": True})
+    body = {"kind": "selection", "url": "https://example.com/q", "title": "Q", "text": "too long for it"}
+    node_id = client.post("/extension/capture", headers=key, json=body).json()["node"]["id"]
+    monkeypatch.setattr(api, "max_corpus_chars", lambda: 40)
+    got = client.post("/extension/file", headers=key, json={"node_id": node_id, "orbit": "small"}).json()
+    assert got == {"orbit": "small", "filed": False, "outcome": "cap", "cap": 40}

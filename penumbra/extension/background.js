@@ -275,6 +275,20 @@ async function inTab(tabId, func) {
   }
 }
 
+//: What a filing the reader asked for came to, in words: the server says why when it did not
+//: happen, so the card states that reason rather than guessing one.
+function filingNote(got, orbitTitle) {
+  if (!got || got.filed === true) return "";
+  if (got.filed === null || got.filed === undefined) return orbitTitle ? msg("fileWhenRead", orbitTitle) : "";
+  if (got.outcome === "cap") {
+    const lang = chrome.i18n.getUILanguage();
+    const size = lang.startsWith("zh") ? `${Math.round(got.cap / 10000)} 萬` : got.cap.toLocaleString(lang);
+    return msg("notFiledCap", size);
+  }
+  if (got.outcome === "gone") return msg("notFiledGone");
+  return msg("notFiledOther");
+}
+
 async function orbitList() {
   return (await chrome.storage.local.get("orbits")).orbits || [];
 }
@@ -326,9 +340,9 @@ async function capture(tab, { kind, orbit = null, link = "", selectionText = "" 
     const orbits = await orbitList();
     const into = orbit ? (orbits.find((o) => o.id === orbit) || {}).title : "";
     await tell(tabId, {
-      status: into ? msg("savedInto", into) : msg("saved"),
+      status: into && got.filed ? msg("savedInto", into) : msg("saved"),
       title: shown,
-      note: got.filed === false ? msg("notFiledCap") : "",
+      note: into ? filingNote(got, into) : "",
       nodeId: got.node && got.node.id,
       orbits: into ? [] : orbits,
       fileLabel: msg("fileInto"),
@@ -382,8 +396,9 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
           });
           const title = ((await orbitList()).find((o) => o.id === message.orbit) || {}).title || "";
           await tell(tabId, got.filed === false
-            ? { status: msg("failed"), note: msg("notFiledCap"), bad: true }
-            : { status: msg("savedInto", title) });
+            ? { status: msg("notFiled", title), note: filingNote(got, title), bad: true }
+            : got.filed === true ? { status: msg("savedInto", title) }
+            : { status: msg("saved"), note: filingNote(got, title) });
         } else {
           await api("/extension/undo", {
             method: "POST",

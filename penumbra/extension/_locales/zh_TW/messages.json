@@ -108,7 +108,12 @@
     }
   },
   "notFiledCap": {
-    "message": "已經在視界裡了；那個軌道已滿，所以沒放進去。"
+    "message": "那個軌道的文字已經到一次提問能讀的上限（$VALUE$ 字），所以先留在視界。設定檔的 PN_MAX_CORPUS_CHARS 可以調高上限。",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
   },
   "fileInto": {
     "message": "放進軌道…"
@@ -124,6 +129,28 @@
   },
   "keptOfflineNote": {
     "message": "等 Penumbra 開了會自動送出（目前 $VALUE$ 則在等）。",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
+  },
+  "notFiledGone": {
+    "message": "那個軌道已經不在了，先留在視界。"
+  },
+  "notFiledOther": {
+    "message": "先留在視界。"
+  },
+  "notFiled": {
+    "message": "沒放進「$VALUE$」",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
+  },
+  "fileWhenRead": {
+    "message": "讀完後會放進「$VALUE$」。",
     "placeholders": {
       "value": {
         "content": "$1"

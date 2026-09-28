@@ -108,7 +108,12 @@
     }
   },
   "notFiledCap": {
-    "message": "It is in the Horizon; that orbit is full, so it was not filed."
+    "message": "That orbit already holds as much text as one question can read ($VALUE$ characters), so it stayed in the Horizon. PN_MAX_CORPUS_CHARS in the configuration file raises the limit.",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
   },
   "fileInto": {
     "message": "Put it into an orbit…"
@@ -124,6 +129,28 @@
   },
   "keptOfflineNote": {
     "message": "It will be sent when Penumbra opens ($VALUE$ waiting).",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
+  },
+  "notFiledGone": {
+    "message": "That orbit is no longer there; it stayed in the Horizon."
+  },
+  "notFiledOther": {
+    "message": "It stayed in the Horizon."
+  },
+  "notFiled": {
+    "message": "Not put into “$VALUE$”",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
+  },
+  "fileWhenRead": {
+    "message": "It goes into “$VALUE$” once it has been read.",
     "placeholders": {
       "value": {
         "content": "$1"

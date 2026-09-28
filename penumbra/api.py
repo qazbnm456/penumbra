@@ -3578,31 +3578,45 @@ def _next_source_guess(orbit: Orbit | None) -> int:
 
 def _file_under_cap(node_id: str, target: str) -> horizon.NodeMembership | None:
     """File a parsed capture that is in no orbit into an existing orbit, unless that would pass the
-    corpus cap. Returns the membership it made, or None.
+    corpus cap. Returns the membership it made, or None. The automatic path: see `_file_status`."""
+    return _file_status(node_id, target)[1]
 
-    Skipped when the node is already in an orbit (the reader filed it first), when it is not parsed,
-    and when the orbit is gone: nothing here creates an orbit behind the reader. The cap check is
-    invariant 8's: it fails a whole question loudly past the cap, and quietly growing one orbit
-    toward it with every capture would turn "just throw everything in" into an orbit nobody can
-    ask. Such a node stays in the Horizon, where it always was (invariant 78: filing copies).
+
+def _file_status(
+    node_id: str, target: str, *, reader: bool = False
+) -> tuple[str, horizon.NodeMembership | None]:
+    """File a parsed capture into an existing orbit: `(outcome, membership)`, where the outcome is
+    `filed`, `already` (it is in that orbit), `elsewhere`, `cap`, `unread` or `gone`.
+
+    Automatic filing (`reader=False`) skips a capture already in an orbit, since the reader or an
+    earlier rule already chose; a choice the READER makes (`reader=True`, the extension's card or
+    menu) is honoured wherever else it is, as the list's "also file into" is. Nothing here creates
+    an orbit behind the reader. The cap check is invariant 8's: it fails a whole question loudly
+    past the cap, and quietly growing one orbit toward it with every capture would turn "just throw
+    everything in" into an orbit nobody can ask. Such a node stays in the Horizon, where it always
+    was (invariant 78: filing copies).
     """
     if slug(target).startswith(HORIZON_ASK_KEY):
         _log.warning("filing target %r uses the reserved Horizon ask handle; not filing", target)
-        return None
+        return "gone", None
     node = horizon.get_node(node_id)
-    if node is None or node.state not in ("ready", "ready_undistilled"):
-        return None
+    if node is None:
+        return "gone", None
+    if node.state not in ("ready", "ready_undistilled"):
+        return "unread", None
     # Membership in the assigned orbit alone still counts as unfiled, the same way suggestions
     # count it.
     filed = {m.orbit_id for m in horizon.memberships_for(node_id)}
-    if slug(target) in filed or filed - {_landing_slug()}:
-        return None
+    if slug(target) in filed:
+        return "already", None
+    if not reader and filed - {_landing_slug()}:
+        return "elsewhere", None
     # One filing at a time: the intake worker and an upload can both finish a node at once, and
     # two filings checked against the same "before" could each pass the cap and together exceed it.
     with _LANDING_LOCK:
         existing = load_orbit(target)
         if existing is None:
-            return None
+            return "gone", None
         # The REAL assembled length, markers and separators included (`Corpus.blob`), not the sum
         # of block text: a 50-character paste becomes 68 characters of blob (its marker and a
         # newline), so counting text alone let an orbit pass invariant 8's cap and fail every
@@ -3612,10 +3626,10 @@ def _file_under_cap(node_id: str, target: str) -> horizon.NodeMembership | None:
         added = len(Corpus(sources=[source]).blob())
         if held + (2 if held else 0) + added > max_corpus_chars():
             _log.info("not filing %s into %s: it would pass the corpus cap", node_id, target)
-            return None
+            return "cap", None
         membership = horizon.promote_node(node_id, target, create=False)
     _forget_suggestions()
-    return membership
+    return "filed", membership
 
 
 def _file_into_landing_orbit(node_id: str) -> None:
@@ -3704,7 +3718,7 @@ def _on_capture_ready(node_id: str) -> None:
     with _FILE_ON_READY_LOCK:
         target = _FILE_ON_READY.pop(node_id, None)
     if target:
-        _file_under_cap(node_id, target)
+        _file_status(node_id, target, reader=True)  # the reader chose it, from the extension
     else:
         _file_into_landing_orbit(node_id)
     _vector_worker().nudge()
@@ -4319,7 +4333,7 @@ async def extension_capture(request: Request) -> dict:
                 with _FILE_ON_READY_LOCK:
                     pending = _FILE_ON_READY.pop(node.id, None)
                 if pending:
-                    await asyncio.to_thread(_file_under_cap, node.id, pending)
+                    await asyncio.to_thread(lambda: _file_status(node.id, pending, reader=True))
         _remember_extension_capture(node.id)
         return {"node": node.model_dump(), "queued": True}
 
@@ -4329,21 +4343,33 @@ async def extension_capture(request: Request) -> dict:
         else:
             source = selection_source(body.text or "", body.url, "s0", title=body.title)
         node = horizon.add_node(with_injection_flags(source))
-        filed = None
+        outcome = None
         if target:
             _vector_worker().nudge()
-            filed = _file_under_cap(node.id, target) is not None
+            outcome = _file_status(node.id, target, reader=True)[0]
         else:
             _file_quietly(node.id)
-        return node, filed
+        return node, outcome
 
     try:
-        node, filed = await _abandonable(_store)
+        node, outcome = await _abandonable(_store)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     _remember_extension_capture(node.id)
     queue.nudge()
-    return {"node": node.model_dump(), "filed": filed}
+    return {"node": node.model_dump(), **_filing_answer(outcome)}
+
+
+def _filing_answer(outcome: str | None) -> dict:
+    """What the extension's card says about a filing it asked for: whether it is in the orbit now,
+    and when not, the reason, with the cap's size when that is the reason, so the card never has to
+    guess."""
+    if outcome is None:
+        return {"filed": None}
+    answer: dict = {"filed": outcome in ("filed", "already"), "outcome": outcome}
+    if outcome == "cap":
+        answer["cap"] = max_corpus_chars()
+    return answer
 
 
 #: Captures the extension made, by node id, with when: its confirmation card can file one into an
@@ -4396,8 +4422,8 @@ async def extension_file(body: ExtensionFile) -> dict:
         with _FILE_ON_READY_LOCK:
             _FILE_ON_READY[body.node_id] = target
         return {"filed": None, "orbit": target}
-    membership = await asyncio.to_thread(_file_under_cap, body.node_id, target)
-    return {"filed": membership is not None, "orbit": target}
+    outcome, _membership = await asyncio.to_thread(lambda: _file_status(body.node_id, target, reader=True))
+    return {"orbit": target, **_filing_answer(outcome)}
 
 
 @app.post("/extension/undo")
