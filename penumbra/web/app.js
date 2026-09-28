@@ -11654,9 +11654,18 @@ function mapRings() {
 
 //: The whole map in view: zoomed out just enough for the outermost ring.
 function mapHome() {
-  const outer = mapRings().at(-1);
-  // Room for the label under a planet at the bottom of the outer ring, and its moons at the sides.
-  return { x: 500, y: 340, k: Math.min(1, 480 / (outer.rx + 70), 300 / (outer.ry + 90)) };
+  // Fitted to the outermost ring that holds a planet: at least three rings are drawn, and fitting
+  // the empty third one left nine orbits small in the middle of the stage.
+  const rings = mapRings();
+  let left = starMap.orbits.length;
+  let used = 1;
+  for (let i = 0; i < rings.length && left > 0; i += 1) {
+    used = i + 1;
+    left -= rings[i].cap;
+  }
+  const outer = rings[used - 1];
+  // Room for the label under a planet at the bottom of that ring, and its moons at the sides.
+  return { x: 500, y: 340, k: Math.min(1.25, 480 / (outer.rx + 70), 300 / (outer.ry + 90)) };
 }
 
 async function renderStarMap() {
@@ -11864,6 +11873,7 @@ function mapTick(now) {
   }
   if (mapMotion.last && !mapMotion.paused && !mapMotion.held) mapMotion.clock += Math.min(0.1, (now - mapMotion.last) / 1000);
   mapMotion.last = now;
+  stepSky(now);
   placeStarMap();
   mapMotion.frame = requestAnimationFrame(mapTick);
 }
@@ -12214,21 +12224,43 @@ function skyOnScreen() {
   return document.body.dataset.view === "horizon" && !horizonEl("starmap").hidden && !document.hidden && motionAllowed();
 }
 
-//: One sky event, travelling from where it starts by (dx, dy) over `seconds`, then removed.
+//: One sky event, travelling from where it starts by (dx, dy) over `seconds`, then removed. Moved
+//: by the map's own frame loop (`stepSky`), not by a CSS animation: a keyframe animation started on
+//: an SVG element, with its travel in custom properties, cost WebKit a style pass over the whole map
+//: each time a meteor appeared, and the orbit hitched every ten seconds or so, as often as meteors.
+const skyActive = [];
+
 function skyTraveller(cls, x, y, angle, dx, dy, seconds, build) {
   const layer = skyLayer();
   if (!layer) return;
-  const outer = svgEl("g", { transform: `translate(${x.toFixed(1)} ${y.toFixed(1)})` });
-  const mover = svgEl("g", {}, cls);
-  mover.style.setProperty("--dx", `${dx.toFixed(1)}px`);
-  mover.style.setProperty("--dy", `${dy.toFixed(1)}px`);
-  mover.style.animationDuration = `${seconds.toFixed(2)}s`;
-  const turned = svgEl("g", { transform: `rotate(${angle.toFixed(1)})` });
-  build(turned);
-  mover.appendChild(turned);
-  outer.appendChild(mover);
+  const outer = svgEl("g", { opacity: "0" }, cls);
+  build(outer);
   layer.appendChild(outer);
-  mover.addEventListener("animationend", () => outer.remove());
+  skyActive.push({
+    outer, x, y, angle, dx, dy, t0: performance.now(), ms: seconds * 1000,
+    streak: cls === "map-meteor", spin: outer.querySelector(".map-rock-spin"),
+  });
+}
+
+function stepSky(now) {
+  for (let i = skyActive.length - 1; i >= 0; i -= 1) {
+    const item = skyActive[i];
+    const u = Math.min(1, (now - item.t0) / item.ms);
+    if (!item.outer.isConnected || u >= 1) {
+      item.outer.remove();
+      skyActive.splice(i, 1);
+      continue;
+    }
+    // A meteor rushes and fades out; a comet or a rock drifts in, crosses and fades out.
+    const e = item.streak ? 1 - (1 - u) * (1 - u) : u;
+    const fade = item.streak
+      ? (u < 0.15 ? u / 0.15 : 1 - (u - 0.15) / 0.85)
+      : (u < 0.08 ? u / 0.08 : u > 0.92 ? (1 - u) / 0.08 : 1);
+    item.outer.setAttribute("transform",
+      `translate(${(item.x + item.dx * e).toFixed(1)} ${(item.y + item.dy * e).toFixed(1)}) rotate(${item.angle.toFixed(1)})`);
+    item.outer.setAttribute("opacity", fade.toFixed(2));
+    if (item.spin) item.spin.setAttribute("transform", `rotate(${((now - item.t0) / 25) % 360})`);
+  }
 }
 
 function skyMeteor(from) {
@@ -12257,6 +12289,7 @@ function skyComet() {
   const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
   skyTraveller("map-comet", x, y, angle, dx, dy, 28 + Math.random() * 18, (g) => {
     g.appendChild(svgEl("rect", { x: -140, y: -2.2, width: 140, height: 4.4, rx: 2.2, fill: "url(#pn-comet-tail)" }));
+    g.appendChild(svgEl("circle", { r: 6 }, "map-comet-glow"));
     g.appendChild(svgEl("circle", { r: 2.4 }, "map-comet-head"));
   });
 }

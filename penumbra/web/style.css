@@ -9899,51 +9899,25 @@ body:not([data-view="horizon"]) .capture-dock {
 .stop-trail-clear { stop-color: oklch(98% 0.02 80); stop-opacity: 0; }
 .stop-tail { stop-color: oklch(85% 0.08 220); stop-opacity: 0.45; }
 
-/* Weather: each event travels by its own (--dx, --dy) and is removed when it ends. */
+/* Weather: each event is moved by `stepSky` and removed when it ends. */
 .map-sky {
   pointer-events: none;
 }
 
-.map-meteor,
-.map-comet,
-.map-rock {
-  animation-name: sky-travel;
-  animation-timing-function: linear;
-  animation-fill-mode: forwards;
-}
-
-.map-meteor {
-  animation-name: sky-streak;
-  animation-timing-function: cubic-bezier(0.3, 0.1, 0.6, 1);
-}
-
-@keyframes sky-travel {
-  0% { transform: translate(0, 0); opacity: 0; }
-  8% { opacity: 1; }
-  92% { opacity: 1; }
-  100% { transform: translate(var(--dx), var(--dy)); opacity: 0; }
-}
-
-@keyframes sky-streak {
-  0% { transform: translate(0, 0); opacity: 0; }
-  15% { opacity: 1; }
-  100% { transform: translate(var(--dx), var(--dy)); opacity: 0; }
-}
-
+/* Weather moves in the map's frame loop (`stepSky`); nothing here animates it. The comet's glow is
+   a second, wider circle rather than a drop-shadow, which WebKit would redraw every frame. */
 .map-comet-head {
   fill: oklch(97% 0.03 210);
-  filter: drop-shadow(0 0 3px oklch(90% 0.08 210));
+}
+
+.map-comet-glow {
+  fill: oklch(90% 0.08 210 / 0.25);
 }
 
 .map-rock-body {
   fill: oklch(52% 0.02 60);
 }
 
-.map-rock-spin {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: map-spin 9s linear infinite;
-}
 
 /* The Rest button sits with the camera's, one gap below them. */
 .map-rest {
