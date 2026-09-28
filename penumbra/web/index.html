@@ -110,9 +110,16 @@
          which is the other half of why it is here. -->
     <nav class="facets" id="facets" aria-label="Orbits" data-i18n-label="app.orbits">
       <div class="facet-tools" id="facet-tools" hidden>
-        <input type="search" class="facet-filter" id="facet-filter" placeholder="Filter orbits"
-               aria-label="Filter orbits" data-i18n-placeholder="facets.filter" data-i18n-label="facets.filter">
-        <select class="facet-sort" id="facet-sort" aria-label="Order" data-i18n-label="facets.sort"></select>
+        <label class="facet-find">
+          <svg class="facet-find-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+          <input type="search" class="facet-filter" id="facet-filter" placeholder="Filter orbits"
+                 aria-label="Filter orbits" data-i18n-placeholder="facets.filter" data-i18n-label="facets.filter">
+        </label>
+        <button type="button" class="facet-sort" id="facet-sort" aria-haspopup="menu" aria-expanded="false"
+                aria-label="Order" title="Order" data-i18n-label="facets.sort" data-i18n-title="facets.sort">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3v10M2.5 10.5 5 13l2.5-2.5M11 13V3M8.5 5.5 11 3l2.5 2.5"/></svg>
+        </button>
+        <div class="facet-sort-menu" id="facet-sort-menu" role="menu" hidden></div>
       </div>
       <div id="facet-list"></div>
       <button type="button" class="facet facet-new" id="facet-new" data-i18n="horizon.newFacet">+ New orbit</button>

@@ -5422,10 +5422,12 @@ body.is-resizing .studio-grip {
   border-right: 1px solid var(--border);
 }
 
-/* The rail's filter and order, once there are enough orbits to look for one. */
+/* The rail's filter and order, once there are enough orbits to look for one: one row, a field with
+   a magnifier and the order behind an icon, as a mail client's list header has them. */
 .facet-tools {
+  position: relative;
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: var(--space-2);
   padding: 0 var(--space-2) var(--space-4);
 }
@@ -5434,19 +5436,126 @@ body.is-resizing .studio-grip {
   display: none;
 }
 
-.facet-filter,
-.facet-sort {
+.facet-find {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.facet-find-icon {
+  position: absolute;
+  left: var(--space-3);
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--text-faint);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+.facet-filter {
+  width: 100%;
+  min-width: 0;
   font: inherit;
   font-size: var(--text-sm);
   color: var(--text);
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-2) calc(var(--space-3) + 20px);
+}
+
+.facet-filter:focus-visible {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .facet-sort {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
   color: var(--text-dim);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.facet-sort svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.facet-sort:hover,
+.facet-sort[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--surface-1);
+  border-color: var(--border);
+}
+
+.facet-sort-menu {
+  position: absolute;
+  top: calc(100% - var(--space-2));
+  right: var(--space-2);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  padding: var(--space-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 30px -14px rgb(0 0 0 / 0.7);
+}
+
+.facet-sort-menu[hidden] {
+  display: none;
+}
+
+.facet-sort-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: left;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  background: none;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+}
+
+.facet-sort-item::before {
+  content: "";
+  width: 12px;
+  text-align: center;
+  color: var(--accent);
+}
+
+.facet-sort-item[aria-checked="true"] {
+  color: var(--text);
+}
+
+.facet-sort-item[aria-checked="true"]::before {
+  content: "\2713";
+}
+
+.facet-sort-item:hover,
+.facet-sort-item:focus-visible {
+  outline: none;
+  background: var(--surface-1);
 }
 
 .facet-empty {
@@ -7237,13 +7346,14 @@ body[data-view="horizon"] .orbit-picker {
 .map-planet {
   cursor: pointer;
   outline: none;
-  transition: opacity 160ms var(--ib-ease), filter 260ms var(--ib-ease);
+  transition: opacity 220ms var(--ib-ease);
 }
 
-/* Two planets passing each other: the one behind gives way (`settleOverlaps`). */
+/* Two planets passing each other: the one behind gives way (`settleOverlaps`). Opacity only: a blur
+   filter inside an SVG is re-rasterised on every frame the planet moves, and WebKit, which the
+   desktop app renders with, does that on the main thread. */
 .map-planet.is-behind {
-  opacity: 0.22;
-  filter: blur(1.6px);
+  opacity: 0.18;
 }
 
 .map-planet.is-dim {
@@ -7416,7 +7526,9 @@ button.card-chip:hover {
   flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-2);
-  padding-bottom: var(--space-4);
+  /* Room for the chips' own borders: `overflow: hidden` clips at the padding edge, and with none
+     above them it shaved off their top line. */
+  padding: 2px 2px var(--space-4);
   overflow: hidden;
 }
 
@@ -7619,7 +7731,17 @@ body.is-resizing .orbit-graph {
   fill: oklch(80% 0.09 var(--hue, 55) / 0.85);
   text-anchor: middle;
   dominant-baseline: middle;
-  pointer-events: none;
+  cursor: pointer;
+  outline: none;
+}
+
+/* The name is the region's handle (it presses the tag), so it answers the pointer like one. */
+.graph-region-label:hover,
+.graph-region-label:focus-visible,
+.graph-region-label.is-on {
+  fill: oklch(90% 0.1 var(--hue, 55));
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .graph-cap {

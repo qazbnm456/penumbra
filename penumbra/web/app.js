@@ -10083,20 +10083,60 @@ function setHorizonQuery(text) {
   field.focus();
 }
 
+const FACET_SORTS = [
+  ["recent", () => t("facets.sortRecent", "Latest first")],
+  ["name", () => t("facets.sortName", "By name")],
+  ["size", () => t("facets.sortSize", "Most sources")],
+];
+
 function initFacetTools() {
   const filter = horizonEl("facet-filter");
   const sort = horizonEl("facet-sort");
-  const paintOptions = () => {
-    sort.textContent = "";
-    [["recent", t("facets.sortRecent", "Latest first")], ["name", t("facets.sortName", "By name")],
-      ["size", t("facets.sortSize", "Most sources")]].forEach(([value, label]) => {
-      const option = new Option(label, value);
-      option.selected = value === facetView.sort;
-      sort.appendChild(option);
-    });
+  const menu = horizonEl("facet-sort-menu");
+  const close = () => {
+    menu.hidden = true;
+    sort.setAttribute("aria-expanded", "false");
   };
-  paintOptions();
-  window.addEventListener("ui-lang-changed", paintOptions);
+  const open = () => {
+    menu.textContent = "";
+    FACET_SORTS.forEach(([value, label]) => {
+      const item = elt("button", "facet-sort-item", label());
+      item.type = "button";
+      item.setAttribute("role", "menuitemradio");
+      item.setAttribute("aria-checked", value === facetView.sort ? "true" : "false");
+      item.addEventListener("click", () => {
+        facetView.sort = value;
+        try {
+          localStorage.setItem("pn.facetSort", value);
+        } catch {
+          // Private window: the order still applies for this visit.
+        }
+        close();
+        sort.focus();
+        paintFacets();
+      });
+      menu.appendChild(item);
+    });
+    menu.hidden = false;
+    sort.setAttribute("aria-expanded", "true");
+    menu.querySelector('[aria-checked="true"]')?.focus();
+  };
+  sort.addEventListener("click", () => (menu.hidden ? open() : close()));
+  menu.addEventListener("keydown", (event) => {
+    const items = [...menu.querySelectorAll(".facet-sort-item")];
+    const at = items.indexOf(document.activeElement);
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      close();
+      sort.focus();
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      items[(at + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus();
+    }
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (!menu.hidden && !event.target.closest("#facet-sort, #facet-sort-menu")) close();
+  });
   filter.addEventListener("input", () => {
     facetView.query = filter.value;
     paintFacets();
@@ -10108,15 +10148,6 @@ function initFacetTools() {
       facetView.query = "";
       paintFacets();
     }
-  });
-  sort.addEventListener("change", () => {
-    facetView.sort = sort.value;
-    try {
-      localStorage.setItem("pn.facetSort", sort.value);
-    } catch {
-      // Private window: the order still applies for this visit.
-    }
-    paintFacets();
   });
 }
 
@@ -11689,7 +11720,7 @@ function paintStarMapLenses() {
 //: reduced motion gets the same map standing still.
 //: `paused` is the pointer or focus resting on something; `held` is the camera focused on a planet,
 //: which must stay where the camera went until the reader goes back to the whole map.
-const mapMotion = { clock: 0, last: 0, paused: false, held: false, frame: 0 };
+const mapMotion = { clock: 0, last: 0, paused: false, held: false, frame: 0, pointed: null };
 
 function motionAllowed() {
   return !window.matchMedia || !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -11738,10 +11769,14 @@ function bridgeGeometry(a, b) {
   return { d: `M ${a.x} ${a.y} Q ${cx} ${cy} ${b.x} ${b.y}`, lx: (a.x + 2 * cx + b.x) / 4, ly: (a.y + 2 * cy + b.y) / 4 - 6 };
 }
 
+const placeScratch = new Map();
+
 function placeStarMap() {
   const scene = starMap.scene;
   if (!scene) return;
-  const at = new Map();
+  // Reused: this runs every frame (see `settleOverlaps`).
+  const at = placeScratch;
+  at.clear();
   scene.planets.forEach(({ p, group }) => {
     const pos = planetAt(p);
     at.set(p.orbit.slug, pos);
@@ -11763,31 +11798,61 @@ function placeStarMap() {
 //: Planets on different rings turn at different speeds, so two will pass each other. Two drawn
 //: over each other at full strength are both unreadable; one must win. The nearer one wins (lower
 //: on the screen, which on these tilted orbits is the near side) and is drawn on top, and the one
-//: behind fades and blurs until they part. The planet picked or pointed at always wins. Each planet
-//: counts as its body with its moons plus the label and count under it.
+//: behind fades until they part. The planet picked or pointed at always wins.
+//:
+//: Only a real touch counts: a planet's body with its moons is a circle, and its name and count a
+//: box under it, and two planets overlap when either part of one meets either part of the other.
+//: A single box round body and label together faded planets that were still clear of each other.
+//: Nothing is allocated per frame beyond what the positions need: this runs sixty times a second,
+//: and garbage made at that rate is collected in pauses the orbit visibly stutters through.
+const overlapScratch = { order: [], behind: new Set() };
+
+function planetParts(p, pos) {
+  const reach = p.r + 13;
+  const half = (p.labelW || 0) / 2 + 2;
+  return { x: pos.x, y: pos.y, reach, lx0: pos.x - half, lx1: pos.x + half, ly0: pos.y + p.r + 18, ly1: pos.y + p.r + 50 };
+}
+
+function partsTouch(a, b) {
+  const circles = Math.hypot(a.x - b.x, a.y - b.y) < a.reach + b.reach;
+  const boxes = a.lx0 < b.lx1 && b.lx0 < a.lx1 && a.ly0 < b.ly1 && b.ly0 < a.ly1;
+  const circleBox = (c, q) => {
+    const nx = Math.max(q.lx0, Math.min(c.x, q.lx1));
+    const ny = Math.max(q.ly0, Math.min(c.y, q.ly1));
+    return Math.hypot(c.x - nx, c.y - ny) < c.reach;
+  };
+  return circles || boxes || circleBox(a, b) || circleBox(b, a);
+}
+
 function settleOverlaps(scene, at) {
-  const boxes = scene.planets.map(({ p, group }) => {
-    const pos = at.get(p.orbit.slug);
-    const reach = p.r + 16;
-    const half = Math.max(reach, (p.labelW || 0) / 2 + 4);
-    const first = p.orbit.slug === starMap.selected || group.matches(":hover, :focus-within");
-    return { group, first, y: pos.y, x0: pos.x - half, x1: pos.x + half, y0: pos.y - reach, y1: pos.y + p.r + 52 };
+  const order = overlapScratch.order;
+  order.length = 0;
+  scene.planets.forEach((entry) => {
+    entry.parts = planetParts(entry.p, at.get(entry.p.orbit.slug));
+    entry.first = entry.p.orbit.slug === starMap.selected || entry.p.orbit.slug === mapMotion.pointed;
+    order.push(entry);
   });
-  const order = [...boxes].sort((a, b) => (a.first - b.first) || (a.y - b.y));
-  const key = order.map((b) => scene.planets.findIndex((e) => e.group === b.group)).join(",");
+  order.sort((a, b) => (a.first - b.first) || (a.parts.y - b.parts.y));
+  let key = "";
+  for (let i = 0; i < order.length; i += 1) key += `${order[i].p.orbit.slug}|`;
   if (key !== scene.order) {
     scene.order = key;
-    order.forEach((b) => b.group.parentNode && b.group.parentNode.appendChild(b.group));
+    order.forEach((entry) => entry.group.parentNode && entry.group.parentNode.appendChild(entry.group));
   }
-  const behind = new Set();
+  const behind = overlapScratch.behind;
+  behind.clear();
   for (let i = 0; i < order.length; i += 1) {
     for (let j = i + 1; j < order.length; j += 1) {
-      const a = order[i];
-      const b = order[j];
-      if (a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1) behind.add(a.group);
+      if (partsTouch(order[i].parts, order[j].parts)) behind.add(order[i]);
     }
   }
-  boxes.forEach(({ group, first }) => group.classList.toggle("is-behind", !first && behind.has(group)));
+  order.forEach((entry) => {
+    const hide = !entry.first && behind.has(entry);
+    if (hide !== Boolean(entry.hidden)) {
+      entry.hidden = hide;
+      entry.group.classList.toggle("is-behind", hide);
+    }
+  });
 }
 
 function mapTick(now) {
@@ -12852,8 +12917,8 @@ function drawStarMap() {
       }
     });
     // A planet holds still while it is pointed at or focused, so it can be read and clicked.
-    const hold = () => { mapMotion.paused = true; };
-    const release = () => { mapMotion.paused = false; };
+    const hold = () => { mapMotion.paused = true; mapMotion.pointed = orbit.slug; };
+    const release = () => { mapMotion.paused = false; mapMotion.pointed = null; };
     group.addEventListener("pointerenter", hold);
     group.addEventListener("pointerleave", release);
     group.addEventListener("focus", hold);
@@ -14908,7 +14973,7 @@ function drawGraph() {
   // the same hue. A name on the rim of a circle read as a tag stuck to a bubble, one set large in the
   // middle ran into the captures' own labels, and circles round loose groups overlapped each other.
   const hueOf = new Map();
-  const groupLayer = svgEl("g", { "aria-hidden": "true" }, "graph-groups");
+  const groupLayer = svgEl("g", {}, "graph-groups");
   let hueIndex = 0;
   layout.groups.forEach((group) => {
     if (group.ids.length < 2) return;
@@ -14916,18 +14981,46 @@ function drawGraph() {
     hueIndex += 1;
     group.ids.forEach((id) => hueOf.set(id, hue));
     const lit = !focus || group.ids.some((id) => litCaptures.has(id));
-    const region = svgEl("g", {}, `graph-region${lit ? "" : " is-dim"}`);
+    const region = svgEl("g", { "aria-hidden": "true" }, `graph-region${lit ? "" : " is-dim"}`);
     region.style.setProperty("--hue", String(hue));
     const shape = svgEl("path", { d: graphRegionPath(group, layout) }, "graph-region-shape");
     shape.style.strokeWidth = String(GRAPH_REGION_PAD * 2);
     region.appendChild(shape);
     groupLayer.appendChild(region);
     const centre = graphRegionCentre(group, layout);
+    const on = lenses.size === 1 && lenses.has(group.name);
     const label = svgText(centre.x, centre.y,
       t("graph.regionName", `#${shortLabel(group.name, 18)} · ${group.ids.length}`,
         { name: shortLabel(group.name, 18), n: group.ids.length }),
-      `graph-region-label${lit ? "" : " is-dim"}`);
+      `graph-region-label${lit ? "" : " is-dim"}${on ? " is-on" : ""}`);
     label.style.setProperty("--hue", String(hue));
+    // The name is the region's handle: pressing it is pressing the tag, which lights these
+    // captures, lists them in the panel and scopes an ask to them. Pressed again, it lets go.
+    label.setAttribute("tabindex", "0");
+    label.setAttribute("role", "button");
+    label.setAttribute("aria-pressed", on ? "true" : "false");
+    label.setAttribute("aria-label", t("graph.regionTip", `${group.ids.length} captures here are filed under #${group.name}.`,
+      { name: group.name, n: group.ids.length }));
+    const tip = () => showGraphTip(label, `#${group.name}`,
+      t("graph.regionTip", `${group.ids.length} captures here are filed under #${group.name}.`,
+        { name: group.name, n: group.ids.length }));
+    const press = () => {
+      graphState.lenses = on ? new Set() : new Set([group.name]);
+      graphState.selected = null;
+      paintGraphLenses();
+      drawGraph();
+    };
+    label.addEventListener("pointerenter", tip);
+    label.addEventListener("focus", tip);
+    label.addEventListener("pointerleave", hideGraphTip);
+    label.addEventListener("blur", hideGraphTip);
+    label.addEventListener("click", press);
+    label.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        press();
+      }
+    });
     groupLayer.appendChild(label);
     refs.groups.push({ shape, label, group });
   });
@@ -15280,7 +15373,7 @@ function initGraphCamera() {
     if (!graphDrag.moved) {
       // A click on empty space, not the end of a pan, lets go of the entity or tags picked, the
       // way a click on the star map's empty space closes its card.
-      if (event.type === "pointerup" && !graphDrag.name && !event.target.closest(".graph-entity, .graph-cap")
+      if (event.type === "pointerup" && !graphDrag.name && !event.target.closest(".graph-entity, .graph-cap, .graph-region-label")
         && (graphState.selected || graphState.lenses.size)) {
         graphState.selected = null;
         graphState.lenses = new Set();
@@ -15398,7 +15491,9 @@ function renderGraphPanel(litCaptures) {
   if (!graphState.lenses.size && !graphState.selected) {
     // How to read it, once, where the orbit is described: the drawing has no legend of its own.
     panel.appendChild(elt("p", "card-note", t("graph.legend",
-      "A dot is a capture. A tinted region is a tag, holding the captures filed under it. A pill is something two or more captures name, joined to each of them, with how many.")));
+      "A dot is a capture. A pill is something two or more captures name, joined to each of them, with how many.")));
+    panel.appendChild(elt("p", "card-note", t("graph.regionsNote",
+      "A tinted region is a tag two or more captures here share, each capture in the region of its most shared tag; a capture whose tags are its own is in none. Press a region's name to see just those captures and ask about them.")));
     if ((data.similar || []).length) {
       panel.appendChild(elt("p", "card-note", t("graph.similarNote",
         "Dashed lines join captures with similar content, compared on this computer. Hollow dots are not summarised yet.")));
