@@ -7845,6 +7845,11 @@ body.is-resizing .orbit-graph {
   stroke-width: 2;
 }
 
+/* A double planet has no single sphere to outline; its rim shows only as the selection ring. */
+.map-planet.is-binary:not(.is-selected) .map-planet-rim {
+  stroke: none;
+}
+
 /* The planet a selected moon belongs to: named, not selected. */
 .map-planet.is-host .map-planet-rim {
   stroke: oklch(85% 0.04 70 / 0.55);

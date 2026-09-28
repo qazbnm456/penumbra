@@ -25,9 +25,10 @@ from pathlib import Path
 from . import concepts, horizon
 from .horizon import DEFAULT_HORIZON_DIR
 
-#: The most new orbits one pass may open, however many the model proposes: enough to sort a large
-#: import, few enough that a confused reply cannot scatter the Horizon into dozens of orbits.
-MAX_NEW_ORBITS = 5
+#: The most new orbits one call may open, however many the model proposes: enough for the subjects
+#: of a large import (a first run over 40 captures on 7 subjects, capped at 5, merged AI with space
+#: exploration), few enough that a confused reply cannot scatter the Horizon into dozens of orbits.
+MAX_NEW_ORBITS = 10
 #: The most captures one call sees; the rest wait for the next pass.
 MAX_CAPTURES = 40
 _NAME_CHARS = 60
@@ -48,7 +49,9 @@ it, and is written in `language` when one is given, otherwise in the language mo
 - leave it, only when it is too thin to place at all.
 
 Prefer an existing orbit when it reasonably fits. Never invent a new orbit that duplicates an existing one. \
-Open at most `max_new_orbits` new orbits.
+Open at most `max_new_orbits` new orbits. Never put captures on unrelated subjects into one orbit to stay \
+under that number, and never file a capture into an orbit whose subject it does not share: leave it \
+instead, and it will be placed in a later round.
 
 Answer `plan_json` with JSON only: {"placements": [{"capture": "<capture id>", "orbit": "<existing orbit id \
 or empty>", "new_orbit": "<new orbit name or empty>"}]}."""

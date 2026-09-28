@@ -3359,10 +3359,22 @@ def _align_after_pass(base_dir) -> None:
 _ORGANIZE: dict[str, object] = {"running": False, "error": "", "left": set(), "orbits": frozenset()}
 
 
+#: Rounds one pass may organise in: a round that opened orbits is followed by another over what it
+#: left, since those captures may now fit, and otherwise would wait for the next capture.
+_ORGANIZE_ROUNDS = 3
+
+
 def _organize_after_pass(language: str = "") -> None:
-    """In `auto` filing, the end of a summary pass sends the summarised captures still in no orbit
-    to one model call (`organize.OrganizeCaptures`) and files each where it says: an orbit that
-    exists, or a new orbit it names (at most `organize.MAX_NEW_ORBITS` a pass).
+    for _round in range(_ORGANIZE_ROUNDS):
+        if not _organize_round(language):
+            return
+
+
+def _organize_round(language: str = "") -> bool:
+    """One round of organising. In `auto` filing, the end of a summary pass sends the summarised
+    captures still in no orbit to one model call (`organize.OrganizeCaptures`) and files each where
+    it says: an orbit that exists, or a new orbit it names (at most `organize.MAX_NEW_ORBITS` a
+    call). True when it opened orbits and left captures, which another round should look at again.
 
     Runs after `_auto_file_suggested`, so the free local matches are taken first and the model only
     sees what they could not place. Only in `auto` mode, which the reader chose knowing it calls
@@ -3372,12 +3384,12 @@ def _organize_after_pass(language: str = "") -> None:
     """
     try:
         if filing_mode()[0] != "auto":
-            return
+            return False
     except SystemExit:
-        return
+        return False
     with _DISTIL_GUARD:
         if _DISTIL["cancel"] or _model_unreachable():
-            return
+            return False
     base = _horizon_queue().base_dir
     orbits, _unreadable = list_orbit_summaries()
     titles = {orb.id: orb.title or _fallback_name(orb.sources) for orb in orbits}
@@ -3387,7 +3399,7 @@ def _organize_after_pass(language: str = "") -> None:
         skip = set(_ORGANIZE["left"])
     captures, held = organize.gather(_landing_slug(), skip=skip, base_dir=base)
     if not captures:
-        return
+        return False
     with _DISTIL_GUARD:
         _ORGANIZE.update({"running": True, "error": ""})
     try:
@@ -3404,31 +3416,34 @@ def _organize_after_pass(language: str = "") -> None:
         plan = organize.plan_from(
             raw if isinstance(raw, dict) else {}, captures={c["id"] for c in captures}, orbits=titles
         )
-        _apply_organize_plan(plan, {c["id"]: c["title"] for c in captures}, base)
+        opened = _apply_organize_plan(plan, {c["id"]: c["title"] for c in captures}, base)
         placed = {capture for capture, _kind, _where in plan}
         with _DISTIL_GUARD:
             left = set(_ORGANIZE["left"]) | {c["id"] for c in captures if c["id"] not in placed}
             _ORGANIZE["left"] = left
+        return opened > 0 and len(placed) < len(captures)
     except Exception as exc:  # noqa: BLE001 - reported on the page; the captures stay where they are
         with _DISTIL_GUARD:
             if not _DISTIL["cancel"]:
                 _ORGANIZE["error"] = f"{type(exc).__name__}: {exc}"[:300]
         _log.warning("organize: %s", exc)
+        return False
     finally:
         with _DISTIL_GUARD:
             _ORGANIZE["running"] = False
 
 
-def _apply_organize_plan(plan: list[tuple[str, str, str]], titles: dict[str, str], base) -> None:
+def _apply_organize_plan(plan: list[tuple[str, str, str]], titles: dict[str, str], base) -> int:
     """File what `organize.plan_from` allowed. A new orbit is made only when its first capture is
-    about to go in, and removed again if nothing could be filed into it."""
+    about to go in, and removed again if nothing could be filed into it. Returns how many new orbits
+    it kept."""
     with horizon._connect(base) as conn:
         filing._ensure(conn)
         declined = {(r[0], r[1]) for r in conn.execute("SELECT node_id, orbit_id FROM filing_dismissed")}
     made: dict[str, str] = {}
     for capture, kind, where in plan:
         if _stop_requested():
-            return
+            break
         target = where
         if kind == "new":
             target = made.get(where) or ""
@@ -3451,9 +3466,13 @@ def _apply_organize_plan(plan: list[tuple[str, str, str]], titles: dict[str, str
             _remember_auto_filed(
                 {"node_id": capture, "title": titles.get(capture, ""), "new_orbit": kind == "new"}, membership
             )
+    kept = 0
     for target in made.values():
-        if not horizon.nodes_in_orbit(target, base_dir=base):
+        if horizon.nodes_in_orbit(target, base_dir=base):
+            kept += 1
+        else:
             delete_orbit(target)
+    return kept
 
 
 def _stop_requested() -> bool:

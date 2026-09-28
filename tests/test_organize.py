@@ -185,3 +185,27 @@ def test_a_stopped_pass_does_not_organise(client, monkeypatch):
         api._DISTIL["cancel"] = True
     api._organize_after_pass()
     assert seen == []
+
+
+def test_a_round_that_opened_orbits_is_followed_by_one_over_what_it_left(client, monkeypatch):
+    a = _summarised(client, "rockets", ["Rocket"])
+    b = _summarised(client, "moons", ["Moon"])
+    replies = iter([
+        {"placements": [{"capture": a, "new_orbit": "Space"}]},
+        {"placements": [{"capture": b, "orbit": "PLACEHOLDER"}]},
+    ])
+
+    def reply(kwargs):
+        plan = next(replies)
+        orbits = json.loads(kwargs["orbits"])
+        for item in plan["placements"]:
+            if item.get("orbit") == "PLACEHOLDER":
+                item["orbit"] = orbits[0]["id"]
+        return plan
+
+    seen = _fake_model(monkeypatch, reply)
+    api._organize_after_pass()
+    assert len(seen) == 2, "the second round sees the capture the first one left"
+    assert b in seen[1]["captures"] and a not in seen[1]["captures"]
+    space = horizon.memberships_for(a)[0].orbit_id
+    assert [m.orbit_id for m in horizon.memberships_for(b)] == [space]

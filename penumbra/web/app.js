@@ -12588,11 +12588,15 @@ function drawStarMap() {
     const kindHere = kinds.get(orbit.slug);
     const seed = stableHash(`planet:${orbit.slug}`);
     if (kindHere === "binary") {
+      // Both worlds sit inside the planet's circle with a gap between them, so the moons, which
+      // circle just outside it, never cross a body, and the pair reads as two worlds, not one
+      // planet with a second one stuck to its side. The single-planet rim is left off (CSS).
+      group.classList.add("is-binary");
       const pair = svgEl("g", {}, "map-binary");
       pair.style.animationDuration = `${(30 + (index % 4) * 8)}s`;
       const kindsA = Object.keys(PLANET_KINDS).filter((k) => !["binary", "ringed"].includes(k));
       const rnd = seededRandom(seed + 0.25);
-      [[-0.42, 0.62], [0.66, 0.42]].forEach(([at, size], n) => {
+      [[-0.45, 0.5], [0.6, 0.35]].forEach(([at, size], n) => {
         const place = svgEl("g", { transform: `translate(${(at * p.r).toFixed(2)} 0)` });
         const counter = svgEl("g", {}, "map-binary-body");
         counter.style.animationDuration = pair.style.animationDuration;
