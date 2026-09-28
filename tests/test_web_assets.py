@@ -3484,3 +3484,13 @@ def test_the_capture_field_and_progress_strip_are_never_hidden_on_the_map():
         names = [s.strip() for s in selectors.split(",")]
         for guarded in (".view-horizon.is-map .capture", ".view-horizon.is-map .intake-strip"):
             assert guarded not in names, f"{guarded} is hidden by `{selectors.strip()}`"
+
+
+def test_the_header_cannot_be_selected_like_a_page():
+    """In WebKit a double click on the header's moon selected its image, and the highlight stayed
+    on the tile. The header is the window's top edge, so nothing in it is selectable."""
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+    header = re.search(r"^\.header \{([^}]*)\}", css, re.MULTILINE).group(1)
+    assert "user-select: none" in header
+    moon = re.search(r"^\.wordmark-moon \{([^}]*)\}", css, re.MULTILINE).group(1)
+    assert "pointer-events: none" in moon and "-webkit-user-drag: none" in moon

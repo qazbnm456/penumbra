@@ -443,6 +443,10 @@ input:focus {
    screenshot showed the open picker sandwiched between the source cards and the chat panel. The
    header needs its own layer, above the columns and below the modals (1000). */
 .header {
+  /* The top of the window, not a page: nothing in it is text to select. A double click on the
+     moon selected its image in WebKit, and the highlight stayed on the tile. */
+  -webkit-user-select: none;
+  user-select: none;
   position: relative;
   z-index: 100;
   flex: 0 0 auto;
@@ -3034,6 +3038,9 @@ select:hover {
 }
 
 .orbit-rename-input {
+  /* Its text stays selectable inside the unselectable header. */
+  -webkit-user-select: text;
+  user-select: text;
   flex: 1 1 auto;
   min-width: 0;
   margin: var(--space-1);
@@ -9557,6 +9564,9 @@ body:not([data-view="horizon"]) .capture-dock {
    Penny, the half-lit moon, stands where the wordmark was. She leans in when pointed at, and a
    right click lets her introduce herself in a game-style dialogue under the header. */
 .wordmark-moon {
+  /* The button is the target; the image can be neither selected nor dragged off as a file. */
+  pointer-events: none;
+  -webkit-user-drag: none;
   display: block;
   width: 30px;
   height: 30px;
