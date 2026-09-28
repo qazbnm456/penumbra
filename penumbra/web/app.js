@@ -9972,6 +9972,20 @@ function refreshWhenShown() {
 
 refreshWhenShown();
 
+//: The rail's filter and order, a convenience of this browser. It shows once there are enough
+//: orbits to look for one: a filter by name and an order (latest first, by name, by size).
+const FACET_TOOLS_AT = 6;
+const facetView = { orbits: [], query: "", sort: readFacetSort() };
+
+function readFacetSort() {
+  try {
+    const stored = localStorage.getItem("pn.facetSort");
+    return ["recent", "name", "size"].includes(stored) ? stored : "recent";
+  } catch {
+    return "recent";
+  }
+}
+
 async function renderFacets() {
   const list = horizonEl("facet-list");
   let data;
@@ -9981,9 +9995,31 @@ async function renderFacets() {
     list.textContent = "";
     return;
   }
+  facetView.orbits = data.orbits || [];
+  paintFacets();
+}
+
+function sortedFacets(orbits, labels) {
+  const byName = (a, b) => labels.get(a.id).localeCompare(labels.get(b.id), uiLang());
+  const order = {
+    recent: (a, b) => (b.updated_at || 0) - (a.updated_at || 0) || byName(a, b),
+    name: byName,
+    size: (a, b) => (b.source_count || 0) - (a.source_count || 0) || byName(a, b),
+  }[facetView.sort];
+  return [...orbits].sort(order);
+}
+
+function paintFacets() {
+  const list = horizonEl("facet-list");
+  const orbits = facetView.orbits;
+  const tools = horizonEl("facet-tools");
+  tools.hidden = orbits.length < FACET_TOOLS_AT;
+  const q = tools.hidden ? "" : facetView.query.trim().toLowerCase();
   list.textContent = "";
-  const labels = facetLabels(data.orbits || []);
-  for (const book of data.orbits || []) {
+  const labels = facetLabels(orbits);
+  const shown = sortedFacets(orbits, labels).filter((book) => !q || labels.get(book.id).toLowerCase().includes(q));
+  if (!shown.length && orbits.length) list.appendChild(elt("p", "facet-empty", t("facets.none", "No orbit matches.")));
+  for (const book of shown) {
     const item = elt("button", "facet");
     item.type = "button";
     // The handle, for `syncFacetCurrent` only — never rendered (invariant 37).
@@ -10045,6 +10081,43 @@ function setHorizonQuery(text) {
   // The field is where a reader looks to change or clear what they just asked for, so put the
   // caret there rather than leaving them hunting for it after a tag click.
   field.focus();
+}
+
+function initFacetTools() {
+  const filter = horizonEl("facet-filter");
+  const sort = horizonEl("facet-sort");
+  const paintOptions = () => {
+    sort.textContent = "";
+    [["recent", t("facets.sortRecent", "Latest first")], ["name", t("facets.sortName", "By name")],
+      ["size", t("facets.sortSize", "Most sources")]].forEach(([value, label]) => {
+      const option = new Option(label, value);
+      option.selected = value === facetView.sort;
+      sort.appendChild(option);
+    });
+  };
+  paintOptions();
+  window.addEventListener("ui-lang-changed", paintOptions);
+  filter.addEventListener("input", () => {
+    facetView.query = filter.value;
+    paintFacets();
+  });
+  filter.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && filter.value) {
+      event.stopPropagation();
+      filter.value = "";
+      facetView.query = "";
+      paintFacets();
+    }
+  });
+  sort.addEventListener("change", () => {
+    facetView.sort = sort.value;
+    try {
+      localStorage.setItem("pn.facetSort", sort.value);
+    } catch {
+      // Private window: the order still applies for this visit.
+    }
+    paintFacets();
+  });
 }
 
 function initHorizon() {
@@ -10256,6 +10329,7 @@ function initHorizon() {
 }
 
 initHorizon();
+initFacetTools();
 
 // --- Asking the Horizon ------------------------------------------------------------------------
 //
@@ -11386,24 +11460,121 @@ function shortLabel(text, max = 18) {
 //: thing. They combine as a union (any of them lights), because a lens answers "show me what is
 //: about this", and adding a second interest should show more, not less. `onToggle(name)` flips one;
 //: `onToggle(null)` clears them all.
+//: The tag row is one line whatever the number of tags: the chosen ones first, then the most used,
+//: as many as fit, and at the end a button that opens every tag with a search field. A row that
+//: wrapped grew with every capture, and a tag past the first twelve could not be reached at all.
+const lensPicker = { row: null, query: "" };
+const LENS_ROW_MAX = 10;
+
 function renderLenses(lensRow, tags, active, onToggle) {
   lensRow.textContent = "";
-  tags.slice(0, 12).forEach((tag) => {
+  lensRow.hidden = !tags.length;
+  if (!tags.length) {
+    closeLensPicker();
+    return;
+  }
+  const chosen = tags.filter((tag) => active.has(tag.name));
+  const rest = tags.filter((tag) => !active.has(tag.name)).slice(0, LENS_ROW_MAX);
+  const lensChip = (tag) => {
     const button = elt("button", "lens", `#${tag.name}`);
     button.type = "button";
     button.appendChild(elt("span", "lens-count", String(tag.count)));
     button.setAttribute("aria-pressed", active.has(tag.name) ? "true" : "false");
     button.addEventListener("click", () => onToggle(tag.name));
-    lensRow.appendChild(button);
+    return button;
+  };
+  chosen.forEach((tag) => lensRow.appendChild(lensChip(tag)));
+  const optional = rest.map((tag) => lensRow.appendChild(lensChip(tag)));
+  const more = elt("button", "lens-more", t("lens.all", `All tags · ${tags.length}`, { n: tags.length }));
+  more.type = "button";
+  more.setAttribute("aria-expanded", lensPicker.row === lensRow ? "true" : "false");
+  more.addEventListener("click", () => {
+    if (lensPicker.row === lensRow) closeLensPicker();
+    else openLensPicker(lensRow, tags, active, onToggle, { focus: true });
   });
+  lensRow.appendChild(more);
   if (active.size) {
     const clear = elt("button", "lens-clear", t("lens.clear", "Clear"));
     clear.type = "button";
     clear.addEventListener("click", () => onToggle(null));
     lensRow.appendChild(clear);
   }
-  lensRow.hidden = !tags.length;
+  // One line: the least used of the optional chips give way until the row fits. A hidden row has
+  // no width to measure, so it keeps them all and is fitted when it is drawn again.
+  if (lensRow.clientWidth > 0) {
+    while (optional.length && lensRow.scrollWidth > lensRow.clientWidth + 1) optional.pop().remove();
+  }
+  if (lensPicker.row === lensRow) openLensPicker(lensRow, tags, active, onToggle, { focus: false });
 }
+
+function closeLensPicker() {
+  const row = lensPicker.row;
+  lensPicker.row = null;
+  if (!row) return;
+  row.parentElement?.querySelector(".lens-picker")?.remove();
+  const more = row.querySelector(".lens-more");
+  if (more) more.setAttribute("aria-expanded", "false");
+}
+
+//: Every tag, searchable, under the row. Choosing one keeps it open, so several can be picked in a
+//: row; Escape or a click elsewhere closes it.
+function openLensPicker(lensRow, tags, active, onToggle, { focus }) {
+  const host = lensRow.parentElement;
+  if (!host) return;
+  host.querySelector(".lens-picker")?.remove();
+  lensPicker.row = lensRow;
+  const more = lensRow.querySelector(".lens-more");
+  if (more) more.setAttribute("aria-expanded", "true");
+  const panel = elt("div", "lens-picker");
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-label", t("lens.all", `All tags · ${tags.length}`, { n: tags.length }));
+  panel.style.top = `${lensRow.offsetTop + lensRow.offsetHeight + 4}px`;
+  panel.style.left = `${lensRow.offsetLeft}px`;
+  const search = document.createElement("input");
+  search.type = "search";
+  search.className = "lens-picker-search";
+  search.placeholder = t("lens.search", "Search tags");
+  search.setAttribute("aria-label", t("lens.search", "Search tags"));
+  search.value = lensPicker.query;
+  const list = elt("div", "lens-picker-list");
+  const empty = elt("p", "lens-picker-empty", t("lens.none", "No tag matches."));
+  const paint = () => {
+    const q = search.value.trim().toLowerCase();
+    lensPicker.query = search.value;
+    list.textContent = "";
+    const found = tags.filter((tag) => !q || tag.name.toLowerCase().includes(q));
+    found.forEach((tag) => {
+      const item = elt("button", "lens", `#${tag.name}`);
+      item.type = "button";
+      item.appendChild(elt("span", "lens-count", String(tag.count)));
+      item.setAttribute("aria-pressed", active.has(tag.name) ? "true" : "false");
+      item.addEventListener("click", () => onToggle(tag.name));
+      list.appendChild(item);
+    });
+    empty.hidden = found.length > 0;
+  };
+  search.addEventListener("input", paint);
+  panel.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    event.stopPropagation();
+    closeLensPicker();
+    lensRow.querySelector(".lens-more")?.focus();
+  });
+  panel.appendChild(search);
+  panel.appendChild(list);
+  panel.appendChild(empty);
+  paint();
+  host.appendChild(panel);
+  if (focus || document.activeElement === document.body) search.focus();
+  else if (!panel.contains(document.activeElement) && lensPicker.refocus) search.focus();
+  lensPicker.refocus = true;
+}
+
+document.addEventListener("pointerdown", (event) => {
+  if (!lensPicker.row) return;
+  if (event.target.closest(".lens-picker, .lens-more, .lens")) return;
+  closeLensPicker();
+});
 
 function toggledLenses(lenses, name) {
   if (name === null) return new Set();

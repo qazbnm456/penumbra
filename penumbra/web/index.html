@@ -109,6 +109,11 @@
          were the point. It also uses the width a single reading column leaves empty on a desktop,
          which is the other half of why it is here. -->
     <nav class="facets" id="facets" aria-label="Orbits" data-i18n-label="app.orbits">
+      <div class="facet-tools" id="facet-tools" hidden>
+        <input type="search" class="facet-filter" id="facet-filter" placeholder="Filter orbits"
+               aria-label="Filter orbits" data-i18n-placeholder="facets.filter" data-i18n-label="facets.filter">
+        <select class="facet-sort" id="facet-sort" aria-label="Order" data-i18n-label="facets.sort"></select>
+      </div>
       <div id="facet-list"></div>
       <button type="button" class="facet facet-new" id="facet-new" data-i18n="horizon.newFacet">+ New orbit</button>
       <!-- Drag to size, drag narrow to put away, double-click to toggle, arrows from the keyboard. -->

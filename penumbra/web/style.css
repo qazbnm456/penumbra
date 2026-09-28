@@ -5422,6 +5422,39 @@ body.is-resizing .studio-grip {
   border-right: 1px solid var(--border);
 }
 
+/* The rail's filter and order, once there are enough orbits to look for one. */
+.facet-tools {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) var(--space-4);
+}
+
+.facet-tools[hidden] {
+  display: none;
+}
+
+.facet-filter,
+.facet-sort {
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+}
+
+.facet-sort {
+  color: var(--text-dim);
+}
+
+.facet-empty {
+  margin: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+}
+
 .facet {
   /* Flex, not a float. The count floated right of an inline name that already filled the width,
      so it wrapped to a second line and the row read as broken. */
@@ -7376,11 +7409,78 @@ button.card-chip:hover {
 }
 
 /* Tag lenses, on the map and on the graph. */
+/* One line, however many tags (`renderLenses` fits it); every tag is in the picker. */
 .lenses {
+  position: relative;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-4);
+  overflow: hidden;
+}
+
+.lenses > * {
+  flex: none;
+}
+
+.lens-more {
+  font-family: var(--sans);
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-4);
+  cursor: pointer;
+}
+
+.lens-more[aria-expanded="true"],
+.lens-more:hover {
+  border-color: var(--accent);
+  border-style: solid;
+}
+
+.lens-picker {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: min(420px, 90%);
+  max-height: 360px;
+  padding: var(--space-4);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 40px -18px rgb(0 0 0 / 0.7);
+}
+
+.lens-picker-search {
+  font: inherit;
+  font-size: var(--text-md);
+  color: var(--text);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-4);
+}
+
+.lens-picker-list {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  padding-bottom: var(--space-4);
+  overflow-y: auto;
+}
+
+.lens-picker-empty {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+}
+
+.lens-picker-empty[hidden] {
+  display: none;
 }
 
 .lens {
