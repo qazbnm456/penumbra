@@ -156,5 +156,20 @@
         "content": "$1"
       }
     }
+  },
+  "stillSaving": {
+    "message": "This page is already on its way."
+  },
+  "alreadyKept": {
+    "message": "Already kept"
+  },
+  "alreadyKeptNote": {
+    "message": "This page is in the Horizon already, nearly word for word."
+  },
+  "keepAnother": {
+    "message": "Keep another copy"
+  },
+  "autoFilingNote": {
+    "message": "Filing is automatic: it goes into the orbit that fits once it has a suggestion, usually after its summary."
   }
 }

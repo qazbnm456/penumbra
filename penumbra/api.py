@@ -119,7 +119,20 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from python_multipart.exceptions import MultipartParseError
 from starlette.formparsers import MultiPartException
 
-from . import asks, auth, concepts, distill, filing, horizon, intake, runner, search, topology, vectors
+from . import (
+    asks,
+    auth,
+    concepts,
+    dedupe,
+    distill,
+    filing,
+    horizon,
+    intake,
+    runner,
+    search,
+    topology,
+    vectors,
+)
 from .align import AlignConcepts
 from .audio import GeneratePodcastScript
 from .citations import locate_answer_spans, strip_markers, verify_citations
@@ -4229,8 +4242,9 @@ async def capture_into_horizon(body: CaptureRequest, request: Request) -> dict:
     nodes = []
     try:
         for url in body.urls:
-            # A wrapper link (a platform's click-through page) is captured as its destination.
-            nodes.append(await asyncio.to_thread(queue.submit, unwrap_url(url)))
+            # A wrapper link (a platform's click-through page) is captured as its destination, and an
+            # address that differs only by tracking is the capture already there.
+            nodes.append(await asyncio.to_thread(queue.submit, dedupe.normalize_url(unwrap_url(url))))
         for text in body.texts:
             if not text.strip():
                 continue
@@ -4270,6 +4284,9 @@ class ExtensionCapture(BaseModel):
     text: str | None = None
     #: File the capture into this orbit instead of the way `filing_mode` says.
     orbit: str | None = Field(default=None, max_length=200)
+    #: Keep it even though it is a duplicate of a capture already in the Horizon (the card's
+    #: "keep another copy").
+    force: bool = False
 
 
 @app.get("/extension/status")
@@ -4323,7 +4340,10 @@ async def extension_capture(request: Request) -> dict:
     queue = _horizon_queue()
 
     if body.kind == "link":
-        node = await asyncio.to_thread(queue.submit, unwrap_url(body.url))
+        url = dedupe.normalize_url(unwrap_url(body.url))
+        known = horizon.node_id_for(url, origin_is_the_identity=True)
+        before = await asyncio.to_thread(horizon.get_node, known)
+        node = await asyncio.to_thread(queue.submit, url)
         if target:
             with _FILE_ON_READY_LOCK:
                 _FILE_ON_READY[node.id] = target
@@ -4335,13 +4355,18 @@ async def extension_capture(request: Request) -> dict:
                 if pending:
                     await asyncio.to_thread(lambda: _file_status(node.id, pending, reader=True))
         _remember_extension_capture(node.id)
-        return {"node": node.model_dump(), "queued": True}
+        return {"node": node.model_dump(), "queued": before is None, "duplicate": before is not None,
+                **await asyncio.to_thread(_where_it_is, node.id)}
 
     def _store():
         if body.kind == "page":
             source = page_source(body.html or "", body.url, "s0", title=body.title, text=body.text or "")
         else:
             source = selection_source(body.text or "", body.url, "s0", title=body.title)
+        if not body.force:
+            existing = dedupe.find_duplicate(source)
+            if existing is not None:
+                return existing, None, True
         node = horizon.add_node(with_injection_flags(source))
         outcome = None
         if target:
@@ -4349,15 +4374,26 @@ async def extension_capture(request: Request) -> dict:
             outcome = _file_status(node.id, target, reader=True)[0]
         else:
             _file_quietly(node.id)
-        return node, outcome
+        return node, outcome, False
 
     try:
-        node, outcome = await _abandonable(_store)
+        node, outcome, duplicate = await _abandonable(_store)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     _remember_extension_capture(node.id)
     queue.nudge()
-    return {"node": node.model_dump(), **_filing_answer(outcome)}
+    return {"node": node.model_dump(), "duplicate": duplicate, **_filing_answer(outcome),
+            **await asyncio.to_thread(_where_it_is, node.id)}
+
+
+def _where_it_is(node_id: str) -> dict:
+    """The orbits a capture is in now and how new captures are filed, so the card can say where it
+    went, or that automatic filing will place it once it has a suggestion."""
+    try:
+        mode = filing_mode()[0]
+    except SystemExit:
+        mode = "manual"
+    return {"orbits": [m.orbit_id for m in horizon.memberships_for(node_id)], "filing_mode": mode}
 
 
 def _filing_answer(outcome: str | None) -> dict:

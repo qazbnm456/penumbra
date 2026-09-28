@@ -208,3 +208,38 @@ def test_a_real_cap_says_so_with_the_number(client, monkeypatch):
     monkeypatch.setattr(api, "max_corpus_chars", lambda: 40)
     got = client.post("/extension/file", headers=key, json={"node_id": node_id, "orbit": "small"}).json()
     assert got == {"orbit": "small", "filed": False, "outcome": "cap", "cap": 40}
+
+
+def test_capturing_the_same_page_again_finds_the_capture_already_there(client):
+    """A post re-rendered with a new relative time was a second capture on every press."""
+    key = _pair(client)
+    first = PAGE.replace("</article>", "<p>3 minutes ago</p></article>")
+    again = PAGE.replace("</article>", "<p>5 minutes ago</p></article>")
+    url = "https://x.com/someone/status/1"
+    one = client.post("/extension/capture", headers=key,
+                      json={"kind": "page", "url": url, "html": first}).json()
+    two = client.post("/extension/capture", headers=key,
+                      json={"kind": "page", "url": url + "?s=20", "html": again}).json()
+    assert one["duplicate"] is False and two["duplicate"] is True
+    assert two["node"]["id"] == one["node"]["id"]
+    forced = client.post("/extension/capture", headers=key,
+                         json={"kind": "page", "url": url, "html": again, "force": True}).json()
+    assert forced["duplicate"] is False and forced["node"]["id"] != one["node"]["id"], "keep another copy"
+
+
+def test_the_answer_says_where_the_capture_went_and_how_filing_works(client, monkeypatch):
+    key = _pair(client)
+    monkeypatch.setenv("PN_FILING_MODE", "auto")
+    body = {"kind": "selection", "url": "https://example.com/f", "title": "F", "text": "a passage for auto"}
+    got = client.post("/extension/capture", headers=key, json=body).json()
+    assert got["filing_mode"] == "auto" and got["orbits"] == []
+
+
+def test_a_link_with_tracking_is_the_link_already_captured(client):
+    key = _pair(client)
+    first = client.post("/extension/capture", headers=key,
+                        json={"kind": "link", "url": "https://example.com/read"}).json()
+    again = client.post("/extension/capture", headers=key,
+                        json={"kind": "link", "url": "https://www.example.com/read/?utm_source=x"}).json()
+    assert first["duplicate"] is False and again["duplicate"] is True
+    assert again["node"]["id"] == first["node"]["id"]

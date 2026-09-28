@@ -120,16 +120,30 @@ async function checkOnline() {
 
 // --- the menu -----------------------------------------------------------------------------------
 
-async function rebuildMenus() {
+//: One rebuild at a time. Tab switches, window focus and the status alarm all ask for one, and two
+//: running together each removed everything and then created the same ids, which the browser
+//: reported as "Cannot create item with duplicate id".
+let menuChain = Promise.resolve();
+
+function rebuildMenus() {
+  menuChain = menuChain.then(buildMenus, buildMenus);
+  return menuChain;
+}
+
+function addMenu(item) {
+  chrome.contextMenus.create(item, () => void chrome.runtime.lastError);
+}
+
+async function buildMenus() {
   await chrome.contextMenus.removeAll();
   const paired = await pairing();
   const title = !paired ? msg("menuRoot") : online ? msg("menuRoot") : msg("menuRootOffline");
-  chrome.contextMenus.create({ id: MENU_ROOT, title, contexts: CONTEXTS });
+  addMenu({ id: MENU_ROOT, title, contexts: CONTEXTS });
   if (!paired) {
-    chrome.contextMenus.create({ id: MENU_CONNECT, parentId: MENU_ROOT, title: msg("menuConnect"), contexts: CONTEXTS });
+    addMenu({ id: MENU_CONNECT, parentId: MENU_ROOT, title: msg("menuConnect"), contexts: CONTEXTS });
     return;
   }
-  chrome.contextMenus.create({ id: MENU_HORIZON, parentId: MENU_ROOT, title: msg("menuHorizon"), contexts: CONTEXTS });
+  addMenu({ id: MENU_HORIZON, parentId: MENU_ROOT, title: msg("menuHorizon"), contexts: CONTEXTS });
   let orbits = [];
   if (online) {
     try {
@@ -141,9 +155,9 @@ async function rebuildMenus() {
   }
   if (!orbits.length) orbits = (await chrome.storage.local.get("orbits")).orbits || [];
   if (!orbits.length) return;
-  chrome.contextMenus.create({ id: "sep", parentId: MENU_ROOT, type: "separator", contexts: CONTEXTS });
+  addMenu({ id: "sep", parentId: MENU_ROOT, type: "separator", contexts: CONTEXTS });
   orbits.slice(0, 30).forEach((orbit) => {
-    chrome.contextMenus.create({
+    addMenu({
       id: `${ORBIT_PREFIX}${orbit.id}`,
       parentId: MENU_ROOT,
       title: msg("menuOrbit", orbit.title || orbit.id),
@@ -234,9 +248,14 @@ async function card(tabId, state) {
 
 async function badge(tabId, ok, detail = "") {
   if (!tabId) return;
-  await chrome.action.setBadgeBackgroundColor({ tabId, color: ok ? "#d9853b" : "#b3261e" });
-  await chrome.action.setBadgeText({ tabId, text: ok ? "✓" : "!" });
-  await chrome.action.setTitle({ tabId, title: ok ? msg("done") : `${msg("failed")}: ${detail}` });
+  // The tab may have closed while the capture was on its way; that is not an error worth a report.
+  try {
+    await chrome.action.setBadgeBackgroundColor({ tabId, color: ok ? "#d9853b" : "#b3261e" });
+    await chrome.action.setBadgeText({ tabId, text: ok ? "✓" : "!" });
+    await chrome.action.setTitle({ tabId, title: ok ? msg("done") : `${msg("failed")}: ${detail}` });
+  } catch {
+    return;
+  }
   setTimeout(() => {
     chrome.action.setBadgeText({ tabId, text: "" }).catch(() => {});
   }, ok ? 2500 : 8000);
@@ -244,6 +263,22 @@ async function badge(tabId, ok, detail = "") {
 
 async function tell(tabId, state) {
   if (!(await card(tabId, state))) await badge(tabId, !state.bad, state.note || state.status);
+}
+
+//: Captures on their way, by tab: a second press on the same page while the first is still going
+//: says so instead of sending the page twice. The last capture's request is kept, by tab, for the
+//: card's "keep another copy".
+const inFlight = new Set();
+const lastBody = new Map();
+
+//: Where a capture went, or where automatic filing will take it: the card's second line.
+async function placement(got, chosenTitle) {
+  const orbits = await orbitList();
+  const names = (got.orbits || []).map((id) => (orbits.find((o) => o.id === id) || {}).title).filter(Boolean);
+  if (chosenTitle && got.filed) return { status: msg("savedInto", chosenTitle), note: "" };
+  if (names.length) return { status: msg("savedInto", names.join("、")), note: "" };
+  const note = got.filing_mode === "auto" ? msg("autoFilingNote") : "";
+  return { status: msg("saved"), note };
 }
 
 // --- capturing ----------------------------------------------------------------------------------
@@ -329,7 +364,18 @@ async function capture(tab, { kind, orbit = null, link = "", selectionText = "" 
     return;
   }
   if (orbit) body.orbit = orbit;
-  const shown = body.title || body.url || link;
+  await send(tab, body);
+}
+
+async function send(tab, body) {
+  const tabId = tab && tab.id;
+  const shown = body.title || body.url;
+  if (inFlight.has(tabId)) {
+    await tell(tabId, { status: msg("saving"), title: shown, busy: true, note: msg("stillSaving") });
+    return;
+  }
+  inFlight.add(tabId);
+  lastBody.set(tabId, body);
   await tell(tabId, { status: msg("saving"), title: shown, busy: true, stay: true });
   try {
     const got = await api("/extension/capture", {
@@ -338,13 +384,27 @@ async function capture(tab, { kind, orbit = null, link = "", selectionText = "" 
       body: JSON.stringify(body),
     });
     const orbits = await orbitList();
-    const into = orbit ? (orbits.find((o) => o.id === orbit) || {}).title : "";
+    const into = body.orbit ? (orbits.find((o) => o.id === body.orbit) || {}).title : "";
+    if (got.duplicate) {
+      const where = await placement(got, "");
+      await tell(tabId, {
+        status: msg("alreadyKept"),
+        title: (got.node && (got.node.title || (got.node.preview || {}).title)) || shown,
+        note: where.status === msg("saved") ? msg("alreadyKeptNote") : where.status,
+        nodeId: got.node && got.node.id,
+        orbits: into ? [] : orbits,
+        fileLabel: msg("fileInto"),
+        againLabel: msg("keepAnother"),
+      });
+      return;
+    }
+    const where = await placement(got, into);
     await tell(tabId, {
-      status: into && got.filed ? msg("savedInto", into) : msg("saved"),
+      status: where.status,
       title: shown,
-      note: into ? filingNote(got, into) : "",
+      note: into && !got.filed ? filingNote(got, into) : where.note,
       nodeId: got.node && got.node.id,
-      orbits: into ? [] : orbits,
+      orbits: into || (got.orbits || []).length ? [] : orbits,
       fileLabel: msg("fileInto"),
       undoLabel: msg("undo"),
     });
@@ -360,6 +420,8 @@ async function capture(tab, { kind, orbit = null, link = "", selectionText = "" 
       return;
     }
     await tell(tabId, { status: msg("failed"), title: shown, note: err.message, bad: true });
+  } finally {
+    inFlight.delete(tabId);
   }
 }
 
@@ -385,6 +447,11 @@ chrome.commands.onCommand.addListener((command, tab) => {
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (!message) return false;
   const tabId = sender.tab && sender.tab.id;
+  if (message.type === "card-again") {
+    const body = lastBody.get(tabId);
+    if (body && sender.tab) void send(sender.tab, { ...body, force: true });
+    return false;
+  }
   if (message.type === "card-file" || message.type === "card-undo") {
     (async () => {
       try {

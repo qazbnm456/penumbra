@@ -156,5 +156,20 @@
         "content": "$1"
       }
     }
+  },
+  "stillSaving": {
+    "message": "這一頁已經在送了。"
+  },
+  "alreadyKept": {
+    "message": "已經收過了"
+  },
+  "alreadyKeptNote": {
+    "message": "視界裡已經有這一頁，內容幾乎一樣。"
+  },
+  "keepAnother": {
+    "message": "還是收一份"
+  },
+  "autoFilingNote": {
+    "message": "歸入方式是自動：有建議時會自動放進合適的軌道，通常在摘要之後。"
   }
 }

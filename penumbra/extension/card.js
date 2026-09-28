@@ -8,6 +8,12 @@
 function penumbraCard(state) {
   const HOST_ID = "__penumbra_card";
   let host = document.getElementById(HOST_ID);
+  // A card left by an earlier copy of the extension (reloaded, updated) belongs to a world this one
+  // cannot reach, so it would stay on the page forever; it is replaced.
+  if (host && !window.__penumbraRoot) {
+    host.remove();
+    host = null;
+  }
   if (!host) {
     host = document.createElement("div");
     host.id = HOST_ID;
@@ -85,7 +91,7 @@ function penumbraCard(state) {
     note.textContent = state.note;
     card.appendChild(note);
   }
-  if (state.nodeId && (state.orbits || []).length + (state.undoLabel ? 1 : 0)) {
+  if (state.nodeId && (state.orbits || []).length + (state.undoLabel || state.againLabel ? 1 : 0)) {
     const actions = document.createElement("div");
     actions.className = "actions";
     if ((state.orbits || []).length) {
@@ -96,6 +102,13 @@ function penumbraCard(state) {
         if (pick.value) chrome.runtime.sendMessage({ type: "card-file", nodeId: state.nodeId, orbit: pick.value });
       });
       actions.appendChild(pick);
+    }
+    if (state.againLabel) {
+      const again = document.createElement("button");
+      again.className = "act";
+      again.textContent = state.againLabel;
+      again.addEventListener("click", () => chrome.runtime.sendMessage({ type: "card-again" }));
+      actions.appendChild(again);
     }
     if (state.undoLabel) {
       const undo = document.createElement("button");
@@ -117,8 +130,9 @@ function penumbraCard(state) {
   // Stays while the pointer is on it or a choice is open; otherwise leaves on its own.
   const arm = () => {
     clearTimeout(window.__penumbraTimer);
-    if (state.stay) return;
-    window.__penumbraTimer = setTimeout(leave, state.bad ? 7000 : 4500);
+    // A card that waits for an answer still leaves in the end: if the answer never comes (the
+    // extension restarted mid-request), "Keeping it…" must not stay on the page for good.
+    window.__penumbraTimer = setTimeout(leave, state.stay ? 30000 : state.bad ? 7000 : 4500);
   };
   card.addEventListener("mouseenter", () => clearTimeout(window.__penumbraTimer));
   card.addEventListener("mouseleave", arm);
