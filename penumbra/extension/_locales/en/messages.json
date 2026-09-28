@@ -170,7 +170,7 @@
     "message": "Keep another copy"
   },
   "autoFilingNote": {
-    "message": "Filing is automatic: after its summary it goes into the orbit that fits, or a new one."
+    "message": "Filing is automatic: after its summary it goes into the orbit that fits, or a new one once a second capture shares its subject."
   },
   "autoWontMove": {
     "message": "Automatic filing will not move it."

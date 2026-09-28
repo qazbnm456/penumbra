@@ -34,7 +34,7 @@ What exists:
 - A star map of the Horizon and a knowledge graph of each orbit, drawn from summaries' entities and tags (`topology.py`, `/horizon/topology`, `/horizon/graph`).
 - A browser extension (`penumbra/extension/`, Chromium MV3) that captures a rendered page, a selected passage with its page, or a link, into the Horizon or a chosen orbit. It pairs from the settings page (`pair.html`) and holds a capture-only key (`auth.capture_token`), not the API token.
 - Local relations (`vectors.py`): a downloaded embedding model and a `sqlite-vec` index in the Horizon's database, drawn as similarity lines in the graph and used for filing suggestions.
-- Summaries split by length: one call for a short capture, `DistillLongDocument` (`distill_long.py`) for a long one. Concept alignment (`align.py`) merges entity names into an alias table (`concepts.py`) that every reader applies, and filing suggestions (`filing.py`) are computed locally from shared entities and tags. In the automatic filing mode, `organize.py` places what they cannot with one model call at the end of a summary pass, opening a new orbit when none fits.
+- Summaries split by length: one call for a short capture, `DistillLongDocument` (`distill_long.py`) for a long one. Concept alignment (`align.py`) merges entity names into an alias table (`concepts.py`) that every reader applies, and filing suggestions (`filing.py`) are computed locally from shared entities and tags. In the automatic filing mode, `organize.py` places what they cannot at the end of a summary pass, with one model call a round and at most three rounds, opening a new orbit when none fits and two or more captures share the subject.
 
 The API is the only place a run is isolated in a subprocess (`runner.py` and `worker.py`); `cli.py` runs in-process.
 
@@ -45,7 +45,7 @@ The API is the only place a run is isolated in a subprocess (`runner.py` and `wo
 Still unbuilt. Do not assume any of these exist because a design discussion mentioned them:
 
 - The four guide kinds are not stored on an orbit; only the overview is (invariant 38). No guide is citable in a later `ask` unless it is promoted through a note (32).
-- There is no multi-worker `uvicorn` story for the in-memory maps: `_ACTIVE_RUNS`, `_RUN_PROCESSES`, `_BUSY`, `_DISTIL`, `_CANCELLED_BEFORE_SPAWN`, `intake._SHARED` and `horizon._INITIALIZED`. The orbit file and the Horizon database are safe across processes; those maps are not.
+- There is no multi-worker `uvicorn` story for the in-memory maps: `_ACTIVE_RUNS`, `_RUN_PROCESSES`, `_BUSY`, `_DISTIL`, `_ORGANIZE`, `_READER_LANGUAGE`, `_CANCELLED_BEFORE_SPAWN`, `intake._SHARED` and `horizon._INITIALIZED`. The orbit file and the Horizon database are safe across processes; those maps are not.
 - The API has one shared token and no accounts, sessions or per-user authorization (25, 77).
 - `cli.py` cannot reach the Horizon (78, 79, 80), and it has no orbit-management verbs: no list, rename or delete. The API and the web UI have all three.
 - Folders and archives cannot be captured, because invariant 26 keeps local paths out of the API and the desktop shell does not supply them.

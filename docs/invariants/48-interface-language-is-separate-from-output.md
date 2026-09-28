@@ -4,7 +4,7 @@
 
 One decides what the buttons say, the other what the model writes. A reader in Taiwan may want a Chinese interface over English papers, and merging the two would make that impossible to express. The interface language lives in `localStorage`, and the settings page shows both on separate rows.
 
-They are separate but not isolated: the interface language is sent with every request and is one of the signals used to choose the output language (invariant 69). An explicit output language still wins outright.
+They are separate but not isolated: the interface language is sent with every request and is one of the signals used to choose the output language (invariant 69). The server also keeps the last one it saw (`.reader-language`), for work that runs with no request, such as the automatic summary pass. An explicit output language still wins outright.
 
 `STRINGS.en` is empty on purpose. English is whatever `index.html` and `app.js` already say: static markup carries `data-i18n`, `-title`, `-placeholder` and `-tip` attributes with its own text as the fallback, and every `t(key, fallback)` call passes its English at the call site. There is no English table to drift out of sync. One tripwire fails the build on a bare `t("key")`, which would show the key to an English reader, and another on a key that is used but not translated, because `t()` falls back silently and the interface would stay half-English.
 

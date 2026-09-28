@@ -3387,13 +3387,17 @@ _ORGANIZE: dict[str, object] = {"running": False, "error": ""}
 _ORGANIZE_ROUNDS = 3
 
 
-def _organize_after_pass(language: str = "") -> None:
+def _organize_after_pass(language: str = "", should_stop=None) -> None:
+    """`should_stop` is the automatic pass's own: it runs on the intake worker's thread, and a
+    capture dropped meanwhile must not wait behind up to three model calls (invariant 47's yield)."""
     for _round in range(_ORGANIZE_ROUNDS):
-        if not _organize_round(language):
+        if should_stop is not None and should_stop():
+            return
+        if not _organize_round(language, should_stop):
             return
 
 
-def _organize_round(language: str = "") -> bool:
+def _organize_round(language: str = "", should_stop=None) -> bool:
     """One round of organising. In `auto` filing, the end of a summary pass sends the summarised
     captures still in no orbit to one model call (`organize.OrganizeCaptures`) and files each where
     it says: an orbit that exists, or a new orbit it names (at most `organize.MAX_NEW_ORBITS` a
@@ -3425,6 +3429,8 @@ def _organize_round(language: str = "") -> bool:
         # Something new arrived, so what was left before goes again beside it: a capture left
         # because its subject was its alone gets its orbit when the second one comes.
         captures, held = organize.gather(_landing_slug(), base_dir=base)
+    if should_stop is not None and should_stop():
+        return False
     with _DISTIL_GUARD:
         _ORGANIZE.update({"running": True, "error": ""})
     try:
@@ -3441,10 +3447,12 @@ def _organize_round(language: str = "") -> bool:
         plan = organize.plan_from(
             raw if isinstance(raw, dict) else {}, captures={c["id"] for c in captures}, orbits=titles
         )
-        opened = _apply_organize_plan(plan, {c["id"]: c["title"] for c in captures}, base)
-        placed = {capture for capture, _kind, _where in plan}
-        organize.remember_left({c["id"] for c in captures if c["id"] not in placed}, signature, base_dir=base)
-        return opened > 0 and len(placed) < len(captures)
+        opened, filed = _apply_organize_plan(plan, {c["id"]: c["title"] for c in captures}, base)
+        # Left is everything not actually filed, not everything the plan did not name: a capture
+        # the plan sent to a declined orbit, or past the corpus cap, would otherwise be sent to the
+        # model again at the end of every pass.
+        organize.remember_left({c["id"] for c in captures if c["id"] not in filed}, signature, base_dir=base)
+        return opened > 0 and len(filed) < len(captures)
     except Exception as exc:  # noqa: BLE001 - reported on the page; the captures stay where they are
         with _DISTIL_GUARD:
             if not _DISTIL["cancel"]:
@@ -3456,14 +3464,17 @@ def _organize_round(language: str = "") -> bool:
             _ORGANIZE["running"] = False
 
 
-def _apply_organize_plan(plan: list[tuple[str, str, str]], titles: dict[str, str], base) -> int:
+def _apply_organize_plan(
+    plan: list[tuple[str, str, str]], titles: dict[str, str], base
+) -> tuple[int, set[str]]:
     """File what `organize.plan_from` allowed. A new orbit is made only when its first capture is
     about to go in, and removed again if nothing could be filed into it. Returns how many new orbits
-    it kept."""
+    it kept and which captures it filed."""
     with horizon._connect(base) as conn:
         filing._ensure(conn)
         declined = {(r[0], r[1]) for r in conn.execute("SELECT node_id, orbit_id FROM filing_dismissed")}
     made: dict[str, str] = {}
+    filed: set[str] = set()
     for capture, kind, where in plan:
         if _stop_requested():
             break
@@ -3486,6 +3497,7 @@ def _apply_organize_plan(plan: list[tuple[str, str, str]], titles: dict[str, str
             _log.exception("organize: could not file %s", capture)
             continue
         if membership is not None:
+            filed.add(capture)
             _remember_auto_filed(
                 {"node_id": capture, "title": titles.get(capture, ""), "new_orbit": kind == "new"}, membership
             )
@@ -3495,7 +3507,7 @@ def _apply_organize_plan(plan: list[tuple[str, str, str]], titles: dict[str, str
             kept += 1
         else:
             delete_orbit(target)
-    return kept
+    return kept, filed
 
 
 def _stop_requested() -> bool:
@@ -3728,7 +3740,7 @@ def _auto_distil_after_intake() -> None:
         # never place anything the local matches cannot. Not while captures are still arriving:
         # the pass after the last of them sees them all at once.
         if not should_stop():
-            _organize_after_pass()
+            _organize_after_pass(should_stop=should_stop)
     except Exception as exc:  # noqa: BLE001 - same contract as the manual pass
         with _DISTIL_GUARD:
             _DISTIL["error"] = f"{type(exc).__name__}: {exc}"[:300]
@@ -4244,8 +4256,13 @@ async def dismiss_distil_error() -> dict:
         snapshot = _distil_snapshot()
     # The reasons kept on the nodes are seen now too; the captures stay unsummarised and waiting.
     def _forget() -> None:
-        for failure in _stored_failures():
-            horizon.update_node(failure["id"], base_dir=_horizon_queue_base(), error=None)
+        # All of them, not the first page `_stored_failures` lists, or older ones came back.
+        with horizon._connect(_horizon_queue_base()) as conn:
+            ids = [r[0] for r in conn.execute(
+                "SELECT id FROM nodes WHERE state = 'ready_undistilled' AND error IS NOT NULL AND error != ''"
+            ).fetchall()]
+        for node_id in ids:
+            horizon.update_node(node_id, base_dir=_horizon_queue_base(), error=None)
 
     await asyncio.to_thread(_forget)
     return {"dismissed": True, **snapshot}

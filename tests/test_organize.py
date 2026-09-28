@@ -264,3 +264,26 @@ def test_a_failed_summary_is_reported_after_a_restart_and_cleared_by_dismiss(cli
     assert client.post("/horizon/distil/dismiss").status_code == 200
     assert client.get("/horizon/status").json()["distil"]["failures"] == []
     assert horizon.get_node(node_id).state == "ready_undistilled", "dismissing forgets only the reason"
+
+
+def test_a_capture_the_plan_named_but_filing_refused_is_not_sent_again(client, monkeypatch):
+    """Left means not filed, not merely not named: a capture sent to an orbit the reader declined
+    would otherwise cost a model call at the end of every later pass."""
+    seed = _summarised(client, "seed", [])
+    client.post(f"/horizon/{seed}/promote", json={"orbit_id": "space", "create": True})
+    a = _summarised(client, "rockets", ["Rocket"])
+    assert client.post(f"/horizon/{a}/promote", json={"orbit_id": "space"}).status_code == 200
+    source_id = horizon.memberships_for(a)[0].source_id
+    assert client.delete(f"/orbits/space/sources/{source_id}").status_code == 200
+    seen = _fake_model(monkeypatch, {"placements": [{"capture": a, "orbit": "space"}]})
+    api._organize_after_pass()
+    api._organize_after_pass()
+    assert len(seen) == 1, "the second pass sent the refused capture to the model again"
+
+
+def test_organising_yields_to_a_waiting_capture(client, monkeypatch):
+    """On the automatic pass it runs on the intake worker's thread, so it stops when told to."""
+    _summarised(client, "loose", ["X"])
+    seen = _fake_model(monkeypatch, {"placements": []})
+    api._organize_after_pass(should_stop=lambda: True)
+    assert seen == []

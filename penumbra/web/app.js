@@ -2016,7 +2016,7 @@ function settingRows() {
         manual: t("settings.filingManualHelp",
           "New captures stay in the Horizon until you file them from the waiting card beside the star map."),
         auto: t("settings.filingAutoHelp",
-          "A capture goes into an orbit on its own. Once summaries are written, the ones that clearly match an orbit are filed without a model call, and the model places the rest: into an orbit that fits, or into a new orbit it names when none does."),
+          "A capture goes into an orbit on its own. Once summaries are written, the ones that clearly match an orbit are filed without a model call, and the model places the rest: into an orbit that fits, or, when none does and two or more captures share the subject, into a new orbit it names. A capture alone on its subject waits for a second."),
         assign: t("settings.filingAssignHelp", "Every new capture is filed into the orbit you choose."),
       },
       sub: {
@@ -11848,28 +11848,36 @@ function placeStarMap() {
 //: and garbage made at that rate is collected in pauses the orbit visibly stutters through.
 const overlapScratch = { order: [], behind: new Set() };
 
-function planetParts(p, pos) {
-  const reach = p.r + 13;
+//: Written into the object the planet already carries, so a frame makes no new one.
+function planetParts(p, pos, into) {
   const half = (p.labelW || 0) / 2 + 2;
-  return { x: pos.x, y: pos.y, reach, lx0: pos.x - half, lx1: pos.x + half, ly0: pos.y + p.r + 18, ly1: pos.y + p.r + 50 };
+  into.x = pos.x;
+  into.y = pos.y;
+  into.reach = p.r + 13;
+  into.lx0 = pos.x - half;
+  into.lx1 = pos.x + half;
+  into.ly0 = pos.y + p.r + 18;
+  into.ly1 = pos.y + p.r + 50;
+  return into;
+}
+
+function circleMeetsBox(c, q) {
+  const nx = Math.max(q.lx0, Math.min(c.x, q.lx1));
+  const ny = Math.max(q.ly0, Math.min(c.y, q.ly1));
+  return Math.hypot(c.x - nx, c.y - ny) < c.reach;
 }
 
 function partsTouch(a, b) {
-  const circles = Math.hypot(a.x - b.x, a.y - b.y) < a.reach + b.reach;
-  const boxes = a.lx0 < b.lx1 && b.lx0 < a.lx1 && a.ly0 < b.ly1 && b.ly0 < a.ly1;
-  const circleBox = (c, q) => {
-    const nx = Math.max(q.lx0, Math.min(c.x, q.lx1));
-    const ny = Math.max(q.ly0, Math.min(c.y, q.ly1));
-    return Math.hypot(c.x - nx, c.y - ny) < c.reach;
-  };
-  return circles || boxes || circleBox(a, b) || circleBox(b, a);
+  if (Math.hypot(a.x - b.x, a.y - b.y) < a.reach + b.reach) return true;
+  if (a.lx0 < b.lx1 && b.lx0 < a.lx1 && a.ly0 < b.ly1 && b.ly0 < a.ly1) return true;
+  return circleMeetsBox(a, b) || circleMeetsBox(b, a);
 }
 
 function settleOverlaps(scene, at) {
   const order = overlapScratch.order;
   order.length = 0;
   scene.planets.forEach((entry) => {
-    entry.parts = planetParts(entry.p, at.get(entry.p.orbit.slug));
+    entry.parts = planetParts(entry.p, at.get(entry.p.orbit.slug), entry.parts || {});
     entry.first = entry.p.orbit.slug === starMap.selected || entry.p.orbit.slug === mapMotion.pointed;
     order.push(entry);
   });

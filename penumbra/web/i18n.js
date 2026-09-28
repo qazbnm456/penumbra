@@ -205,7 +205,7 @@ const STRINGS = {
     "settings.filingAuto": "自動",
     "settings.filingAssign": "指派",
     "settings.filingManualHelp": "新收的東西先留在視界，等你在星圖旁「等你處理的」卡片自己歸入。",
-    "settings.filingAutoHelp": "新收的東西會自己進到軌道。摘要寫好後，明顯屬於某個軌道的直接歸入，不呼叫模型；其餘交給模型判斷，放進合適的軌道，都不合適就開一個新軌道並取名。",
+    "settings.filingAutoHelp": "新收的東西會自己進到軌道。摘要寫好後，明顯屬於某個軌道的直接歸入，不呼叫模型；其餘交給模型判斷，放進合適的軌道。都不合適、又有兩則以上同主題時，就開一個新軌道並取名；只有一則的主題先等第二則。",
     "settings.filingAssignHelp": "每則新收的東西都放進你選的軌道。",
     "settings.filingOrbit": "軌道",
     "island.open": "打開 Penumbra",
