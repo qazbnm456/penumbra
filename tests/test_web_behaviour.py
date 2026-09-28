@@ -908,12 +908,14 @@ def test_strikethrough_renders_as_a_deletion_not_as_tildes():
 def test_the_knowledge_graph_layout_is_stable_bounded_and_framed():
     result = _run("graphLayout")
     assert result["same"], "the same orbit drew a different picture on a second layout"
-    assert result["inside"], "an entity was placed off the stage"
     assert result["box"]["w"] >= 900 and result["box"]["h"] >= 640, (
         "a small graph was framed tighter than the minimum, which blows its labels up"
     )
-    assert result["captureNearAnchors"], "a capture was drawn away from the entities it names"
-    assert result["linkedCloser"], "two linked entities ended up further apart than an unlinked one"
+    assert result["drawn"] == ["e:REM", "e:memory"], "an entity only one capture names was drawn as a hub"
+    assert result["captureNearHub"], "a capture was drawn away from the hubs it names"
+    assert result["grouped"], "two captures sharing hubs were not grouped, or a loose one joined them"
+    assert result["groupName"] == "sleep", "a group was not named by its commonest tag"
+    assert result["apart"], "two nodes were left on top of each other"
 
 
 def test_the_view_mode_preference_falls_back_to_its_default():

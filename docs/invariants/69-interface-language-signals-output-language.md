@@ -8,6 +8,8 @@ A chosen preference outranks an inherited one. `Accept-Language` comes from the 
 
 The value travels in a header, `X-Penumbra-Interface-Language`, added once in `api()` in `app.js`. `_resolve_language` is reached from every run-taking endpoint, so a body field would mean five schema changes and one forgotten. The value sent is the language's English name, not `zh-Hant`, because the model answers in English language names, and a code or a word in the language being identified makes it parse instead of weigh.
 
+Work that runs with no request cannot read the header, so the auth middleware records the last value it saw (`config.remember_reader_language`, a `.reader-language` file beside the settings) and the automatic summary pass and organising read it back (`config.reader_language`). It is the same signal kept for later, not a new setting: it never outranks an output language the reader chose, and the settings page presents the unset choice as "Follow the interface language".
+
 A proper noun is never translated (`instructions.PROPER_NOUNS`), because translating it hands the reader a term they cannot search for. The rule is composed into both `chat_language_rule` and `artifact_language_rule` from one constant (invariant 13), and into the title prompt, which is a plain `dspy.Predict` and shares nothing else. It extends invariant 45's rule from the podcast to every artifact a reader might search from.
 
 ---

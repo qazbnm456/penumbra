@@ -46,7 +46,7 @@ The summariser reads `Corpus.excerpt`, never `blob()[:n]` (invariant 61). `disti
 
 ## The language ladder is shorter here
 
-A summary is model-written prose, so invariant 39 applies, but `distil_pending` runs on a background thread with no request, so the interface-language signal (invariant 69) and `Accept-Language` are out of reach. The ladder is `output_language()` (the operator's stated preference), then a language the caller passes, then nothing, in which case the prompt tells the model to follow the document. That last step is a known narrowing of invariant 39 for Tier 0; the way out is a caller that passes the signal, not a resolver inside a function with no request.
+A summary is model-written prose, so invariant 39 applies, but `distil_pending` runs on a background thread with no request, so the interface-language signal (invariant 69) and `Accept-Language` are out of reach. The ladder is `output_language()` (the operator's stated preference), then a language the caller passes, then nothing, in which case the prompt tells the model to follow the document. The automatic pass and organising pass `config.reader_language()`: the interface language the last request carried (`X-Penumbra-Interface-Language`), recorded by the auth middleware in `.reader-language` beside the settings file. Without it, a reader with a Chinese interface and no output language set got English summaries and English orbit names, because most documents were English. It only fills an unset output language, so invariant 48's two settings stay separate; it is kept out of the settings file because it is observed, not chosen, and the settings page draws every key that file holds.
 
 ## Not an RLMTask, not a subprocess
 

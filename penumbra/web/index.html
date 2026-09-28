@@ -502,8 +502,8 @@
     </section>
   </main>
 
-  <!-- An orbit drawn as its knowledge graph: its captures' entities as nodes, joined when one
-       capture names both, with tags as lenses. The other way to show an orbit; the three columns
+  <!-- An orbit drawn as its knowledge graph: its captures as points, joined through the entities
+       two or more of them name, in groups that hang together, with tags as lenses. The other way to show an orbit; the three columns
        are the same orbit, and the header's toggle moves between them. -->
   <section class="orbit-graph" id="view-graph" hidden aria-label="Knowledge graph" data-i18n-label="graph.label">
     <div class="graph-stage">
@@ -519,6 +519,7 @@
                 title="Back to the whole graph" data-i18n-label="graph.zoomHome" data-i18n-title="graph.zoomHome"
                 disabled>&#x21BA;</button>
       </div>
+      <div class="starmap-tip" id="graph-tip" role="tooltip" hidden></div>
       <p class="graph-empty" id="graph-empty" hidden></p>
       <div class="graph-pending" id="graph-pending" hidden>
         <p class="graph-pending-line" id="graph-pending-line"></p>

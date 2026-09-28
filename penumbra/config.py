@@ -722,6 +722,33 @@ def write_settings(values: dict[str, str], base_dir: str | Path = _DEFAULT_ORBIT
     atomic_write_text(settings_path(base_dir), json.dumps(values, indent=2, ensure_ascii=False))
 
 
+_READER_LANGUAGE_FILENAME = ".reader-language"
+
+
+def reader_language(base_dir: str | Path = _DEFAULT_ORBITS_DIR) -> str | None:
+    """The interface language the reader last used in the workspace or the island, or None.
+
+    What an unset output language follows where no request is there to ask: the automatic summary
+    pass and organising run on a background thread, and without it they wrote in whatever language
+    most documents were in (English summaries and orbit names under a Chinese interface). It never
+    overrides `output_language()`, which is a stated preference; it only fills the gap when there is
+    none, which keeps invariant 48's two settings separate. Kept beside the settings file rather
+    than in it, because it is observed, not chosen, and the settings page draws every key the file
+    holds. Never raises, like `read_settings`."""
+    try:
+        text = (Path(base_dir) / _READER_LANGUAGE_FILENAME).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    return clean_language(text)
+
+
+def remember_reader_language(name: str | None, base_dir: str | Path = _DEFAULT_ORBITS_DIR) -> None:
+    """Record the interface language a request carried, when it differs from the one recorded."""
+    cleaned = clean_language(name)
+    if cleaned and cleaned != reader_language(base_dir):
+        atomic_write_text(Path(base_dir) / _READER_LANGUAGE_FILENAME, cleaned)
+
+
 def _env_wins(name: str) -> str | None:
     """The env value IF it actually beats the file — never merely "the variable is present". An
     empty or whitespace `PN_OUTPUT_LANGUAGE` loses to the file, so reporting it as pinned would

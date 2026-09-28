@@ -1906,9 +1906,16 @@ function settingRows() {
       choicesKey: "output_languages",
       label: t("settings.outputLanguage", "Output language"),
       placeholder: t("settings.outputLanguagePlaceholder", "e.g. Traditional Chinese"),
+      // Unset, it follows the interface language (`config.reader_language`), so the empty choice
+      // says so and names the language it currently means.
+      blankLabel: () => {
+        const found = UI_LANGUAGES.find((l) => l.code === uiLang());
+        const name = found ? found.label : "";
+        return t("settings.followInterface", `Follow the interface language (${name})`, { name });
+      },
       help: t(
         "settings.outputLanguageHelp",
-        "Leave empty to let each orbit work out its own from your interface and system language, its sources and your questions."
+        "Summaries and new orbit names follow the interface language unless you choose one here. An orbit also leans towards it, though one you question in another language may answer in that."
       ),
     },
     // Provider-aware on purpose: with chatterbox `default_voices` returns null for EVERY language,
@@ -2386,7 +2393,7 @@ function renderSettings(state_) {
       if (!row.noDefault) {
         const blank = document.createElement("option");
         blank.value = "";
-        blank.textContent = t("settings.useDefault", "Use the default");
+        blank.textContent = row.blankLabel ? row.blankLabel() : t("settings.useDefault", "Use the default");
         input.appendChild(blank);
       }
       // A value already stored that is NOT in the list (an env var, or a voice from another
@@ -14263,13 +14270,10 @@ async function renderGraph() {
   const before = graphState.layout;
   graphState.layout = layoutGraph(data);
   if (sameOrbit && graphState.moved && before) {
-    // Where the reader dragged things stays where they put it when the data refreshes. The
-    // captures' offsets are taken from the fresh layout first, then follow the kept positions.
-    followCaptures(graphState.layout);
-    before.pos.forEach((point, name) => {
-      if (graphState.layout.pos.has(name)) graphState.layout.pos.set(name, { ...point });
+    // Where the reader dragged things stays where they put it when the data refreshes.
+    before.pos.forEach((point, key) => {
+      if (graphState.layout.pos.has(key)) graphState.layout.pos.set(key, { ...point });
     });
-    followCaptures(graphState.layout);
   } else if (!sameOrbit) {
     graphState.moved = false;
     resetGraphCamera();
@@ -14298,120 +14302,354 @@ function showGraphEmpty(text) {
 
 //: A small force layout, run to rest before anything is drawn, so the graph appears still rather
 //: than settling in front of the reader. Deterministic: the same orbit draws the same picture.
+//: The graph is a map of what connects, not of everything named. Captures are the points; an entity
+//: two or more of them name is a hub between them, sized by how many do; an entity only one capture
+//: names adds no connection, so it is not drawn and shows in that capture's tooltip instead. Joining
+//: every pair of entities one capture named turned each capture into a mesh of triangles, and with
+//: three kinds of line the picture read as noise. Captures that hang together (through shared hubs
+//: or local relations) are found as groups and drawn on a faint region named by their commonest tag.
+const GRAPH_HUB_MIN = 2;
+const GRAPH_CAPTURE_R = 6;
+
+function graphHubRadius(count) {
+  return Math.min(24, 8 + count * 2.4);
+}
+
+//: Groups of captures that hang together: label propagation over captures linked by shared hubs
+//: (a hub named by k captures adds 1/(k-1) to each pair, so one ubiquitous hub does not glue
+//: everything into one group), shared tags and local relations. Deterministic: a fixed order and ties broken
+//: by id, so the same orbit gives the same groups every time.
+function graphGroups(captures, similar) {
+  const ids = captures.map((c) => c.node_id).sort();
+  const near = new Map(ids.map((id) => [id, new Map()]));
+  const link = (a, b, w) => {
+    if (a === b || !near.has(a) || !near.has(b)) return;
+    near.get(a).set(b, (near.get(a).get(b) || 0) + w);
+    near.get(b).set(a, (near.get(b).get(a) || 0) + w);
+  };
+  const byHub = new Map();
+  captures.forEach((c) => c.hubs.forEach((name) => {
+    if (!byHub.has(name)) byHub.set(name, []);
+    byHub.get(name).push(c.node_id);
+  }));
+  byHub.forEach((members) => {
+    for (let i = 0; i < members.length; i += 1) {
+      for (let j = i + 1; j < members.length; j += 1) link(members[i], members[j], 1 / (members.length - 1));
+    }
+  });
+  // Shared tags count for half as much: broader than an entity, but in an orbit where each summary
+  // names its entities differently they are most of what two captures visibly share.
+  const byTag = new Map();
+  captures.forEach((c) => c.tags.forEach((tag) => {
+    if (!byTag.has(tag)) byTag.set(tag, []);
+    byTag.get(tag).push(c.node_id);
+  }));
+  byTag.forEach((members) => {
+    if (members.length > Math.max(3, captures.length / 2)) return; // a tag on most of them separates nothing
+    for (let i = 0; i < members.length; i += 1) {
+      for (let j = i + 1; j < members.length; j += 1) link(members[i], members[j], 0.5 / (members.length - 1));
+    }
+  });
+  (similar || []).forEach((pair) => link(pair.a, pair.b, 1));
+  const label = new Map(ids.map((id) => [id, id]));
+  for (let round = 0; round < 12; round += 1) {
+    let changed = false;
+    ids.forEach((id) => {
+      const score = new Map();
+      near.get(id).forEach((w, other) => score.set(label.get(other), (score.get(label.get(other)) || 0) + w));
+      if (!score.size) return;
+      let best = label.get(id);
+      let bestW = score.get(best) || 0;
+      score.forEach((w, candidate) => {
+        if (w > bestW + 1e-9 || (Math.abs(w - bestW) <= 1e-9 && candidate < best)) {
+          best = candidate;
+          bestW = w;
+        }
+      });
+      if (best !== label.get(id)) {
+        label.set(id, best);
+        changed = true;
+      }
+    });
+    if (!changed) break;
+  }
+  const groups = new Map();
+  ids.forEach((id) => {
+    if (!groups.has(label.get(id))) groups.set(label.get(id), []);
+    groups.get(label.get(id)).push(id);
+  });
+  const byId = new Map(captures.map((c) => [c.node_id, c]));
+  return [...groups.values()].map((members) => {
+    const tags = new Map();
+    const hubs = new Map();
+    members.forEach((id) => {
+      byId.get(id).tags.forEach((tag) => tags.set(tag, (tags.get(tag) || 0) + 1));
+      byId.get(id).hubs.forEach((name) => hubs.set(name, (hubs.get(name) || 0) + 1));
+    });
+    const top = (counts) => [...counts].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0];
+    const named = members.length >= 2 ? top(tags) || top(hubs) : null;
+    return { ids: members, name: named ? named[0] : "" };
+  });
+}
+
 function layoutGraph(data) {
   const W = 1000;
   const H = 700;
-  const names = data.entities.map((e) => e.name);
+  const count = new Map(data.entities.map((e) => [e.name, e.count]));
+  const hubs = new Set(data.entities.filter((e) => e.count >= GRAPH_HUB_MIN).map((e) => e.name));
+  const captures = data.captures.map((c) => ({ ...c, hubs: c.entities.filter((n) => hubs.has(n)) }));
+  const groups = graphGroups(captures, data.similar);
+  const groupOf = new Map();
+  groups.forEach((g, i) => g.ids.forEach((id) => groupOf.set(`c:${id}`, i)));
+  const r = new Map();
   const pos = new Map();
-  names.forEach((name, i) => {
-    const angle = (i / Math.max(names.length, 1)) * Math.PI * 2;
-    const r = 180 + stableHash(name) * 120;
-    pos.set(name, { x: W / 2 + r * Math.cos(angle), y: H / 2 + r * Math.sin(angle) });
+  // Seeds: each group on its own spot round the middle, its captures around it; a hub between the
+  // captures that name it. The forces below do the rest.
+  const big = groups.filter((g) => g.ids.length > 1).length || 1;
+  let slot = 0;
+  groups.forEach((g, i) => {
+    const alone = g.ids.length === 1;
+    const angle = ((alone ? slot + 0.5 : slot) / big) * Math.PI * 2 + stableHash(`g${i}`) * 0.4;
+    if (!alone) slot += 1;
+    const reach = groups.length > 1 ? (alone ? 330 : 230) : 0;
+    const cx = W / 2 + reach * Math.cos(angle);
+    const cy = H / 2 + reach * 0.72 * Math.sin(angle);
+    g.ids.forEach((id) => {
+      const b = stableHash(id) * Math.PI * 2;
+      const d = 20 + stableHash(`${id}r`) * 50;
+      pos.set(`c:${id}`, { x: cx + d * Math.cos(b), y: cy + d * Math.sin(b) });
+      r.set(`c:${id}`, GRAPH_CAPTURE_R);
+    });
   });
-  const edges = data.edges.filter((e) => pos.has(e.a) && pos.has(e.b));
-  for (let step = 0; step < 280; step += 1) {
-    const cool = 1 - step / 280;
-    const force = new Map(names.map((n) => [n, { x: 0, y: 0 }]));
-    for (let i = 0; i < names.length; i += 1) {
-      for (let j = i + 1; j < names.length; j += 1) {
-        const a = pos.get(names[i]);
-        const b = pos.get(names[j]);
+  const edges = [];
+  captures.forEach((c) => c.hubs.forEach((name) => edges.push({ a: `c:${c.node_id}`, b: `e:${name}`, weight: 1 })));
+  hubs.forEach((name) => {
+    const around = edges.filter((e) => e.b === `e:${name}`).map((e) => pos.get(e.a));
+    const jitter = stableHash(`h${name}`) * Math.PI * 2;
+    const x = around.reduce((s, p) => s + p.x, 0) / Math.max(around.length, 1) + 12 * Math.cos(jitter);
+    const y = around.reduce((s, p) => s + p.y, 0) / Math.max(around.length, 1) + 12 * Math.sin(jitter);
+    pos.set(`e:${name}`, around.length ? { x, y } : { x: W / 2, y: H / 2 });
+    r.set(`e:${name}`, graphHubRadius(count.get(name) || 1));
+    // A hub belongs to the group most of its captures are in.
+    const votes = new Map();
+    edges.filter((e) => e.b === `e:${name}`).forEach((e) => {
+      const g = groupOf.get(e.a);
+      votes.set(g, (votes.get(g) || 0) + 1);
+    });
+    const best = [...votes].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+    if (best && best[1] > 1) groupOf.set(`e:${name}`, best[0]);
+  });
+  const similar = (data.similar || [])
+    .filter((p) => pos.has(`c:${p.a}`) && pos.has(`c:${p.b}`))
+    .map((p) => ({ a: `c:${p.a}`, b: `c:${p.b}` }));
+  const keys = [...pos.keys()];
+  for (let step = 0; step < 320; step += 1) {
+    const cool = 1 - step / 320;
+    const force = new Map(keys.map((k) => [k, { x: 0, y: 0 }]));
+    const centre = new Map();
+    keys.forEach((k) => {
+      const g = groupOf.get(k);
+      if (g === undefined) return;
+      const c = centre.get(g) || { x: 0, y: 0, n: 0 };
+      c.x += pos.get(k).x;
+      c.y += pos.get(k).y;
+      c.n += 1;
+      centre.set(g, c);
+    });
+    for (let i = 0; i < keys.length; i += 1) {
+      for (let j = i + 1; j < keys.length; j += 1) {
+        const a = pos.get(keys[i]);
+        const b = pos.get(keys[j]);
         let dx = a.x - b.x;
         let dy = a.y - b.y;
         const d2 = Math.max(dx * dx + dy * dy, 25);
-        const push = 9000 / d2;
+        const same = groupOf.get(keys[i]) !== undefined && groupOf.get(keys[i]) === groupOf.get(keys[j]);
+        const push = (same ? 2600 : 5200) * (1 + (r.get(keys[i]) + r.get(keys[j])) / 24) / d2;
         const d = Math.sqrt(d2);
         dx /= d;
         dy /= d;
-        force.get(names[i]).x += dx * push;
-        force.get(names[i]).y += dy * push;
-        force.get(names[j]).x -= dx * push;
-        force.get(names[j]).y -= dy * push;
+        force.get(keys[i]).x += dx * push;
+        force.get(keys[i]).y += dy * push;
+        force.get(keys[j]).x -= dx * push;
+        force.get(keys[j]).y -= dy * push;
       }
     }
-    edges.forEach((e) => {
+    const spring = (e, rest, k) => {
       const a = pos.get(e.a);
       const b = pos.get(e.b);
       const dx = b.x - a.x;
       const dy = b.y - a.y;
-      const d = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-      const pull = (d - 110) * 0.02 * Math.min(e.weight, 4);
+      const d = Math.max(Math.hypot(dx, dy), 1);
+      const pull = (d - rest) * k;
       force.get(e.a).x += (dx / d) * pull;
       force.get(e.a).y += (dy / d) * pull;
       force.get(e.b).x -= (dx / d) * pull;
       force.get(e.b).y -= (dy / d) * pull;
-    });
-    names.forEach((n) => {
-      const p = pos.get(n);
-      const f = force.get(n);
-      f.x += (W / 2 - p.x) * 0.012;
-      f.y += (H / 2 - p.y) * 0.012;
-      const len = Math.sqrt(f.x * f.x + f.y * f.y);
-      const cap = 24 * cool + 1;
+    };
+    edges.forEach((e) => spring(e, 70, 0.035));
+    similar.forEach((e) => spring(e, 90, 0.015));
+    keys.forEach((k) => {
+      const p = pos.get(k);
+      const f = force.get(k);
+      const c = centre.get(groupOf.get(k));
+      if (c && c.n > 1) {
+        f.x += (c.x / c.n - p.x) * 0.03;
+        f.y += (c.y / c.n - p.y) * 0.03;
+      }
+      f.x += (W / 2 - p.x) * 0.008;
+      f.y += (H / 2 - p.y) * 0.008;
+      const len = Math.hypot(f.x, f.y);
+      const cap = 22 * cool + 0.8;
       const scale = len > cap ? cap / len : 1;
-      p.x = Math.min(W - 60, Math.max(60, p.x + f.x * scale));
-      p.y = Math.min(H - 60, Math.max(50, p.y + f.y * scale));
+      p.x += f.x * scale;
+      p.y += f.y * scale;
     });
   }
-  // Captures sit beside the entities they name; one naming none waits at the edge, unless local
-  // relations link it to a capture that is placed, in which case it sits beside that one.
-  const captures = data.captures.map((c, i) => {
-    const anchors = c.entities.map((n) => pos.get(n)).filter(Boolean);
-    const jitterA = stableHash(c.node_id) * Math.PI * 2;
-    const jitterR = 22 + stableHash(`${c.node_id}r`) * 26;
-    if (!anchors.length) {
-      const angle = (i / Math.max(data.captures.length, 1)) * Math.PI * 2;
-      return { ...c, x: W / 2 + 440 * Math.cos(angle), y: H / 2 + 300 * Math.sin(angle), anchors };
-    }
-    const cx = anchors.reduce((s, a) => s + a.x, 0) / anchors.length;
-    const cy = anchors.reduce((s, a) => s + a.y, 0) / anchors.length;
-    return { ...c, x: cx + jitterR * Math.cos(jitterA), y: cy + jitterR * Math.sin(jitterA), anchors };
-  });
-  const at = new Map(captures.map((c) => [c.node_id, c]));
-  (data.similar || []).forEach((pair) => {
-    const a = at.get(pair.a);
-    const b = at.get(pair.b);
-    if (!a || !b) return;
-    const [loose, placed] = !a.anchors.length && b.anchors.length ? [a, b] : !b.anchors.length && a.anchors.length ? [b, a] : [null, null];
-    if (!loose || loose.moved) return;
-    const angle = stableHash(`${loose.node_id}s`) * Math.PI * 2;
-    loose.x = placed.x + 34 * Math.cos(angle);
-    loose.y = placed.y + 34 * Math.sin(angle);
-    loose.moved = true;
-  });
+  graphUntangle(pos, r, captures, hubs);
+  graphSeparateGroups({ pos, r, captures, hubs, groups });
   // Framed to what was drawn, so a small graph fills the stage instead of sitting in its middle;
-  // never tighter than a minimum, so two entities are not blown up to fill a screen.
-  const points = [...pos.values(), ...captures];
+  // never tighter than a minimum, so two nodes are not blown up to fill a screen.
+  const points = [...pos.values()];
   let box = { x: 0, y: 0, w: W, h: H };
   if (points.length) {
-    const xs = points.map((p) => p.x);
-    const ys = points.map((p) => p.y);
-    const pad = 70;
-    let x0 = Math.min(...xs) - pad;
-    let x1 = Math.max(...xs) + pad;
-    let y0 = Math.min(...ys) - pad;
-    let y1 = Math.max(...ys) + pad + 20;
-    const minW = 900;
-    const minH = 640;
-    if (x1 - x0 < minW) {
-      const grow = (minW - (x1 - x0)) / 2;
+    const pad = 90;
+    let x0 = Math.min(...points.map((p) => p.x)) - pad;
+    let x1 = Math.max(...points.map((p) => p.x)) + pad;
+    let y0 = Math.min(...points.map((p) => p.y)) - pad;
+    let y1 = Math.max(...points.map((p) => p.y)) + pad + 20;
+    if (x1 - x0 < 900) {
+      const grow = (900 - (x1 - x0)) / 2;
       x0 -= grow;
       x1 += grow;
     }
-    if (y1 - y0 < minH) {
-      const grow = (minH - (y1 - y0)) / 2;
+    if (y1 - y0 < 640) {
+      const grow = (640 - (y1 - y0)) / 2;
       y0 -= grow;
       y1 += grow;
     }
     box = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
   }
-  return { pos, edges, captures, box };
+  return { pos, r, edges, similar, captures, hubs, groups, box };
+}
+
+//: The width a label takes, roughly: a CJK character is about as wide as the font size, a Latin one
+//: a little over half of it.
+function graphLabelWidth(text, size) {
+  return [...text].reduce((w, ch) => w + (/[\u2E80-\uFFEF]/.test(ch) ? size : size * 0.58), 0);
+}
+
+//: Forces keep nodes apart but know nothing of the labels under them, and two names drawn over each
+//: other cannot be read. Each node with its label is a box; overlapping boxes are pushed apart along
+//: the axis that needs the least travel, a few dozen times.
+function graphUntangle(pos, r, captures, hubs) {
+  const boxes = [];
+  captures.forEach((c) => boxes.push({ key: `c:${c.node_id}`, w: Math.max(14, graphLabelWidth(shortLabel(c.title, 18), 11)) + 10,
+    top: GRAPH_CAPTURE_R + 4, bottom: GRAPH_CAPTURE_R + 20 }));
+  hubs.forEach((name) => boxes.push({ key: `e:${name}`, w: Math.max(2 * r.get(`e:${name}`), graphLabelWidth(shortLabel(name, 18), 13)) + 10,
+    top: r.get(`e:${name}`) + 4, bottom: r.get(`e:${name}`) + 24 }));
+  for (let round = 0; round < 60; round += 1) {
+    let moved = false;
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = pos.get(boxes[i].key);
+        const b = pos.get(boxes[j].key);
+        const ox = (boxes[i].w + boxes[j].w) / 2 - Math.abs(a.x - b.x);
+        const oy = (b.y >= a.y ? boxes[i].bottom + boxes[j].top : boxes[j].bottom + boxes[i].top) - Math.abs(a.y - b.y);
+        if (ox <= 0 || oy <= 0) continue;
+        moved = true;
+        if (ox < oy) {
+          const shift = (ox / 2 + 0.5) * (a.x <= b.x ? 1 : -1);
+          a.x -= shift;
+          b.x += shift;
+        } else {
+          const shift = (oy / 2 + 0.5) * (a.y <= b.y ? 1 : -1);
+          a.y -= shift;
+          b.y += shift;
+        }
+      }
+    }
+    if (!moved) break;
+  }
+}
+
+//: Two groups' regions must not overlap, or a capture seems to belong to both: overlapping regions
+//: are moved apart whole, every node in each moving together, so nothing inside is rearranged.
+function graphSeparateGroups(layout) {
+  const drawn = layout.groups.filter((g) => g.ids.length > 1);
+  const members = drawn.map((g) => {
+    const keys = new Set(g.ids.map((id) => `c:${id}`));
+    layout.captures.filter((c) => g.ids.includes(c.node_id)).forEach((c) => c.hubs.forEach((n) => keys.add(`e:${n}`)));
+    return [...keys];
+  });
+  for (let round = 0; round < 40; round += 1) {
+    let moved = false;
+    const shapes = drawn.map((g) => graphGroupCircle(g, layout));
+    for (let i = 0; i < drawn.length; i += 1) {
+      for (let j = i + 1; j < drawn.length; j += 1) {
+        const a = shapes[i];
+        const b = shapes[j];
+        const dx = b.cx - a.cx;
+        const dy = b.cy - a.cy;
+        const d = Math.hypot(dx, dy) || 0.01;
+        const overlap = a.radius + b.radius + 18 - d;
+        if (overlap <= 0) continue;
+        moved = true;
+        const ux = dx / d;
+        const uy = dy / d;
+        const shared = members[i].filter((k) => members[j].includes(k));
+        members[i].forEach((k) => {
+          if (shared.includes(k)) return;
+          const p = layout.pos.get(k);
+          layout.pos.set(k, { x: p.x - ux * overlap / 2, y: p.y - uy * overlap / 2 });
+        });
+        members[j].forEach((k) => {
+          if (shared.includes(k)) return;
+          const p = layout.pos.get(k);
+          layout.pos.set(k, { x: p.x + ux * overlap / 2, y: p.y + uy * overlap / 2 });
+        });
+      }
+    }
+    if (!moved) break;
+  }
+}
+
+//: The faint region behind a group: a circle round its captures and hubs, with room for labels.
+function graphGroupCircle(group, layout) {
+  const keys = [...group.ids.map((id) => `c:${id}`),
+    ...[...layout.hubs].filter((name) => group.ids.some((id) =>
+      layout.captures.find((c) => c.node_id === id)?.hubs.includes(name))).map((name) => `e:${name}`)];
+  const points = keys.map((k) => layout.pos.get(k)).filter(Boolean);
+  const cx = points.reduce((s, p) => s + p.x, 0) / points.length;
+  const cy = points.reduce((s, p) => s + p.y, 0) / points.length;
+  const radius = Math.max(...keys.map((k) => {
+    const p = layout.pos.get(k);
+    return p ? Math.hypot(p.x - cx, p.y - cy) + (layout.r.get(k) || 6) : 0;
+  })) + 30;
+  return { cx, cy, radius };
+}
+
+function showGraphTip(target, title, sub) {
+  const tip = horizonEl("graph-tip");
+  const host = target.closest(".graph-stage").getBoundingClientRect();
+  const box = target.getBoundingClientRect();
+  tip.textContent = "";
+  tip.appendChild(elt("span", "map-tip-title", shortLabel(title, 80)));
+  if (sub) tip.appendChild(elt("span", "map-tip-sub", sub));
+  tip.hidden = false;
+  tip.style.left = `${Math.round(box.left + box.width / 2 - host.left)}px`;
+  tip.style.top = `${Math.round(box.top - host.top)}px`;
+}
+
+function hideGraphTip() {
+  const tip = horizonEl("graph-tip");
+  if (tip) tip.hidden = true;
 }
 
 function drawGraph() {
   const svg = horizonEl("graph-svg");
   const keepFocus = focusedKey(svg);
   clearSvg(svg);
+  hideGraphTip();
   const data = graphState.data;
   const layout = graphState.layout;
   if (!data || !layout) return;
@@ -14421,14 +14659,14 @@ function drawGraph() {
   const world = svgEl("g", {}, "graph-world");
   svg.appendChild(world);
   graphState.world = world;
-  const refs = { entities: new Map(), edges: [], links: [], captures: [], similar: [] };
+  const refs = { nodes: new Map(), links: [], similar: [], groups: [] };
   graphState.refs = refs;
   const count = new Map(data.entities.map((e) => [e.name, e.count]));
   const lenses = graphState.lenses;
   const selected = graphState.selected;
 
-  // What is lit: a lens lights its captures and every entity they name; an entity lights itself and
-  // the captures that name it.
+  // What is lit: a lens lights its captures and the hubs they name; an entity lights itself and the
+  // captures that name it (a chip can pick one that is not a hub, and its captures still light).
   const litCaptures = new Set();
   const litEntities = new Set();
   if (lenses.size) {
@@ -14445,67 +14683,89 @@ function drawGraph() {
     });
   }
   const focus = Boolean(lenses.size || selected);
+  const keyLit = (key) => (key.startsWith("c:") ? litCaptures.has(key.slice(2)) : litEntities.has(key.slice(2)));
+
+  const groupLayer = svgEl("g", { "aria-hidden": "true" }, "graph-groups");
+  layout.groups.forEach((group) => {
+    if (group.ids.length < 2) return;
+    const shape = graphGroupCircle(group, layout);
+    const lit = !focus || group.ids.some((id) => litCaptures.has(id));
+    const circle = svgEl("circle", { cx: shape.cx, cy: shape.cy, r: shape.radius }, `graph-group${lit ? "" : " is-dim"}`);
+    groupLayer.appendChild(circle);
+    const label = svgText(shape.cx, shape.cy - shape.radius + 18, group.name ? `#${shortLabel(group.name, 22)}` : "",
+      `graph-group-label${lit ? "" : " is-dim"}`);
+    groupLayer.appendChild(label);
+    refs.groups.push({ circle, label, group });
+  });
+  world.appendChild(groupLayer);
 
   const edgeLayer = svgEl("g", {}, "graph-edges");
-  layout.captures.forEach((c) => {
-    c.entities.forEach((n) => {
-      const p = layout.pos.get(n);
-      if (!p) return;
-      const lit = litCaptures.has(c.node_id) && litEntities.has(n);
-      const line = svgEl("line", { x1: c.x, y1: c.y, x2: p.x, y2: p.y },
-        `graph-link${lit ? " is-lit" : ""}${focus && !lit ? " is-dim" : ""}`);
-      refs.links.push({ line, c, n });
-      edgeLayer.appendChild(line);
-    });
-  });
   layout.edges.forEach((e) => {
     const a = layout.pos.get(e.a);
     const b = layout.pos.get(e.b);
-    const lit = lenses.size ? litEntities.has(e.a) && litEntities.has(e.b) : e.a === selected || e.b === selected;
+    const lit = focus && keyLit(e.a) && keyLit(e.b);
     const line = svgEl("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y },
-      `graph-edge${lit ? " is-lit" : ""}${focus && !lit ? " is-dim" : ""}`);
-    line.style.strokeWidth = String(1 + Math.min(e.weight, 5) * 1.1);
-    refs.edges.push({ line, a: e.a, b: e.b });
+      `graph-link${lit ? " is-lit" : ""}${focus && !lit ? " is-dim" : ""}`);
+    refs.links.push({ line, a: e.a, b: e.b });
+    edgeLayer.appendChild(line);
+  });
+  // Local relations: a dashed line between two captures whose text is alike.
+  layout.similar.forEach((e) => {
+    const a = layout.pos.get(e.a);
+    const b = layout.pos.get(e.b);
+    const line = svgEl("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y }, `graph-similar${focus ? " is-dim" : ""}`);
+    refs.similar.push({ line, a: e.a, b: e.b });
     edgeLayer.appendChild(line);
   });
   world.appendChild(edgeLayer);
 
-  // Local relations: a dashed line between two captures whose text is alike.
-  const placed = new Map(layout.captures.map((c) => [c.node_id, c]));
-  (data.similar || []).forEach((pair) => {
-    const a = placed.get(pair.a);
-    const b = placed.get(pair.b);
-    if (!a || !b) return;
-    const line = svgEl("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y }, `graph-similar${focus ? " is-dim" : ""}`);
-    refs.similar.push({ line, a, b });
-    edgeLayer.appendChild(line);
-  });
-
   layout.captures.forEach((c) => {
+    const key = `c:${c.node_id}`;
+    const p = layout.pos.get(key);
     const lit = !focus || litCaptures.has(c.node_id);
     const waiting = c.state === "ready_undistilled";
-    const mark = svgEl("rect", { x: c.x - 4, y: c.y - 4, width: 8, height: 8, rx: 2 },
-      `graph-capture${waiting ? " is-waiting" : ""}${lit ? "" : " is-dim"}`);
-    const title = svgEl("title");
-    title.textContent = c.title;
-    mark.appendChild(title);
-    refs.captures.push({ rect: mark, c });
-    world.appendChild(mark);
+    const group = svgEl("g", { tabindex: 0, role: "img", "aria-label": c.title },
+      `graph-cap${waiting ? " is-waiting" : ""}${lit ? "" : " is-dim"}`);
+    const body = svgEl("circle", { cx: p.x, cy: p.y, r: GRAPH_CAPTURE_R }, "graph-cap-body");
+    const label = svgText(p.x, p.y + GRAPH_CAPTURE_R + 14, shortLabel(c.title, 18), "graph-cap-label");
+    group.appendChild(body);
+    group.appendChild(label);
+    group.dataset.key = `capture:${c.node_id}`;
+    const tip = () => showGraphTip(body, c.title, waiting
+      ? t("graph.notSummarised", "Not summarised yet")
+      : c.entities.length
+        ? t("graph.names", `Names ${c.entities.slice(0, 6).join(", ")}`,
+          { names: c.entities.slice(0, 6).join(t("list.sep", ", ")) })
+        : "");
+    group.addEventListener("pointerenter", tip);
+    group.addEventListener("focus", tip);
+    group.addEventListener("pointerleave", hideGraphTip);
+    group.addEventListener("blur", hideGraphTip);
+    refs.nodes.set(key, { body, label, r: GRAPH_CAPTURE_R });
+    world.appendChild(group);
   });
 
   data.entities.forEach((entity) => {
-    const p = layout.pos.get(entity.name);
-    const r = Math.min(28, 9 + (count.get(entity.name) || 1) * 2.6);
+    if (!layout.hubs.has(entity.name)) return;
+    const key = `e:${entity.name}`;
+    const p = layout.pos.get(key);
+    const r = layout.r.get(key);
     const lit = !focus || litEntities.has(entity.name);
     const group = svgEl("g", { tabindex: 0, role: "button", "aria-pressed": entity.name === selected ? "true" : "false",
       "aria-label": t("graph.entityLabel", `${entity.name}, in ${entity.count} captures`, { name: entity.name, n: entity.count }) },
     `graph-entity${entity.name === selected ? " is-selected" : ""}${lit ? "" : " is-dim"}`);
     const body = svgEl("circle", { cx: p.x, cy: p.y, r }, "graph-entity-body");
-    const label = svgText(p.x, p.y + r + 16, shortLabel(entity.name, 16), "graph-entity-label");
+    const label = svgText(p.x, p.y + r + 16, shortLabel(entity.name, 18), "graph-entity-label");
     group.appendChild(body);
     group.appendChild(label);
-    refs.entities.set(entity.name, { body, label, r });
+    refs.nodes.set(key, { body, label, r });
     group.dataset.key = `entity:${entity.name}`;
+    const tip = () => showGraphTip(body, entity.name,
+      t("graph.entityCount", `Named by ${count.get(entity.name)} captures here`, { n: count.get(entity.name) }));
+    group.addEventListener("pointerenter", tip);
+    group.addEventListener("focus", tip);
+    group.addEventListener("pointerleave", hideGraphTip);
+    group.addEventListener("blur", hideGraphTip);
     const pick = () => {
       // The click that ends a drag is not a pick.
       if (graphDrag.suppress) return;
@@ -14525,8 +14785,8 @@ function drawGraph() {
   });
   applyGraphCamera();
 
-  if (!data.entities.length) {
-    showGraphEmpty(data.captures.length || data.undistilled.length
+  if (!data.entities.length && !layout.captures.length) {
+    showGraphEmpty(data.undistilled.length
       ? t("graph.noEntities", "Nothing here names an entity yet. Summarising is what finds them.")
       : t("graph.nothingFiled", "Nothing in this orbit came through the Horizon, so there is nothing to draw yet. The columns have its sources."));
   } else {
@@ -14595,33 +14855,17 @@ function graphHome() {
   drawGraph();
 }
 
-//: A capture sits among the entities it names; after they move it moves with them, by the offset it
-//: had from their centre when the layout placed it.
-function followCaptures(layout) {
-  layout.captures.forEach((c) => {
-    const points = c.entities.map((n) => layout.pos.get(n)).filter(Boolean);
-    if (!points.length) return;
-    if (!c.offset) {
-      const cx0 = points.reduce((sum, p) => sum + p.x, 0) / points.length;
-      const cy0 = points.reduce((sum, p) => sum + p.y, 0) / points.length;
-      c.offset = { x: c.x - cx0, y: c.y - cy0 };
-      return;
-    }
-    c.x = points.reduce((sum, p) => sum + p.x, 0) / points.length + c.offset.x;
-    c.y = points.reduce((sum, p) => sum + p.y, 0) / points.length + c.offset.y;
-  });
-}
-
 function paintGraphGeometry() {
   const refs = graphState.refs;
-  const pos = graphState.layout.pos;
+  const layout = graphState.layout;
   if (!refs) return;
-  refs.entities.forEach(({ body, label, r }, name) => {
-    const p = pos.get(name);
+  const pos = layout.pos;
+  refs.nodes.forEach(({ body, label, r }, key) => {
+    const p = pos.get(key);
     body.setAttribute("cx", p.x);
     body.setAttribute("cy", p.y);
     label.setAttribute("x", p.x);
-    label.setAttribute("y", p.y + r + 16);
+    label.setAttribute("y", p.y + r + (key.startsWith("c:") ? 14 : 16));
   });
   const line = (el, a, b) => {
     el.setAttribute("x1", a.x);
@@ -14629,12 +14873,15 @@ function paintGraphGeometry() {
     el.setAttribute("x2", b.x);
     el.setAttribute("y2", b.y);
   };
-  refs.edges.forEach(({ line: el, a, b }) => line(el, pos.get(a), pos.get(b)));
-  refs.links.forEach(({ line: el, c, n }) => line(el, c, pos.get(n)));
-  refs.similar.forEach(({ line: el, a, b }) => line(el, a, b));
-  refs.captures.forEach(({ rect, c }) => {
-    rect.setAttribute("x", c.x - 4);
-    rect.setAttribute("y", c.y - 4);
+  refs.links.forEach(({ line: el, a, b }) => line(el, pos.get(a), pos.get(b)));
+  refs.similar.forEach(({ line: el, a, b }) => line(el, pos.get(a), pos.get(b)));
+  refs.groups.forEach(({ circle, label, group }) => {
+    const shape = graphGroupCircle(group, layout);
+    circle.setAttribute("cx", shape.cx);
+    circle.setAttribute("cy", shape.cy);
+    circle.setAttribute("r", shape.radius);
+    label.setAttribute("x", shape.cx);
+    label.setAttribute("y", shape.cy - shape.radius + 18);
   });
 }
 
@@ -14660,7 +14907,6 @@ function relaxNeighbours(ease) {
     pos.set(other, { x: p.x + step.x, y: p.y + step.y });
   });
   moving = Math.max(moving, separateNodes(name));
-  followCaptures(graphState.layout);
   return moving;
 }
 
@@ -14668,7 +14914,7 @@ function relaxNeighbours(ease) {
 //: apart, and the one being dragged never moves for it.
 function separateNodes(held) {
   const pos = graphState.layout.pos;
-  const radius = (key) => (graphState.refs && graphState.refs.entities.get(key)?.r) || 12;
+  const radius = (key) => graphState.layout.r.get(key) || 8;
   const keys = [...pos.keys()];
   let pushed = 0;
   for (let i = 0; i < keys.length; i += 1) {
@@ -14730,11 +14976,14 @@ function initGraphCamera() {
   svg.addEventListener("pointerdown", (event) => {
     if (event.button !== 0 || !graphState.layout) return;
     event.preventDefault();
-    const node = event.target.closest(".graph-entity");
+    const node = event.target.closest(".graph-entity, .graph-cap");
     graphDrag.id = event.pointerId;
     graphDrag.start = { cx: event.clientX, cy: event.clientY, x: graphCam.x, y: graphCam.y };
     graphDrag.moved = false;
-    graphDrag.name = node ? node.dataset.key.slice("entity:".length) : null;
+    // The layout keys nodes as `e:<entity>` and `c:<capture id>`; the element's key names which.
+    graphDrag.name = node
+      ? (node.dataset.key.startsWith("entity:") ? `e:${node.dataset.key.slice(7)}` : `c:${node.dataset.key.slice(8)}`)
+      : null;
   });
   svg.addEventListener("pointermove", (event) => {
     if (graphDrag.id !== event.pointerId || !graphDrag.start) return;
@@ -14748,7 +14997,7 @@ function initGraphCamera() {
       if (graphDrag.name) {
         graphDrag.from = new Map([...graphState.layout.pos].map(([key, p]) => [key, { ...p }]));
         graphDrag.weights = dragWeights(graphDrag.name, graphState.layout.edges);
-        followCaptures(graphState.layout);
+        hideGraphTip();
       }
     }
     if (graphDrag.name) {
@@ -14773,7 +15022,7 @@ function initGraphCamera() {
     if (!graphDrag.moved) {
       // A click on empty space, not the end of a pan, lets go of the entity or tags picked, the
       // way a click on the star map's empty space closes its card.
-      if (event.type === "pointerup" && !graphDrag.name && !event.target.closest(".graph-entity")
+      if (event.type === "pointerup" && !graphDrag.name && !event.target.closest(".graph-entity, .graph-cap")
         && (graphState.selected || graphState.lenses.size)) {
         graphState.selected = null;
         graphState.lenses = new Set();
@@ -14888,14 +15137,19 @@ function renderGraphPanel(litCaptures) {
     panel.appendChild(merged);
   }
   panel.appendChild(elt("p", "card-meta", t("graph.inCaptures", `${items.length} captures`, { n: items.length })));
-  if ((data.similar || []).length && !graphState.lenses.size && !graphState.selected) {
-    panel.appendChild(elt("p", "card-note", t("graph.similarNote",
-      "Dashed lines join captures with similar content, compared on this computer. Hollow squares are not summarised yet.")));
-  }
-  const left = (data.omitted && data.omitted.entities) || 0;
-  if (left && !graphState.lenses.size && !graphState.selected) {
-    panel.appendChild(elt("p", "card-note", t("graph.omitted",
-      `${left} less-named entities are not drawn.`, { n: left })));
+  if (!graphState.lenses.size && !graphState.selected) {
+    // How to read it, once, where the orbit is described: the drawing has no legend of its own.
+    panel.appendChild(elt("p", "card-note", t("graph.legend",
+      "Small dots are captures. A larger circle is an entity several of them name, larger for more; a faint region is a group that hangs together.")));
+    if ((data.similar || []).length) {
+      panel.appendChild(elt("p", "card-note", t("graph.similarNote",
+        "Dashed lines join captures with similar content, compared on this computer. Hollow dots are not summarised yet.")));
+    }
+    const left = data.entities.length - layout.hubs.size + ((data.omitted && data.omitted.entities) || 0);
+    if (left > 0) {
+      panel.appendChild(elt("p", "card-note", t("graph.omitted",
+        `${left} entities named by only one capture are not drawn; pointing at a capture lists them.`, { n: left })));
+    }
   }
   if (near.length) {
     panel.appendChild(elt("p", "card-kicker", graphState.lenses.size || !graphState.selected

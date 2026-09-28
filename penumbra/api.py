@@ -149,6 +149,8 @@ from .config import (
     max_trace_files,
     max_upload_bytes,
     output_language,
+    reader_language,
+    remember_reader_language,
     settings_state,
     setup,
     trace_retention_seconds,
@@ -407,7 +409,24 @@ async def _require_api_token(request: Request, call_next):
             },
             headers={"WWW-Authenticate": "Bearer"},
         )
+    _note_reader_language(request.headers.get("x-penumbra-interface-language"))
     return await call_next(request)
+
+
+#: The last interface language recorded, so a request that carries the same one costs no disk read.
+_READER_LANGUAGE: dict[str, str] = {"last": ""}
+
+
+def _note_reader_language(name: str | None) -> None:
+    """What an unset output language follows off-request (`config.reader_language`)."""
+    if not name or name == _READER_LANGUAGE["last"]:
+        return
+    try:
+        remember_reader_language(name)
+    except OSError:
+        _log.warning("could not record the interface language %r", name)
+        return
+    _READER_LANGUAGE["last"] = name
 
 #: In-flight runs, keyed by orbit id — a SINGLE-PROCESS in-memory map, and ONE SLOT per
 #: orbit id. Two known, documented limitations (AGENTS.md invariant 23), neither a silent bug:
@@ -3408,7 +3427,7 @@ def _organize_round(language: str = "") -> bool:
             {
                 "captures": json.dumps(captures, ensure_ascii=False),
                 "orbits": json.dumps(organize.orbit_listing(titles, held), ensure_ascii=False),
-                "language": output_language() or language,
+                "language": output_language() or language or reader_language() or "",
                 "max_new_orbits": organize.MAX_NEW_ORBITS,
             },
             "horizon-organize",
@@ -3684,6 +3703,9 @@ def _auto_distil_after_intake() -> None:
         distill.distil_pending(
             limit=total,
             base_dir=queue.base_dir,
+            # No request here, so an unset output language follows the interface language the
+            # reader last used (`config.reader_language`); `output_language()` still wins inside.
+            language=reader_language() or "",
             should_stop=should_stop,
             on_node=tick,
             on_error=failed,
@@ -4204,7 +4226,7 @@ async def distil_horizon(body: DistilRequest, request: Request) -> dict:
     # Invariant 69's signal, from the one place that HAS it. `distil_pending` deliberately does not
     # resolve a language itself — it runs with no request — so the caller that does supplies it
     # (invariant 80's shortened ladder). `output_language()` still outranks this inside the pass.
-    language = request.headers.get("x-penumbra-interface-language", "")
+    language = request.headers.get("x-penumbra-interface-language", "") or reader_language() or ""
 
     node_ids: list[str] | None = None
     if body.node_ids is not None:

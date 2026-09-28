@@ -7446,31 +7446,65 @@ body.is-resizing .orbit-graph {
   width: 100%;
 }
 
-.graph-edge {
-  stroke: var(--border-strong);
-  opacity: 0.7;
-}
-
 .graph-link {
-  stroke: var(--border);
+  stroke: var(--border-strong);
   stroke-width: 1;
+  opacity: 0.8;
 }
 
-.graph-edge.is-lit,
 .graph-link.is-lit {
   stroke: var(--accent);
-  opacity: 0.9;
+  stroke-width: 1.6;
+  opacity: 0.95;
 }
 
-.graph-edge.is-dim,
 .graph-link.is-dim,
-.graph-capture.is-dim,
-.graph-entity.is-dim {
-  opacity: 0.32;
+.graph-cap.is-dim,
+.graph-entity.is-dim,
+.graph-group.is-dim,
+.graph-group-label.is-dim {
+  opacity: 0.3;
 }
 
-.graph-capture {
+/* A group that hangs together: a faint region, named by its commonest tag. */
+.graph-group {
+  fill: color-mix(in oklch, var(--accent) 6%, transparent);
+  stroke: color-mix(in oklch, var(--accent) 22%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 2 5;
+  pointer-events: none;
+}
+
+.graph-group-label {
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0.02em;
   fill: var(--text-dim);
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.graph-cap {
+  outline: none;
+}
+
+.graph-cap-body {
+  fill: var(--text-dim);
+  stroke: var(--bg);
+  stroke-width: 1.5;
+}
+
+.graph-cap:hover .graph-cap-body,
+.graph-cap:focus-visible .graph-cap-body {
+  fill: var(--text);
+}
+
+.graph-cap-label {
+  font-family: var(--sans);
+  font-size: 11px;
+  fill: var(--text-faint);
+  text-anchor: middle;
+  pointer-events: none;
 }
 
 .graph-entity {
@@ -7740,7 +7774,7 @@ body.is-resizing .orbit-graph {
   opacity: 0.25;
 }
 
-.graph-capture.is-waiting {
+.graph-cap.is-waiting .graph-cap-body {
   fill: none;
   stroke: var(--text-dim);
   stroke-width: 1.4;
@@ -9487,13 +9521,15 @@ body:not([data-view="horizon"]) .capture-dock {
   touch-action: none;
 }
 
-.graph-svg .graph-entity {
+.graph-svg .graph-entity,
+.graph-svg .graph-cap {
   cursor: grab;
 }
 
 .graph-svg.is-panning,
 .graph-svg.is-dragging,
-.graph-svg.is-dragging .graph-entity {
+.graph-svg.is-dragging .graph-entity,
+.graph-svg.is-dragging .graph-cap {
   cursor: grabbing;
 }
 

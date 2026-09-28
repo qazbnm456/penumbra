@@ -1551,20 +1551,23 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
   },
 
   //: The knowledge graph's layout, run on a small orbit twice: it must be deterministic (the same
-  //: orbit draws the same picture), keep every entity on the stage, frame what it drew no tighter
-  //: than the minimum, and put a capture beside the entities it names.
+  //: orbit draws the same picture), frame what it drew no tighter than the minimum, draw only the
+  //: entities two or more captures name, keep a capture beside its hubs, group captures that share
+  //: one, and leave no two nodes on top of each other.
   graphLayout() {
-    const run = new Function(
-      `${extract("stableHash")}\n${extract("layoutGraph")}\nreturn { layoutGraph };`
-    )();
+    const consts = src.match(/const GRAPH_HUB_MIN = [^;]*;\nconst GRAPH_CAPTURE_R = [^;]*;/)[0];
+    const names = ["stableHash", "shortLabel", "graphHubRadius", "graphGroups", "graphLabelWidth",
+      "graphUntangle", "graphSeparateGroups", "graphGroupCircle", "layoutGraph"];
+    const run = new Function(`${consts}\n${names.map(extract).join("\n")}\nreturn { layoutGraph };`)();
     const data = {
       entities: [
-        { name: "REM", count: 3 }, { name: "memory", count: 2 }, { name: "Walker", count: 1 },
+        { name: "REM", count: 2 }, { name: "memory", count: 2 }, { name: "Walker", count: 1 },
         { name: "caffeine", count: 1 },
       ],
       edges: [{ a: "REM", b: "memory", weight: 2 }, { a: "REM", b: "Walker", weight: 1 }],
       captures: [
-        { node_id: "nd-1", title: "a", origin: "x", state: "ready", entities: ["REM", "memory"], tags: [] },
+        { node_id: "nd-1", title: "a", origin: "x", state: "ready", entities: ["REM", "memory", "Walker"], tags: ["sleep"] },
+        { node_id: "nd-3", title: "c", origin: "z", state: "ready", entities: ["REM", "memory", "caffeine"], tags: ["sleep"] },
         { node_id: "nd-2", title: "b", origin: "y", state: "ready", entities: [], tags: [] },
       ],
       tags: [], undistilled: [],
@@ -1572,17 +1575,22 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     const one = run.layoutGraph(data);
     const two = run.layoutGraph(data);
     const pts = [...one.pos.values()];
-    const rem = one.pos.get("REM");
-    const memory = one.pos.get("memory");
-    const c = one.captures[0];
-    const mid = { x: (rem.x + memory.x) / 2, y: (rem.y + memory.y) / 2 };
+    const at = (k) => one.pos.get(k);
+    let apart = true;
+    for (let i = 0; i < pts.length; i += 1) {
+      for (let j = i + 1; j < pts.length; j += 1) {
+        if (Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y) < 20) apart = false;
+      }
+    }
+    const groupOf = (id) => one.groups.findIndex((g) => g.ids.includes(id));
     return {
       same: JSON.stringify([...one.pos.entries()]) === JSON.stringify([...two.pos.entries()]),
-      inside: pts.every((p) => p.x >= 60 && p.x <= 940 && p.y >= 50 && p.y <= 640),
       box: one.box,
-      captureNearAnchors: Math.hypot(c.x - mid.x, c.y - mid.y) <= 60,
-      linkedCloser: Math.hypot(rem.x - memory.x, rem.y - memory.y)
-        < Math.hypot(one.pos.get("caffeine").x - rem.x, one.pos.get("caffeine").y - rem.y),
+      drawn: [...one.pos.keys()].filter((k) => k.startsWith("e:")).sort(),
+      captureNearHub: Math.hypot(at("c:nd-1").x - at("e:REM").x, at("c:nd-1").y - at("e:REM").y) <= 140,
+      grouped: groupOf("nd-1") === groupOf("nd-3") && groupOf("nd-2") !== groupOf("nd-1"),
+      groupName: one.groups[groupOf("nd-1")].name,
+      apart,
     };
   },
 
