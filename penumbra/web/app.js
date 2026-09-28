@@ -2617,7 +2617,10 @@ const OVER_QUOTA = /RateLimitError|insufficient_quota|rate.?limit|\b429\b/i;
 //: every router error, so a `max_tokens` refusal rendered as "your provider has no model called
 //: gpt-4o-mini" - sending the reader to pick another OpenAI model, which fails identically, while
 //: the Horizon strip on the same page correctly blamed the key.
-const NO_SUCH_MODEL = /NotFoundError|model_not_found/;
+//: `(?<!Module)`: Python's `ModuleNotFoundError` ends in the same word, and a desktop runtime
+//: missing a package (mid-rebuild) was reported as the provider having no such model.
+const NO_SUCH_MODEL = /(?<!Module)NotFoundError|model_not_found/;
+const MISSING_PACKAGE = /ModuleNotFoundError: No module named '([\w.]+)'/;
 //: Two refusals about SIZE, which are different problems with different actions: the reply this
 //: build asked for is longer than the model will produce, and the sources are longer than it can
 //: read. The first names `PN_MAX_TOKENS` because that is the lever.
@@ -2855,6 +2858,12 @@ function readableError(text) {
   }
   if (fromProvider && OVER_QUOTA.test(raw)) {
     return t("err.overQuota", "The model provider refused: rate limit or quota. Wait and try again, or check your plan.");
+  }
+  const missing = raw.match(MISSING_PACKAGE);
+  if (missing) {
+    return t("err.missingPackage",
+      `Penumbra's own Python could not load ${missing[1]}. Quit and reopen the app; if it happens again, reinstall it.`,
+      { name: missing[1] });
   }
   if (fromProvider && NO_SUCH_MODEL.test(raw)) {
     return withShellHint(model

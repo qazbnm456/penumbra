@@ -3470,3 +3470,17 @@ def test_the_star_maps_frame_loop_never_moves_a_node():
         if name == "stepSky":
             moves = [m for m in moves if m != "append("]  # it removes finished weather, nothing more
         assert not moves, f"{name} moves nodes every frame: {moves}"
+
+
+def test_the_capture_field_and_progress_strip_are_never_hidden_on_the_map():
+    """A rule hiding the failure line on the map was written as the last selector of the list that
+    sizes the capture field and the progress strip, so it hid those too: the capture drawer opened
+    empty and a summary pass showed no progress. No rule that hides may name them."""
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    for selectors, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+        if "display: none" not in body:
+            continue
+        names = [s.strip() for s in selectors.split(",")]
+        for guarded in (".view-horizon.is-map .capture", ".view-horizon.is-map .intake-strip"):
+            assert guarded not in names, f"{guarded} is hidden by `{selectors.strip()}`"

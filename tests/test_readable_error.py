@@ -436,3 +436,13 @@ def test_a_missing_claude_code_says_what_to_install_not_how_to_edit_path():
     )
     (cleaned,) = _clean(raw)
     assert "Install Claude Code" in cleaned and "npm" not in cleaned and "PATH" not in cleaned, cleaned
+
+
+def test_a_missing_package_is_not_reported_as_a_missing_model():
+    """`ModuleNotFoundError` ends in `NotFoundError`, which is how litellm names a model the provider
+    does not have; a desktop runtime missing a package mid-rebuild was told to check PN_MAIN_MODEL."""
+    (cleaned,) = _clean(
+        "RuntimeError: server misconfigured - caused by ModuleNotFoundError: No module named 'litellm'",
+    )
+    assert "litellm" in cleaned
+    assert "PN_MAIN_MODEL" not in cleaned

@@ -462,6 +462,7 @@ const STRINGS = {
     "err.overQuota": "模型供應商拒絕了請求：超過頻率或額度上限。等一下再試，或檢查你的方案。",
     "err.noSuchModel": "你的供應商沒有叫做 {model} 的模型。請檢查 PN_MAIN_MODEL 並重新啟動伺服器。",
     "err.noSuchModelPlain": "你的供應商沒有這個模型。請檢查 PN_MAIN_MODEL 並重新啟動伺服器。",
+    "err.missingPackage": "Penumbra 內建的 Python 載入不了 {name}。請結束並重新開啟應用程式；如果再發生，請重新安裝。",
     // 別人的網站回的狀態碼，不是模型供應商的問題。403 從供應商來是金鑰被拒，從網頁來是那一頁不讓人讀，
     // 而「抓不到的頁面」本來就是收東西最常見的失敗。翻成它的意思，不要把數字丟給讀者。
     "err.pageRefused": "這一頁不讓我們讀。可能需要登入，或是它擋自動抓取。",

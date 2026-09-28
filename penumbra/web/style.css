@@ -7249,9 +7249,17 @@ body[data-view="horizon"] .orbit-picker {
 .view-horizon.is-map .capture,
 .view-horizon.is-map .capture-hint,
 .view-horizon.is-map .capture-note,
-.view-horizon.is-map .intake-strip,
+.view-horizon.is-map .intake-strip {
+  width: 100%;
+  max-width: var(--ib-measure);
+  margin-left: auto;
+  margin-right: auto;
+  box-sizing: border-box;
+}
+
 /* On the map a failure is a section of the waiting card (`renderHorizonTodo`), not a bar under the
-   map, which squeezed it. */
+   map, which squeezed it. A rule of its own: written as the last line of the list above, it hid
+   the capture field and the progress strip on the map along with it. */
 .view-horizon.is-map #distil-error {
   display: none;
 }
