@@ -9064,7 +9064,9 @@ function failureGroupView(group) {
   const box = elt("div", "distil-fail-group");
   const head = elt("div", "distil-fail-head");
   head.appendChild(elt("span", "distil-fail-cause", group.label));
-  head.appendChild(elt("span", "todo-count", String(group.items.length)));
+  // Said in words: a bare number beside a cause read as a code, not as how many it hit.
+  head.appendChild(elt("span", "distil-fail-count",
+    t("horizon.failItems", `${group.items.length} affected`, { n: group.items.length })));
   box.appendChild(head);
   if (group.hint) box.appendChild(elt("p", "distil-fail-hint", group.hint));
   const names = (items) => {
@@ -9110,8 +9112,24 @@ async function retryFailedSummaries(ids, button) {
   await pollIntake();
 }
 
+//: Whether there is a failure to show: a pass that lost captures or could not start, or alignment
+//: or organising that failed. The waiting card counts it as a to-do.
+function distilTrouble() {
+  const distil = horizonState.distil || {};
+  if (distil.running) return false;
+  return Boolean(Number(distil.failed || 0) || distil.error || (horizonState.align && horizonState.align.error)
+    || (horizonState.organize && horizonState.organize.error));
+}
+
+//: The list shows failures in their own line above the stream; the map shows them as a section of
+//: its waiting card instead, where every other to-do is, rather than as a bar under the map that
+//: squeezed it.
 function renderDistilError() {
-  const errline = horizonEl("distil-error");
+  fillDistilError(horizonEl("distil-error"));
+  if (viewIsHorizon() && viewMode("horizon") === "map") renderStarMapCard();
+}
+
+function fillDistilError(errline) {
   const distil = horizonState.distil || {};
   const failed = Number(distil.failed || 0);
   const alignError = (horizonState.align && horizonState.align.error) || "";
@@ -13688,7 +13706,7 @@ async function fileCapture(nodeId, orbitId, control) {
 function horizonTodoCount() {
   const loose = (starMap.data && starMap.data.loose && starMap.data.loose.count) || 0;
   const running = Boolean(horizonState.distil && horizonState.distil.running);
-  return loose + suggest.items.length + (running ? 0 : horizonState.undistilled || 0);
+  return loose + suggest.items.length + (running ? 0 : horizonState.undistilled || 0) + (distilTrouble() ? 1 : 0);
 }
 
 function renderHorizonCard(card, { standing = false } = {}) {
@@ -13746,13 +13764,20 @@ function renderHorizonTodo(card, loose) {
   if (loose.count) {
     section(t("map.todoLoose", "Not in an orbit"), loose.count);
     card.appendChild(elt("p", "card-note", t("map.looseHelp", "File each into an orbit here, or drag its dot onto a planet.")));
-    const list = elt("ul", "card-list todo-list");
     const shown = (loose.items || []).slice(0, TODO_SHOWN);
+    // Automatic filing looked at these and left them: without saying so, a capture that stays put
+    // under automatic filing looks like one it forgot.
+    if (shown.some((item) => suggest.left.has(item.id))) {
+      card.appendChild(elt("p", "card-note todo-why", t("map.todoLeftWhy",
+        "Automatic filing has looked at the ones marked \u201cwaiting for a second\u201d: no orbit fits them and nothing else here shares their subject yet. The orbit opens when a second capture on the subject arrives, or file one yourself now.")));
+    }
+    const list = elt("ul", "card-list todo-list");
     shown.forEach((item) => {
       const row = elt("li", "card-row is-filing");
       const name = elt("button", "card-row-title", captureName(item.title));
       name.type = "button";
       name.addEventListener("click", () => openMapFocus({ kind: "capture", ...item, orbit: null }));
+      if (suggest.left.has(item.id)) name.appendChild(elt("span", "todo-tag", t("map.todoLeftTag", "waiting for a second")));
       row.appendChild(name);
       row.appendChild(filePicker(item.id));
       list.appendChild(row);
@@ -13800,6 +13825,12 @@ function renderHorizonTodo(card, loose) {
     run.type = "button";
     run.addEventListener("click", () => horizonEl("distil-btn").click());
     card.appendChild(run);
+  }
+  if (distilTrouble()) {
+    section(t("map.todoFailed", "Did not work"), Number((horizonState.distil || {}).failed || 0) || 1);
+    const box = elt("div", "distil-error in-card");
+    fillDistilError(box);
+    card.appendChild(box);
   }
 }
 
@@ -14368,7 +14399,7 @@ function distilOrbitControl(slug, count) {
 // --- filing suggestions ---------------------------------------------------------------------------
 
 //: `autoSeq` is the last automatic filing already announced; null until the first answer sets it.
-const suggest = { items: [], open: false, lastFetch: 0, inFlight: false, again: false, autoSeq: null };
+const suggest = { items: [], open: false, lastFetch: 0, inFlight: false, again: false, autoSeq: null, left: new Set() };
 
 async function ensureOrbitTitles() {
   if (orbitTitles.size) return;
@@ -14407,6 +14438,7 @@ async function refreshSuggestions({ force = false } = {}) {
   }
   await ensureOrbitTitles();
   suggest.items = data.suggestions || [];
+  suggest.left = new Set(data.organize_left || []);
   renderSuggestions();
   announceAutoFiled(data);
 }

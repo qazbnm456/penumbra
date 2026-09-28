@@ -7250,12 +7250,36 @@ body[data-view="horizon"] .orbit-picker {
 .view-horizon.is-map .capture-hint,
 .view-horizon.is-map .capture-note,
 .view-horizon.is-map .intake-strip,
-.view-horizon.is-map .distil-error {
-  width: 100%;
-  max-width: var(--ib-measure);
-  margin-left: auto;
-  margin-right: auto;
-  box-sizing: border-box;
+/* On the map a failure is a section of the waiting card (`renderHorizonTodo`), not a bar under the
+   map, which squeezed it. */
+.view-horizon.is-map #distil-error {
+  display: none;
+}
+
+.distil-error.in-card {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+}
+
+.distil-fail-count {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* Why automatic filing left some captures where they are. */
+.todo-why {
+  color: var(--text-dim);
+}
+
+.todo-tag {
+  margin-left: var(--space-2);
+  padding: 0 var(--space-2);
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  white-space: nowrap;
 }
 
 /* On the map the note sits under the legend, so it takes the legend's line and width rather than

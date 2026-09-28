@@ -4977,7 +4977,14 @@ async def filing_suggestions(since: int = 0) -> dict:
     sequence number to ask from next time, so the workspace can announce each one once."""
     found = await asyncio.to_thread(_suggestions_cached)
     filed, seq = _auto_filed_since(since)
-    return {"suggestions": found, "count": len(found), "auto_filed": filed, "auto_seq": seq}
+    # The captures automatic organising looked at and left, because their subject is theirs alone
+    # (`organize.MIN_NEW_ORBIT`) or nothing fits: the waiting card says why they are still here.
+    with _DISTIL_GUARD:
+        left = sorted(_ORGANIZE["left"]) if filing_mode()[0] == "auto" else []
+    return {
+        "suggestions": found, "count": len(found), "auto_filed": filed, "auto_seq": seq,
+        "organize_left": left,
+    }
 
 
 #: Suggestions for a few seconds, computed by one caller at a time. Two pollers ask (the island every
