@@ -3128,6 +3128,10 @@ def _record_failure(node_id: str, exc: Exception) -> None:
     """Count a capture that failed in the running pass and keep its name and reason. The caller
     holds `_DISTIL_GUARD`."""
     reason = f"{type(exc).__name__}: {exc}"[:300]
+    # On the node as well: `_DISTIL` is process state, and after a restart the waiting card read the
+    # capture as merely unsummarised, with no word of why (`_stored_failures`).
+    with contextlib.suppress(Exception):
+        horizon.update_node(node_id, base_dir=_horizon_queue_base(), error=reason)
     _DISTIL["unreachable"] = int(_DISTIL["unreachable"]) + 1 if _is_connection_failure(reason) else 0
     _DISTIL["failed"] = int(_DISTIL["failed"]) + 1
     _DISTIL["error"] = reason
@@ -3373,9 +3377,9 @@ def _align_after_pass(base_dir) -> None:
 
 
 #: Organising's own visible state, beside alignment's (invariant 60). Guarded by `_DISTIL_GUARD`.
-#: `left` holds the captures the model saw and chose to leave, for the orbit set it saw them
-#: against, so they are not sent again at the end of every pass until a new orbit could take them.
-_ORGANIZE: dict[str, object] = {"running": False, "error": "", "left": set(), "orbits": frozenset()}
+#: The captures it looked at and left are kept in the Horizon's database (`organize.left_ids`), not
+#: here: process state was gone after a restart, and the waiting card with it.
+_ORGANIZE: dict[str, object] = {"running": False, "error": ""}
 
 
 #: Rounds one pass may organise in: a round that opened orbits is followed by another over what it
@@ -3412,10 +3416,8 @@ def _organize_round(language: str = "") -> bool:
     base = _horizon_queue().base_dir
     orbits, _unreadable = list_orbit_summaries()
     titles = {orb.id: orb.title or _fallback_name(orb.sources) for orb in orbits}
-    with _DISTIL_GUARD:
-        if _ORGANIZE["orbits"] != frozenset(titles):
-            _ORGANIZE.update({"left": set(), "orbits": frozenset(titles)})
-        skip = set(_ORGANIZE["left"])
+    signature = organize.orbit_signature(titles)
+    skip = organize.left_ids(signature, base_dir=base)
     captures, held = organize.gather(_landing_slug(), skip=skip, base_dir=base)
     if not captures:
         return False
@@ -3441,9 +3443,7 @@ def _organize_round(language: str = "") -> bool:
         )
         opened = _apply_organize_plan(plan, {c["id"]: c["title"] for c in captures}, base)
         placed = {capture for capture, _kind, _where in plan}
-        with _DISTIL_GUARD:
-            left = set(_ORGANIZE["left"]) | {c["id"] for c in captures if c["id"] not in placed}
-            _ORGANIZE["left"] = left
+        organize.remember_left({c["id"] for c in captures if c["id"] not in placed}, signature, base_dir=base)
         return opened > 0 and len(placed) < len(captures)
     except Exception as exc:  # noqa: BLE001 - reported on the page; the captures stay where they are
         with _DISTIL_GUARD:
@@ -4099,7 +4099,32 @@ async def horizon_status() -> dict:
     with _DISTIL_GUARD:
         align = {"running": bool(_ALIGN["running"]), "error": str(_ALIGN["error"])}
         organizing = {"running": bool(_ORGANIZE["running"]), "error": str(_ORGANIZE["error"])}
-    return {**_horizon_queue().status(), "distil": _distil_status(), "align": align, "organize": organizing}
+    distil = _distil_status()
+    if not distil["running"] and not distil["failures"]:
+        # Nothing from this process: what earlier ones recorded on the nodes, still waiting.
+        stored = await asyncio.to_thread(_stored_failures)
+        if stored:
+            distil = {**distil, "failures": stored, "failed": len(stored)}
+    return {**_horizon_queue().status(), "distil": distil, "align": align, "organize": organizing}
+
+
+def _stored_failures() -> list[dict]:
+    """Captures still unsummarised whose last attempt failed, with the reason recorded on them."""
+    with horizon._connect(_horizon_queue_base()) as conn:
+        rows = conn.execute(
+            "SELECT id, title, origin, preview, error FROM nodes WHERE state = 'ready_undistilled' "
+            "AND error IS NOT NULL AND error != '' ORDER BY updated_at DESC LIMIT ?",
+            (_DISTIL_FAILURES_KEPT,),
+        ).fetchall()
+    out = []
+    for row in rows:
+        try:
+            preview = json.loads(row["preview"] or "{}")
+        except ValueError:
+            preview = {}
+        title = row["title"] or (preview.get("title") if isinstance(preview, dict) else "") or row["origin"]
+        out.append({"id": row["id"], "title": title, "error": row["error"]})
+    return out
 
 
 @app.post("/horizon/cancel")
@@ -4216,7 +4241,14 @@ async def dismiss_distil_error() -> dict:
         # clears it until another alignment starts, which after a give-up may be never.
         _ALIGN["error"] = ""
         _ORGANIZE["error"] = ""
-        return {"dismissed": True, **_distil_snapshot()}
+        snapshot = _distil_snapshot()
+    # The reasons kept on the nodes are seen now too; the captures stay unsummarised and waiting.
+    def _forget() -> None:
+        for failure in _stored_failures():
+            horizon.update_node(failure["id"], base_dir=_horizon_queue_base(), error=None)
+
+    await asyncio.to_thread(_forget)
+    return {"dismissed": True, **snapshot}
 
 
 @app.post("/horizon/distil")
@@ -4969,6 +5001,12 @@ def _landing_slug() -> str | None:
     return slug(target) if mode == "assign" and target else None
 
 
+def _organize_left_now() -> set[str]:
+    orbits, _unreadable = list_orbit_summaries()
+    titles = {orb.id: orb.title or _fallback_name(orb.sources) for orb in orbits}
+    return organize.left_ids(organize.orbit_signature(titles), base_dir=_horizon_queue_base())
+
+
 @app.get("/horizon/suggestions")
 async def filing_suggestions(since: int = 0) -> dict:
     """Captures that probably belong in an orbit they are not in, by shared entities and tags.
@@ -4979,8 +5017,7 @@ async def filing_suggestions(since: int = 0) -> dict:
     filed, seq = _auto_filed_since(since)
     # The captures automatic organising looked at and left, because their subject is theirs alone
     # (`organize.MIN_NEW_ORBIT`) or nothing fits: the waiting card says why they are still here.
-    with _DISTIL_GUARD:
-        left = sorted(_ORGANIZE["left"]) if filing_mode()[0] == "auto" else []
+    left = sorted(await asyncio.to_thread(_organize_left_now)) if filing_mode()[0] == "auto" else []
     return {
         "suggestions": found, "count": len(found), "auto_filed": filed, "auto_seq": seq,
         "organize_left": left,

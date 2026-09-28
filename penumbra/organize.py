@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -201,6 +202,42 @@ def gather(
         if r["id"] not in filed and r["id"] not in skip
     ]
     return captures[:MAX_CAPTURES], dict(held)
+
+
+_LEFT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS organize_left (
+    node_id TEXT PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+    orbits  TEXT NOT NULL,
+    left_at REAL NOT NULL
+);
+"""
+
+
+def orbit_signature(orbits: dict[str, str]) -> str:
+    """The set of orbits a decision was made against. A capture left against one set is looked at
+    again once the set changes, since a new orbit may now take it."""
+    return "\u001f".join(sorted(orbits))
+
+
+def left_ids(signature: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> set[str]:
+    """The captures organising left against this set of orbits. Kept in the Horizon's database, so
+    the waiting card can still say why they wait after the server restarts."""
+    with horizon._connect(base_dir) as conn:
+        conn.executescript(_LEFT_SCHEMA)
+        rows = conn.execute("SELECT node_id FROM organize_left WHERE orbits = ?", (signature,)).fetchall()
+    return {r[0] for r in rows}
+
+
+def remember_left(ids: set[str], signature: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> None:
+    if not ids:
+        return
+    now = time.time()
+    with horizon._connect(base_dir) as conn:
+        conn.executescript(_LEFT_SCHEMA)
+        conn.executemany(
+            "INSERT OR REPLACE INTO organize_left (node_id, orbits, left_at) VALUES (?, ?, ?)",
+            [(node_id, signature, now) for node_id in ids],
+        )
 
 
 def orbit_listing(orbits: dict[str, str], held: dict[str, list[str]]) -> list[dict]:

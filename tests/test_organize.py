@@ -72,7 +72,7 @@ def _clean(monkeypatch):
     monkeypatch.setenv("PN_FILING_MODE", "auto")
     with api._DISTIL_GUARD:
         api._DISTIL.update({"running": False, "cancel": False, "unreachable": 0})
-        api._ORGANIZE.update({"running": False, "error": "", "left": set(), "orbits": frozenset()})
+        api._ORGANIZE.update({"running": False, "error": ""})
     yield
     if intake._SHARED is not None:
         intake._SHARED.stop(timeout=5)
@@ -234,3 +234,33 @@ def test_what_was_left_goes_again_when_something_new_arrives(client, monkeypatch
     b = _summarised(client, "zettelkasten", ["Notes"])
     api._organize_after_pass()
     assert len(seen) == 2 and a in seen[1]["captures"] and b in seen[1]["captures"]
+
+
+def test_what_was_left_is_remembered_across_a_restart(client, monkeypatch):
+    """The left set lives in the Horizon's database, so the waiting card can still say why a
+    capture waits after the server restarts (it was process state, and a restart erased it)."""
+    a = _summarised(client, "origami", ["Paper"])
+    _fake_model(monkeypatch, {"placements": [{"capture": a, "new_orbit": "Paper folding"}]})
+    api._organize_after_pass()
+    got = client.get("/horizon/suggestions").json()
+    assert got["organize_left"] == [a]
+    monkeypatch.setenv("PN_FILING_MODE", "manual")
+    assert client.get("/horizon/suggestions").json()["organize_left"] == [], "only automatic filing says so"
+
+
+def test_a_failed_summary_is_reported_after_a_restart_and_cleared_by_dismiss(client, monkeypatch):
+    node_id = client.post("/horizon", json={"texts": ["lighthouse"]}).json()["nodes"][0]["id"]
+    for _ in range(150):
+        if horizon.get_node(node_id).state == "ready_undistilled":
+            break
+        time.sleep(0.02)
+    with api._DISTIL_GUARD:
+        api._record_failure(node_id, RuntimeError("run timed out after 300s"))
+        # A restart: the process forgets everything it held.
+        api._DISTIL.update({"failed": 0, "error": "", "failures": [], "running": False})
+    distil = client.get("/horizon/status").json()["distil"]
+    assert distil["failed"] == 1 and distil["failures"][0]["id"] == node_id
+    assert "timed out" in distil["failures"][0]["error"]
+    assert client.post("/horizon/distil/dismiss").status_code == 200
+    assert client.get("/horizon/status").json()["distil"]["failures"] == []
+    assert horizon.get_node(node_id).state == "ready_undistilled", "dismissing forgets only the reason"

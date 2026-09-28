@@ -376,6 +376,9 @@ def distil_pending(
             node.id,
             base_dir=base_dir,
             state="ready",
+            # A summary that now exists clears the reason an earlier attempt failed (`api`
+            # records it on the node so the waiting card can say so after a restart).
+            error=None,
             title=result.title,
             summary=result.summary,
             tags=result.tags,
