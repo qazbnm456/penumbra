@@ -106,6 +106,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -167,7 +168,7 @@ from .orbit import (
     remove_source,
     slug,
 )
-from .parsers.web import FetchError, page_source, selection_source
+from .parsers.web import FetchError, page_source, selection_source, unwrap_url
 from .prose import polish
 from .schema import (
     FAQ,
@@ -4214,7 +4215,8 @@ async def capture_into_horizon(body: CaptureRequest, request: Request) -> dict:
     nodes = []
     try:
         for url in body.urls:
-            nodes.append(await asyncio.to_thread(queue.submit, url))
+            # A wrapper link (a platform's click-through page) is captured as its destination.
+            nodes.append(await asyncio.to_thread(queue.submit, unwrap_url(url)))
         for text in body.texts:
             if not text.strip():
                 continue
@@ -4297,6 +4299,9 @@ async def extension_capture(request: Request) -> dict:
         raise HTTPException(422, str(exc)) from exc
     if not is_url(body.url):
         raise HTTPException(422, "only web pages can be captured (http or https)")
+    if urllib.parse.urlsplit(body.url).netloc == request.url.netloc:
+        # Penumbra's own pages (the pairing page, the workspace) are not something to keep.
+        raise HTTPException(422, "this is one of Penumbra's own pages")
     target = None
     if body.orbit:
         target = (await asyncio.to_thread(_load_orbit_or_404, body.orbit)).id
@@ -4304,7 +4309,7 @@ async def extension_capture(request: Request) -> dict:
     queue = _horizon_queue()
 
     if body.kind == "link":
-        node = await asyncio.to_thread(queue.submit, body.url)
+        node = await asyncio.to_thread(queue.submit, unwrap_url(body.url))
         if target:
             with _FILE_ON_READY_LOCK:
                 _FILE_ON_READY[node.id] = target
@@ -4315,6 +4320,7 @@ async def extension_capture(request: Request) -> dict:
                     pending = _FILE_ON_READY.pop(node.id, None)
                 if pending:
                     await asyncio.to_thread(_file_under_cap, node.id, pending)
+        _remember_extension_capture(node.id)
         return {"node": node.model_dump(), "queued": True}
 
     def _store():
@@ -4335,8 +4341,88 @@ async def extension_capture(request: Request) -> dict:
         node, filed = await _abandonable(_store)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    _remember_extension_capture(node.id)
     queue.nudge()
     return {"node": node.model_dump(), "filed": filed}
+
+
+#: Captures the extension made, by node id, with when: its confirmation card can file one into an
+#: orbit or take it back, and only within `_EXTENSION_UNDO_SECONDS`, so a leaked capture key cannot
+#: reach anything it did not just add. In memory: a restart ends the window, which is fine for a
+#: card that closes after a few seconds.
+_EXTENSION_RECENT: dict[str, float] = {}
+_EXTENSION_RECENT_LOCK = threading.Lock()
+_EXTENSION_UNDO_SECONDS = 600
+
+
+def _remember_extension_capture(node_id: str) -> None:
+    now = time.monotonic()
+    with _EXTENSION_RECENT_LOCK:
+        for old in [k for k, at in _EXTENSION_RECENT.items() if now - at > _EXTENSION_UNDO_SECONDS]:
+            del _EXTENSION_RECENT[old]
+        _EXTENSION_RECENT[node_id] = now
+
+
+def _recent_extension_capture(node_id: str) -> bool:
+    with _EXTENSION_RECENT_LOCK:
+        at = _EXTENSION_RECENT.get(node_id)
+    return at is not None and time.monotonic() - at <= _EXTENSION_UNDO_SECONDS
+
+
+class ExtensionFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str = Field(max_length=100)
+    orbit: str = Field(min_length=1, max_length=200)
+
+
+class ExtensionUndo(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str = Field(max_length=100)
+
+
+@app.post("/extension/file")
+async def extension_file(body: ExtensionFile) -> dict:
+    """Capture key: file a capture the extension just made into an orbit, from its card. A link not
+    read yet is filed once it is."""
+    if not _recent_extension_capture(body.node_id):
+        raise HTTPException(404, "not a capture this browser just made")
+    target = (await asyncio.to_thread(_load_orbit_or_404, body.orbit)).id
+    node = await asyncio.to_thread(horizon.get_node, body.node_id)
+    if node is None:
+        raise HTTPException(404, "that capture is gone")
+    if node.state not in ("ready", "ready_undistilled"):
+        with _FILE_ON_READY_LOCK:
+            _FILE_ON_READY[body.node_id] = target
+        return {"filed": None, "orbit": target}
+    membership = await asyncio.to_thread(_file_under_cap, body.node_id, target)
+    return {"filed": membership is not None, "orbit": target}
+
+
+@app.post("/extension/undo")
+async def extension_undo(body: ExtensionUndo) -> dict:
+    """Capture key: take back a capture the extension just made, from its card: out of any orbit it
+    was filed into (unless an answer already cites it) and out of the Horizon."""
+    if not _recent_extension_capture(body.node_id):
+        raise HTTPException(404, "not a capture this browser just made")
+
+    def _undo() -> bool:
+        with _FILE_ON_READY_LOCK:
+            _FILE_ON_READY.pop(body.node_id, None)
+        for membership in horizon.memberships_for(body.node_id):
+            orbit = load_orbit(membership.orbit_id)
+            if orbit is None or _citations_of(orbit, membership.source_id):
+                continue
+            mutate_orbit(membership.orbit_id, lambda orb, sid=membership.source_id: remove_source(orb, sid))
+            _forget_removed_source(membership.orbit_id, membership.source_id)
+        return horizon.remove_node(body.node_id)
+
+    removed = await asyncio.to_thread(_undo)
+    with _EXTENSION_RECENT_LOCK:
+        _EXTENSION_RECENT.pop(body.node_id, None)
+    _forget_suggestions()
+    return {"removed": bool(removed)}
 
 
 #: The unpacked extension, shipped inside the package so the desktop app carries it too. Its path

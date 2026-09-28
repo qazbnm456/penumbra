@@ -175,7 +175,7 @@ def host_is_allowed(host_header: str | None) -> bool:
 #
 # The extension cannot read the launch token: it is minted per launch and handed only to the
 # shell's own windows. So pairing gives it a SECOND key, kept on disk so it survives restarts, and
-# scoped to capturing: it opens the three routes below and nothing else. A leaked capture key can
+# scoped to capturing: it opens the routes below and nothing else. A leaked capture key can
 # add captures and read the orbits' names; it cannot read a source, delete anything or change a
 # setting, which is what the full token can do (invariant 77).
 
@@ -184,6 +184,9 @@ CAPTURE_ROUTES = frozenset({
     ("GET", "/extension/status"),
     ("GET", "/extension/orbits"),
     ("POST", "/extension/capture"),
+    #: Both act only on a capture this key made in the last few minutes (`api._EXTENSION_RECENT`).
+    ("POST", "/extension/file"),
+    ("POST", "/extension/undo"),
 })
 
 _CAPTURE_TOKEN_FILE = ".capture-token"

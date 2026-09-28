@@ -8595,13 +8595,19 @@ function tidyPageTitle(title) {
   return decodeEntities(title).replace(/\s+[-\u2013\u2014|]\s*(?:Wikipedia|維基百科|维基百科)[^-\u2013\u2014|]*$/u, "").trim();
 }
 
+//: Where a capture really is: the page a shortened or redirected link led to (`preview.final_url`,
+//: recorded by the server as it followed the link), else the address captured.
+function nodeWhere(node) {
+  return (node.preview && node.preview.final_url) || node.origin || "";
+}
+
 function nodeHeadline(node) {
   if (node.title) return tidyPageTitle(node.title);
   const preview = node.preview || {};
   if (preview.title) return tidyPageTitle(preview.title);
   const origin = node.origin || "";
   if (origin.startsWith("pasted:")) return "";
-  return originLabel(origin);
+  return originLabel(nodeWhere(node));
 }
 
 function nodeProse(node) {
@@ -8653,9 +8659,16 @@ function nodeMetaLine(node) {
     // and a tail-truncated URL is the worst of both: it costs the width anyway and the part it
     // keeps (the scheme and the domain's first few letters) is the part you already knew. The
     // whole value stays reachable as the element's title.
-    const origin = elt("span", "node-origin", originLabel(node.origin));
-    origin.title = node.origin;
+    const origin = elt("span", "node-origin", originLabel(nodeWhere(node)));
+    origin.title = nodeWhere(node);
     bits.push(origin);
+  }
+  // A link that led somewhere else says through what, so a shortener's name never stands in for
+  // the page and a hop through an unexpected site is visible (`via t.co`).
+  if (node.preview && node.preview.via) {
+    const via = elt("span", "node-origin node-via", t("horizon.via", `via ${node.preview.via}`, { hosts: node.preview.via }));
+    via.title = `${node.origin} \u2192 ${nodeWhere(node)}`;
+    bits.push(via);
   }
   // When the headline fell back to the bare host, the PATH is what tells two captures apart. Shown
   // here rather than in the title, because a title is a name and a path is a coordinate - and with
@@ -8666,10 +8679,10 @@ function nodeMetaLine(node) {
     // string and the row printed `note.txt` over `note.txt` - one fact twice, on the default state
     // of every uploaded and dropped file, since distillation is off by default (invariant 80). A
     // web capture is the case this branch was written for and still gets host + path, two facts.
-    const path = originPath(node.origin);
+    const path = originPath(nodeWhere(node));
     if (path && path !== nodeHeadline(node)) {
       const span = elt("span", "node-origin", path);
-      span.title = node.origin;
+      span.title = nodeWhere(node);
       bits.push(span);
     }
   }

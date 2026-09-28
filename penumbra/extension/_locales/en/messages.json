@@ -71,5 +71,63 @@
   },
   "shortcutHow": {
     "message": "Change the shortcut at chrome://extensions/shortcuts."
+  },
+  "offlineTitle": {
+    "message": "Penumbra is not running. Captures wait here until it is."
+  },
+  "menuRootOffline": {
+    "message": "Penumbra (not running, kept for later)"
+  },
+  "errorTooLargeToKeep": {
+    "message": "Too large to keep while Penumbra is closed. Open Penumbra and try again."
+  },
+  "errorQueueFull": {
+    "message": "50 captures are already waiting. Open Penumbra to send them."
+  },
+  "close": {
+    "message": "Close"
+  },
+  "pairHowShort": {
+    "message": "Press Connect browser in Penumbra's settings."
+  },
+  "ownPage": {
+    "message": "This is one of Penumbra's own pages"
+  },
+  "saving": {
+    "message": "Keeping it…"
+  },
+  "saved": {
+    "message": "Kept in the Horizon"
+  },
+  "savedInto": {
+    "message": "Kept in “$VALUE$”",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
+  },
+  "notFiledCap": {
+    "message": "It is in the Horizon; that orbit is full, so it was not filed."
+  },
+  "fileInto": {
+    "message": "Put it into an orbit…"
+  },
+  "undo": {
+    "message": "Undo"
+  },
+  "undone": {
+    "message": "Taken back"
+  },
+  "keptOffline": {
+    "message": "Penumbra is not running, so it is kept here"
+  },
+  "keptOfflineNote": {
+    "message": "It will be sent when Penumbra opens ($VALUE$ waiting).",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
   }
 }

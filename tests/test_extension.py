@@ -143,3 +143,40 @@ def test_a_chinese_selection_points_back_by_characters_not_by_the_whole_passage(
 
     fragment = unquote(horizon.node_source(node["id"]).origin.split("#:~:text=", 1)[1])
     assert fragment == "研究發現，慢波睡眠期間海,腦皮質，這就是系統鞏固。"
+
+
+def test_penumbras_own_pages_are_not_captured(client):
+    key = _pair(client)
+    got = client.post("/extension/capture", headers=key,
+                      json={"kind": "page", "url": "http://127.0.0.1/pair.html", "html": PAGE})
+    assert got.status_code == 422 and "own pages" in got.json()["detail"]
+
+
+def test_a_wrapped_link_is_captured_as_its_destination(client):
+    key = _pair(client)
+    wrapped = "https://l.facebook.com/l.php?u=https%3A%2F%2Fexample.com%2Freal&h=AT0"
+    got = client.post("/extension/capture", headers=key, json={"kind": "link", "url": wrapped})
+    node = got.json()["node"]
+    assert node["origin"] == "https://example.com/real"
+
+
+def test_the_card_can_file_or_take_back_only_what_this_browser_just_captured(client):
+    key = _pair(client)
+    seed = client.post("/horizon", headers=_full(), json={"texts": ["seed"]}).json()["nodes"][0]["id"]
+    client.post(f"/horizon/{seed}/promote", headers=_full(), json={"orbit_id": "reading", "create": True})
+    body = {"kind": "selection", "url": "https://example.com/a", "title": "A", "text": "a passage to keep"}
+    node_id = client.post("/extension/capture", headers=key, json=body).json()["node"]["id"]
+
+    filed = client.post("/extension/file", headers=key, json={"node_id": node_id, "orbit": "reading"})
+    assert filed.status_code == 200 and filed.json()["filed"] is True
+    assert [m.orbit_id for m in horizon.memberships_for(node_id)] == ["reading"]
+
+    undone = client.post("/extension/undo", headers=key, json={"node_id": node_id})
+    assert undone.json()["removed"] is True
+    assert horizon.get_node(node_id) is None
+    assert len(client.get("/orbits/reading", headers=_full()).json()["sources"]) == 1, "only the seed is left"
+
+    # Something the extension did not just capture is out of its reach.
+    assert client.post("/extension/undo", headers=key, json={"node_id": seed}).status_code == 404
+    refused = client.post("/extension/file", headers=key, json={"node_id": seed, "orbit": "reading"})
+    assert refused.status_code == 404

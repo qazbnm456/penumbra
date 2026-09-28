@@ -747,6 +747,7 @@ const STRINGS = {
     "suggest.no": "不要",
     "suggest.like": "放進「{where}」：內容和「{like}」相似",
     "graph.similarNote": "虛線連起內容相似的收錄，是在你的電腦上比對的。空心方塊是還沒摘要的收錄。",
+    "horizon.via": "經由 {hosts}",
     "settings.extension": "瀏覽器擴充功能",
     "settings.extensionHelp": "直接從 Chrome、Arc、Brave 或 Edge 收下正在看的網頁、一段文字連同出處，或一個連結。要登入才看得到的頁面，也會照你看到的樣子收進來。",
     "settings.extensionStep1": "在瀏覽器打開擴充功能頁，開啟「開發人員模式」，按「載入未封裝項目」，選這個資料夾：",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
@@ -123,9 +124,11 @@ def test_default_fetcher_uses_the_guarded_opener_never_plain_urlopen(monkeypatch
         def __exit__(self, *exc):
             return False
 
-    monkeypatch.setattr(
-        web._opener, "open", lambda req, timeout=None: opened.append(req) or _Response()
-    )
+    def fake_open(req, timeout=None):
+        opened.append(req)
+        return _Response()
+
+    monkeypatch.setattr(web, "_opener_for", lambda trail: SimpleNamespace(open=fake_open))
 
     assert web._default_fetcher("https://example.com/a") == "<html><body>ok</body></html>"
     assert len(opened) == 1
@@ -150,7 +153,11 @@ def test_an_address_with_chinese_in_it_is_fetched_percent_encoded(monkeypatch):
         def __exit__(self, *exc):
             return False
 
-    monkeypatch.setattr(web._opener, "open", lambda req, timeout=None: opened.append(req) or _Response())
+    def fake_open(req, timeout=None):
+        opened.append(req)
+        return _Response()
+
+    monkeypatch.setattr(web, "_opener_for", lambda trail: SimpleNamespace(open=fake_open))
     web._default_fetcher("https://zh.wikipedia.org/zh-tw/凍頂烏龍茶?q=茶#段落")
     assert opened[0].full_url == (
         "https://zh.wikipedia.org/zh-tw/%E5%87%8D%E9%A0%82%E7%83%8F%E9%BE%8D%E8%8C%B6"
@@ -397,7 +404,8 @@ def _canned(monkeypatch, body: bytes, content_type: str):
         def __exit__(self, *exc):
             return False
 
-    monkeypatch.setattr(web._opener, "open", lambda req, timeout=None: _Response())
+    opener = SimpleNamespace(open=lambda req, timeout=None: _Response())
+    monkeypatch.setattr(web, "_opener_for", lambda trail: opener)
     web._canned_response = _Response  # so a test can read what `read` was asked for
     return web
 
@@ -487,3 +495,29 @@ def test_the_fetch_is_bounded(monkeypatch):
         f"the fetch asked for {web._canned_response.asked} bytes; it must ask for the cap plus one "
         "(65) so a file exactly at the cap is still distinguishable from one over it"
     )
+
+
+def test_a_link_wrapper_is_unwrapped_from_its_own_address_without_a_request():
+    """A platform's click-through page carries the destination in its query; it is read from there,
+    as a mail gateway decodes a rewritten link, and the wrapper is never contacted."""
+    assert web.unwrap_url("https://l.facebook.com/l.php?u=https%3A%2F%2Fexample.com%2Fa&h=x") == "https://example.com/a"
+    assert web.unwrap_url("https://www.google.com/url?q=https://example.com/b&sa=D") == "https://example.com/b"
+    assert web.unwrap_url(
+        "https://nam02.safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.com%2Fc&data=1"
+    ) == "https://example.com/c"
+    # Nested wrappers peel one at a time; a non-web target leaves the wrapper as it was.
+    inner = "https://www.google.com/url?q=https://example.com/d"
+    from urllib.parse import quote
+
+    assert web.unwrap_url("https://l.facebook.com/l.php?u=" + quote(inner, safe="")) == "https://example.com/d"
+    assert web.unwrap_url("https://www.google.com/url?q=javascript:alert(1)").startswith("https://www.google.com/url")
+    assert web.unwrap_url("https://t.co/abc") == "https://t.co/abc", "a shortener is resolved by the fetch"
+
+
+def test_a_shortened_link_records_where_it_led_and_stops_after_five_hops():
+    assert web._via("https://t.co/x", ["https://example.com/page"]) == {
+        "final_url": "https://example.com/page", "via": "t.co"}
+    assert web._via("https://t.co/x", ["https://bit.ly/y", "https://example.com/p"])["via"] == "t.co → bit.ly"
+    assert web._via("https://example.com/a", ["https://example.com/b"]) == {}, "same-site is not news"
+    assert web._TrailRedirectHandler.max_redirections == 5
+    assert issubclass(web._TrailRedirectHandler, web._SafeRedirectHandler), "every hop keeps the SSRF check"

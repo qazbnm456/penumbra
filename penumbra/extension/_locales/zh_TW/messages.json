@@ -71,5 +71,63 @@
   },
   "shortcutHow": {
     "message": "快捷鍵可以在 chrome://extensions/shortcuts 修改。"
+  },
+  "offlineTitle": {
+    "message": "Penumbra 沒開著，收下的東西會先存在這裡，等它開了再送。"
+  },
+  "menuRootOffline": {
+    "message": "Penumbra（沒開著，先暫存）"
+  },
+  "errorTooLargeToKeep": {
+    "message": "太大了，Penumbra 沒開時存不下。打開 Penumbra 再試一次。"
+  },
+  "errorQueueFull": {
+    "message": "已經有 50 則在等了。打開 Penumbra 把它們送出去。"
+  },
+  "close": {
+    "message": "關閉"
+  },
+  "pairHowShort": {
+    "message": "在 Penumbra 設定頁按「連接瀏覽器」。"
+  },
+  "ownPage": {
+    "message": "這是 Penumbra 自己的頁面"
+  },
+  "saving": {
+    "message": "收進中…"
+  },
+  "saved": {
+    "message": "已收進視界"
+  },
+  "savedInto": {
+    "message": "已放進「$VALUE$」",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
+  },
+  "notFiledCap": {
+    "message": "已經在視界裡了；那個軌道已滿，所以沒放進去。"
+  },
+  "fileInto": {
+    "message": "放進軌道…"
+  },
+  "undo": {
+    "message": "復原"
+  },
+  "undone": {
+    "message": "已收回"
+  },
+  "keptOffline": {
+    "message": "Penumbra 沒開著，先幫你存著"
+  },
+  "keptOfflineNote": {
+    "message": "等 Penumbra 開了會自動送出（目前 $VALUE$ 則在等）。",
+    "placeholders": {
+      "value": {
+        "content": "$1"
+      }
+    }
   }
 }

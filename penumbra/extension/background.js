@@ -1,25 +1,52 @@
 // The Penumbra extension: capture what this browser shows into the Horizon of the Penumbra running
-// on this computer. It holds a capture key from pairing (`chrome.storage.local`), which opens three
-// routes on the local server and nothing else: status, the orbits' names, and capture.
+// on this computer. It holds a capture key from pairing (`chrome.storage.local`), which opens only
+// the capture routes on the local server: status, the orbits' names, capture, and filing or taking
+// back a capture it just made.
 //
 // What it captures, and why the server alone could not: a whole page as rendered here (behind a
 // login, or drawn by JavaScript, the server's own fetch sees neither), a selected passage together
 // with the page it came from (dragging text loses the address), and a link, which the server
-// fetches like any pasted URL.
+// fetches like any pasted URL, following a shortener hop by hop under its SSRF guard.
+//
+// It answers on the page, with a card (`card.js`), and it knows whether Penumbra is running: when it
+// is not, the icon is greyed and a capture is kept here and sent when Penumbra is back.
+
+importScripts("card.js");
 
 const MENU_ROOT = "penumbra";
 const MENU_HORIZON = "horizon";
 const MENU_CONNECT = "connect";
 const ORBIT_PREFIX = "orbit:";
 const CONTEXTS = ["page", "selection", "link"];
-const COPPER = "#d9853b";
+//: What may wait here while Penumbra is closed: `chrome.storage.local` holds 10 MB, and a page's
+//: HTML without its scripts and media is well under the per-item bound.
+const QUEUE_MAX = 50;
+const QUEUE_ITEM_BYTES = 2 * 1024 * 1024;
 
 const msg = (key, ...subs) => chrome.i18n.getMessage(key, subs) || key;
+
+//: The moon on the card, as a data URL: a page cannot load an image from the extension unless the
+//: extension lists it as web-accessible, which would let any site detect that it is installed.
+let iconData = "";
+async function icon() {
+  if (!iconData) {
+    const blob = await (await fetch(chrome.runtime.getURL("icons/48.png"))).blob();
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = "";
+    bytes.forEach((b) => { binary += String.fromCharCode(b); });
+    iconData = `data:image/png;base64,${btoa(binary)}`;
+  }
+  return iconData;
+}
 
 async function pairing() {
   const { base, token } = await chrome.storage.local.get(["base", "token"]);
   return base && token ? { base, token } : null;
 }
+
+//: A failure to reach the server, as distinct from the server refusing: only the first is a reason
+//: to keep the capture for later.
+class Unreachable extends Error {}
 
 async function api(path, init = {}) {
   const paired = await pairing();
@@ -31,7 +58,7 @@ async function api(path, init = {}) {
       headers: { ...(init.headers || {}), Authorization: `Bearer ${paired.token}` },
     });
   } catch {
-    throw new Error(msg("errorServer"));
+    throw new Unreachable(msg("errorServer"));
   }
   if (resp.status === 401) throw new Error(msg("errorUnpaired"));
   if (!resp.ok) {
@@ -46,22 +73,73 @@ async function api(path, init = {}) {
   return resp.json();
 }
 
+// --- is Penumbra running? -----------------------------------------------------------------------
+
+let online = null;
+
+//: The icon, greyed while Penumbra cannot be reached or this browser is not paired, drawn from the
+//: colour one so there is a single icon to keep.
+async function paintIcon(on) {
+  if (on) {
+    await chrome.action.setIcon({ path: { 16: "icons/16.png", 32: "icons/32.png" } });
+    return;
+  }
+  const imageData = {};
+  for (const size of [16, 32]) {
+    const bitmap = await createImageBitmap(await (await fetch(chrome.runtime.getURL(`icons/${size}.png`))).blob());
+    const canvas = new OffscreenCanvas(size, size);
+    const ctx = canvas.getContext("2d");
+    ctx.filter = "grayscale(1) opacity(0.45)";
+    ctx.drawImage(bitmap, 0, 0, size, size);
+    imageData[size] = ctx.getImageData(0, 0, size, size);
+  }
+  await chrome.action.setIcon({ imageData });
+}
+
+async function checkOnline() {
+  let now = false;
+  if (await pairing()) {
+    try {
+      await api("/extension/status");
+      now = true;
+    } catch {
+      now = false;
+    }
+  }
+  const changed = now !== online;
+  online = now;
+  if (changed) {
+    await paintIcon(now);
+    await chrome.action.setTitle({ title: now ? msg("actionTitle") : msg((await pairing()) ? "offlineTitle" : "errorNotPaired") });
+    await rebuildMenus();
+  }
+  if (now) await flushQueue();
+  await paintQueueBadge();
+  return now;
+}
+
 // --- the menu -----------------------------------------------------------------------------------
 
 async function rebuildMenus() {
   await chrome.contextMenus.removeAll();
-  chrome.contextMenus.create({ id: MENU_ROOT, title: msg("menuRoot"), contexts: CONTEXTS });
-  if (!(await pairing())) {
+  const paired = await pairing();
+  const title = !paired ? msg("menuRoot") : online ? msg("menuRoot") : msg("menuRootOffline");
+  chrome.contextMenus.create({ id: MENU_ROOT, title, contexts: CONTEXTS });
+  if (!paired) {
     chrome.contextMenus.create({ id: MENU_CONNECT, parentId: MENU_ROOT, title: msg("menuConnect"), contexts: CONTEXTS });
     return;
   }
   chrome.contextMenus.create({ id: MENU_HORIZON, parentId: MENU_ROOT, title: msg("menuHorizon"), contexts: CONTEXTS });
   let orbits = [];
-  try {
-    orbits = (await api("/extension/orbits")).orbits || [];
-  } catch {
-    // The server may be closed; the Horizon item still works once it is open again.
+  if (online) {
+    try {
+      orbits = (await api("/extension/orbits")).orbits || [];
+      await chrome.storage.local.set({ orbits });
+    } catch {
+      // keep the last list
+    }
   }
+  if (!orbits.length) orbits = (await chrome.storage.local.get("orbits")).orbits || [];
   if (!orbits.length) return;
   chrome.contextMenus.create({ id: "sep", parentId: MENU_ROOT, type: "separator", contexts: CONTEXTS });
   orbits.slice(0, 30).forEach((orbit) => {
@@ -75,24 +153,97 @@ async function rebuildMenus() {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  void rebuildMenus();
-  chrome.alarms.create("orbits", { periodInMinutes: 15 });
+  chrome.alarms.create("status", { periodInMinutes: 0.5 });
+  void checkOnline();
 });
-chrome.runtime.onStartup.addListener(() => void rebuildMenus());
+chrome.runtime.onStartup.addListener(() => {
+  chrome.alarms.create("status", { periodInMinutes: 0.5 });
+  void checkOnline();
+});
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "orbits") void rebuildMenus();
+  if (alarm.name === "status") void checkOnline();
 });
+chrome.tabs.onActivated.addListener(() => void checkOnline());
+chrome.windows.onFocusChanged.addListener(() => void checkOnline());
 
-// --- saying what happened -----------------------------------------------------------------------
+// --- kept while Penumbra is closed ----------------------------------------------------------------
 
-async function flash(tabId, ok, detail = "") {
-  await chrome.action.setBadgeBackgroundColor({ tabId, color: ok ? COPPER : "#b3261e" });
+async function queued() {
+  return (await chrome.storage.local.get("queue")).queue || [];
+}
+
+async function paintQueueBadge() {
+  const count = (await queued()).length;
+  await chrome.action.setBadgeBackgroundColor({ color: "#7a6f66" });
+  await chrome.action.setBadgeText({ text: count ? String(count) : "" });
+}
+
+async function keepForLater(body) {
+  const size = new Blob([JSON.stringify(body)]).size;
+  if (size > QUEUE_ITEM_BYTES) throw new Error(msg("errorTooLargeToKeep"));
+  const queue = await queued();
+  if (queue.length >= QUEUE_MAX) throw new Error(msg("errorQueueFull"));
+  queue.push({ body, at: Date.now() });
+  await chrome.storage.local.set({ queue });
+  await paintQueueBadge();
+  return queue.length;
+}
+
+let flushing = false;
+
+async function flushQueue() {
+  if (flushing) return;
+  flushing = true;
+  try {
+    let queue = await queued();
+    while (queue.length) {
+      try {
+        await api("/extension/capture", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(queue[0].body),
+        });
+      } catch (err) {
+        if (err instanceof Unreachable) break; // closed again: keep the rest
+        // Refused for a reason of its own (an orbit since deleted): drop it rather than retry it forever.
+      }
+      queue = queue.slice(1);
+      await chrome.storage.local.set({ queue });
+    }
+  } finally {
+    flushing = false;
+    await paintQueueBadge();
+  }
+}
+
+// --- the card on the page ------------------------------------------------------------------------
+
+async function card(tabId, state) {
+  if (!tabId) return false;
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: penumbraCard,
+      args: [{ icon: await icon(), closeLabel: msg("close"), ...state }],
+    });
+    return true;
+  } catch {
+    return false; // a page extensions may not touch (the browser's own pages, the web store)
+  }
+}
+
+async function badge(tabId, ok, detail = "") {
+  if (!tabId) return;
+  await chrome.action.setBadgeBackgroundColor({ tabId, color: ok ? "#d9853b" : "#b3261e" });
   await chrome.action.setBadgeText({ tabId, text: ok ? "✓" : "!" });
   await chrome.action.setTitle({ tabId, title: ok ? msg("done") : `${msg("failed")}: ${detail}` });
   setTimeout(() => {
     chrome.action.setBadgeText({ tabId, text: "" }).catch(() => {});
-    chrome.action.setTitle({ tabId, title: msg("actionTitle") }).catch(() => {});
   }, ok ? 2500 : 8000);
+}
+
+async function tell(tabId, state) {
+  if (!(await card(tabId, state))) await badge(tabId, !state.bad, state.note || state.status);
 }
 
 // --- capturing ----------------------------------------------------------------------------------
@@ -124,10 +275,28 @@ async function inTab(tabId, func) {
   }
 }
 
+async function orbitList() {
+  return (await chrome.storage.local.get("orbits")).orbits || [];
+}
+
 async function capture(tab, { kind, orbit = null, link = "", selectionText = "" }) {
   const tabId = tab && tab.id;
+  const paired = await pairing();
+  if (!paired) {
+    await tell(tabId, { status: msg("errorNotPaired"), note: msg("pairHowShort"), bad: true });
+    chrome.runtime.openOptionsPage();
+    return;
+  }
   try {
-    let body;
+    if (tab && tab.url && new URL(tab.url).origin === paired.base && kind !== "link") {
+      await tell(tabId, { status: msg("ownPage"), bad: true });
+      return;
+    }
+  } catch {
+    // not a URL we can read; the capture itself will say
+  }
+  let body;
+  try {
     if (kind === "link") {
       body = { kind, url: link, title: "" };
     } else if (kind === "selection") {
@@ -139,19 +308,44 @@ async function capture(tab, { kind, orbit = null, link = "", selectionText = "" 
         text: (read && read.text.trim()) || selectionText,
       };
     } else {
-      const read = await inTab(tabId, readPage);
-      body = { kind: "page", ...read };
+      body = { kind: "page", ...(await inTab(tabId, readPage)) };
     }
-    if (orbit) body.orbit = orbit;
-    await api("/extension/capture", {
+  } catch (err) {
+    await tell(tabId, { status: msg("failed"), note: err.message, bad: true });
+    return;
+  }
+  if (orbit) body.orbit = orbit;
+  const shown = body.title || body.url || link;
+  await tell(tabId, { status: msg("saving"), title: shown, busy: true, stay: true });
+  try {
+    const got = await api("/extension/capture", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (tabId) await flash(tabId, true);
+    const orbits = await orbitList();
+    const into = orbit ? (orbits.find((o) => o.id === orbit) || {}).title : "";
+    await tell(tabId, {
+      status: into ? msg("savedInto", into) : msg("saved"),
+      title: shown,
+      note: got.filed === false ? msg("notFiledCap") : "",
+      nodeId: got.node && got.node.id,
+      orbits: into ? [] : orbits,
+      fileLabel: msg("fileInto"),
+      undoLabel: msg("undo"),
+    });
   } catch (err) {
-    if (tabId) await flash(tabId, false, err.message);
-    if (!(await pairing())) chrome.runtime.openOptionsPage();
+    if (err instanceof Unreachable) {
+      try {
+        const count = await keepForLater(body);
+        await tell(tabId, { status: msg("keptOffline"), title: shown, note: msg("keptOfflineNote", String(count)) });
+      } catch (kept) {
+        await tell(tabId, { status: msg("failed"), note: kept.message, bad: true });
+      }
+      void checkOnline();
+      return;
+    }
+    await tell(tabId, { status: msg("failed"), title: shown, note: err.message, bad: true });
   }
 }
 
@@ -172,12 +366,41 @@ chrome.commands.onCommand.addListener((command, tab) => {
   if (command === "capture-page" && tab) void capture(tab, { kind: "page" });
 });
 
-// --- pairing ------------------------------------------------------------------------------------
+// --- messages: the pairing page, and the card's two buttons ----------------------------------------
 
-//: The pairing page's content script hands over the key it found in the page's fragment, with the
-//: page's own origin, which is the server's address. The key is kept only if the server accepts it.
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
-  if (!message || message.type !== "pair") return false;
+  if (!message) return false;
+  const tabId = sender.tab && sender.tab.id;
+  if (message.type === "card-file" || message.type === "card-undo") {
+    (async () => {
+      try {
+        if (message.type === "card-file") {
+          const got = await api("/extension/file", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ node_id: message.nodeId, orbit: message.orbit }),
+          });
+          const title = ((await orbitList()).find((o) => o.id === message.orbit) || {}).title || "";
+          await tell(tabId, got.filed === false
+            ? { status: msg("failed"), note: msg("notFiledCap"), bad: true }
+            : { status: msg("savedInto", title) });
+        } else {
+          await api("/extension/undo", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ node_id: message.nodeId }),
+          });
+          await tell(tabId, { status: msg("undone") });
+        }
+      } catch (err) {
+        await tell(tabId, { status: msg("failed"), note: err.message, bad: true });
+      }
+    })();
+    return false;
+  }
+  if (message.type !== "pair") return false;
+  // The pairing page's content script hands over the key it found in the page's fragment, with the
+  // page's own origin, which is the server's address. The key is kept only if the server accepts it.
   const origin = sender.origin || (sender.url ? new URL(sender.url).origin : "");
   const local = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(origin);
   if (!local || !message.code) {
@@ -189,7 +412,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       const resp = await fetch(`${origin}/extension/status`, { headers: { Authorization: `Bearer ${message.code}` } });
       if (!resp.ok) throw new Error(String(resp.status));
       await chrome.storage.local.set({ base: origin, token: message.code });
-      await rebuildMenus();
+      online = null;
+      await checkOnline();
       reply({ ok: true });
     } catch {
       reply({ ok: false });
@@ -199,5 +423,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 });
 
 chrome.storage.onChanged.addListener((changes) => {
-  if (changes.token || changes.base) void rebuildMenus();
+  if (changes.token || changes.base) {
+    online = null;
+    void checkOnline();
+  }
 });

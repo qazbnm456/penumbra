@@ -70,6 +70,67 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 _opener = urllib.request.build_opener(_SafeRedirectHandler)
 
+#: The most hops a captured link may take before its page: what link-preview services allow a
+#: shortener chain, and fewer than `urllib`'s default of ten. Every hop is checked by the SSRF guard.
+_MAX_HOPS = 5
+
+
+class _TrailRedirectHandler(_SafeRedirectHandler):
+    """`_SafeRedirectHandler` that also records where it went and stops after `_MAX_HOPS`, so a
+    shortened link is captured as the page it leads to, with the way it got there."""
+
+    max_redirections = _MAX_HOPS
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.trail: list[str] = []
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        forward = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if forward is not None:
+            self.trail.append(newurl)
+        return forward
+
+
+#: Link wrappers that carry their destination in a query parameter: a platform's click-through
+#: page, a mail filter's rewrite. The destination is read from the address itself, with no request
+#: to the wrapper, the way a mail-security gateway decodes a rewritten link. `(host, path)` to the
+#: parameters that may hold it; a path of None matches any path on that host.
+_WRAPPERS: dict[tuple[str, str | None], tuple[str, ...]] = {
+    ("l.facebook.com", "/l.php"): ("u",),
+    ("lm.facebook.com", "/l.php"): ("u",),
+    ("l.messenger.com", "/l.php"): ("u",),
+    ("l.instagram.com", None): ("u",),
+    ("www.google.com", "/url"): ("q", "url"),
+    ("google.com", "/url"): ("q", "url"),
+    ("www.youtube.com", "/redirect"): ("q",),
+    ("out.reddit.com", None): ("url",),
+    ("t.umblr.com", "/redirect"): ("z",),
+    ("slack-redir.net", "/link"): ("url",),
+    ("www.linkedin.com", "/safety/go"): ("url",),
+}
+
+
+def unwrap_url(url: str, *, depth: int = 3) -> str:
+    """`url` with known link wrappers peeled off, reading the destination from the address. Only
+    an http(s) destination is taken; anything else leaves the wrapper as it was. Opaque shorteners
+    (t.co, bit.ly) keep their address here and are resolved by the fetch, hop by hop."""
+    current = url
+    for _ in range(depth):
+        parts = urllib.parse.urlsplit(current)
+        host = (parts.hostname or "").lower()
+        keys = _WRAPPERS.get((host, parts.path)) or _WRAPPERS.get((host, None))
+        if host.endswith(".safelinks.protection.outlook.com"):
+            keys = ("url",)
+        if not keys:
+            break
+        query = urllib.parse.parse_qs(parts.query)
+        target = next((query[k][0] for k in keys if query.get(k)), "")
+        if urllib.parse.urlsplit(target).scheme not in ("http", "https"):
+            break
+        current = target
+    return current
+
 
 #: What `quote` leaves alone in a path, query or fragment: every reserved and unreserved ASCII
 #: character, and `%`, so a URL that is already percent-encoded passes through unchanged.
@@ -98,6 +159,11 @@ def _as_uri(url: str) -> str:
 
 
 def _fetch(url: str, *, timeout: float = 15.0) -> tuple[bytes, str]:
+    raw, content_type, _trail = _fetch_with_trail(url, timeout=timeout)
+    return raw, content_type
+
+
+def _fetch_with_trail(url: str, *, timeout: float = 15.0) -> tuple[bytes, str, list[str]]:
     """The bytes and the declared content type, both of which the caller needs.
 
     **Bounded.** The read used to be `resp.read()` with no argument, on an endpoint where any token
@@ -111,8 +177,9 @@ def _fetch(url: str, *, timeout: float = 15.0) -> tuple[bytes, str]:
     _check_safe(url)
     cap = max_upload_bytes()
     req = urllib.request.Request(url, headers={"User-Agent": "penumbra/0.1"})
+    trail = _TrailRedirectHandler()
     try:
-        with _opener.open(req, timeout=timeout) as resp:
+        with _opener_for(trail).open(req, timeout=timeout) as resp:
             raw = resp.read(cap + 1)
             content_type = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
     except FetchError:
@@ -121,7 +188,25 @@ def _fetch(url: str, *, timeout: float = 15.0) -> tuple[bytes, str]:
         raise FetchError(f"fetch error for {url!r}: {exc}") from exc
     if len(raw) > cap:
         raise FetchError(f"{url!r} is larger than the {cap}-byte limit")
-    return raw, content_type
+    return raw, content_type, list(trail.trail)
+
+
+def _opener_for(trail: _TrailRedirectHandler):
+    """The opener one fetch uses: the guarded redirect handler, recording this fetch's hops."""
+    return urllib.request.build_opener(trail)
+
+
+def _via(url: str, trail: list[str]) -> dict[str, str]:
+    """Where a link led, for the preview: the final address, and the hosts it passed through when
+    it crossed from one to another (`t.co → example.com`), so the reader sees the destination of a
+    shortened link rather than the shortener's name."""
+    if not trail:
+        return {}
+    hosts = [urllib.parse.urlsplit(u).hostname or "" for u in [url, *trail]]
+    passed = [h for i, h in enumerate(hosts[:-1]) if h and h != hosts[-1] and h not in hosts[:i]]
+    if not passed:
+        return {}
+    return {"final_url": trail[-1][:2000], "via": " → ".join(passed)}
 
 
 def _default_fetcher(url: str, *, timeout: float = 15.0) -> str:
@@ -242,7 +327,8 @@ def parse_web(url: str, source_id: str, *, fetcher=None) -> Source:
     if fetcher is not None:
         return _from_html(fetcher(url), url, source_id)
 
-    raw, content_type = _fetch(url)
+    raw, content_type, trail = _fetch_with_trail(url)
+    via = _via(url, trail)
     if _looks_like_pdf(raw, content_type):
         # Through a real file, because PDFium wants one — and through `parse_pdf`, so a PDF reached
         # by URL gets the identical page-per-block treatment, the OCR ladder and the `_PDFIUM_LOCK`
@@ -259,14 +345,18 @@ def parse_web(url: str, source_id: str, *, fetcher=None) -> Source:
             source = parse_pdf(handle.name, source_id)
         # `parse_pdf` names the temp file as the origin; the ORIGIN is the URL the reader pasted,
         # and it is what dedupe and every citation coordinate key off.
-        return source.model_copy(update={"origin": url})
+        return source.model_copy(update={"origin": url, "preview": {**source.preview, **via}})
 
     if content_type in _PLAIN_TYPES:
         from .text import parse_text
 
-        return parse_text(raw.decode("utf-8", errors="replace"), source_id, origin=url)
+        parsed = parse_text(raw.decode("utf-8", errors="replace"), source_id, origin=url)
+        return parsed.model_copy(update={"preview": {**parsed.preview, **via}})
 
-    return _from_html(raw.decode("utf-8", errors="replace"), url, source_id)
+    # The origin stays the address the reader captured (it is what dedupe and a queued node's id key
+    # off); where it led is in the preview.
+    page = _from_html(raw.decode("utf-8", errors="replace"), url, source_id)
+    return page.model_copy(update={"preview": {**page.preview, **via}})
 
 
 def page_source(html: str, url: str, source_id: str, *, title: str = "", text: str = "") -> Source:

@@ -8109,6 +8109,11 @@ body.is-resizing .orbit-graph {
 }
 
 /* --- Local relations, in settings ---------------------------------------------------------------- */
+/* A link that led elsewhere names what it passed through, quieter than the site itself. */
+.node-via {
+  color: var(--text-faint);
+}
+
 /* The browser extension row: the install steps, the folder to load with its copy button, and
    Connect. The path is shown whole and may wrap; it is read once and pasted. */
 .ext-steps {
