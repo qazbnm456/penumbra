@@ -182,7 +182,7 @@ def test_the_card_can_file_or_take_back_only_what_this_browser_just_captured(cli
     assert refused.status_code == 404
 
 
-def test_the_readers_choice_is_filed_even_after_automatic_filing_put_it_elsewhere(client):
+def test_the_readers_choice_is_filed_even_after_automatic_filing_put_it_elsewhere(client, monkeypatch):
     """Automatic filing had already put the capture into its suggested orbit, and the card's choice
     was refused and shown as "that orbit is full". A choice the reader makes is honoured."""
     key = _pair(client)
@@ -194,8 +194,11 @@ def test_the_readers_choice_is_filed_even_after_automatic_filing_put_it_elsewher
     node_id = client.post("/extension/capture", headers=key, json=body).json()["node"]["id"]
     client.post(f"/horizon/{node_id}/promote", headers=_full(), json={"orbit_id": "suggested"})
 
+    monkeypatch.setenv("PN_FILING_MODE", "auto")
     got = client.post("/extension/file", headers=key, json={"node_id": node_id, "orbit": "chosen"}).json()
     assert got["filed"] is True and got["outcome"] == "filed"
+    # The card adds "automatic filing will not move it" only when filing is automatic.
+    assert got["filing_mode"] == "auto"
     assert sorted(m.orbit_id for m in horizon.memberships_for(node_id)) == ["chosen", "suggested"]
 
 
@@ -207,7 +210,8 @@ def test_a_real_cap_says_so_with_the_number(client, monkeypatch):
     node_id = client.post("/extension/capture", headers=key, json=body).json()["node"]["id"]
     monkeypatch.setattr(api, "max_corpus_chars", lambda: 40)
     got = client.post("/extension/file", headers=key, json={"node_id": node_id, "orbit": "small"}).json()
-    assert got == {"orbit": "small", "filed": False, "outcome": "cap", "cap": 40}
+    assert {k: got[k] for k in ("orbit", "filed", "outcome", "cap")} == {
+        "orbit": "small", "filed": False, "outcome": "cap", "cap": 40}
 
 
 def test_capturing_the_same_page_again_finds_the_capture_already_there(client):

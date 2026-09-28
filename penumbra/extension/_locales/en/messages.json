@@ -171,5 +171,8 @@
   },
   "autoFilingNote": {
     "message": "Filing is automatic: it goes into the orbit that fits once it has a suggestion, usually after its summary."
+  },
+  "autoWontMove": {
+    "message": "Automatic filing will not move it."
   }
 }

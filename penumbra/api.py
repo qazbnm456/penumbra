@@ -4457,9 +4457,9 @@ async def extension_file(body: ExtensionFile) -> dict:
     if node.state not in ("ready", "ready_undistilled"):
         with _FILE_ON_READY_LOCK:
             _FILE_ON_READY[body.node_id] = target
-        return {"filed": None, "orbit": target}
+        return {"filed": None, "orbit": target, **await asyncio.to_thread(_where_it_is, body.node_id)}
     outcome, _membership = await asyncio.to_thread(lambda: _file_status(body.node_id, target, reader=True))
-    return {"orbit": target, **_filing_answer(outcome)}
+    return {"orbit": target, **_filing_answer(outcome), **await asyncio.to_thread(_where_it_is, body.node_id)}
 
 
 @app.post("/extension/undo")

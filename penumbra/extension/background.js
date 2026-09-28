@@ -275,7 +275,9 @@ const lastBody = new Map();
 async function placement(got, chosenTitle) {
   const orbits = await orbitList();
   const names = (got.orbits || []).map((id) => (orbits.find((o) => o.id === id) || {}).title).filter(Boolean);
-  if (chosenTitle && got.filed) return { status: msg("savedInto", chosenTitle), note: "" };
+  // Only with automatic filing is there something that might have moved it; say that it will not.
+  const kept = got.filing_mode === "auto" ? msg("autoWontMove") : "";
+  if (chosenTitle && got.filed) return { status: msg("savedInto", chosenTitle), note: kept };
   if (names.length) return { status: msg("savedInto", names.join("、")), note: "" };
   const note = got.filing_mode === "auto" ? msg("autoFilingNote") : "";
   return { status: msg("saved"), note };
@@ -402,7 +404,9 @@ async function send(tab, body) {
     await tell(tabId, {
       status: where.status,
       title: shown,
-      note: into && !got.filed ? filingNote(got, into) : where.note,
+      note: into && !got.filed
+        ? [filingNote(got, into), got.filing_mode === "auto" ? msg("autoWontMove") : ""].filter(Boolean).join(" ")
+        : where.note,
       nodeId: got.node && got.node.id,
       orbits: into || (got.orbits || []).length ? [] : orbits,
       fileLabel: msg("fileInto"),
@@ -462,10 +466,11 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
             body: JSON.stringify({ node_id: message.nodeId, orbit: message.orbit }),
           });
           const title = ((await orbitList()).find((o) => o.id === message.orbit) || {}).title || "";
+          const kept = got.filing_mode === "auto" ? msg("autoWontMove") : "";
           await tell(tabId, got.filed === false
             ? { status: msg("notFiled", title), note: filingNote(got, title), bad: true }
-            : got.filed === true ? { status: msg("savedInto", title) }
-            : { status: msg("saved"), note: filingNote(got, title) });
+            : got.filed === true ? { status: msg("savedInto", title), note: kept }
+            : { status: msg("saved"), note: [filingNote(got, title), kept].filter(Boolean).join(" ") });
         } else {
           await api("/extension/undo", {
             method: "POST",

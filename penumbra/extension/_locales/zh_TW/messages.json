@@ -171,5 +171,8 @@
   },
   "autoFilingNote": {
     "message": "歸入方式是自動：有建議時會自動放進合適的軌道，通常在摘要之後。"
+  },
+  "autoWontMove": {
+    "message": "自動歸入不會再移動它。"
   }
 }
