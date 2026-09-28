@@ -90,6 +90,9 @@
   --text-lg: 0.9rem;
   --text-xl: 1rem;
   --text-2xl: 1.0625rem;
+  /* Two display sizes, for the one screen set like a slide: an orbit's first, empty conversation. */
+  --text-slide: 1.3rem;
+  --text-slide-action: 1.1rem;
   /* The reading MEASURE, shared by the chat thread and the source viewer. */
   --chat-measure: 38rem;
 
@@ -1884,19 +1887,37 @@ body.is-resizing .cols {
   display: none;
 }
 
-/* The invitation sits on the column's centre line in both directions. Left-aligned inside a
-   vertically centred block, it read as a stray paragraph that had drifted off the axis. */
+/* The invitation reads like the title slide of a deck: vertically centred, set against the
+   column's left edge with the conversation's own inset, a large primary action and a larger line
+   under it. Centred small, the button and its hint floated in the middle of an empty column. */
 .chat-history.is-invitation .chat-overview {
   border-color: transparent;
   background: none;
-  align-items: center;
-  text-align: center;
+  align-items: flex-start;
+  text-align: left;
   padding-left: 0;
   padding-right: 0;
+  /* Out of the reading measure, onto the column's own left edge, where the composer starts. */
+  max-width: none;
+  margin-inline: 0;
 }
 
 .chat-history.is-invitation .chat-starter {
-  align-items: center;
+  align-items: flex-start;
+  gap: var(--space-5);
+}
+
+.chat-history.is-invitation .chat-starter .btn {
+  min-height: 56px;
+  padding: 0 var(--space-8);
+  font-size: var(--text-slide-action);
+  border-radius: calc(var(--radius) * 1.4);
+}
+
+.chat-history.is-invitation .chat-starter .hint {
+  font-size: var(--text-slide);
+  line-height: 1.4;
+  color: var(--text-dim);
 }
 
 .chat-overview {
@@ -7183,7 +7204,13 @@ body[data-view="horizon"] .orbit-picker {
 .map-planet {
   cursor: pointer;
   outline: none;
-  transition: opacity 160ms var(--ib-ease);
+  transition: opacity 160ms var(--ib-ease), filter 260ms var(--ib-ease);
+}
+
+/* Two planets passing each other: the one behind gives way (`settleOverlaps`). */
+.map-planet.is-behind {
+  opacity: 0.22;
+  filter: blur(1.6px);
 }
 
 .map-planet.is-dim {
@@ -7461,26 +7488,37 @@ body.is-resizing .orbit-graph {
 .graph-link.is-dim,
 .graph-cap.is-dim,
 .graph-entity.is-dim,
-.graph-group.is-dim,
-.graph-group-label.is-dim {
+.graph-region-label.is-dim {
   opacity: 0.3;
 }
 
-/* A group that hangs together: a faint region, named by its commonest tag. */
-.graph-group {
-  fill: color-mix(in oklch, var(--accent) 6%, transparent);
-  stroke: color-mix(in oklch, var(--accent) 22%, transparent);
-  stroke-width: 1;
-  stroke-dasharray: 2 5;
+/* A group that hangs together: a soft region in its own hue. The fill and the wide round stroke
+   are one opaque colour inside a translucent group, so where they overlap it is not painted twice. */
+.graph-region {
+  opacity: 0.16;
   pointer-events: none;
 }
 
-.graph-group-label {
+.graph-region.is-dim {
+  opacity: 0.05;
+}
+
+.graph-region-shape {
+  fill: oklch(72% 0.1 var(--hue, 55));
+  stroke: oklch(72% 0.1 var(--hue, 55));
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+/* Its name, a caption under the region in the region's hue. */
+.graph-region-label {
   font-family: var(--sans);
-  font-size: 12px;
-  letter-spacing: 0.02em;
-  fill: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  fill: oklch(80% 0.09 var(--hue, 55) / 0.85);
   text-anchor: middle;
+  dominant-baseline: middle;
   pointer-events: none;
 }
 
@@ -7488,23 +7526,39 @@ body.is-resizing .orbit-graph {
   outline: none;
 }
 
+/* A capture is a small moon in its group's hue, as a summarised moon is copper on the star map. */
 .graph-cap-body {
-  fill: var(--text-dim);
+  fill: oklch(74% 0.12 var(--hue, 60));
   stroke: var(--bg);
-  stroke-width: 1.5;
+  stroke-width: 2;
 }
 
 .graph-cap:hover .graph-cap-body,
 .graph-cap:focus-visible .graph-cap-body {
-  fill: var(--text);
+  fill: oklch(86% 0.1 var(--hue, 60));
+  stroke: oklch(86% 0.1 var(--hue, 60) / 0.35);
+  stroke-width: 6;
+}
+
+/* Every label sits on a halo of the background, so a line passing under it never cuts the words. */
+.graph-cap-label {
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 4px;
+  stroke-linejoin: round;
 }
 
 .graph-cap-label {
   font-family: var(--sans);
-  font-size: 11px;
-  fill: var(--text-faint);
+  font-size: 12px;
+  fill: var(--text-dim);
   text-anchor: middle;
   pointer-events: none;
+}
+
+.graph-cap:hover .graph-cap-label,
+.graph-cap:focus-visible .graph-cap-label {
+  fill: var(--text);
 }
 
 .graph-entity {
@@ -7512,27 +7566,39 @@ body.is-resizing .orbit-graph {
   outline: none;
 }
 
+/* An entity is a pill with its name and count, like the chips in the side panel: a name, not a
+   bigger capture. */
 .graph-entity-body {
-  fill: color-mix(in oklch, var(--accent) 28%, var(--bg));
-  stroke: var(--accent);
-  stroke-width: 2;
+  fill: var(--surface-2);
+  stroke: var(--border-strong);
+  stroke-width: 1;
 }
 
 .graph-entity:hover .graph-entity-body,
 .graph-entity:focus-visible .graph-entity-body {
-  stroke-width: 3;
+  stroke: var(--accent);
 }
 
 .graph-entity.is-selected .graph-entity-body {
-  stroke: var(--text);
-  stroke-width: 3;
+  fill: color-mix(in oklch, var(--accent) 22%, var(--surface-2));
+  stroke: var(--accent);
+  stroke-width: 1.5;
 }
 
 .graph-entity-label {
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 12px;
   fill: var(--text);
-  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+}
+
+.graph-entity-count {
+  font-family: var(--sans);
+  font-size: 11px;
+  fill: var(--text-faint);
+  text-anchor: end;
+  dominant-baseline: central;
   pointer-events: none;
 }
 
@@ -7766,8 +7832,9 @@ body.is-resizing .orbit-graph {
 
 .graph-similar {
   stroke: var(--text-faint);
-  stroke-width: 1.2;
-  stroke-dasharray: 3 4;
+  stroke-width: 1;
+  stroke-dasharray: 2 5;
+  opacity: 0.55;
 }
 
 .graph-similar.is-dim {

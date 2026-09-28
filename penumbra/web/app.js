@@ -11440,7 +11440,11 @@ function mapRings() {
   let left = starMap.orbits.length;
   for (let i = 0; left > 0 || rings.length < 3; i += 1) {
     const cap = 3 + 3 * i;
-    rings.push({ rx: 230 + 100 * i, ry: 138 + 60 * i, cap, period: 240 + 140 * i });
+    // Far enough apart that a planet with its moons and label on one ring clears one on the next
+    // where the ellipses are closest (top and bottom). At 60 apart they collided every time two
+    // passed; the map grows outwards instead, and `mapHome` zooms out to hold it.
+    // The inner ring clears the Horizon's name and count under the centre (to +110).
+    rings.push({ rx: 260 + 160 * i, ry: 175 + 100 * i, cap, period: 240 + 140 * i });
     left -= cap;
   }
   return rings;
@@ -11449,7 +11453,8 @@ function mapRings() {
 //: The whole map in view: zoomed out just enough for the outermost ring.
 function mapHome() {
   const outer = mapRings().at(-1);
-  return { x: 500, y: 320, k: Math.min(1, 480 / (outer.rx + 50), 300 / (outer.ry + 50)) };
+  // Room for the label under a planet at the bottom of the outer ring, and its moons at the sides.
+  return { x: 500, y: 340, k: Math.min(1, 480 / (outer.rx + 70), 300 / (outer.ry + 90)) };
 }
 
 async function renderStarMap() {
@@ -11571,6 +11576,7 @@ function placeStarMap() {
     at.set(p.orbit.slug, pos);
     group.setAttribute("transform", `translate(${pos.x.toFixed(2)} ${pos.y.toFixed(2)})`);
   });
+  settleOverlaps(scene, at);
   scene.bridges.forEach(({ bridge, path, hit, label }) => {
     const a = at.get(bridge.a);
     const b = at.get(bridge.b);
@@ -11581,6 +11587,36 @@ function placeStarMap() {
     label.setAttribute("x", g.lx.toFixed(2));
     label.setAttribute("y", g.ly.toFixed(2));
   });
+}
+
+//: Planets on different rings turn at different speeds, so two will pass each other. Two drawn
+//: over each other at full strength are both unreadable; one must win. The nearer one wins (lower
+//: on the screen, which on these tilted orbits is the near side) and is drawn on top, and the one
+//: behind fades and blurs until they part. The planet picked or pointed at always wins. Each planet
+//: counts as its body with its moons plus the label and count under it.
+function settleOverlaps(scene, at) {
+  const boxes = scene.planets.map(({ p, group }) => {
+    const pos = at.get(p.orbit.slug);
+    const reach = p.r + 16;
+    const half = Math.max(reach, (p.labelW || 0) / 2 + 4);
+    const first = p.orbit.slug === starMap.selected || group.matches(":hover, :focus-within");
+    return { group, first, y: pos.y, x0: pos.x - half, x1: pos.x + half, y0: pos.y - reach, y1: pos.y + p.r + 52 };
+  });
+  const order = [...boxes].sort((a, b) => (a.first - b.first) || (a.y - b.y));
+  const key = order.map((b) => scene.planets.findIndex((e) => e.group === b.group)).join(",");
+  if (key !== scene.order) {
+    scene.order = key;
+    order.forEach((b) => b.group.parentNode && b.group.parentNode.appendChild(b.group));
+  }
+  const behind = new Set();
+  for (let i = 0; i < order.length; i += 1) {
+    for (let j = i + 1; j < order.length; j += 1) {
+      const a = order[i];
+      const b = order[j];
+      if (a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1) behind.add(a.group);
+    }
+  }
+  boxes.forEach(({ group, first }) => group.classList.toggle("is-behind", !first && behind.has(group)));
 }
 
 function mapTick(now) {
@@ -12448,7 +12484,10 @@ function drawStarMap() {
 
   const planets = planetLayout();
   const kinds = planetKinds(planets.map((pl) => pl.orbit.slug));
-  const scene = { planets: [], bridges: [] };
+  const scene = { planets: [], bridges: [], order: "" };
+  // Planets have a layer of their own, so the nearer one can be drawn over the farther by
+  // reordering them alone (`settleOverlaps`).
+  const planetLayer = svgEl("g", {}, "map-planets");
   // Every source reaches the Horizon now, so a hollow moon is rare (a CLI addition the server has
   // not recorded yet); its legend entry shows only while one is drawn.
   horizonEl("legend-local").hidden = !starMap.orbits.some((o) => (o.sources || 0) > o.captures);
@@ -12648,9 +12687,11 @@ function drawStarMap() {
     group.addEventListener("pointerleave", release);
     group.addEventListener("focus", hold);
     group.addEventListener("blur", release);
-    world.appendChild(group);
+    planetLayer.appendChild(group);
+    p.labelW = graphLabelWidth(shortLabel(orbit.title), 13.5);
     scene.planets.push({ p, group });
   });
+  world.appendChild(planetLayer);
   starMap.scene = scene;
   placeStarMap();
   if (mapCamera.home && !mapCamera.anim) Object.assign(mapCamera, mapHome());
@@ -13094,7 +13135,12 @@ function applyCamera() {
 
 function clampCamera(c) {
   const k = Math.min(MAP_ZOOM.max, Math.max(MAP_ZOOM.min, c.k));
-  return { k, x: Math.min(1000, Math.max(0, c.x)), y: Math.min(640, Math.max(0, c.y)) };
+  const outer = mapRings().at(-1);
+  return {
+    k,
+    x: Math.min(MAP_CENTRE.x + outer.rx, Math.max(MAP_CENTRE.x - outer.rx, c.x)),
+    y: Math.min(MAP_CENTRE.y + outer.ry + 60, Math.max(MAP_CENTRE.y - outer.ry, c.y)),
+  };
 }
 
 function setCamera(c) {
@@ -14302,94 +14348,58 @@ function showGraphEmpty(text) {
 
 //: A small force layout, run to rest before anything is drawn, so the graph appears still rather
 //: than settling in front of the reader. Deterministic: the same orbit draws the same picture.
-//: The graph is a map of what connects, not of everything named. Captures are the points; an entity
-//: two or more of them name is a hub between them, sized by how many do; an entity only one capture
-//: names adds no connection, so it is not drawn and shows in that capture's tooltip instead. Joining
-//: every pair of entities one capture named turned each capture into a mesh of triangles, and with
-//: three kinds of line the picture read as noise. Captures that hang together (through shared hubs
-//: or local relations) are found as groups and drawn on a faint region named by their commonest tag.
+//: The graph is a map of what connects, and each thing drawn means one thing. A dot is a capture. A
+//: pill is an entity two or more captures name, joined by a line to each of them; an entity only
+//: one capture names adds no connection, so it is listed when that capture is pointed at instead. A
+//: dashed line joins captures whose text is alike. A tinted region is a tag: exactly the captures
+//: filed under it here, named and counted the way the tag row above counts it. An earlier version
+//: drew entities as circles like the captures and named regions found by similarity after their
+//: commonest tag, so a region called #睡眠 held six captures while the tag held three, and a larger
+//: circle read as a bigger capture rather than as a name.
 const GRAPH_HUB_MIN = 2;
 const GRAPH_CAPTURE_R = 6;
+//: One hue per group, so which group a capture is in reads at a glance without a line to its name:
+//: copper first (the product's own), then hues far enough apart to tell on a dark ground.
+const GRAPH_HUES = [55, 190, 300, 12, 125, 250, 90, 340];
+const GRAPH_REGION_PAD = 30;
 
-function graphHubRadius(count) {
-  return Math.min(24, 8 + count * 2.4);
+function graphHubRadius(name, count) {
+  // For spacing: about half a pill's width, so pills repel like the circles they replaced.
+  return Math.min(40, graphPillSize(name, count).w / 2);
 }
 
-//: Groups of captures that hang together: label propagation over captures linked by shared hubs
-//: (a hub named by k captures adds 1/(k-1) to each pair, so one ubiquitous hub does not glue
-//: everything into one group), shared tags and local relations. Deterministic: a fixed order and ties broken
-//: by id, so the same orbit gives the same groups every time.
-function graphGroups(captures, similar) {
-  const ids = captures.map((c) => c.node_id).sort();
-  const near = new Map(ids.map((id) => [id, new Map()]));
-  const link = (a, b, w) => {
-    if (a === b || !near.has(a) || !near.has(b)) return;
-    near.get(a).set(b, (near.get(a).get(b) || 0) + w);
-    near.get(b).set(a, (near.get(b).get(a) || 0) + w);
-  };
-  const byHub = new Map();
-  captures.forEach((c) => c.hubs.forEach((name) => {
-    if (!byHub.has(name)) byHub.set(name, []);
-    byHub.get(name).push(c.node_id);
-  }));
-  byHub.forEach((members) => {
-    for (let i = 0; i < members.length; i += 1) {
-      for (let j = i + 1; j < members.length; j += 1) link(members[i], members[j], 1 / (members.length - 1));
-    }
-  });
-  // Shared tags count for half as much: broader than an entity, but in an orbit where each summary
-  // names its entities differently they are most of what two captures visibly share.
+//: The regions: each capture goes to one tag, the one most captures here share (ties by name), among
+//: the tags at least two of them carry. A tag every capture carries separates nothing and is not a
+//: region. What a tag keeps after that is its region, so a region's name and count are always a
+//: tag's own; a capture whose tags all went elsewhere or are its alone is drawn outside any region.
+function graphGroups(captures) {
+  const count = new Map();
+  captures.forEach((c) => new Set(c.tags).forEach((tag) => count.set(tag, (count.get(tag) || 0) + 1)));
+  const usable = (tag) => count.get(tag) >= 2 && !(captures.length > 2 && count.get(tag) === captures.length);
   const byTag = new Map();
-  captures.forEach((c) => c.tags.forEach((tag) => {
-    if (!byTag.has(tag)) byTag.set(tag, []);
-    byTag.get(tag).push(c.node_id);
-  }));
-  byTag.forEach((members) => {
-    if (members.length > Math.max(3, captures.length / 2)) return; // a tag on most of them separates nothing
-    for (let i = 0; i < members.length; i += 1) {
-      for (let j = i + 1; j < members.length; j += 1) link(members[i], members[j], 0.5 / (members.length - 1));
+  const alone = [];
+  [...captures].sort((a, b) => (a.node_id < b.node_id ? -1 : 1)).forEach((c) => {
+    const best = [...new Set(c.tags)].filter(usable)
+      .sort((a, b) => count.get(b) - count.get(a) || (a < b ? -1 : 1))[0];
+    if (!best) {
+      alone.push(c.node_id);
+      return;
     }
+    if (!byTag.has(best)) byTag.set(best, []);
+    byTag.get(best).push(c.node_id);
   });
-  (similar || []).forEach((pair) => link(pair.a, pair.b, 1));
-  const label = new Map(ids.map((id) => [id, id]));
-  for (let round = 0; round < 12; round += 1) {
-    let changed = false;
-    ids.forEach((id) => {
-      const score = new Map();
-      near.get(id).forEach((w, other) => score.set(label.get(other), (score.get(label.get(other)) || 0) + w));
-      if (!score.size) return;
-      let best = label.get(id);
-      let bestW = score.get(best) || 0;
-      score.forEach((w, candidate) => {
-        if (w > bestW + 1e-9 || (Math.abs(w - bestW) <= 1e-9 && candidate < best)) {
-          best = candidate;
-          bestW = w;
-        }
-      });
-      if (best !== label.get(id)) {
-        label.set(id, best);
-        changed = true;
-      }
-    });
-    if (!changed) break;
-  }
-  const groups = new Map();
-  ids.forEach((id) => {
-    if (!groups.has(label.get(id))) groups.set(label.get(id), []);
-    groups.get(label.get(id)).push(id);
+  const groups = [];
+  [...byTag].sort((a, b) => b[1].length - a[1].length || (a[0] < b[0] ? -1 : 1)).forEach(([tag, ids]) => {
+    if (ids.length >= 2) groups.push({ ids, name: tag });
+    else alone.push(...ids);
   });
-  const byId = new Map(captures.map((c) => [c.node_id, c]));
-  return [...groups.values()].map((members) => {
-    const tags = new Map();
-    const hubs = new Map();
-    members.forEach((id) => {
-      byId.get(id).tags.forEach((tag) => tags.set(tag, (tags.get(tag) || 0) + 1));
-      byId.get(id).hubs.forEach((name) => hubs.set(name, (hubs.get(name) || 0) + 1));
-    });
-    const top = (counts) => [...counts].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0];
-    const named = members.length >= 2 ? top(tags) || top(hubs) : null;
-    return { ids: members, name: named ? named[0] : "" };
-  });
+  alone.sort().forEach((id) => groups.push({ ids: [id], name: "" }));
+  return groups;
+}
+
+//: A pill's size: the entity's name set in 12px, padded, with its count beside it.
+function graphPillSize(name, count) {
+  return { w: graphLabelWidth(shortLabel(name, 20), 12) + graphLabelWidth(String(count), 11) + 26, h: 24 };
 }
 
 function layoutGraph(data) {
@@ -14398,7 +14408,7 @@ function layoutGraph(data) {
   const count = new Map(data.entities.map((e) => [e.name, e.count]));
   const hubs = new Set(data.entities.filter((e) => e.count >= GRAPH_HUB_MIN).map((e) => e.name));
   const captures = data.captures.map((c) => ({ ...c, hubs: c.entities.filter((n) => hubs.has(n)) }));
-  const groups = graphGroups(captures, data.similar);
+  const groups = graphGroups(captures);
   const groupOf = new Map();
   groups.forEach((g, i) => g.ids.forEach((id) => groupOf.set(`c:${id}`, i)));
   const r = new Map();
@@ -14422,6 +14432,7 @@ function layoutGraph(data) {
     });
   });
   const edges = [];
+  const hubOwner = new Map();
   captures.forEach((c) => c.hubs.forEach((name) => edges.push({ a: `c:${c.node_id}`, b: `e:${name}`, weight: 1 })));
   hubs.forEach((name) => {
     const around = edges.filter((e) => e.b === `e:${name}`).map((e) => pos.get(e.a));
@@ -14429,7 +14440,7 @@ function layoutGraph(data) {
     const x = around.reduce((s, p) => s + p.x, 0) / Math.max(around.length, 1) + 12 * Math.cos(jitter);
     const y = around.reduce((s, p) => s + p.y, 0) / Math.max(around.length, 1) + 12 * Math.sin(jitter);
     pos.set(`e:${name}`, around.length ? { x, y } : { x: W / 2, y: H / 2 });
-    r.set(`e:${name}`, graphHubRadius(count.get(name) || 1));
+    r.set(`e:${name}`, graphHubRadius(name, count.get(name) || 1));
     // A hub belongs to the group most of its captures are in.
     const votes = new Map();
     edges.filter((e) => e.b === `e:${name}`).forEach((e) => {
@@ -14438,6 +14449,9 @@ function layoutGraph(data) {
     });
     const best = [...votes].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
     if (best && best[1] > 1) groupOf.set(`e:${name}`, best[0]);
+    // A hub shared between groups belongs to the one that names it most, and only that group's
+    // region takes it in: counted in both, it stretched each region across to the other.
+    if (best) hubOwner.set(name, best[0]);
   });
   const similar = (data.similar || [])
     .filter((p) => pos.has(`c:${p.a}`) && pos.has(`c:${p.b}`))
@@ -14506,7 +14520,7 @@ function layoutGraph(data) {
     });
   }
   graphUntangle(pos, r, captures, hubs);
-  graphSeparateGroups({ pos, r, captures, hubs, groups });
+  graphSeparateGroups({ pos, r, captures, hubs, groups, hubOwner });
   // Framed to what was drawn, so a small graph fills the stage instead of sitting in its middle;
   // never tighter than a minimum, so two nodes are not blown up to fill a screen.
   const points = [...pos.values()];
@@ -14529,7 +14543,7 @@ function layoutGraph(data) {
     }
     box = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
   }
-  return { pos, r, edges, similar, captures, hubs, groups, box };
+  return { pos, r, edges, similar, captures, hubs, groups, hubOwner, box };
 }
 
 //: The width a label takes, roughly: a CJK character is about as wide as the font size, a Latin one
@@ -14545,8 +14559,10 @@ function graphUntangle(pos, r, captures, hubs) {
   const boxes = [];
   captures.forEach((c) => boxes.push({ key: `c:${c.node_id}`, w: Math.max(14, graphLabelWidth(shortLabel(c.title, 18), 11)) + 10,
     top: GRAPH_CAPTURE_R + 4, bottom: GRAPH_CAPTURE_R + 20 }));
-  hubs.forEach((name) => boxes.push({ key: `e:${name}`, w: Math.max(2 * r.get(`e:${name}`), graphLabelWidth(shortLabel(name, 18), 13)) + 10,
-    top: r.get(`e:${name}`) + 4, bottom: r.get(`e:${name}`) + 24 }));
+  hubs.forEach((name) => {
+    const pill = graphPillSize(name, captures.filter((c) => c.hubs.includes(name)).length);
+    boxes.push({ key: `e:${name}`, w: pill.w + 8, top: pill.h / 2 + 4, bottom: pill.h / 2 + 4 });
+  });
   for (let round = 0; round < 60; round += 1) {
     let moved = false;
     for (let i = 0; i < boxes.length; i += 1) {
@@ -14576,11 +14592,7 @@ function graphUntangle(pos, r, captures, hubs) {
 //: are moved apart whole, every node in each moving together, so nothing inside is rearranged.
 function graphSeparateGroups(layout) {
   const drawn = layout.groups.filter((g) => g.ids.length > 1);
-  const members = drawn.map((g) => {
-    const keys = new Set(g.ids.map((id) => `c:${id}`));
-    layout.captures.filter((c) => g.ids.includes(c.node_id)).forEach((c) => c.hubs.forEach((n) => keys.add(`e:${n}`)));
-    return [...keys];
-  });
+  const members = drawn.map((g) => graphGroupKeys(g, layout));
   for (let round = 0; round < 40; round += 1) {
     let moved = false;
     const shapes = drawn.map((g) => graphGroupCircle(g, layout));
@@ -14591,19 +14603,17 @@ function graphSeparateGroups(layout) {
         const dx = b.cx - a.cx;
         const dy = b.cy - a.cy;
         const d = Math.hypot(dx, dy) || 0.01;
-        const overlap = a.radius + b.radius + 18 - d;
+        // Room for each region's caption under it as well.
+        const overlap = Math.min(60, a.radius + b.radius + 24 - d);
         if (overlap <= 0) continue;
         moved = true;
         const ux = dx / d;
         const uy = dy / d;
-        const shared = members[i].filter((k) => members[j].includes(k));
         members[i].forEach((k) => {
-          if (shared.includes(k)) return;
           const p = layout.pos.get(k);
           layout.pos.set(k, { x: p.x - ux * overlap / 2, y: p.y - uy * overlap / 2 });
         });
         members[j].forEach((k) => {
-          if (shared.includes(k)) return;
           const p = layout.pos.get(k);
           layout.pos.set(k, { x: p.x + ux * overlap / 2, y: p.y + uy * overlap / 2 });
         });
@@ -14613,18 +14623,55 @@ function graphSeparateGroups(layout) {
   }
 }
 
+//: The nodes a group's region covers: its captures.
+function graphGroupKeys(group) {
+  // A region is a tag's captures and nothing else: an entity they name may be named elsewhere too.
+  return group.ids.map((id) => `c:${id}`);
+}
+
+//: The convex hull of a group's nodes as a closed path (Andrew's monotone chain). Two nodes give a
+//: line and one a point; the wide round stroke turns either into a capsule or a disc.
+function graphRegionPath(group, layout) {
+  const pts = graphGroupKeys(group, layout).map((k) => layout.pos.get(k)).filter(Boolean)
+    .map((p) => [p.x, p.y]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower = [];
+  pts.forEach((p) => {
+    while (lower.length >= 2 && cross(lower.at(-2), lower.at(-1), p) <= 0) lower.pop();
+    lower.push(p);
+  });
+  const upper = [];
+  [...pts].reverse().forEach((p) => {
+    while (upper.length >= 2 && cross(upper.at(-2), upper.at(-1), p) <= 0) upper.pop();
+    upper.push(p);
+  });
+  const hull = [...lower.slice(0, -1), ...upper.slice(0, -1)];
+  if (!hull.length) return "M 0 0";
+  return `M ${hull.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join(" L ")} Z`;
+}
+
+//: Where a group's name sits: a caption centred under its region, clear of its lowest node's label.
+function graphRegionCentre(group, layout) {
+  const keys = graphGroupKeys(group, layout);
+  const pts = keys.map((k) => layout.pos.get(k)).filter(Boolean);
+  const bottom = Math.max(...keys.map((k) => {
+    const p = layout.pos.get(k);
+    return p ? p.y + (layout.r.get(k) || 6) + 20 : -Infinity;
+  }));
+  const x = pts.reduce((s2, p) => s2 + p.x, 0) / pts.length;
+  return { x, y: Math.max(bottom, Math.max(...pts.map((p) => p.y)) + GRAPH_REGION_PAD) + 16 };
+}
+
 //: The faint region behind a group: a circle round its captures and hubs, with room for labels.
 function graphGroupCircle(group, layout) {
-  const keys = [...group.ids.map((id) => `c:${id}`),
-    ...[...layout.hubs].filter((name) => group.ids.some((id) =>
-      layout.captures.find((c) => c.node_id === id)?.hubs.includes(name))).map((name) => `e:${name}`)];
+  const keys = graphGroupKeys(group, layout);
   const points = keys.map((k) => layout.pos.get(k)).filter(Boolean);
-  const cx = points.reduce((s, p) => s + p.x, 0) / points.length;
-  const cy = points.reduce((s, p) => s + p.y, 0) / points.length;
+  const cx = points.reduce((sum, p) => sum + p.x, 0) / points.length;
+  const cy = points.reduce((sum, p) => sum + p.y, 0) / points.length;
   const radius = Math.max(...keys.map((k) => {
     const p = layout.pos.get(k);
     return p ? Math.hypot(p.x - cx, p.y - cy) + (layout.r.get(k) || 6) : 0;
-  })) + 30;
+  })) + GRAPH_REGION_PAD + 20;
   return { cx, cy, radius };
 }
 
@@ -14685,17 +14732,33 @@ function drawGraph() {
   const focus = Boolean(lenses.size || selected);
   const keyLit = (key) => (key.startsWith("c:") ? litCaptures.has(key.slice(2)) : litEntities.has(key.slice(2)));
 
+  // Each group is a soft region shaped round its own nodes (the convex hull, padded and rounded by
+  // a wide round-joined stroke), tinted with the group's hue, with its name as a caption under it in
+  // the same hue. A name on the rim of a circle read as a tag stuck to a bubble, one set large in the
+  // middle ran into the captures' own labels, and circles round loose groups overlapped each other.
+  const hueOf = new Map();
   const groupLayer = svgEl("g", { "aria-hidden": "true" }, "graph-groups");
+  let hueIndex = 0;
   layout.groups.forEach((group) => {
     if (group.ids.length < 2) return;
-    const shape = graphGroupCircle(group, layout);
+    const hue = GRAPH_HUES[hueIndex % GRAPH_HUES.length];
+    hueIndex += 1;
+    group.ids.forEach((id) => hueOf.set(id, hue));
     const lit = !focus || group.ids.some((id) => litCaptures.has(id));
-    const circle = svgEl("circle", { cx: shape.cx, cy: shape.cy, r: shape.radius }, `graph-group${lit ? "" : " is-dim"}`);
-    groupLayer.appendChild(circle);
-    const label = svgText(shape.cx, shape.cy - shape.radius + 18, group.name ? `#${shortLabel(group.name, 22)}` : "",
-      `graph-group-label${lit ? "" : " is-dim"}`);
+    const region = svgEl("g", {}, `graph-region${lit ? "" : " is-dim"}`);
+    region.style.setProperty("--hue", String(hue));
+    const shape = svgEl("path", { d: graphRegionPath(group, layout) }, "graph-region-shape");
+    shape.style.strokeWidth = String(GRAPH_REGION_PAD * 2);
+    region.appendChild(shape);
+    groupLayer.appendChild(region);
+    const centre = graphRegionCentre(group, layout);
+    const label = svgText(centre.x, centre.y,
+      t("graph.regionName", `#${shortLabel(group.name, 18)} · ${group.ids.length}`,
+        { name: shortLabel(group.name, 18), n: group.ids.length }),
+      `graph-region-label${lit ? "" : " is-dim"}`);
+    label.style.setProperty("--hue", String(hue));
     groupLayer.appendChild(label);
-    refs.groups.push({ circle, label, group });
+    refs.groups.push({ shape, label, group });
   });
   world.appendChild(groupLayer);
 
@@ -14726,6 +14789,7 @@ function drawGraph() {
     const waiting = c.state === "ready_undistilled";
     const group = svgEl("g", { tabindex: 0, role: "img", "aria-label": c.title },
       `graph-cap${waiting ? " is-waiting" : ""}${lit ? "" : " is-dim"}`);
+    if (hueOf.has(c.node_id)) group.style.setProperty("--hue", String(hueOf.get(c.node_id)));
     const body = svgEl("circle", { cx: p.x, cy: p.y, r: GRAPH_CAPTURE_R }, "graph-cap-body");
     const label = svgText(p.x, p.y + GRAPH_CAPTURE_R + 14, shortLabel(c.title, 18), "graph-cap-label");
     group.appendChild(body);
@@ -14749,19 +14813,40 @@ function drawGraph() {
     if (!layout.hubs.has(entity.name)) return;
     const key = `e:${entity.name}`;
     const p = layout.pos.get(key);
-    const r = layout.r.get(key);
+    const n = count.get(entity.name) || 0;
+    const size = graphPillSize(entity.name, n);
     const lit = !focus || litEntities.has(entity.name);
     const group = svgEl("g", { tabindex: 0, role: "button", "aria-pressed": entity.name === selected ? "true" : "false",
+      transform: `translate(${p.x} ${p.y})`,
       "aria-label": t("graph.entityLabel", `${entity.name}, in ${entity.count} captures`, { name: entity.name, n: entity.count }) },
     `graph-entity${entity.name === selected ? " is-selected" : ""}${lit ? "" : " is-dim"}`);
-    const body = svgEl("circle", { cx: p.x, cy: p.y, r }, "graph-entity-body");
-    const label = svgText(p.x, p.y + r + 16, shortLabel(entity.name, 18), "graph-entity-label");
+    const body = svgEl("rect", { x: -size.w / 2, y: -size.h / 2, width: size.w, height: size.h, rx: size.h / 2 },
+      "graph-entity-body");
+    const name = svgText(-size.w / 2 + 12, 0, shortLabel(entity.name, 20), "graph-entity-label");
+    const tally = svgText(size.w / 2 - 10, 0, String(n), "graph-entity-count");
     group.appendChild(body);
-    group.appendChild(label);
-    refs.nodes.set(key, { body, label, r });
+    group.appendChild(name);
+    group.appendChild(tally);
+    world.appendChild(group);
+    // Sized to the text as drawn, which an estimate from character counts gets wrong for capitals
+    // and mixed scripts; the estimate only spaced the layout.
+    try {
+      const nameW = name.getComputedTextLength();
+      const tallyW = tally.getComputedTextLength();
+      if (nameW > 0) {
+        const w = nameW + tallyW + 30;
+        body.setAttribute("x", String(-w / 2));
+        body.setAttribute("width", String(w));
+        name.setAttribute("x", String(-w / 2 + 12));
+        tally.setAttribute("x", String(w / 2 - 10));
+      }
+    } catch {
+      // No layout engine (a test's fake DOM): keep the estimate.
+    }
+    refs.nodes.set(key, { group, pill: true });
     group.dataset.key = `entity:${entity.name}`;
     const tip = () => showGraphTip(body, entity.name,
-      t("graph.entityCount", `Named by ${count.get(entity.name)} captures here`, { n: count.get(entity.name) }));
+      t("graph.entityCount", `Named by ${n} captures here`, { n }));
     group.addEventListener("pointerenter", tip);
     group.addEventListener("focus", tip);
     group.addEventListener("pointerleave", hideGraphTip);
@@ -14860,8 +14945,12 @@ function paintGraphGeometry() {
   const layout = graphState.layout;
   if (!refs) return;
   const pos = layout.pos;
-  refs.nodes.forEach(({ body, label, r }, key) => {
+  refs.nodes.forEach(({ body, label, r, group, pill }, key) => {
     const p = pos.get(key);
+    if (pill) {
+      group.setAttribute("transform", `translate(${p.x} ${p.y})`);
+      return;
+    }
     body.setAttribute("cx", p.x);
     body.setAttribute("cy", p.y);
     label.setAttribute("x", p.x);
@@ -14875,13 +14964,11 @@ function paintGraphGeometry() {
   };
   refs.links.forEach(({ line: el, a, b }) => line(el, pos.get(a), pos.get(b)));
   refs.similar.forEach(({ line: el, a, b }) => line(el, pos.get(a), pos.get(b)));
-  refs.groups.forEach(({ circle, label, group }) => {
-    const shape = graphGroupCircle(group, layout);
-    circle.setAttribute("cx", shape.cx);
-    circle.setAttribute("cy", shape.cy);
-    circle.setAttribute("r", shape.radius);
-    label.setAttribute("x", shape.cx);
-    label.setAttribute("y", shape.cy - shape.radius + 18);
+  refs.groups.forEach(({ shape, label, group }) => {
+    shape.setAttribute("d", graphRegionPath(group, layout));
+    const centre = graphRegionCentre(group, layout);
+    label.setAttribute("x", centre.x);
+    label.setAttribute("y", centre.y);
   });
 }
 
@@ -15140,7 +15227,7 @@ function renderGraphPanel(litCaptures) {
   if (!graphState.lenses.size && !graphState.selected) {
     // How to read it, once, where the orbit is described: the drawing has no legend of its own.
     panel.appendChild(elt("p", "card-note", t("graph.legend",
-      "Small dots are captures. A larger circle is an entity several of them name, larger for more; a faint region is a group that hangs together.")));
+      "A dot is a capture. A tinted region is a tag, holding the captures filed under it. A pill is something two or more captures name, joined to each of them, with how many.")));
     if ((data.similar || []).length) {
       panel.appendChild(elt("p", "card-note", t("graph.similarNote",
         "Dashed lines join captures with similar content, compared on this computer. Hollow dots are not summarised yet.")));

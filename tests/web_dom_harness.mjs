@@ -1555,9 +1555,10 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
   //: entities two or more captures name, keep a capture beside its hubs, group captures that share
   //: one, and leave no two nodes on top of each other.
   graphLayout() {
-    const consts = src.match(/const GRAPH_HUB_MIN = [^;]*;\nconst GRAPH_CAPTURE_R = [^;]*;/)[0];
-    const names = ["stableHash", "shortLabel", "graphHubRadius", "graphGroups", "graphLabelWidth",
-      "graphUntangle", "graphSeparateGroups", "graphGroupCircle", "layoutGraph"];
+    const consts = ["GRAPH_HUB_MIN", "GRAPH_CAPTURE_R", "GRAPH_REGION_PAD"]
+      .map((name) => src.match(new RegExp(`const ${name} = [^;]*;`))[0]).join("\n");
+    const names = ["stableHash", "shortLabel", "graphPillSize", "graphHubRadius", "graphGroups", "graphLabelWidth",
+      "graphUntangle", "graphSeparateGroups", "graphGroupKeys", "graphGroupCircle", "layoutGraph"];
     const run = new Function(`${consts}\n${names.map(extract).join("\n")}\nreturn { layoutGraph };`)();
     const data = {
       entities: [
