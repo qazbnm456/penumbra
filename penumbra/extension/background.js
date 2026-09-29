@@ -360,8 +360,18 @@ async function setTabState(tabId, state) {
 
 const spinning = new Set();
 //: Tabs given an icon of their own, marked or not: the global icon no longer reaches them, so they
-//: are painted again when Penumbra goes on or offline.
+//: are painted again when Penumbra goes on or offline. Kept in session storage as well, so a
+//: restarted service worker still knows them.
 const painted = new Set();
+
+async function rememberPainted() {
+  await chrome.storage.session.set({ painted: [...painted] });
+}
+
+async function recallPainted() {
+  const { painted: kept } = await chrome.storage.session.get("painted");
+  (kept || []).forEach((id) => painted.add(id));
+}
 
 async function idleTitle() {
   if (online !== false) return msg("actionTitle");
@@ -387,7 +397,10 @@ async function paintTab(tabId, state) {
     clearInterval(spinTimer);
     spinTimer = null;
   }
-  painted.add(tabId);
+  if (!painted.has(tabId)) {
+    painted.add(tabId);
+    void rememberPainted();
+  }
   try {
     if (!mark) {
       if (online === false) await chrome.action.setIcon({ tabId, imageData: await drawIcon({ grey: true }) });
@@ -419,6 +432,7 @@ function stale(state) {
 }
 
 async function settleOrphans() {
+  await recallPainted();
   const all = await chrome.storage.session.get(null);
   // Tabs painted without state (a capture taken back, a tab cleared) follow the global icon again.
   for (const tabId of painted) {
@@ -437,7 +451,7 @@ async function settleOrphans() {
 void settleOrphans();
 chrome.tabs.onRemoved.addListener((tabId) => {
   spinning.delete(tabId);
-  painted.delete(tabId);
+  if (painted.delete(tabId)) void rememberPainted();
   void chrome.storage.session.remove(tabKey(tabId));
 });
 

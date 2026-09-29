@@ -10477,11 +10477,10 @@ async function renderFacets() {
   try {
     data = await api("/orbits");
   } catch {
-    list.textContent = "";
+    if (!editingTitleIn(list)) list.textContent = "";
     return;
   }
   facetView.orbits = data.orbits || [];
-  if (editingTitleIn(list)) return;
   paintFacets();
 }
 
@@ -10497,6 +10496,10 @@ function sortedFacets(orbits, labels) {
 
 function paintFacets() {
   const list = horizonEl("facet-list");
+  // Every repaint of the rail waits while a rename is open in it (`editingTitleIn`): the poll, the
+  // sort menu and the filter would otherwise throw away what is being typed. The rename's own save
+  // repaints it once it closes.
+  if (editingTitleIn(list)) return;
   const orbits = facetView.orbits;
   const tools = horizonEl("facet-tools");
   tools.hidden = orbits.length < FACET_TOOLS_AT;
