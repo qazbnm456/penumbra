@@ -244,6 +244,79 @@ fn remember(app: &AppHandle, key: &str, value: serde_json::Value) {
     );
 }
 
+/// Whether the workspace frame has been set since Penumbra started. The window is built at a fixed
+/// size, so without this every launch opened a 1440x900 window wherever the system put it.
+static FRAMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Bumped on every move or resize; a save runs only if no later one arrived while it waited.
+static FRAME_EDITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Where the reader left the workspace (`workspace_frame` in `desktop.json`), put back the first
+/// time it shows after a launch: its position and size, and whether it was zoomed to the screen.
+/// With nothing remembered, or a frame on a display that is no longer attached, it fills the screen
+/// (the zoom a double-click on the header gives, keeping the menu bar and the Dock), not a
+/// full-screen Space. Returns whether to zoom once the window is showing.
+fn restore_frame(app: &AppHandle, window: &WebviewWindow) -> bool {
+    if FRAMED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return false;
+    }
+    let saved = recall(app).get("workspace_frame").cloned().unwrap_or_default();
+    let num = |key: &str| saved.get(key).and_then(|v| v.as_f64());
+    let (Some(x), Some(y), Some(w), Some(h)) = (num("x"), num("y"), num("w"), num("h")) else {
+        return true;
+    };
+    let on_screen = window.available_monitors().unwrap_or_default().iter().any(|m| {
+        let (p, s) = (m.position(), m.size());
+        x >= p.x as f64 && y >= p.y as f64 && x < (p.x + s.width as i32) as f64 && y < (p.y + s.height as i32) as f64
+    });
+    if !on_screen || w < 1.0 || h < 1.0 {
+        return true;
+    }
+    let _ = window.set_size(tauri::PhysicalSize::new(w as u32, h as u32));
+    let _ = window.set_position(tauri::PhysicalPosition::new(x as i32, y as i32));
+    saved.get("zoomed").and_then(|v| v.as_bool()).unwrap_or(false)
+}
+
+/// Remember the workspace's frame after the reader moves or resizes it, half a second after the last
+/// change so a drag writes once. A zoomed window records only that it is zoomed, keeping the frame it
+/// was zoomed from, which is where un-zooming returns. The star map's rest (simple full screen) and a
+/// full-screen Space are the page's states, not a place the reader put the window, so they are skipped.
+fn note_frame(window: &WebviewWindow) {
+    let edit = FRAME_EDITS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    let app = window.app_handle().clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(500));
+        if FRAME_EDITS.load(std::sync::atomic::Ordering::SeqCst) != edit {
+            return;
+        }
+        let Some(window) = app.get_webview_window(WINDOW) else { return };
+        if !window.is_visible().unwrap_or(false)
+            || window.is_minimized().unwrap_or(false)
+            || window.is_fullscreen().unwrap_or(false)
+        {
+            return;
+        }
+        let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size()) else { return };
+        let covers = window
+            .current_monitor()
+            .ok()
+            .flatten()
+            .is_some_and(|m| m.size().width == size.width && m.size().height == size.height);
+        if covers {
+            return;
+        }
+        let mut frame = recall(&app).get("workspace_frame").and_then(|v| v.as_object().cloned()).unwrap_or_default();
+        let zoomed = window.is_maximized().unwrap_or(false);
+        frame.insert("zoomed".into(), serde_json::json!(zoomed));
+        if !zoomed {
+            frame.insert("x".into(), serde_json::json!(pos.x));
+            frame.insert("y".into(), serde_json::json!(pos.y));
+            frame.insert("w".into(), serde_json::json!(size.width));
+            frame.insert("h".into(), serde_json::json!(size.height));
+        }
+        remember(&app, "workspace_frame", serde_json::Value::Object(frame));
+    });
+}
+
 /// Bring the workspace forward: from the island, the Dock, or a failure it has to show.
 fn open_workspace(app: &AppHandle) {
     // A background app has no Dock icon and no menu bar; while the workspace is open it needs both
@@ -253,7 +326,11 @@ fn open_workspace(app: &AppHandle) {
     let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
     if let Some(window) = app.get_webview_window(WINDOW) {
         let _ = window.unminimize();
+        let zoom = restore_frame(app, &window);
         let _ = window.show();
+        if zoom {
+            let _ = window.maximize();
+        }
         let _ = window.set_focus();
     }
 }
@@ -868,6 +945,14 @@ pub fn run() {
                     true
                 })
                 .build()?;
+            // The first launch shows the workspace at once; later launches show it from the island.
+            if !introduced {
+                if let Some(window) = handle.get_webview_window(WINDOW) {
+                    if restore_frame(&handle, &window) {
+                        let _ = window.maximize();
+                    }
+                }
+            }
             if !model_configured(&handle) {
                 ensure_config(&handle);
             }
@@ -894,8 +979,18 @@ pub fn run() {
             // longer reached the page and rest would not end until a click. The shell gives the
             // keyboard back, puts the island away (it floated over the sky as a black bar) and
             // hides the pointer until it moves; leaving the frame brings the island back.
+            if let tauri::WindowEvent::Moved(_) = event {
+                if let Some(workspace) = window.app_handle().get_webview_window(WINDOW) {
+                    if window.label() == WINDOW {
+                        note_frame(&workspace);
+                    }
+                }
+            }
             if let tauri::WindowEvent::Resized(size) = event {
                 if window.label() == WINDOW {
+                    if let Some(workspace) = window.app_handle().get_webview_window(WINDOW) {
+                        note_frame(&workspace);
+                    }
                     let covers = window
                         .current_monitor()
                         .ok()
