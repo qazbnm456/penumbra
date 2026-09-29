@@ -174,5 +174,29 @@
   },
   "autoWontMove": {
     "message": "Automatic filing will not move it."
+  },
+  "cancelling": {
+    "message": "Cancelling: it will be taken back as soon as it lands."
+  },
+  "notMine": {
+    "message": "Kept earlier, not by this press"
+  },
+  "notMineNote": {
+    "message": "This page was already in Penumbra before, so pressing again cannot take it back. Remove it in Penumbra if you want it gone."
+  },
+  "tooLateNote": {
+    "message": "It was kept more than ten minutes ago, which is too long to take back from here. Remove it in Penumbra instead."
+  },
+  "captureAgain": {
+    "message": "Keep it again"
+  },
+  "titleSaving": {
+    "message": "Keeping this page… press again to cancel"
+  },
+  "titleSaved": {
+    "message": "Kept. Press again to take it back"
+  },
+  "titleFailed": {
+    "message": "Could not keep this page. Press to try again"
   }
 }

@@ -91,7 +91,7 @@ function penumbraCard(state) {
     note.textContent = state.note;
     card.appendChild(note);
   }
-  if (state.nodeId && (state.orbits || []).length + (state.undoLabel || state.againLabel ? 1 : 0)) {
+  if ((state.nodeId && (state.orbits || []).length + (state.undoLabel || state.againLabel ? 1 : 0)) || state.recaptureLabel) {
     const actions = document.createElement("div");
     actions.className = "actions";
     if ((state.orbits || []).length) {
@@ -109,6 +109,13 @@ function penumbraCard(state) {
       again.textContent = state.againLabel;
       again.addEventListener("click", () => chrome.runtime.sendMessage({ type: "card-again" }));
       actions.appendChild(again);
+    }
+    if (state.recaptureLabel) {
+      const recapture = document.createElement("button");
+      recapture.className = "act";
+      recapture.textContent = state.recaptureLabel;
+      recapture.addEventListener("click", () => chrome.runtime.sendMessage({ type: "card-recapture" }));
+      actions.appendChild(recapture);
     }
     if (state.undoLabel) {
       const undo = document.createElement("button");

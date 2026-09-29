@@ -4608,3 +4608,28 @@ def test_a_run_belongs_to_the_orbit_it_was_derived_for_not_to_every_orbit_it_pre
     finally:
         for run_id in (theirs, f"{theirs}-lang", ask, ours):
             api._RUN_PROCESSES.pop(run_id, None)
+
+
+def test_a_title_suggestion_is_returned_and_never_saved(client, monkeypatch):
+    """Suggest in the rename field asks the model again for an orbit that already has a name, and
+    leaves the choice to the reader: the rename stays the only write (invariant 53)."""
+    client.post("/orbits/myorbit/sources", json={"sources": ["https://example.com/a"]})
+    client.put("/orbits/myorbit/title", json={"title": "First name"})
+    seen = {}
+
+    async def fake_run(orbit_id, dotted, kwargs, config, run_id, timeout=None, fresh=False):
+        seen["fresh"] = fresh
+        return '"A better name."'
+
+    async def no_language(*_args, **_kwargs):
+        return ""
+
+    monkeypatch.setattr(api, "_run_isolated", fake_run)
+    monkeypatch.setattr(api, "_config", lambda: api.PenumbraConfig())
+    monkeypatch.setattr(api, "_resolve_language", no_language)
+    resp = client.post("/orbits/myorbit/title/suggestion")
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"title": "A better name"}
+    assert seen["fresh"] is True, "each press can differ"
+    assert load_orbit("myorbit").title == "First name", "a suggestion writes nothing"
+    assert client.post("/orbits/nope/title/suggestion").status_code == 404

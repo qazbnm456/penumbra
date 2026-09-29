@@ -7012,8 +7012,19 @@ body[data-view="horizon"] .orbit-picker {
    `.save-as-note { opacity: 0 }` — same specificity — beat it: on a phone the only route into
    Notes measured opacity 0. `test_the_touch_escape_comes_after_every_rule_it_overrides` pins
    the order. */
+/* The rail's rename, shown on hover or focus (and always without hover, below). */
+.facet-rename {
+  opacity: 0;
+}
+
+.facet-row:hover .facet-rename,
+.facet-rename:focus-visible {
+  opacity: 1;
+}
+
 @media (any-hover: none) {
   .orbit-row-rename,
+  .facet-rename,
   .orbit-row-delete,
   .src-remove,
   .save-as-note,
@@ -10827,15 +10838,22 @@ button.node-more:hover {
   background: color-mix(in oklch, var(--accent) 18%, transparent);
 }
 
+/* The picker's last row: a field that opens a new orbit under the name typed, or unnamed. */
 .orbit-pick-new {
-  color: var(--accent-text);
-  border-top: 1px solid var(--border);
-  border-radius: 0;
   margin-top: var(--space-1);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--surface-1);
+  border: 1px dashed var(--border-strong);
+  border-radius: calc(var(--radius) - 2px);
+  padding: var(--space-2) var(--space-3);
 }
 
-.orbit-pick-new::before {
-  content: "+";
+.orbit-pick-new:focus-visible {
+  outline: none;
+  border-style: solid;
+  border-color: var(--accent);
 }
 
 /* The key to the marks (`renderMarks`). It is a key, not a document: every row is one real mark and
@@ -11108,4 +11126,82 @@ button.node-more:hover {
 
 .setting-export .btn {
   margin-top: var(--space-2);
+}
+
+/* Naming an orbit (`titleEditor`): the field, and Suggest beside it. */
+.title-editor {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+}
+
+.title-suggest {
+  flex: none;
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--accent-text);
+  background: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.title-suggest:hover,
+.title-suggest:focus-visible {
+  border-color: var(--accent);
+}
+
+.title-suggest:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* A rail row: the orbit's button, and its rename beside it, shown on hover or focus. */
+.facet-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.facet-row .facet {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.facet-rename,
+.card-rename {
+  flex: none;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+  background: none;
+  border: 0;
+  border-radius: var(--radius);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+
+.facet-row.is-renaming {
+  padding: var(--space-1) 0;
+}
+
+.facet-rename:hover,
+.card-rename:hover,
+.facet-rename:focus-visible,
+.card-rename:focus-visible {
+  color: var(--accent);
+}
+
+.card-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.card-title-row .card-title {
+  min-width: 0;
 }

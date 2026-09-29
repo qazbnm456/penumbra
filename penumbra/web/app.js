@@ -1532,55 +1532,102 @@ function renderOrbitRow(orb) {
 
 // Rename in place. A PUT, never the generate endpoint: setting a title is an instant write that
 // always succeeds, generating one is a model run that can fail and be superseded.
-function startRename(row, orb) {
-  row.innerHTML = "";
+//: The one control for naming an orbit: a field that saves on Enter or when it loses focus, Escape
+//: to leave it, and Suggest, which asks the model for a name from what the orbit holds now and puts it
+//: in the field for the reader to keep, edit or discard (`POST .../title/suggestion`, one model call a
+//: press, never saved by itself). `done(title|null)` runs once, with the saved title or null.
+function titleEditor(orbitId, current, done) {
+  const wrap = elt("div", "title-editor");
   const input = document.createElement("input");
   input.className = "orbit-rename-input";
-  input.value = orb.title || "";
+  input.value = current || "";
   input.maxLength = 120;
-  row.appendChild(input);
-
-  async function commit() {
+  input.setAttribute("aria-label", t("app.rename", "Rename"));
+  const suggest = elt("button", "title-suggest", t("rename.suggest", "Suggest"));
+  suggest.type = "button";
+  suggest.title = t("rename.suggestTip", "Ask the model for a name from what this orbit holds now. One model call.");
+  wrap.appendChild(input);
+  wrap.appendChild(suggest);
+  let settled = false;
+  const finish = (title) => {
+    if (settled) return;
+    settled = true;
+    done(title);
+  };
+  const commit = async () => {
     const value = input.value.trim();
-    if (!value || value === orb.title) {
-      refreshOrbitList();
+    if (!value || value === current) {
+      finish(null);
       return;
     }
     try {
-      const updated = await api(`/orbits/${encodeURIComponent(orb.id)}/title`, {
+      const updated = await api(`/orbits/${encodeURIComponent(orbitId)}/title`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: value }),
       });
-      if (orb.id === state.orbitId) {
+      if (orbitId === state.orbitId) {
         state.title = updated.title;
-        store.emit("orbit:titled", { title: state.title, orbitId: orb.id });
+        store.emit("orbit:titled", { title: state.title, orbitId });
       }
+      finish(updated.title);
     } catch (err) {
       notify(t("err.rename", `Could not rename: ${err.message}`, { message: err.message }));
+      finish(null);
     }
-    refreshOrbitList();
-  }
-
+  };
   input.addEventListener("keydown", (event) => {
+    event.stopPropagation();
     if (event.key === "Enter") {
       // Mid-composition Enter COMMITS an IME candidate; stealing it renames the orbit to a
       // half-typed word. Same guard, same reason, as the ask box and the capture field.
       if (event.isComposing || event.keyCode === 229) return;
       event.preventDefault();
-      commit();
+      void commit();
     }
-    if (event.key === "Escape") {
-      // Detach the blur handler FIRST. Escape used to call the async refresh with `commit` still
-      // listening on a focused input, so any focus change while that request was in flight sent the
-      // typed value as a real rename — a cancel that could commit.
-      input.removeEventListener("blur", commit);
-      refreshOrbitList();
+    // Escape leaves without saving; the blur that follows finds it settled and does nothing.
+    if (event.key === "Escape") finish(null);
+  });
+  // Leaving the field saves, unless the focus went to Suggest, which belongs to it.
+  input.addEventListener("blur", (event) => {
+    if (event.relatedTarget === suggest) return;
+    setTimeout(() => { if (!wrap.contains(document.activeElement)) void commit(); }, 0);
+  });
+  suggest.addEventListener("click", async () => {
+    suggest.disabled = true;
+    suggest.textContent = t("rename.suggesting", "Thinking\u2026");
+    try {
+      const got = await api(`/orbits/${encodeURIComponent(orbitId)}/title/suggestion`, { method: "POST" });
+      if (got.title) input.value = got.title;
+    } catch (err) {
+      notify(readableError(err.message));
+    } finally {
+      suggest.disabled = false;
+      suggest.textContent = t("rename.suggest", "Suggest");
+      input.focus();
+      input.select();
     }
   });
-  input.addEventListener("blur", commit);
-  input.focus();
-  input.select();
+  suggest.addEventListener("blur", (event) => {
+    if (event.relatedTarget !== input && !settled && !suggest.disabled) void commit();
+  });
+  queueMicrotask(() => {
+    input.focus();
+    input.select();
+  });
+  return wrap;
+}
+
+function startRename(row, orb) {
+  row.textContent = "";
+  row.appendChild(titleEditor(orb.id, orb.title || "", () => void refreshOrbitList()));
+}
+
+//: After a rename from the map or the rail: every place that shows the name reads it again.
+function afterRename() {
+  void renderFacets();
+  void renderStarMap();
+  void refreshOrbitList();
 }
 
 function closeOrbitMenu({ restoreFocus = false } = {}) {
@@ -10432,7 +10479,21 @@ function paintFacets() {
     item.addEventListener("click", async () => {
       await openOrbit(book.id);
     });
-    list.appendChild(item);
+    // A row, so the rename can sit beside the orbit's button rather than inside it.
+    const row = elt("div", "facet-row");
+    row.appendChild(item);
+    const rename = elt("button", "facet-rename", "\u270e\ufe0e");
+    rename.type = "button";
+    rename.title = t("app.rename", "Rename");
+    rename.setAttribute("aria-label", t("rename.labelled", `Rename ${label}`, { name: label }));
+    rename.addEventListener("click", (event) => {
+      event.stopPropagation();
+      row.textContent = "";
+      row.classList.add("is-renaming");
+      row.appendChild(titleEditor(book.id, book.title || "", () => afterRename()));
+    });
+    row.appendChild(rename);
+    list.appendChild(row);
   }
   syncFacetCurrent();
 }
@@ -14521,11 +14582,37 @@ function orbitPicker(nodeId, memberships = []) {
         });
         list.appendChild(item);
       });
-      const fresh = elt("button", "orbit-pick-item orbit-pick-new", t("horizon.newOrbit", "New orbit\u2026"));
-      fresh.type = "button";
-      fresh.addEventListener("click", async () => {
+      // A new orbit is named here, or left for the model to name when the field is empty. The id is
+      // still minted (invariant 37); the name is only its title.
+      const fresh = document.createElement("input");
+      fresh.type = "text";
+      fresh.className = "orbit-pick-new";
+      fresh.maxLength = 120;
+      fresh.placeholder = t("pick.newPlaceholder", "New orbit: type a name, Enter");
+      fresh.setAttribute("aria-label", t("horizon.newOrbit", "New orbit\u2026"));
+      fresh.addEventListener("keydown", async (event) => {
+        event.stopPropagation();
+        if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return;
+        event.preventDefault();
+        const name = fresh.value.trim();
+        const id = `orbit-${crypto.randomUUID().slice(0, 8)}`;
+        fresh.disabled = true;
         Object.assign(orbitPickOpen, { nodeId, at: performance.now() });
-        await fileCapture(nodeId, `orbit-${crypto.randomUUID().slice(0, 8)}`, null, { create: true });
+        const ok = await fileCapture(nodeId, id, null, { create: true, label: name });
+        if (ok !== false && name) {
+          try {
+            await api(`/orbits/${encodeURIComponent(id)}/title`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ title: name }),
+            });
+            orbitTitles.set(id, name);
+          } catch (err) {
+            notify(t("err.rename", `Could not rename: ${err.message}`, { message: err.message }));
+          }
+          afterRename();
+        }
+        fresh.disabled = false;
       });
       list.appendChild(fresh);
     };
@@ -15125,7 +15212,18 @@ function paintStarMapCard(mapCard) {
   if (mapPanelGrip && mapPanelGrip.isCollapsed()) mapPanelGrip.setCollapsed(false, { persist: false });
   mapCardClose(mapCard);
   mapCard.appendChild(elt("p", "card-kicker", relativeTime(orbit.recency)));
-  mapCard.appendChild(elt("h2", "card-title", orbit.title));
+  const heading = elt("div", "card-title-row");
+  heading.appendChild(elt("h2", "card-title", orbit.title));
+  const rename = elt("button", "card-rename", "\u270e\ufe0e");
+  rename.type = "button";
+  rename.title = t("app.rename", "Rename");
+  rename.setAttribute("aria-label", t("rename.labelled", `Rename ${orbit.title}`, { name: orbit.title }));
+  rename.addEventListener("click", () => {
+    heading.textContent = "";
+    heading.appendChild(titleEditor(orbit.id, orbit.title || "", () => afterRename()));
+  });
+  heading.appendChild(rename);
+  mapCard.appendChild(heading);
   mapCard.appendChild(elt("p", "card-meta", orbit.captures
     ? t("map.cardCounts", `${orbit.sources} sources, ${orbit.captures} filed from the Horizon`,
       { n: orbit.sources, m: orbit.captures })

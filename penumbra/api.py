@@ -2293,13 +2293,36 @@ async def suggest_title(
     orbit = _load_orbit_or_404(orbit_id)
     if orbit.title:
         return _orbit_response(orbit)
+    title = await _title_from_model(orbit_id, orbit, request, _derive_run_id(orbit_id, body.run_id))
+    orbit = await _mutate_or_http(
+        orbit_id, lambda orb: setattr(orb, "title", orb.title or str(title)), create=False
+    )
+    return _orbit_response(orbit)
 
+
+@app.post("/orbits/{orbit_id}/title/suggestion")
+async def suggest_title_only(
+    orbit_id: str, request: Request, body: RunOptions = _NO_RUN_OPTIONS
+) -> dict:
+    """A name for the orbit from what it holds now, returned and NOT saved.
+
+    What the rename field's Suggest offers: an automatic title is given once and never overwritten,
+    so an orbit named after its first capture kept that name as it grew. This asks again, uncached so
+    each press can differ, and leaves the choice to the reader, whose rename (`PUT .../title`) stays
+    the only write (invariant 53). One model call a press, and only on a press."""
+    orbit = _load_orbit_or_404(orbit_id)
+    title = await _title_from_model(
+        orbit_id, orbit, request, _derive_run_id(orbit_id, body.run_id), fresh=True
+    )
+    return {"title": normalize_title(str(title)) or str(title)}
+
+
+async def _title_from_model(orbit_id: str, orbit, request: Request, run_id: str, *, fresh: bool = False):
+    """The model's title for `orbit` from every source, falling back to the deterministic one."""
+    _require_sources(orbit, "title")
     origins = [s.origin for s in orbit.sources]
     titles = [s.preview.get("title", "") for s in orbit.sources]
-    _require_sources(orbit, "title")
-
     config = _config()
-    run_id = _derive_run_id(orbit_id, body.run_id)
     try:
         # EVERY source, not the first 8000 characters of the blob — see `Corpus.excerpt`.
         excerpt = corpus_of(orbit).excerpt(8000)
@@ -2319,17 +2342,14 @@ async def suggest_title(
             {"sources": excerpt, "origins": origins, "language": language or "", "titles": titles},
             config,
             run_id,
+            fresh=fresh,
         )
     except HTTPException:
         # A failed/timed-out naming run must not deny the caller their orbit — fall back to the
         # deterministic title, the same "never lose what already succeeded" discipline invariant 19
         # applies to a TTS failure after a transcript exists.
         title = fallback_title(origins, titles)
-
-    orbit = await _mutate_or_http(
-        orbit_id, lambda orb: setattr(orb, "title", orb.title or str(title)), create=False
-    )
-    return _orbit_response(orbit)
+    return title
 
 
 @app.post("/orbits/{orbit_id}/overview", response_model=OrbitResponse)

@@ -84,16 +84,59 @@ async function paintIcon(on) {
     await chrome.action.setIcon({ path: { 16: "icons/16.png", 32: "icons/32.png" } });
     return;
   }
+  await chrome.action.setIcon({ imageData: await drawIcon({ grey: true }) });
+}
+
+const bitmaps = {};
+async function iconBitmap(size) {
+  if (!bitmaps[size]) {
+    bitmaps[size] = await createImageBitmap(await (await fetch(chrome.runtime.getURL(`icons/${size}.png`))).blob());
+  }
+  return bitmaps[size];
+}
+
+//: The moon at 16 and 32 pixels, greyed while offline, with this tab's mark in the lower right: a
+//: turning arc while a capture is on its way, a tick once kept, a cross when it failed.
+async function drawIcon({ grey = false, mark = "", frame = 0 } = {}) {
   const imageData = {};
   for (const size of [16, 32]) {
-    const bitmap = await createImageBitmap(await (await fetch(chrome.runtime.getURL(`icons/${size}.png`))).blob());
     const canvas = new OffscreenCanvas(size, size);
     const ctx = canvas.getContext("2d");
-    ctx.filter = "grayscale(1) opacity(0.45)";
-    ctx.drawImage(bitmap, 0, 0, size, size);
+    if (grey) ctx.filter = "grayscale(1) opacity(0.45)";
+    ctx.drawImage(await iconBitmap(size), 0, 0, size, size);
+    ctx.filter = "none";
+    if (mark) {
+      const r = size * 0.3;
+      const cx = size - r;
+      const cy = size - r;
+      const line = Math.max(1.5, size / 11);
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = mark === "saved" ? "#d9853b" : mark === "failed" ? "#b3261e" : "#2a211c";
+      ctx.fill();
+      ctx.strokeStyle = mark === "saving" ? "#d9853b" : "#ffffff";
+      ctx.lineWidth = line;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      if (mark === "saved") {
+        ctx.moveTo(cx - r * 0.45, cy);
+        ctx.lineTo(cx - r * 0.1, cy + r * 0.35);
+        ctx.lineTo(cx + r * 0.5, cy - r * 0.35);
+      } else if (mark === "failed") {
+        const d = r * 0.4;
+        ctx.moveTo(cx - d, cy - d);
+        ctx.lineTo(cx + d, cy + d);
+        ctx.moveTo(cx + d, cy - d);
+        ctx.lineTo(cx - d, cy + d);
+      } else {
+        const start = (frame % 8) * (Math.PI / 4);
+        ctx.arc(cx, cy, r * 0.55, start, start + Math.PI * 1.4);
+      }
+      ctx.stroke();
+    }
     imageData[size] = ctx.getImageData(0, 0, size, size);
   }
-  await chrome.action.setIcon({ imageData });
+  return imageData;
 }
 
 async function checkOnline() {
@@ -283,6 +326,109 @@ async function placement(got, chosenTitle) {
   return { status: msg("saved"), note };
 }
 
+// --- this tab's capture, on the icon -------------------------------------------------------------
+//
+// A page capture's state, by tab, in `chrome.storage.session` so it outlives a service-worker restart
+// but not the browser: `saving`, `saved` (with the node it made, and whether this press made it) or
+// `failed`. Pressing the icon again acts on it: while saving it cancels (the capture is taken back
+// the moment it lands), once saved it takes it back, after a failure it tries again. Chrome resets a
+// tab's icon when the tab navigates, and the state is dropped then too.
+
+const tabKey = (tabId) => `tab:${tabId}`;
+
+async function tabState(tabId) {
+  if (!tabId) return null;
+  return (await chrome.storage.session.get(tabKey(tabId)))[tabKey(tabId)] || null;
+}
+
+async function setTabState(tabId, state) {
+  if (!tabId) return;
+  if (state) await chrome.storage.session.set({ [tabKey(tabId)]: state });
+  else await chrome.storage.session.remove(tabKey(tabId));
+  await paintTab(tabId, state);
+}
+
+const spinning = new Set();
+let spinTimer = null;
+let spinFrame = 0;
+
+async function paintTab(tabId, state) {
+  const mark = state ? state.state : "";
+  if (mark === "saving") spinning.add(tabId);
+  else spinning.delete(tabId);
+  if (spinning.size && !spinTimer) {
+    spinTimer = setInterval(() => {
+      spinFrame += 1;
+      spinning.forEach((id) => {
+        drawIcon({ grey: online === false, mark: "saving", frame: spinFrame })
+          .then((imageData) => chrome.action.setIcon({ tabId: id, imageData }))
+          .catch(() => spinning.delete(id));
+      });
+    }, 125);
+  } else if (!spinning.size && spinTimer) {
+    clearInterval(spinTimer);
+    spinTimer = null;
+  }
+  try {
+    if (!mark) {
+      if (online === false) await chrome.action.setIcon({ tabId, imageData: await drawIcon({ grey: true }) });
+      else await chrome.action.setIcon({ tabId, path: { 16: "icons/16.png", 32: "icons/32.png" } });
+      await chrome.action.setTitle({ tabId, title: msg(online === false ? "offlineTitle" : "actionTitle") });
+      return;
+    }
+    await chrome.action.setIcon({ tabId, imageData: await drawIcon({ grey: online === false, mark, frame: spinFrame }) });
+    await chrome.action.setTitle({ tabId, title: msg(mark === "saving" ? "titleSaving" : mark === "saved" ? "titleSaved" : "titleFailed") });
+  } catch {
+    // the tab closed meanwhile
+  }
+}
+
+chrome.tabs.onUpdated.addListener((tabId, change) => {
+  if (change.status === "loading") void setTabState(tabId, null);
+});
+chrome.tabs.onRemoved.addListener((tabId) => {
+  spinning.delete(tabId);
+  void chrome.storage.session.remove(tabKey(tabId));
+});
+
+//: The icon pressed on a page: capture it, or act on the capture already made from it.
+async function pressIcon(tab) {
+  const tabId = tab && tab.id;
+  const state = await tabState(tabId);
+  const here = state && (!state.url || !tab.url || state.url === tab.url);
+  if (here && state.state === "saving") {
+    await setTabState(tabId, { ...state, cancel: true });
+    await tell(tabId, { status: msg("cancelling"), title: state.title, busy: true, stay: true });
+    return;
+  }
+  if (here && state.state === "saved") {
+    await withdraw(tab, state);
+    return;
+  }
+  await capture(tab, { kind: "page" });
+}
+
+async function withdraw(tab, state) {
+  const tabId = tab && tab.id;
+  if (!state.mine || !state.nodeId) {
+    await tell(tabId, { status: msg("notMine"), title: state.title, note: msg("notMineNote"), bad: true });
+    return;
+  }
+  try {
+    await api("/extension/undo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ node_id: state.nodeId }),
+    });
+  } catch (err) {
+    const late = /not a capture this browser just made/.test(err.message);
+    await tell(tabId, { status: msg("failed"), title: state.title, note: late ? msg("tooLateNote") : err.message, bad: true });
+    return;
+  }
+  await setTabState(tabId, null);
+  await tell(tabId, { status: msg("undone"), title: state.title, recaptureLabel: msg("captureAgain") });
+}
+
 // --- capturing ----------------------------------------------------------------------------------
 
 //: Runs in the page: its rendered HTML without the parts that are not text (scripts, styles,
@@ -378,6 +524,9 @@ async function send(tab, body) {
   }
   inFlight.add(tabId);
   lastBody.set(tabId, body);
+  // Only a whole page is this tab's capture; a passage or a link is not the page the icon stands for.
+  const mine = body.kind === "page";
+  if (mine) await setTabState(tabId, { state: "saving", url: body.url, title: shown });
   await tell(tabId, { status: msg("saving"), title: shown, busy: true, stay: true });
   try {
     const got = await api("/extension/capture", {
@@ -387,6 +536,16 @@ async function send(tab, body) {
     });
     const orbits = await orbitList();
     const into = body.orbit ? (orbits.find((o) => o.id === body.orbit) || {}).title : "";
+    if (mine) {
+      const nodeId = got.node && got.node.id;
+      const before = await tabState(tabId);
+      await setTabState(tabId, { state: "saved", url: body.url, title: shown, nodeId, mine: !got.duplicate });
+      // Pressed again while it was on its way: take it back now that it has landed.
+      if (before && before.cancel) {
+        await withdraw(tab, { state: "saved", url: body.url, title: shown, nodeId, mine: !got.duplicate });
+        return;
+      }
+    }
     if (got.duplicate) {
       const where = await placement(got, "");
       await tell(tabId, {
@@ -413,6 +572,7 @@ async function send(tab, body) {
       undoLabel: msg("undo"),
     });
   } catch (err) {
+    if (mine) await setTabState(tabId, err instanceof Unreachable ? null : { state: "failed", url: body.url, title: shown });
     if (err instanceof Unreachable) {
       try {
         const count = await keepForLater(body);
@@ -441,9 +601,9 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   void capture(tab, { kind, orbit, link: info.linkUrl || "", selectionText: info.selectionText || "" });
 });
 
-chrome.action.onClicked.addListener((tab) => void capture(tab, { kind: "page" }));
+chrome.action.onClicked.addListener((tab) => void pressIcon(tab));
 chrome.commands.onCommand.addListener((command, tab) => {
-  if (command === "capture-page" && tab) void capture(tab, { kind: "page" });
+  if (command === "capture-page" && tab) void pressIcon(tab);
 });
 
 // --- messages: the pairing page, and the card's two buttons ----------------------------------------
@@ -451,6 +611,10 @@ chrome.commands.onCommand.addListener((command, tab) => {
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (!message) return false;
   const tabId = sender.tab && sender.tab.id;
+  if (message.type === "card-recapture") {
+    if (sender.tab) void capture(sender.tab, { kind: "page" });
+    return false;
+  }
   if (message.type === "card-again") {
     const body = lastBody.get(tabId);
     if (body && sender.tab) void send(sender.tab, { ...body, force: true });
@@ -477,7 +641,9 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ node_id: message.nodeId }),
           });
-          await tell(tabId, { status: msg("undone") });
+          const state = await tabState(tabId);
+          if (state && state.nodeId === message.nodeId) await setTabState(tabId, null);
+          await tell(tabId, { status: msg("undone"), recaptureLabel: msg("captureAgain") });
         }
       } catch (err) {
         await tell(tabId, { status: msg("failed"), note: err.message, bad: true });

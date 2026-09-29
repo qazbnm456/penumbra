@@ -6,6 +6,8 @@
 
 Model-written titles are not unique, so the picker orders orbits by file modification time. The id is no longer shown anywhere (invariant 37), so "which one did I touch last" is what tells two same-named orbits apart. The time is carried outside the schema (`orbit._MTIMES`, `last_modified`), because it is a property of the file and a schema field would mean writing an unread timestamp on every change.
 
+`POST /orbits/{id}/title/suggestion` keeps the split when a reader wants a new name for an orbit that already has one: it runs the same model call uncached and returns the title without writing it, so the rename (`PUT`) stays the only write and generating still never overwrites.
+
 `derived_title` appears in both `OrbitSummary` and `OrbitResponse`, or the header would say "Untitled orbit" while the picker showed a derived label for the same orbit. It comes from `naming.fallback_title` and costs no model call, which matters because titling is lazy (invariant 37).
 
 `GET /settings/choices` serves the settings page's dropdown values and must never call `_config()`, for invariant 41's reason. Voice names depend on `PN_TTS_PROVIDER`, read straight from the environment, and an unknown provider returns an empty voice list so the page still renders. The values are served rather than hardcoded in JavaScript, because a second copy would drift from `tts._LANGUAGE_VOICES`.

@@ -174,5 +174,29 @@
   },
   "autoWontMove": {
     "message": "自動歸入不會再移動它。"
+  },
+  "cancelling": {
+    "message": "正在取消：收進去的那一刻就會收回。"
+  },
+  "notMine": {
+    "message": "之前就收過了，不是這次收的"
+  },
+  "notMineNote": {
+    "message": "這一頁本來就在 Penumbra 裡，所以再按一次收不回來。想刪掉的話，請在 Penumbra 裡移除。"
+  },
+  "tooLateNote": {
+    "message": "這是十分鐘以前收的，已經不能從這裡收回。請到 Penumbra 裡移除。"
+  },
+  "captureAgain": {
+    "message": "再收一次"
+  },
+  "titleSaving": {
+    "message": "正在收這一頁…再按一次可以取消"
+  },
+  "titleSaved": {
+    "message": "收好了。再按一次可以收回"
+  },
+  "titleFailed": {
+    "message": "這一頁沒收成。按一下再試一次"
   }
 }
