@@ -10458,6 +10458,7 @@ async function paintFindPanel() {
       const input = document.createElement("input");
       input.type = "date";
       input.value = f[key];
+      input.dataset.key = `find:date:${key}`;
       input.addEventListener("change", () => {
         f[key] = input.value;
         findChanged();
@@ -14321,6 +14322,7 @@ function orbitPicker(nodeId, memberships = []) {
           const was = selected.has(key);
           const ok = was ? await unfileCapture(nodeId, key, { label: nameOf(o), orbitId: o.id }) : await fileCapture(nodeId, o.id, null, { label: nameOf(o) });
           item.disabled = false;
+          orbitPickOpen.at = performance.now(); // a citation confirm may have held it open a while
           if (ok === false) return;
           if (was) selected.delete(key);
           else selected.set(key);
