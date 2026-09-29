@@ -800,32 +800,40 @@ def remove_node(
     already cited in a saved turn keeps meaning what it meant.
 
     The removal is recorded (`horizon_events`) with the node's name, the orbits it was in and its
-    tags, so the list can show that it went and when, not merely lose the row. Recorded in the same
-    transaction as the delete, from the row itself, so an unreadable row still leaves a record."""
+    tags, so the list can show that it went and when, not merely lose the row. The record and the
+    delete share one `BEGIN IMMEDIATE` transaction (the connection is otherwise autocommit), and the
+    record is written only when the delete removed a row, so a failed delete leaves no record and
+    two presses of Forget leave one."""
     with _connect(base_dir) as conn:
-        row = conn.execute(
-            "SELECT title, origin, preview, tags FROM nodes WHERE id = ?", (node_id,)
-        ).fetchone()
-        if row is not None:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT title, origin, preview, tags FROM nodes WHERE id = ?", (node_id,)
+            ).fetchone()
             orbits = [r[0] for r in conn.execute(
                 "SELECT orbit_id FROM memberships WHERE node_id = ?", (node_id,)
             ).fetchall()]
-            try:
-                preview_title = json.loads(row["preview"] or "{}").get("title") or ""
-            except (ValueError, AttributeError):
-                preview_title = ""
-            try:
-                tags = [t for t in json.loads(row["tags"] or "[]") if isinstance(t, str)]
-            except ValueError:
-                tags = []
-            record = {"orbits": orbits, "tags": tags, **(detail or {})}
-            conn.execute(
-                "INSERT INTO horizon_events (kind, node_id, title, origin, detail, at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                ("removed", node_id, row["title"] or preview_title or row["origin"], row["origin"],
-                 json.dumps(record, ensure_ascii=False), time.time()),
-            )
-        changed = conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,)).rowcount
+            changed = conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,)).rowcount
+            if changed and row is not None:
+                try:
+                    preview_title = json.loads(row["preview"] or "{}").get("title") or ""
+                except (ValueError, AttributeError):
+                    preview_title = ""
+                try:
+                    tags = [t for t in json.loads(row["tags"] or "[]") if isinstance(t, str)]
+                except ValueError:
+                    tags = []
+                record = {"orbits": orbits, "tags": tags, **(detail or {})}
+                conn.execute(
+                    "INSERT INTO horizon_events (kind, node_id, title, origin, detail, at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    ("removed", node_id, row["title"] or preview_title or row["origin"], row["origin"],
+                     json.dumps(record, ensure_ascii=False), time.time()),
+                )
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
     node_blocks_path(node_id, base_dir=base_dir).unlink(missing_ok=True)
     return bool(changed)
 

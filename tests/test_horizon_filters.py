@@ -67,3 +67,23 @@ def test_every_tag_is_listed_with_its_count():
     _node("https://x.example/1", tags=["sleep", "health"])
     _node("https://x.example/2", tags=["health"])
     assert horizon.all_tags()[:2] == [{"name": "health", "count": 2}, {"name": "sleep", "count": 1}]
+
+
+def test_a_delete_that_fails_leaves_no_removal_record():
+    """The record and the delete are one transaction: a list must never show "Removed" beside a
+    capture that is still there."""
+    import sqlite3
+
+    import pytest
+
+    a = _node("https://x.example/still-here")
+    with horizon._connect() as conn:
+        conn.execute("CREATE TRIGGER refuse BEFORE DELETE ON nodes BEGIN SELECT RAISE(ABORT, 'busy'); END")
+    with pytest.raises(sqlite3.IntegrityError):
+        horizon.remove_node(a)
+    assert horizon.removal_events() == []
+    assert horizon.get_node(a) is not None
+    with horizon._connect() as conn:
+        conn.execute("DROP TRIGGER refuse")
+    assert horizon.remove_node(a) and len(horizon.removal_events()) == 1
+    assert not horizon.remove_node(a) and len(horizon.removal_events()) == 1, "a second press records nothing"

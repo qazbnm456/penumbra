@@ -3246,7 +3246,7 @@ function marksGroups() {
     {
       id: "answers",
       title: t("marks.g.answers", "Answers and citations"),
-      note: t("marks.g.answersNote", "Every claim in an answer points at a place in a source, and that place is checked."),
+      note: t("marks.g.answersNote", "Each cited claim in an answer points at a place in a source, and that place is checked."),
       rows: [
         [chip("span", "citation", t("marks.cite.claim", "a claim"), (el) => { el.dataset.reference = "1"; }),
           t("marks.cite.ok", "A cited claim. The number matches a row in the references under the answer; point at it to see how far the claim runs.")],
@@ -8972,6 +8972,12 @@ function findRemovalsInView() {
 
 //: A capture that was removed, in the history where it would have been: when, its name, and from
 //: where it went.
+//: An orbit's name from its slug, for a record that may outlive the orbit: a deleted one says so
+//: rather than printing its handle (invariant 37).
+function orbitNameOrGone(slug) {
+  return orbitTitles.get(slug) || t("horizon.filedInGone", "a deleted orbit");
+}
+
 function renderRemoval(event) {
   const row = elt("div", "node node-removed");
   row.setAttribute("role", "listitem");
@@ -8988,7 +8994,10 @@ function renderRemoval(event) {
   head.appendChild(elt("span", "node-removed-badge", t("find.removedBadge", "Removed")));
   head.appendChild(elt("span", "node-removed-title", captureName(event.title)));
   col.appendChild(head);
-  const names = (event.orbits || []).map((slug) => orbitTitles.get(slug) || slug).join(t("list.sep", ", "));
+  // Each name quoted on its own, so two orbits never read as one name.
+  const names = (event.orbits || [])
+    .map((slug) => t("find.orbitQuoted", `\u201c${orbitNameOrGone(slug)}\u201d`, { name: orbitNameOrGone(slug) }))
+    .join(t("list.sep", ", "));
   const where = event.everywhere && names
     ? t("find.removedEverywhere", `Removed from the Horizon and from ${names}.`, { where: names })
     : names
@@ -10318,7 +10327,7 @@ function findActive() {
   f.tags.forEach((tag) => chips.push({ key: `tag:${tag}`, label: `#${tag}` }));
   if (f.tags.length > 1 && f.tagMode === "all") chips.push({ key: "tagMode", label: t("find.tagAll", "All of these tags") });
   f.orbits.forEach((orbit) => chips.push({ key: `orbit:${orbit}`, label: orbit === "__none__"
-    ? t("find.noOrbit", "In no orbit") : orbitTitles.get(orbit) || orbit }));
+    ? t("find.noOrbit", "In no orbit") : orbitNameOrGone(orbit) }));
   f.states.forEach((state) => chips.push({ key: `state:${state}`, label: findStateLabel(state) }));
   if (!f.added) chips.push({ key: "added", label: t("find.onlyRemoved", "Removed only") });
   if (!f.removed) chips.push({ key: "removed", label: t("find.hideRemoved", "Removed hidden") });
@@ -10407,6 +10416,7 @@ function findSection(panel, title, items, isOn, toggle) {
     chip.type = "button";
     if (count !== undefined) chip.appendChild(elt("span", "lens-count", String(count)));
     chip.setAttribute("aria-pressed", isOn(value) ? "true" : "false");
+    chip.dataset.key = `find:${title}:${value}`;
     chip.addEventListener("click", () => {
       toggle(value);
       findChanged();
@@ -10430,6 +10440,8 @@ async function paintFindPanel() {
     }
   }
   const scroll = panel.scrollTop;
+  // Every toggle rebuilds the panel; the pressed chip keeps focus, so Escape still reaches the panel.
+  const keep = focusedKey(panel);
   panel.textContent = "";
   const toggleIn = (list, value) => (list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
 
@@ -10489,6 +10501,7 @@ async function paintFindPanel() {
       chip.type = "button";
       chip.appendChild(elt("span", "lens-count", String(tag.count)));
       chip.setAttribute("aria-pressed", f.tags.includes(tag.name) ? "true" : "false");
+      chip.dataset.key = `find:tag:${tag.name}`;
       chip.addEventListener("click", () => {
         f.tags = toggleIn(f.tags, tag.name);
         findChanged();
@@ -10503,8 +10516,10 @@ async function paintFindPanel() {
   paintTags();
   panel.appendChild(tagSection);
 
+  // The rail's labels, so two orbits with the same name can be told apart here too.
+  const orbitLabels = facetLabels(facetView.orbits);
   findSection(panel, t("find.orbits", "Orbits"),
-    [["__none__", t("find.noOrbit", "In no orbit")], ...facetView.orbits.map((o) => [o.slug, orbitTitles.get(o.slug) || o.derived_title || o.slug])],
+    [["__none__", t("find.noOrbit", "In no orbit")], ...facetView.orbits.map((o) => [o.slug, orbitLabels.get(o.id)])],
     (value) => f.orbits.includes(value), (value) => { f.orbits = toggleIn(f.orbits, value); });
   findSection(panel, t("find.state", "State"), FIND_STATES.map(([value, key, fallback]) => [value, t(key, fallback)]),
     (value) => f.states.includes(value), (value) => { f.states = toggleIn(f.states, value); });
@@ -10529,6 +10544,7 @@ async function paintFindPanel() {
   foot.appendChild(done);
   panel.appendChild(foot);
   panel.scrollTop = scroll;
+  restoreFocus(panel, keep);
 }
 
 function closeFindPanel() {
@@ -10555,6 +10571,7 @@ function initFindTools() {
     }
     panel.hidden = false;
     filter.setAttribute("aria-expanded", "true");
+    horizonState.allTags = null; // a summary pass since the last open may have added tags
     void paintFindPanel();
   });
   panel.addEventListener("keydown", (event) => {
@@ -14217,12 +14234,16 @@ function mapCardClose(card) {
 //: "File into…" for one capture. Only orbits it is not already in are offered.
 //: Which capture's orbit menu was open, so the rebuild that follows each filing (the card and the
 //: list repaint on refresh) opens it again and the reader can keep choosing.
-const orbitPickOpen = { nodeId: null, wrap: null, close: null };
+//: `at` is when a filing from it began: only a repaint soon after that reopens it, so a picker that
+//: went away with its row does not spring open the next time that capture is shown.
+const orbitPickOpen = { nodeId: null, wrap: null, close: null, at: 0 };
 
 //: One listener for every picker, not one per picker: the list repaints often, and each repaint
 //: would otherwise leave another listener on the document for a wrap that no longer exists.
 document.addEventListener("pointerdown", (event) => {
   const { wrap, close } = orbitPickOpen;
+  // A confirm the filing raised (saved citations) is part of the filing, not a click away from it.
+  if (event.target.closest && event.target.closest(".modal-overlay")) return;
   if (close && !(wrap && wrap.contains(event.target))) close();
 });
 
@@ -14237,11 +14258,15 @@ function orbitPicker(nodeId, memberships = []) {
   //: a count, and the row just pressed would jump under the pointer.
   const known = facetView.orbits.length ? facetView.orbits : starMap.orbits;
   const labels = facetLabels(known);
-  const nameOf = (o) => labels.get(o.id) || "";
-  const orbits = [...known].sort((a, b) => nameOf(a).localeCompare(nameOf(b), uiLang()));
   //: Keys only: `has` is the one question asked of it.
   const selected = new Map();
   for (const m of memberships || []) selected.set(m.orbit_id);
+  //: A membership in an orbit the lists have not loaded yet (one "New orbit…" just opened, before
+  //: the rail refreshes) is still shown and counted, under whatever name is known for it.
+  const unknown = [...selected.keys()].filter((key) => !known.some((o) => (o.slug || o.id) === key));
+  const nameOf = (o) => labels.get(o.id) || orbitTitles.get(o.slug) || t("app.untitled", "Untitled orbit");
+  const orbits = [...known, ...unknown.map((key) => ({ id: key, slug: key }))]
+    .sort((a, b) => nameOf(a).localeCompare(nameOf(b), uiLang()));
   const wrap = elt("div", "orbit-pick");
   const trigger = elt("button", "orbit-pick-trigger");
   trigger.type = "button";
@@ -14291,7 +14316,7 @@ function orbitPicker(nodeId, memberships = []) {
         item.type = "button";
         item.setAttribute("aria-pressed", selected.has(key) ? "true" : "false");
         item.addEventListener("click", async () => {
-          orbitPickOpen.nodeId = nodeId;
+          Object.assign(orbitPickOpen, { nodeId, at: performance.now() });
           item.disabled = true;
           const was = selected.has(key);
           const ok = was ? await unfileCapture(nodeId, key, { label: nameOf(o), orbitId: o.id }) : await fileCapture(nodeId, o.id, null, { label: nameOf(o) });
@@ -14307,7 +14332,7 @@ function orbitPicker(nodeId, memberships = []) {
       const fresh = elt("button", "orbit-pick-item orbit-pick-new", t("horizon.newOrbit", "New orbit\u2026"));
       fresh.type = "button";
       fresh.addEventListener("click", async () => {
-        orbitPickOpen.nodeId = nodeId;
+        Object.assign(orbitPickOpen, { nodeId, at: performance.now() });
         await fileCapture(nodeId, `orbit-${crypto.randomUUID().slice(0, 8)}`, null, { create: true });
       });
       list.appendChild(fresh);
@@ -14344,7 +14369,7 @@ function orbitPicker(nodeId, memberships = []) {
     }
   });
   // Rebuilt after a filing: open again where the reader left it.
-  if (orbitPickOpen.nodeId === nodeId) queueMicrotask(open);
+  if (orbitPickOpen.nodeId === nodeId && performance.now() - orbitPickOpen.at < 5000) queueMicrotask(open);
   return wrap;
 }
 
@@ -15797,6 +15822,11 @@ function drawGraph() {
     chosen.entities.forEach((n) => litEntities.add(n));
     layout.captures.forEach((c) => {
       if (c.entities.some((n) => litEntities.has(n))) litCaptures.add(c.node_id);
+    });
+    // And those alike in content, which the panel lists as related too.
+    layout.similar.forEach((e) => {
+      if (e.a === `c:${chosen.node_id}`) litCaptures.add(e.b.slice(2));
+      if (e.b === `c:${chosen.node_id}`) litCaptures.add(e.a.slice(2));
     });
   }
   const focus = Boolean(lenses.size || selected || chosen);
