@@ -578,7 +578,14 @@ async function send(tab, body) {
     if (mine) {
       const nodeId = got.node && got.node.id;
       const before = await tabState(tabId);
-      await setTabState(tabId, { state: "saved", url: body.url, title: shown, nodeId, mine: !got.duplicate });
+      // Marked only if the tab still shows that page: after a navigation the tick would sit on a
+      // page that was never kept. The URL is readable only while the press's grant lasts, which a
+      // navigation ends, so an unreadable URL counts as moved on.
+      const current = await chrome.tabs.get(tabId).catch(() => null);
+      const stillHere = Boolean(current && current.url && current.url === body.url);
+      await setTabState(tabId, stillHere
+        ? { state: "saved", url: body.url, title: shown, nodeId, mine: !got.duplicate }
+        : null);
       // Pressed again while it was on its way: take it back now that it has landed.
       if (before && before.cancel) {
         await withdraw(tab, { state: "saved", url: body.url, title: shown, nodeId, mine: !got.duplicate });

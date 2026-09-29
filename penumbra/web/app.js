@@ -1535,8 +1535,10 @@ function renderOrbitRow(orb) {
 //: The one control for naming an orbit: a field that saves on Enter or when it loses focus, Escape
 //: to leave it, and Suggest, which asks the model for a name from what the orbit holds now and puts it
 //: in the field for the reader to keep, edit or discard (`POST .../title/suggestion`, one model call a
-//: press, never saved by itself). `done(title|null)` runs once, with the saved title or null.
-function titleEditor(orbitId, current, done) {
+//: press, never saved by itself). While it runs the button reads Stop and cancels that one run
+//: (invariant 47). `done(title|null)` runs once, with the saved title or null. `orbitSlug` is the
+//: orbit's file key, from which the run id is predictable, as for the overview.
+function titleEditor(orbitId, current, done, orbitSlug = orbitId) {
   const wrap = elt("div", "title-editor");
   const input = document.createElement("input");
   input.className = "orbit-rename-input";
@@ -1603,16 +1605,35 @@ function titleEditor(orbitId, current, done) {
   // field's blur would otherwise save and close the editor before the suggestion arrived.
   suggest.addEventListener("pointerdown", (event) => event.preventDefault());
   suggest.addEventListener("mousedown", (event) => event.preventDefault());
+  let suggesting = null; // the run id while a suggestion is on its way
+  let stopped = false;
   suggest.addEventListener("click", async () => {
-    suggest.disabled = true;
-    suggest.textContent = t("rename.suggesting", "Thinking\u2026");
+    if (suggesting) {
+      // Stop: cancel exactly this run, not whatever else the orbit is doing.
+      stopped = true;
+      suggest.disabled = true;
+      await api(`/orbits/${encodeURIComponent(orbitId)}/runs/${encodeURIComponent(suggesting)}/cancel`,
+        { method: "POST" }).catch(() => {});
+      return;
+    }
+    const token = crypto.randomUUID();
+    suggesting = `${orbitSlug}-${token}`;
+    stopped = false;
+    suggest.textContent = t("rename.stop", "Stop");
+    suggest.classList.add("is-running");
     try {
-      const got = await api(`/orbits/${encodeURIComponent(orbitId)}/title/suggestion`, { method: "POST" });
-      if (got.title) input.value = got.title;
+      const got = await api(`/orbits/${encodeURIComponent(orbitId)}/title/suggestion`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ run_id: token }),
+      });
+      if (got.title && !stopped) input.value = got.title;
     } catch (err) {
-      notify(readableError(err.message));
+      if (!stopped) notify(readableError(err.message));
     } finally {
+      suggesting = null;
       suggest.disabled = false;
+      suggest.classList.remove("is-running");
       suggest.textContent = t("rename.suggest", "Suggest");
       if (!settled) {
         input.focus();
@@ -1621,7 +1642,7 @@ function titleEditor(orbitId, current, done) {
     }
   });
   suggest.addEventListener("blur", (event) => {
-    if (event.relatedTarget !== input && !settled && !suggest.disabled) void commit();
+    if (event.relatedTarget !== input && !settled && !suggesting) void commit();
   });
   queueMicrotask(() => {
     input.focus();
@@ -1632,7 +1653,7 @@ function titleEditor(orbitId, current, done) {
 
 function startRename(row, orb) {
   row.textContent = "";
-  row.appendChild(titleEditor(orb.id, orb.title || "", () => void refreshOrbitList()));
+  row.appendChild(titleEditor(orb.id, orb.title || "", () => void refreshOrbitList(), orb.slug || orb.id));
 }
 
 //: After a rename from the map or the rail: every place that shows the name reads it again.
@@ -10502,7 +10523,7 @@ function paintFacets() {
       event.stopPropagation();
       row.textContent = "";
       row.classList.add("is-renaming");
-      row.appendChild(titleEditor(book.id, book.title || "", () => afterRename()));
+      row.appendChild(titleEditor(book.id, book.title || "", () => afterRename(), book.slug || book.id));
     });
     row.appendChild(rename);
     list.appendChild(row);
@@ -15232,7 +15253,7 @@ function paintStarMapCard(mapCard) {
   rename.setAttribute("aria-label", t("rename.labelled", `Rename ${orbit.title}`, { name: orbit.title }));
   rename.addEventListener("click", () => {
     heading.textContent = "";
-    heading.appendChild(titleEditor(orbit.id, orbit.title || "", () => afterRename()));
+    heading.appendChild(titleEditor(orbit.id, orbit.title || "", () => afterRename(), orbit.slug || orbit.id));
   });
   heading.appendChild(rename);
   mapCard.appendChild(heading);

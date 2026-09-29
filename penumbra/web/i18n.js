@@ -129,7 +129,7 @@ const STRINGS = {
     "lens.none": "沒有符合的標籤。",
     "facets.filter": "篩選軌道",
     "rename.suggest": "建議名稱",
-    "rename.suggesting": "想名字中…",
+    "rename.stop": "停止",
     "rename.suggestTip": "依這個軌道現在的內容，請模型想一個名字。會呼叫一次模型。",
     "rename.labelled": "為「{name}」改名",
     "pick.newPlaceholder": "新軌道：輸入名稱後按 Enter",

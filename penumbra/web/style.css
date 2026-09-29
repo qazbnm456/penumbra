@@ -11155,6 +11155,11 @@ button.node-more:hover {
   border-color: var(--accent);
 }
 
+.title-suggest.is-running {
+  color: var(--bad);
+  border-color: color-mix(in oklch, var(--bad) 50%, var(--border-strong));
+}
+
 .title-suggest:disabled {
   opacity: 0.6;
   cursor: progress;
