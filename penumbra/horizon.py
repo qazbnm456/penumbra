@@ -55,6 +55,7 @@ import time
 import unicodedata
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import TypeAdapter, ValidationError
@@ -131,6 +132,16 @@ CREATE TABLE IF NOT EXISTS memberships (
 CREATE INDEX IF NOT EXISTS nodes_state_created ON nodes(state, created_at DESC);
 CREATE INDEX IF NOT EXISTS nodes_created ON nodes(created_at DESC);
 CREATE INDEX IF NOT EXISTS memberships_orbit ON memberships(orbit_id);
+CREATE TABLE IF NOT EXISTS horizon_events (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind    TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    title   TEXT NOT NULL,
+    origin  TEXT NOT NULL,
+    detail  TEXT NOT NULL DEFAULT '{}',
+    at      REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS horizon_events_at ON horizon_events(at DESC);
 """
 
 
@@ -575,7 +586,34 @@ def _search_clause(query: str | None) -> tuple[str, list[object]]:
 _READABLE = " AND ".join(f"json_valid({column})" for column in _JSON_COLUMNS)
 
 
-def _where(state: str | None, query: str | None) -> tuple[str, list[object]]:
+@dataclass(frozen=True)
+class NodeFilter:
+    """The list's conditions beyond the text query, all ANDed together. Within tags the reader
+    chooses any or all; within orbits and states any one is enough. `NO_ORBIT` among the orbits
+    means "in no orbit". Times are epoch seconds, `until` exclusive."""
+
+    tags: tuple[str, ...] = ()
+    tag_mode: str = "any"
+    orbits: tuple[str, ...] = ()
+    states: tuple[str, ...] = ()
+    since: float | None = None
+    until: float | None = None
+
+
+NO_ORBIT = "__none__"
+
+#: The orders the list offers, each a fixed SQL clause (never built from input).
+SORTS = {
+    "newest": "created_at DESC, id ASC",
+    "oldest": "created_at ASC, id ASC",
+    "title": "lower(COALESCE(NULLIF(title, ''), json_extract(preview, '$.title'), origin)) ASC, id ASC",
+    "longest": "chars DESC, id ASC",
+}
+
+
+def _where(
+    state: str | None, query: str | None, filters: NodeFilter | None = None
+) -> tuple[str, list[object]]:
     parts: list[str] = [_READABLE]
     params: list[object] = []
     if state is not None:
@@ -585,6 +623,38 @@ def _where(state: str | None, query: str | None) -> tuple[str, list[object]]:
     if clause:
         parts.append(clause)
         params.extend(extra)
+    if filters is not None:
+        if filters.states:
+            parts.append(f"state IN ({', '.join('?' for _ in filters.states)})")
+            params.extend(filters.states)
+        if filters.tags:
+            marks = ", ".join("?" for _ in filters.tags)
+            if filters.tag_mode == "all":
+                parts.append(
+                    f"(SELECT COUNT(DISTINCT value) FROM json_each(nodes.tags) WHERE value IN ({marks})) = ?"
+                )
+                params.extend([*filters.tags, len(set(filters.tags))])
+            else:
+                parts.append(f"EXISTS (SELECT 1 FROM json_each(nodes.tags) WHERE value IN ({marks}))")
+                params.extend(filters.tags)
+        if filters.orbits:
+            named = [o for o in filters.orbits if o != NO_ORBIT]
+            either = []
+            if named:
+                either.append(
+                    "EXISTS (SELECT 1 FROM memberships m WHERE m.node_id = nodes.id "
+                    f"AND m.orbit_id IN ({', '.join('?' for _ in named)}))"
+                )
+                params.extend(named)
+            if NO_ORBIT in filters.orbits:
+                either.append("NOT EXISTS (SELECT 1 FROM memberships m WHERE m.node_id = nodes.id)")
+            parts.append("(" + " OR ".join(either) + ")")
+        if filters.since is not None:
+            parts.append("created_at >= ?")
+            params.append(filters.since)
+        if filters.until is not None:
+            parts.append("created_at < ?")
+            params.append(filters.until)
     return " WHERE " + " AND ".join(parts), params
 
 
@@ -595,12 +665,14 @@ def list_nodes(
     limit: int = 100,
     offset: int = 0,
     base_dir: str | Path = DEFAULT_HORIZON_DIR,
+    filters: NodeFilter | None = None,
+    sort: str = "newest",
 ) -> list[Node]:
     """Newest first. Paged rather than "everything", because the whole premise is that this grows
     past what an orbit could hold — a listing that loads all of it has the problem Tier 0 exists
     to avoid, one level up."""
-    where, params = _where(state, query)
-    sql = f"SELECT * FROM nodes{where} ORDER BY created_at DESC, id ASC LIMIT ? OFFSET ?"
+    where, params = _where(state, query, filters)
+    sql = f"SELECT * FROM nodes{where} ORDER BY {SORTS.get(sort, SORTS['newest'])} LIMIT ? OFFSET ?"
     params.extend([limit, offset])
     with _connect(base_dir) as conn:
         rows = conn.execute(sql, params).fetchall()
@@ -627,8 +699,9 @@ def count_nodes(
     state: str | None = None,
     query: str | None = None,
     base_dir: str | Path = DEFAULT_HORIZON_DIR,
+    filters: NodeFilter | None = None,
 ) -> int:
-    where, params = _where(state, query)
+    where, params = _where(state, query, filters)
     with _connect(base_dir) as conn:
         return int(conn.execute(f"SELECT COUNT(*) FROM nodes{where}", params).fetchone()[0])
 
@@ -718,15 +791,108 @@ def claim_node(
     return bool(changed)
 
 
-def remove_node(node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> bool:
+def remove_node(
+    node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR, detail: dict | None = None
+) -> bool:
     """Forget a node. Its memberships go with it (`ON DELETE CASCADE`), but **sources already
     promoted into orbits STAY** — they were copied, and an orbit that silently lost a cited
     source because someone tidied their horizon would break invariant 12's promise that a source
-    already cited in a saved turn keeps meaning what it meant."""
+    already cited in a saved turn keeps meaning what it meant.
+
+    The removal is recorded (`horizon_events`) with the node's name, the orbits it was in and its
+    tags, so the list can show that it went and when, not merely lose the row. Recorded in the same
+    transaction as the delete, from the row itself, so an unreadable row still leaves a record."""
     with _connect(base_dir) as conn:
+        row = conn.execute(
+            "SELECT title, origin, preview, tags FROM nodes WHERE id = ?", (node_id,)
+        ).fetchone()
+        if row is not None:
+            orbits = [r[0] for r in conn.execute(
+                "SELECT orbit_id FROM memberships WHERE node_id = ?", (node_id,)
+            ).fetchall()]
+            try:
+                preview_title = json.loads(row["preview"] or "{}").get("title") or ""
+            except (ValueError, AttributeError):
+                preview_title = ""
+            try:
+                tags = [t for t in json.loads(row["tags"] or "[]") if isinstance(t, str)]
+            except ValueError:
+                tags = []
+            record = {"orbits": orbits, "tags": tags, **(detail or {})}
+            conn.execute(
+                "INSERT INTO horizon_events (kind, node_id, title, origin, detail, at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                ("removed", node_id, row["title"] or preview_title or row["origin"], row["origin"],
+                 json.dumps(record, ensure_ascii=False), time.time()),
+            )
         changed = conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,)).rowcount
     node_blocks_path(node_id, base_dir=base_dir).unlink(missing_ok=True)
     return bool(changed)
+
+
+def removal_events(
+    *,
+    query: str | None = None,
+    filters: NodeFilter | None = None,
+    limit: int = 200,
+    base_dir: str | Path = DEFAULT_HORIZON_DIR,
+) -> list[dict]:
+    """Removals, newest first, under the same conditions the list applies where they make sense:
+    the text query on the name and origin, the date range, and tags and orbits against what the
+    capture carried when it went. A state has no meaning for something gone, so a state filter
+    shows no removals."""
+    if filters is not None and filters.states:
+        return []
+    parts, params = ["kind = 'removed'"], []
+    for term in (query or "").split():
+        parts.append("(title LIKE ? ESCAPE '\\' OR origin LIKE ? ESCAPE '\\')")
+        like = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        params.extend([like, like])
+    if filters is not None and filters.since is not None:
+        parts.append("at >= ?")
+        params.append(filters.since)
+    if filters is not None and filters.until is not None:
+        parts.append("at < ?")
+        params.append(filters.until)
+    with _connect(base_dir) as conn:
+        rows = conn.execute(
+            f"SELECT node_id, title, origin, detail, at FROM horizon_events WHERE {' AND '.join(parts)} "
+            "ORDER BY at DESC LIMIT ?",
+            [*params, limit * 4],
+        ).fetchall()
+    out = []
+    for row in rows:
+        try:
+            detail = json.loads(row["detail"] or "{}")
+        except ValueError:
+            detail = {}
+        tags = set(detail.get("tags") or [])
+        orbits = set(detail.get("orbits") or [])
+        if filters is not None and filters.tags:
+            wanted = set(filters.tags)
+            matched = wanted <= tags if filters.tag_mode == "all" else bool(wanted & tags)
+            if not matched:
+                continue
+        if filters is not None and filters.orbits:
+            wanted = set(filters.orbits)
+            if not ((wanted - {NO_ORBIT}) & orbits or (NO_ORBIT in wanted and not orbits)):
+                continue
+        out.append({"node_id": row["node_id"], "title": row["title"], "origin": row["origin"],
+                    "at": row["at"], "orbits": sorted(orbits), "everywhere": bool(detail.get("everywhere"))})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def all_tags(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> list[dict]:
+    """Every tag a readable capture carries, with how many carry it, most carried first."""
+    with _connect(base_dir) as conn:
+        rows = conn.execute(
+            f"""SELECT json_each.value AS name, COUNT(*) AS n FROM nodes, json_each(nodes.tags)
+                WHERE {_READABLE} AND json_each.type = 'text' GROUP BY json_each.value"""
+        ).fetchall()
+    found = [{"name": r["name"], "count": int(r["n"])} for r in rows]
+    return sorted(found, key=lambda tag: (-tag["count"], tag["name"]))
 
 
 def node_source(node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> Source | None:

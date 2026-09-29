@@ -4065,14 +4065,37 @@ async def list_horizon(
     #: `sqlite3` and came back as a plain-text `OverflowError` 500, not JSON.
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=1_000_000),
+    #: The list's conditions, all ANDed (`horizon.NodeFilter`): tags (any or all of them), orbits
+    #: (any; `__none__` is "in no orbit"), states (any), a date range in epoch seconds, an order,
+    #: and which actions to show: captures as they were added, and removals.
+    tag: Annotated[list[str] | None, Query(max_length=80)] = None,
+    tag_mode: Literal["any", "all"] = "any",
+    orbit: Annotated[list[str] | None, Query(max_length=200)] = None,
+    states: Annotated[list[str] | None, Query(max_length=40)] = None,
+    since: float | None = Query(None, ge=0),
+    until: float | None = Query(None, ge=0),
+    sort: Literal["newest", "oldest", "title", "longest"] = "newest",
+    added: bool = True,
+    removed: bool = False,
 ) -> dict:
     """The Horizon listing — the application's front page, so it has to stay cheap at thousands of
     nodes. Paged, and served from the SQLite index alone: no blocks are read (invariant 78 —
     a listing of a thousand nodes must not carry a thousand corpora)."""
-    nodes = await asyncio.to_thread(
-        horizon.list_nodes, state=state, query=q, limit=limit, offset=offset
+    filters = horizon.NodeFilter(
+        tags=tuple((tag or [])[:20]), tag_mode=tag_mode, orbits=tuple((orbit or [])[:40]),
+        states=tuple((states or [])[:8]), since=since, until=until,
     )
-    total = await asyncio.to_thread(horizon.count_nodes, state=state, query=q)
+    if added:
+        nodes = await asyncio.to_thread(
+            horizon.list_nodes, state=state, query=q, limit=limit, offset=offset, filters=filters, sort=sort
+        )
+        total = await asyncio.to_thread(horizon.count_nodes, state=state, query=q, filters=filters)
+    else:
+        nodes, total = [], 0
+    removals = (
+        await asyncio.to_thread(horizon.removal_events, query=q, filters=filters)
+        if removed and state is None else []
+    )
     # NOT filtered by the query: this is what a summary pass would cost, and that is a fact about
     # the Horizon rather than about what you happen to be looking at (invariant 80).
     undistilled = await asyncio.to_thread(horizon.count_nodes, state="ready_undistilled")
@@ -4094,6 +4117,8 @@ async def list_horizon(
             for node in nodes
         ],
         "total": total,
+        #: Captures removed under the same conditions, newest first, for the list to show in place.
+        "removed": removals,
         #: Invariant 80: what a summary pass WOULD cost, before anyone asks for one.
         "undistilled": undistilled,
         #: How many one pass takes, so the button names the number the request will send.
@@ -4106,6 +4131,12 @@ async def list_horizon(
         #: the promotion instead.
         "corpus_char_cap": corpus_char_cap,
     }
+
+
+@app.get("/horizon/tags")
+async def horizon_tags() -> dict:
+    """Every tag the Horizon's captures carry, with how many, for the list's filter."""
+    return {"tags": await asyncio.to_thread(horizon.all_tags)}
 
 
 @app.get("/horizon/status")
@@ -5297,7 +5328,9 @@ async def delete_horizon_node(node_id: str, everywhere: bool = False) -> dict:
             except (HTTPException, ValueError):
                 continue  # the orbit or the source is already gone: nothing left to remove there
             left_orbits.append(membership.orbit_id)
-    removed = await asyncio.to_thread(horizon.remove_node, node_id)
+    removed = await asyncio.to_thread(
+        lambda: horizon.remove_node(node_id, detail={"everywhere": everywhere})
+    )
     _forget_suggestions()
     if not removed:
         raise HTTPException(404, f"no such node: {node_id!r}")
