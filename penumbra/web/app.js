@@ -12041,12 +12041,15 @@ function starMapDefs() {
     [["0", "stop-planet-light"], ["0.55", "stop-planet-mid"], ["1", "stop-planet-dark"]]);
   radial("pn-shade", { cx: "0.32", cy: "0.3", r: "0.95" },
     [["0.5", "stop-clear"], ["1", "stop-shade"]]);
-  radial("pn-halo", {}, [["0.55", "stop-halo"], ["1", "stop-clear"]]);
-  radial("pn-hole-glow", {}, [["0.3", "stop-hole-glow"], ["1", "stop-clear"]]);
+  // Each glow fades to its OWN colour at zero opacity. Fading to the near-black `stop-clear` mixed a
+  // half-transparent dark brown on the way, invisible on the dark sky and a grey smudge round the
+  // black hole on the light one. Only the planet's shade fades to black, as it should.
+  radial("pn-halo", {}, [["0.55", "stop-halo"], ["1", "stop-halo-clear"]]);
+  radial("pn-hole-glow", {}, [["0.3", "stop-hole-glow"], ["1", "stop-hole-glow-clear"]]);
   radial("pn-light", { cx: "0.34", cy: "0.28", r: "0.7" }, [["0", "stop-light"], ["1", "stop-light-clear"]]);
   ["violet", "teal", "rose"].forEach((tone) => radial(`pn-nebula-${tone}`, {},
-    [["0", `stop-nebula-${tone}`], ["0.55", `stop-nebula-${tone}-mid`], ["1", "stop-clear"]]));
-  radial("pn-galaxy", {}, [["0", "stop-galaxy"], ["1", "stop-clear"]]);
+    [["0", `stop-nebula-${tone}`], ["0.55", `stop-nebula-${tone}-mid`], ["1", `stop-nebula-${tone}-clear`]]));
+  radial("pn-galaxy", {}, [["0", "stop-galaxy"], ["1", "stop-galaxy-clear"]]);
   const linear = (id, stops) => {
     const g = svgEl("linearGradient", { id, x1: "0", y1: "0", x2: "1", y2: "0" });
     stops.forEach(([offset, cls]) => g.appendChild(svgEl("stop", { offset }, cls)));

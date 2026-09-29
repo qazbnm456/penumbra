@@ -8309,6 +8309,8 @@ body.is-resizing .orbit-graph {
 .stop-clear { stop-color: oklch(8% 0.01 55); stop-opacity: 0; }
 .stop-halo { stop-color: oklch(75% 0.15 55); stop-opacity: 0.35; }
 .stop-hole-glow { stop-color: oklch(62% 0.15 55); stop-opacity: 0.32; }
+.stop-halo-clear { stop-color: oklch(75% 0.15 55); stop-opacity: 0; }
+.stop-hole-glow-clear { stop-color: oklch(62% 0.15 55); stop-opacity: 0; }
 
 @keyframes map-spin {
   to {
@@ -10246,6 +10248,10 @@ body:not([data-view="horizon"]) .capture-dock {
 .stop-nebula-rose { stop-color: oklch(62% 0.13 20); stop-opacity: 0.13; }
 .stop-nebula-rose-mid { stop-color: oklch(55% 0.1 20); stop-opacity: 0.05; }
 .stop-galaxy { stop-color: oklch(90% 0.04 70); stop-opacity: 0.35; }
+.stop-galaxy-clear { stop-color: oklch(90% 0.04 70); stop-opacity: 0; }
+.stop-nebula-violet-clear { stop-color: oklch(50% 0.12 300); stop-opacity: 0; }
+.stop-nebula-teal-clear { stop-color: oklch(55% 0.09 200); stop-opacity: 0; }
+.stop-nebula-rose-clear { stop-color: oklch(55% 0.1 20); stop-opacity: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   .map-binary,
