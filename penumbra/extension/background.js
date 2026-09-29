@@ -364,13 +364,18 @@ const spinning = new Set();
 //: restarted service worker still knows them.
 const painted = new Set();
 
-async function rememberPainted() {
-  await chrome.storage.session.set({ painted: [...painted] });
-}
-
 async function recallPainted() {
   const { painted: kept } = await chrome.storage.session.get("painted");
   (kept || []).forEach((id) => painted.add(id));
+}
+
+//: Read once when the worker starts, and awaited before any write, so a tab painted in the first
+//: moments after a restart is added to the list kept before it rather than writing over it.
+const paintedLoaded = recallPainted();
+
+async function rememberPainted() {
+  await paintedLoaded;
+  await chrome.storage.session.set({ painted: [...painted] });
 }
 
 async function idleTitle() {
@@ -432,7 +437,7 @@ function stale(state) {
 }
 
 async function settleOrphans() {
-  await recallPainted();
+  await paintedLoaded;
   const all = await chrome.storage.session.get(null);
   // Tabs painted without state (a capture taken back, a tab cleared) follow the global icon again.
   for (const tabId of painted) {
