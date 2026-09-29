@@ -11899,6 +11899,39 @@ const overlapScratch = { order: [], behind: new Set() };
 //: From this many planets up no link is drawn at rest, only on demand.
 const BRIDGE_REST_LIMIT = 15;
 
+//: Which planet's links are lit by pointing, and the release waiting to put them out. One place, not
+//: per scene: a redraw replaces the scene, and a timer left on the old one fired under the new one.
+//: Letting go waits a moment so the pointer can travel from a planet onto one of its links; moving
+//: to another planet, or redrawing, lets the waiting one go at once.
+const planetHover = { slug: null, timer: 0 };
+
+function releasePlanetNow() {
+  clearTimeout(planetHover.timer);
+  planetHover.timer = 0;
+  const slug = planetHover.slug;
+  planetHover.slug = null;
+  if (!slug) return;
+  mapMotion.paused = false;
+  mapMotion.pointed = null;
+  lightPlanetBridges(starMap.scene, slug, false);
+}
+
+function releasePlanetSoon(slug) {
+  clearTimeout(planetHover.timer);
+  planetHover.slug = slug;
+  planetHover.timer = setTimeout(releasePlanetNow, 220);
+}
+
+function holdPlanet(slug) {
+  if (planetHover.slug && planetHover.slug !== slug) releasePlanetNow();
+  clearTimeout(planetHover.timer);
+  planetHover.timer = 0;
+  planetHover.slug = slug;
+  mapMotion.paused = true;
+  mapMotion.pointed = slug;
+  lightPlanetBridges(starMap.scene, slug, true);
+}
+
 //: All of one planet's links, labelled and pointable, while it is pointed at or focused; the rest of
 //: the map dims. A link pinned by a selection or a lens stays lit when the pointer leaves.
 function lightPlanetBridges(scene, slug, on) {
@@ -12815,6 +12848,11 @@ function drawStarMap() {
   const keepFocus = focusedKey(svg);
   clearSvg(svg);
   starMap.scene = null;
+  // The links a pointed planet lit belong to the scene being thrown away.
+  clearTimeout(planetHover.timer);
+  planetHover.timer = 0;
+  planetHover.slug = null;
+  svg.classList.remove("has-lit");
   mapMotion.paused = false; // the planet under the pointer is rebuilt; it holds again on the next move
   // The element a tooltip belongs to is about to be removed, and a removed element sends no
   // pointerleave, so the tip would stay on screen naming something that is gone.
@@ -12901,9 +12939,11 @@ function drawStarMap() {
     hit.setAttribute("aria-label", t("map.bridgeLabel", `${titleA} and ${titleB} both name ${bridge.shared.join(", ")}`,
       { a: titleA, b: titleB, names: bridge.shared.join(t("list.sep", ", ")) }));
     const light = (on) => {
-      horizonEl("starmap-svg").classList.toggle("has-lit", on);
-      path.classList.toggle("is-lit", on || path.classList.contains("is-pinned"));
-      label.classList.toggle("is-lit", on || label.classList.contains("is-pinned"));
+      // A link its pointed planet lit stays lit when the pointer leaves the link itself.
+      const held = planetHover.slug === bridge.a || planetHover.slug === bridge.b;
+      horizonEl("starmap-svg").classList.toggle("has-lit", on || held);
+      path.classList.toggle("is-lit", on || held || path.classList.contains("is-pinned"));
+      label.classList.toggle("is-lit", on || held || label.classList.contains("is-pinned"));
       scene.planets.forEach(({ p, group }) => {
         group.classList.toggle("is-linked", on && (p.orbit.slug === bridge.a || p.orbit.slug === bridge.b));
       });
@@ -12915,22 +12955,18 @@ function drawStarMap() {
       }
     };
     const open = () => openMapFocus({ kind: "bridge", a: bridge.a, b: bridge.b });
+    const fromPlanet = () => planetHover.slug === bridge.a || planetHover.slug === bridge.b;
     [hit, label].forEach((el) => {
       el.addEventListener("pointerenter", () => {
-        clearTimeout(scene.release);
+        // Reached from its own planet, that planet stays lit; reached otherwise, any planet still
+        // waiting to be let go is let go first.
+        if (fromPlanet()) clearTimeout(planetHover.timer);
+        else releasePlanetNow();
         light(true);
       });
       el.addEventListener("pointerleave", () => {
         light(false);
-        // Leaving a link lit from a planet lets that planet's links go too.
-        if (mapMotion.pointed === bridge.a || mapMotion.pointed === bridge.b) {
-          const slug = mapMotion.pointed;
-          scene.release = setTimeout(() => {
-            mapMotion.paused = false;
-            mapMotion.pointed = null;
-            lightPlanetBridges(scene, slug, false);
-          }, 220);
-        }
+        if (fromPlanet()) releasePlanetSoon(planetHover.slug);
       });
       el.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -13089,22 +13125,8 @@ function drawStarMap() {
       }
     });
     // A planet holds still while it is pointed at or focused, so it can be read and clicked.
-    const hold = () => {
-      clearTimeout(scene.release);
-      mapMotion.paused = true;
-      mapMotion.pointed = orbit.slug;
-      lightPlanetBridges(scene, orbit.slug, true);
-    };
-    // Let go a moment later, so the pointer can travel from the planet onto one of its lit links
-    // and click it; a lit link's own pointerenter cancels the release (`scene.release`).
-    const release = () => {
-      clearTimeout(scene.release);
-      scene.release = setTimeout(() => {
-        mapMotion.paused = false;
-        mapMotion.pointed = null;
-        lightPlanetBridges(scene, orbit.slug, false);
-      }, 220);
-    };
+    const hold = () => holdPlanet(orbit.slug);
+    const release = () => releasePlanetSoon(orbit.slug);
     group.addEventListener("pointerenter", hold);
     group.addEventListener("pointerleave", release);
     group.addEventListener("focus", hold);

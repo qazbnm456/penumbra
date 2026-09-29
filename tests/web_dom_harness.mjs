@@ -1554,6 +1554,41 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
   //: orbit draws the same picture), frame what it drew no tighter than the minimum, draw only the
   //: entities two or more captures name, keep a capture beside its hubs, group captures that share
   //: one, and leave no two nodes on top of each other.
+  //: Pointing from one planet to another, by mouse or Tab, lets the first planet's links go, and
+  //: a redraw forgets a release still waiting. Each fake element keeps a class set.
+  planetHoverRelease() {
+    const cls = () => {
+      const set = new Set();
+      return { toggle: (c, on) => (on ? set.add(c) : set.delete(c)), contains: (c) => set.has(c), add: (c) => set.add(c) };
+    };
+    const node = () => ({ classList: cls(), setAttribute() {} });
+    const svg = node();
+    const timers = [];
+    const run = new Function(
+      "starMap", "mapMotion", "horizonEl", "placeStarMap", "setTimeout", "clearTimeout",
+      `const planetHover = { slug: null, timer: 0 };\n${extract("releasePlanetNow")}\n${extract("releasePlanetSoon")}\n` +
+        `${extract("holdPlanet")}\n${extract("lightPlanetBridges")}\n` +
+        "return { planetHover, releasePlanetNow, releasePlanetSoon, holdPlanet };"
+    );
+    const mapMotion = { paused: false, pointed: null };
+    const link = (a, b) => ({ bridge: { a, b }, path: node(), hit: node(), label: node() });
+    const scene = {
+      bridges: [link("A", "X"), link("B", "Y")],
+      planets: ["A", "B", "X", "Y"].map((slug) => ({ p: { orbit: { slug } }, group: node() })),
+    };
+    const api = run({ scene }, mapMotion, () => svg, () => {},
+      (fn) => { timers.push(fn); return timers.length; }, () => {});
+    const lit = (i) => scene.bridges[i].path.classList.contains("is-lit");
+    api.holdPlanet("A");
+    const aLitWhileHeld = lit(0);
+    api.releasePlanetSoon("A");
+    api.holdPlanet("B");
+    const afterMove = { a: lit(0), b: lit(1) };
+    api.releasePlanetSoon("B");
+    timers[timers.length - 1]();
+    return { aLitWhileHeld, afterMove, afterRelease: lit(1), paused: mapMotion.paused, pointed: mapMotion.pointed };
+  },
+
   graphLayout() {
     const consts = ["GRAPH_HUB_MIN", "GRAPH_CAPTURE_R", "GRAPH_REGION_PAD"]
       .map((name) => src.match(new RegExp(`const ${name} = [^;]*;`))[0]).join("\n");

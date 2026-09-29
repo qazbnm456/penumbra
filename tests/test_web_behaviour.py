@@ -1076,3 +1076,12 @@ def test_studying_the_orbit_just_left_from_opens_it_again():
     assert result["first"] == "orbit"
     assert result["again"] == "orbit", "the second press left the reader on the map"
     assert result["opened"] == 2
+
+
+def test_moving_from_one_planet_to_another_lets_the_first_ones_links_go():
+    """Letting go of a planet waits a moment so its links can be clicked; moving to another planet
+    in that moment, by mouse or Tab, left the first planet's links lit and labelled for good."""
+    result = _run("planetHoverRelease")
+    assert result["aLitWhileHeld"]
+    assert result["afterMove"] == {"a": False, "b": True}, "the first planet's links stayed lit"
+    assert result["afterRelease"] is False and result["paused"] is False and result["pointed"] is None
