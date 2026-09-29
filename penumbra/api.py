@@ -5267,7 +5267,7 @@ async def get_horizon_node_source(node_id: str) -> dict:
 
 
 @app.delete("/horizon/{node_id}")
-async def delete_horizon_node(node_id: str) -> dict:
+async def delete_horizon_node(node_id: str, everywhere: bool = False) -> dict:
     """Forget a node. Sources already PROMOTED into orbits stay — they were copied, and a
     orbit silently losing a cited source because someone tidied their horizon would break
     invariant 12's promise (`horizon.remove_node`).
@@ -5281,11 +5281,26 @@ async def delete_horizon_node(node_id: str) -> dict:
     """
     if not horizon.is_node_id(node_id):
         raise HTTPException(400, f"invalid node id {node_id!r}: not a node id")
+    left_orbits: list[str] = []
+    if everywhere:
+        # The reader chose to delete it from every orbit too. Each orbit loses the source the way
+        # removing it there does (ids kept, citations to it come back unverified, the overview and
+        # podcast marked stale), and only then does the node go.
+        for membership in await asyncio.to_thread(horizon.memberships_for, node_id):
+            try:
+                await _mutate_or_http(
+                    membership.orbit_id,
+                    lambda orb, sid=membership.source_id: remove_source(orb, sid),
+                    create=False,
+                )
+            except (HTTPException, ValueError):
+                continue  # the orbit or the source is already gone: nothing left to remove there
+            left_orbits.append(membership.orbit_id)
     removed = await asyncio.to_thread(horizon.remove_node, node_id)
     _forget_suggestions()
     if not removed:
         raise HTTPException(404, f"no such node: {node_id!r}")
-    return {"removed": removed}
+    return {"removed": removed, "orbits": left_orbits}
 
 
 @app.post("/horizon/{node_id}/promote")

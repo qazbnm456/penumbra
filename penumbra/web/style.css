@@ -10319,3 +10319,19 @@ button.node-more:hover {
   font-size: var(--text-sm);
   color: var(--text-dim);
 }
+
+/* The confirm dialog's optional milder choice (`chooseAction`), hidden unless one is offered. */
+.confirm-actions #confirm-alt[hidden] {
+  display: none;
+}
+
+/* A removal in a card: quiet until pointed at, so it never competes with filing or reading. */
+.btn-quiet-danger {
+  color: var(--text-dim);
+}
+
+.btn-quiet-danger:hover,
+.btn-quiet-danger:focus-visible {
+  color: var(--bad);
+  border-color: color-mix(in oklch, var(--bad) 45%, var(--border));
+}

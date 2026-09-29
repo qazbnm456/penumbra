@@ -2937,26 +2937,41 @@ function notify(message, { tone = "bad", timeout = 0, action = null } = {}) {
 //: background rather than reimplementing them. Returns a promise, so every call site keeps the
 //: shape it had with `confirm()` and only gains an `await`.
 function confirmAction(message) {
+  return chooseAction(message).then((answer) => answer === "yes");
+}
+
+//: The confirm dialog, with an optional second, milder choice (`alt`) between Cancel and the
+//: destructive button. Resolves "yes", "alt" or null (Cancel or Escape).
+function chooseAction(message, { yes: yesLabel, alt: altLabel } = {}) {
   return new Promise((resolve) => {
     const overlay = document.getElementById("confirm-overlay");
     const yes = document.getElementById("confirm-yes");
+    const alt = document.getElementById("confirm-alt");
     const no = document.getElementById("confirm-no");
     document.getElementById("confirm-text").textContent = message;
+    yes.textContent = yesLabel || t("app.confirm", "Delete");
+    alt.textContent = altLabel || "";
+    alt.hidden = !altLabel;
     const settle = (answer) => {
       yes.removeEventListener("click", onYes);
+      alt.removeEventListener("click", onAlt);
       no.removeEventListener("click", onNo);
       overlay.removeEventListener("keydown", onKey);
       closeModal(overlay);
+      alt.hidden = true;
+      yes.textContent = t("app.confirm", "Delete");
       resolve(answer);
     };
-    const onYes = () => settle(true);
-    const onNo = () => settle(false);
+    const onYes = () => settle("yes");
+    const onAlt = () => settle("alt");
+    const onNo = () => settle(null);
     // Escape is "no". A destructive confirm that treats an interrupted gesture as consent is the
     // one dialog where the default must be the safe answer.
     const onKey = (event) => {
-      if (event.key === "Escape") settle(false);
+      if (event.key === "Escape") settle(null);
     };
     yes.addEventListener("click", onYes);
+    alt.addEventListener("click", onAlt);
     no.addEventListener("click", onNo);
     overlay.addEventListener("keydown", onKey);
     openModal(overlay);
@@ -9719,6 +9734,35 @@ async function promoteNode(node, picker) {
   renderStarMapCard();
 }
 
+//: Removing a capture from the map. Filed into orbits, it asks which: from the Horizon only (the
+//: orbits keep their copy, as the list's Remove does) or from every orbit as well. Filed nowhere,
+//: it is one plain confirm.
+async function removeCapture(nodeId, orbitNames) {
+  let everywhere = false;
+  if (orbitNames.length) {
+    const names = orbitNames.join(t("list.sep", ", "));
+    const answer = await chooseAction(
+      t("map.removeWhere", `It is also in ${names}. Remove it from there too, or only from the Horizon?`, { where: names }),
+      { yes: t("map.removeEverywhere", "Remove from orbits too"), alt: t("map.removeHorizonOnly", "Horizon only") },
+    );
+    if (!answer) return;
+    everywhere = answer === "yes";
+  } else if (!(await confirmAction(t("map.removeConfirm", "Remove this capture? It is deleted, not just moved.")))) {
+    return;
+  }
+  try {
+    await api(`/horizon/${encodeURIComponent(nodeId)}${everywhere ? "?everywhere=true" : ""}`, { method: "DELETE" });
+  } catch (err) {
+    notify(t("horizon.forgetFailed", `Could not forget it: ${err.message}`, { message: err.message }));
+    return;
+  }
+  renderCaptureCard.cache = null;
+  closeMapFocus();
+  renderFacets();
+  await refreshHorizon({ reset: true });
+  void renderStarMap();
+}
+
 async function forgetNode(node) {
   const ok = await confirmAction(
     t("horizon.forgetConfirm", "Forget this? Anything already filed into an orbit stays.")
@@ -14091,6 +14135,10 @@ function renderCaptureCard(card, focus) {
     read.type = "button";
     read.addEventListener("click", () => void showNodeReader({ ...node, id: focus.id }));
     actions.appendChild(read);
+    const remove = elt("button", "btn btn-quiet-danger", t("map.removeCapture", "Remove\u2026"));
+    remove.type = "button";
+    remove.addEventListener("click", () => void removeCapture(focus.id, where));
+    actions.appendChild(remove);
     detail.appendChild(actions);
   })();
 }
