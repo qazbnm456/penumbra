@@ -51,6 +51,7 @@ Still unbuilt. Do not assume any of these exist because a design discussion ment
 - Folders and archives cannot be captured, because invariant 26 keeps local paths out of the API and the desktop shell does not supply them.
 - The browser extension is Chromium-only (Chrome, Arc, Brave, Edge), installed unpacked; there is no Firefox or Safari build and no store listing.
 - The desktop installers are not signed with a developer identity: macOS builds carry an ad-hoc signature, Windows and Linux builds none.
+- There is no export of everything: an artifact leaves only through Copy, the whole-orbit Markdown export and print. Clearing everything (`POST /data/clear`) exists, so its warning panel says there is no way back.
 - Slides, Google Docs and legacy `.doc` files are not parsed (Word `.docx` is), and full audio transcription is not done. YouTube captions do ship.
 
 ## Invariants: do not break

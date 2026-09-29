@@ -2452,6 +2452,7 @@ function renderSettings(state_) {
   // just round-tripped through the server.
   settingsDraft = null;
 
+
   const save = document.createElement("button");
   save.type = "button";
   save.className = "btn btn-primary";
@@ -2481,6 +2482,17 @@ function renderSettings(state_) {
     }
   });
   body.appendChild(save);
+  // Clearing everything sits after Save, apart from the settings and not saved with them: it acts at
+  // once, after its own warning panel.
+  const wipe = elt("div", "setting-row setting-danger");
+  wipe.appendChild(elt("span", "setting-danger-title", t("settings.clearAll", "Clear everything")));
+  wipe.appendChild(elt("span", "setting-source", t("settings.clearAllHelp",
+    "Deletes every orbit and every capture, with their text, conversations, overviews, audio, asks and removal records. Settings, the model configuration, the downloaded model for local relations and the paired browser extension stay.")));
+  const wipeButton = elt("button", "btn btn-quiet-danger", t("settings.clearAllButton", "Clear everything\u2026"));
+  wipeButton.type = "button";
+  wipeButton.addEventListener("click", () => void clearEverything());
+  wipe.appendChild(wipeButton);
+  body.appendChild(wipe);
 }
 
 //: MODAL FOCUS, in one place, because the two overlays had none.
@@ -3097,6 +3109,97 @@ async function loadSettings() {
     body.textContent = "";
     body.appendChild(failureBlock(t("settings.loadFailed", "Settings did not load"), err.message));
   }
+}
+
+//: Clear everything, from the settings page, through its own warning panel (`#wipe-overlay`): what
+//: goes, with counts, what stays, and a button that stays off until the reader types the words
+//: shown. The settings dialog closes first, because a dialog stacked on an open one takes over its
+//: record of what it made inert and closing the pair would leave the page behind them unusable.
+//: Cancelling goes back to settings.
+async function clearEverything() {
+  document.getElementById("settings-close").click();
+  const overlay = document.getElementById("wipe-overlay");
+  const input = document.getElementById("wipe-input");
+  const go = document.getElementById("wipe-go");
+  const error = document.getElementById("wipe-error");
+  const words = t("wipe.words", "clear everything");
+  document.getElementById("wipe-body").textContent = t("wipe.body",
+    "This deletes everything Penumbra holds for you. There is no export yet, so nothing can bring it back.");
+  const goes = document.getElementById("wipe-goes");
+  goes.textContent = "";
+  const [orbits, captures] = await Promise.all([
+    api("/orbits").then((r) => (r.orbits || []).length).catch(() => null),
+    api("/horizon?limit=1").then((r) => r.total).catch(() => null),
+  ]);
+  [
+    orbits === null ? t("wipe.orbitsAll", "Every orbit, with its sources, notes, conversation, overview and audio")
+      : t("wipe.orbits", `${orbits} orbits, with their sources, notes, conversations, overviews and audio`, { n: orbits }),
+    captures === null ? t("wipe.capturesAll", "Every capture in the Horizon, with its text and summary")
+      : t("wipe.captures", `${captures} captures in the Horizon, with their text and summaries`, { n: captures }),
+    t("wipe.rest", "Every ask, alias and removal record, and every run's trace"),
+  ].forEach((line) => goes.appendChild(elt("li", "", line)));
+  // The words as a node of their own, never interpolated into markup.
+  const label = document.getElementById("wipe-label");
+  label.textContent = "";
+  const parts = t("wipe.label", "Type \u0000 to confirm", { words: "\u0000" }).split("\u0000");
+  label.append(parts[0] || "", elt("code", "wipe-words", words), parts[1] || "");
+  input.value = "";
+  go.disabled = true;
+  go.textContent = t("wipe.go", "Clear everything");
+  error.hidden = true;
+  openModal(overlay);
+  input.focus({ preventScroll: true });
+}
+
+function initWipe() {
+  const overlay = document.getElementById("wipe-overlay");
+  const input = document.getElementById("wipe-input");
+  const go = document.getElementById("wipe-go");
+  const error = document.getElementById("wipe-error");
+  const matches = () => input.value.trim() === t("wipe.words", "clear everything");
+  const cancel = () => {
+    closeModal(overlay);
+    document.getElementById("settings-open").click();
+  };
+  input.addEventListener("input", () => {
+    go.disabled = !matches();
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229 && matches()) go.click();
+  });
+  document.getElementById("wipe-cancel").addEventListener("click", cancel);
+  overlay.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !go.dataset.working) cancel();
+  });
+  go.addEventListener("click", async () => {
+    if (!matches()) return;
+    go.disabled = true;
+    go.dataset.working = "1";
+    go.textContent = t("wipe.working", "Clearing\u2026");
+    let cleared;
+    try {
+      cleared = await api("/data/clear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // The API's own guard words, fixed in English whatever the reader typed.
+        body: JSON.stringify({ confirm: "clear everything" }),
+      });
+    } catch (err) {
+      error.textContent = readableError(err.message);
+      error.hidden = false;
+      go.disabled = false;
+      go.textContent = t("wipe.go", "Clear everything");
+      delete go.dataset.working;
+      return;
+    }
+    closeModal(overlay);
+    notify(t("settings.cleared", `Cleared ${cleared.orbits} orbits and ${cleared.captures} captures.`,
+      { orbits: cleared.orbits, captures: cleared.captures }), { tone: "good", timeout: 4000 });
+    // Every view and cache on the page describes what is gone, so the page starts again from the
+    // Horizon rather than repainting each one.
+    syncAddressBar("", { replace: true });
+    setTimeout(() => window.location.reload(), 1200);
+  });
 }
 
 function initSettings() {
@@ -7439,6 +7542,7 @@ window.addEventListener("ui-lang-changed", () => {
 initTheme();
 initSettings();
 initMarks();
+initWipe();
 initOrbitTitle();
 initOrbitSwitch();
 initSourcesPanel();

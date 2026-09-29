@@ -1375,6 +1375,73 @@ async def delete_orbit_endpoint(orbit_id: str) -> dict:
     return {"deleted": True, "memberships_dropped": forgotten}
 
 
+class ClearAllRequest(BaseModel):
+    #: The words the settings page sends once the reader has confirmed. An API guard against a
+    #: stray or replayed call, not a second confirmation: the page asks the reader first.
+    confirm: str
+
+
+_CLEAR_ALL_WORDS = "clear everything"
+
+
+def _work_in_flight() -> str:
+    """What is still running, named for the refusal, or "" when nothing is."""
+    if _RUN_PROCESSES or _ACTIVE_RUNS or any(_BUSY.values()):
+        return "a question or a generation"
+    if _DISTIL["running"]:
+        return "a summary pass"
+    if _ORGANIZE["running"]:
+        return "automatic filing"
+    if _VECTOR_DL["running"]:
+        return "the local relations download"
+    if _horizon_queue().status()["running"]:
+        return "reading new captures"
+    return ""
+
+
+@app.post("/data/clear")
+async def clear_all_endpoint(body: ClearAllRequest) -> dict:
+    """Delete everything the reader has made: every orbit (its sources, notes, conversation,
+    overview and audio), every capture in the Horizon with its text, memberships, removal records,
+    asks and aliases, and every run trace.
+
+    **Kept:** the settings, the model configuration, the downloaded embedding model and the paired
+    browser extension, because those are how the product is set up rather than what it holds, and a
+    reader starting over wants them in place.
+
+    **Refused while anything runs (409),** for the reason deleting one orbit is: a worker still
+    writing would put back what was just removed. Nothing here needs a new privilege, since every
+    token holder can already delete each of these one by one (invariant 25)."""
+    if body.confirm != _CLEAR_ALL_WORDS:
+        raise HTTPException(400, f"send confirm={_CLEAR_ALL_WORDS!r} to clear everything")
+    busy = _work_in_flight()
+    if busy:
+        raise HTTPException(409, f"{busy} is running; stop it first")
+
+    def _clear() -> dict:
+        orbits, unreadable = list_orbit_summaries()
+        for orbit in orbits:
+            delete_orbit(orbit.id)
+        for stem in unreadable:
+            delete_orbit(stem)
+        traces = 0
+        if _TRACE_DIR.is_dir():
+            for path in _TRACE_DIR.glob("*.jsonl"):
+                path.unlink(missing_ok=True)
+                traces += 1
+        base = _horizon_queue_base()
+        captures = horizon.clear_all(base_dir=base)
+        vectors.clear_index(base)
+        return {"orbits": len(orbits) + len(unreadable), "captures": captures, "traces": traces}
+
+    counts = await asyncio.to_thread(_clear)
+    _DISTIL["failures"] = []
+    _DISTIL["error"] = ""
+    _ORGANIZE["error"] = ""
+    _forget_suggestions()
+    return {"cleared": True, **counts}
+
+
 @app.delete("/orbits/{orbit_id}/sources/{source_id}", response_model=OrbitResponse)
 async def delete_source_endpoint(orbit_id: str, source_id: str) -> OrbitResponse:
     """Remove one source. Same shape as deleting a note: existing orbit only (`create=False`).

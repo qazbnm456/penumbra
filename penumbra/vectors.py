@@ -180,6 +180,20 @@ def remove(base_dir: str | Path = DEFAULT_HORIZON_DIR) -> None:
     _EMBEDDERS.pop(str(model_dir(base_dir)), None)
 
 
+def clear_index(base_dir: str | Path = DEFAULT_HORIZON_DIR) -> None:
+    """Drop every stored vector and keep the model: the Horizon was emptied, not the feature turned
+    off. Without `sqlite_vec` only the row table can be emptied; the next `sync` sweeps the rest."""
+    try:
+        with _vec_connect(base_dir) as conn:
+            conn.execute("DELETE FROM vector_rows")
+            conn.execute("DELETE FROM node_vectors")
+    except ImportError:
+        with horizon._connect(base_dir) as conn:
+            present = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            if "vector_rows" in present:
+                conn.execute("DELETE FROM vector_rows")
+
+
 # --- the embedder -----------------------------------------------------------------------------------
 
 
@@ -261,6 +275,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS node_vectors
 
 @contextmanager
 def _vec_connect(base_dir: str | Path = DEFAULT_HORIZON_DIR):
+    # `sqlite_vec` imports numpy, and under dspy's lazy proxy that import broke every later numpy
+    # access in the process (a recursion), so the real module goes in first, as for the embedder.
+    _real_numpy()
     import sqlite_vec
 
     with horizon._connect(base_dir) as conn:

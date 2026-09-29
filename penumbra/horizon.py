@@ -849,6 +849,41 @@ def remove_node(
     return bool(changed)
 
 
+#: The tables `clear_all` empties: everything a reader's captures put in the database. The
+#: extension's pairing and the downloaded embedding model are files beside it and are kept, and so is
+#: the vector index's virtual table, which only `vectors` can open (`vectors.clear_index`).
+_CLEARED_TABLES = (
+    "memberships", "nodes", "horizon_events", "asks", "filing_dismissed", "entity_aliases",
+    "entity_seen", "organize_left", "search_rows", "search_fts",
+)
+
+
+def clear_all(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> int:
+    """Empty the Horizon: every capture, its stored text, its memberships, removal records, asks,
+    aliases and search rows. Returns how many captures there were.
+
+    One transaction for the rows, as SQL deltas like every other write here (invariant 78), then the
+    text files, which only a row pointed at. A table a feature never created is skipped."""
+    with _connect(base_dir) as conn:
+        present = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            count = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+            for table in _CLEARED_TABLES:
+                if table in present:
+                    conn.execute(f"DELETE FROM {table}")  # a fixed name from the tuple above
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+    nodes = horizon_dir(base_dir) / "nodes"
+    if nodes.is_dir():
+        for path in nodes.glob("nd-*.json"):
+            if is_node_id(path.stem):
+                path.unlink(missing_ok=True)
+    return int(count)
+
+
 def removal_events(
     *,
     query: str | None = None,

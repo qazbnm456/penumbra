@@ -575,6 +575,27 @@
   <!-- One place for "that did not work", and one real dialog for "are you sure". Both replace the
        browser's `alert()`/`confirm()`, which stop the page, cannot be styled, and in the planned
        Tauri shell become OS-level modals over the app. -->
+  <!-- Clearing everything asks more than a confirm: it says what goes and what stays, with counts,
+       and its button stays off until the reader types the words shown. A reflex click cannot do it. -->
+  <div class="modal-overlay" id="wipe-overlay" hidden>
+    <div class="modal modal-wipe" role="alertdialog" aria-modal="true" aria-labelledby="wipe-title" aria-describedby="wipe-body" tabindex="-1">
+      <div class="modal-body wipe-body">
+        <p class="wipe-kicker" data-i18n="wipe.kicker">Cannot be undone</p>
+        <h2 class="wipe-title" id="wipe-title" data-i18n="wipe.title">Clear everything?</h2>
+        <p class="wipe-text" id="wipe-body"></p>
+        <ul class="wipe-list" id="wipe-goes"></ul>
+        <p class="wipe-keeps" id="wipe-keeps" data-i18n="wipe.keeps">Kept: settings, the model configuration, the downloaded model for local relations and the paired browser extension.</p>
+        <label class="wipe-label" for="wipe-input" id="wipe-label"></label>
+        <input type="text" class="wipe-input" id="wipe-input" autocomplete="off" spellcheck="false" />
+        <p class="wipe-error" id="wipe-error" role="alert" hidden></p>
+        <div class="confirm-actions">
+          <button type="button" class="btn" id="wipe-cancel" data-i18n="app.cancel">Cancel</button>
+          <button type="button" class="btn btn-danger" id="wipe-go" disabled data-i18n="wipe.go">Clear everything</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="confirm-overlay" hidden>
     <div class="modal modal-ask" role="dialog" aria-modal="true" aria-labelledby="confirm-text" tabindex="-1">
       <div class="modal-body">
