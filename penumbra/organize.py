@@ -34,6 +34,11 @@ MAX_NEW_ORBITS = 10
 MAX_CAPTURES = 40
 #: The fewest captures a new orbit opens with.
 MIN_NEW_ORBIT = 2
+#: How a capture fits an existing orbit, as the model must say for every such placement. Only these
+#: are filed; `loose` (a word, a place or a broad theme in common) and a missing answer leave it. A
+#: model told to prefer "the closest orbit" put a lighthouse into astronomy and origami into Taiwanese
+#: history, so the judgement is asked for explicitly and checked here rather than trusted.
+FILING_FITS = frozenset({"subject", "part"})
 _NAME_CHARS = 60
 _SUMMARY_CHARS = 400
 _HELD_TITLES = 6
@@ -45,22 +50,27 @@ questions about together.
 entities. `orbits` is a JSON list of the orbits that exist, each with an id, a title and what it holds.
 
 For each capture decide one of:
-- put it into an existing orbit whose subject it belongs to (use that orbit's id);
+- put it into an existing orbit whose subject it belongs to (use that orbit's id), and say how it fits in \
+`fit`: "subject" when the capture is about the orbit's subject, "part" when it is about one part of it, \
+"loose" when all it shares is a word, a place, a person or a broad theme. A lighthouse is not astronomy \
+because both involve light or the sky; origami is not Taiwanese history because it is practised in Taiwan;
 - put it into a NEW orbit, when no existing orbit fits and at least one other capture here shares its \
 subject. Captures on one new subject share one new orbit. A capture whose subject no other capture shares \
-goes into the closest existing orbit if it reasonably fits, and is otherwise left: it gets an orbit once a \
-second capture on its subject arrives. A \
+and no existing orbit holds is left: it gets an orbit once a second capture on its subject arrives. Never \
+stretch an orbit to hold it. A \
 new orbit's name is short (2 to 6 words), names the subject broadly enough to hold more captures like \
 it, and is written in `language` when one is given, otherwise in the language most captures are written in;
 - leave it, only when it is too thin to place at all.
 
-Prefer an existing orbit when it reasonably fits. Never invent a new orbit that duplicates an existing one. \
+Prefer an existing orbit when the capture is about its subject or a part of it. Never invent a new orbit \
+that duplicates an existing one. \
 Open at most `max_new_orbits` new orbits. Never put captures on unrelated subjects into one orbit to stay \
 under that number, and never file a capture into an orbit whose subject it does not share: leave it \
 instead, and it will be placed in a later round.
 
 Answer `plan_json` with JSON only: {"placements": [{"capture": "<capture id>", "orbit": "<existing orbit id \
-or empty>", "new_orbit": "<new orbit name or empty>"}]}."""
+or empty>", "fit": "<subject, part or loose, for an existing orbit>", \
+"new_orbit": "<new orbit name or empty>"}]}."""
 
 
 class OrganizeCaptures:
@@ -103,7 +113,8 @@ def plan_from(
 
     Only a capture it was shown, and each at most once; only an orbit that exists (`orbits` maps id
     to title); a new name equal to an existing orbit's title files into that orbit; new names are
-    cut to a sensible length; a new name only one capture was given is not opened
+    cut to a sensible length; a placement into an existing orbit counts only with a `fit` in
+    `FILING_FITS`, so a loose one leaves the capture; a new name only one capture was given is not opened
     (`MIN_NEW_ORBIT`); and past `max_new` distinct new names the rest are dropped rather than
     opened.
     """
@@ -130,6 +141,8 @@ def plan_from(
         orbit = str(item.get("orbit") or "")
         name = " ".join(str(item.get("new_orbit") or "").split())[:_NAME_CHARS]
         if orbit in orbits:
+            if str(item.get("fit") or "").strip().lower() not in FILING_FITS:
+                continue  # a loose or unstated fit waits for a subject of its own
             seen.add(capture)
             out.append((capture, "orbit", orbit))
         elif name:

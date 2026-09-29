@@ -18,9 +18,9 @@ from penumbra import organize
 
 def test_the_plan_keeps_only_what_it_was_shown():
     raw = {"placements": [
-        {"capture": "a", "orbit": "o1"},
-        {"capture": "a", "orbit": "o2"},  # a second place for the same capture
-        {"capture": "ghost", "orbit": "o1"},  # never shown
+        {"capture": "a", "orbit": "o1", "fit": "subject"},
+        {"capture": "a", "orbit": "o2", "fit": "subject"},  # a second place for the same capture
+        {"capture": "ghost", "orbit": "o1", "fit": "subject"},  # never shown
         {"capture": "b", "orbit": "invented"},  # an orbit that does not exist, and no name
         {"capture": "c", "new_orbit": "  Solar   sails "},
         {"capture": "d", "new_orbit": "solar sails"},
@@ -34,6 +34,21 @@ def test_the_plan_keeps_only_what_it_was_shown():
         ("d", "new", "Solar sails"),
         ("e", "orbit", "o1"),
     ]
+
+
+def test_a_loose_fit_leaves_the_capture_waiting():
+    """A lighthouse went into astronomy and origami into Taiwanese history when the model was told to
+    prefer the closest orbit. Filing into an existing orbit now needs the model to say the capture is
+    about that subject or a part of it; a loose or unstated fit leaves it for a subject of its own."""
+    raw = {"placements": [
+        {"capture": "lighthouse", "orbit": "space", "fit": "loose"},
+        {"capture": "origami", "orbit": "taiwan"},  # no fit given
+        {"capture": "hubble", "orbit": "space", "fit": "Part"},
+        {"capture": "exoplanet", "orbit": "space", "fit": "subject"},
+    ]}
+    plan = organize.plan_from(raw, captures={"lighthouse", "origami", "hubble", "exoplanet"},
+                              orbits={"space": "Space exploration", "taiwan": "Taiwanese history"})
+    assert plan == [("hubble", "orbit", "space"), ("exoplanet", "orbit", "space")]
 
 
 def test_the_plan_opens_a_bounded_number_of_new_orbits():
@@ -116,7 +131,7 @@ def test_captures_go_into_an_orbit_that_fits_or_a_new_one_it_names(client, monke
     b = _summarised(client, "sourdough", ["Bread"])
     c = _summarised(client, "rye", ["Bread"])
     seen = _fake_model(monkeypatch, {"placements": [
-        {"capture": a, "orbit": "space"},
+        {"capture": a, "orbit": "space", "fit": "subject"},
         {"capture": b, "new_orbit": "Baking"},
         {"capture": c, "new_orbit": "baking"},
     ]})
@@ -161,7 +176,7 @@ def test_a_declined_orbit_is_never_the_answer(client, monkeypatch):
     assert client.post(f"/horizon/{a}/promote", json={"orbit_id": "space"}).status_code == 200
     source_id = horizon.memberships_for(a)[0].source_id
     assert client.delete(f"/orbits/space/sources/{source_id}").status_code == 200
-    _fake_model(monkeypatch, {"placements": [{"capture": a, "orbit": "space"}]})
+    _fake_model(monkeypatch, {"placements": [{"capture": a, "orbit": "space", "fit": "subject"}]})
     api._organize_after_pass()
     assert horizon.memberships_for(a) == []
 
@@ -205,7 +220,7 @@ def test_a_round_that_opened_orbits_is_followed_by_one_over_what_it_left(client,
     b = _summarised(client, "moons", ["Moon"])
     replies = iter([
         {"placements": [{"capture": a, "new_orbit": "Space"}, {"capture": c, "new_orbit": "Space"}]},
-        {"placements": [{"capture": b, "orbit": "PLACEHOLDER"}]},
+        {"placements": [{"capture": b, "orbit": "PLACEHOLDER", "fit": "subject"}]},
     ])
 
     def reply(kwargs):
@@ -275,7 +290,7 @@ def test_a_capture_the_plan_named_but_filing_refused_is_not_sent_again(client, m
     assert client.post(f"/horizon/{a}/promote", json={"orbit_id": "space"}).status_code == 200
     source_id = horizon.memberships_for(a)[0].source_id
     assert client.delete(f"/orbits/space/sources/{source_id}").status_code == 200
-    seen = _fake_model(monkeypatch, {"placements": [{"capture": a, "orbit": "space"}]})
+    seen = _fake_model(monkeypatch, {"placements": [{"capture": a, "orbit": "space", "fit": "subject"}]})
     api._organize_after_pass()
     api._organize_after_pass()
     assert len(seen) == 1, "the second pass sent the refused capture to the model again"
