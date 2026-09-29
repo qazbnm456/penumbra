@@ -322,7 +322,13 @@ fn note_frame(window: &WebviewWindow) {
         let zoomed = window.is_maximized().unwrap_or(false);
         let factor = window.scale_factor().unwrap_or(1.0);
         let (pos, size) = (pos.to_logical::<f64>(factor), size.to_logical::<f64>(factor));
-        let mut frame = recall(&app).get("workspace_frame").and_then(|v| v.as_object().cloned()).unwrap_or_default();
+        // A frame from an earlier build is in pixels; start afresh rather than keep its x, y, w and h
+        // under the new units, where a zoomed save would carry them over unconverted.
+        let mut frame = recall(&app)
+            .get("workspace_frame")
+            .and_then(|v| v.as_object().cloned())
+            .filter(|f| f.get("units").and_then(|v| v.as_u64()) == Some(FRAME_UNITS))
+            .unwrap_or_default();
         frame.insert("units".into(), serde_json::json!(FRAME_UNITS));
         frame.insert("zoomed".into(), serde_json::json!(zoomed));
         if !zoomed {
@@ -340,8 +346,8 @@ fn note_frame(window: &WebviewWindow) {
 /// header), so a missing `Titled` style is the rest and nothing else is. Comparing the window with
 /// the display misread a zoomed window as the rest whenever the menu bar and the Dock hide
 /// themselves, and could then miss the rest itself, which reports as zoomed on such a setup.
-/// Elsewhere the comparison is all there is. Called from the window event handler, on the main thread.
-fn is_resting(window: &tauri::Window, size: &tauri::PhysicalSize<u32>) -> bool {
+/// Elsewhere the comparison is all there is. Called on the main thread only.
+fn is_resting(window: &WebviewWindow, size: &tauri::PhysicalSize<u32>) -> bool {
     #[cfg(target_os = "macos")]
     {
         let _ = size;
@@ -1034,14 +1040,30 @@ pub fn run() {
                 }
             }
             if let tauri::WindowEvent::Resized(size) = event {
-                if window.label() == WINDOW {
-                    let resting = is_resting(window, size);
-                    RESTING.store(resting, std::sync::atomic::Ordering::SeqCst);
-                    if let Some(workspace) = window.app_handle().get_webview_window(WINDOW) {
-                        note_frame(&workspace);
-                    }
+                if let Some(workspace) = window.app_handle().get_webview_window(WINDOW).filter(|_| window.label() == WINDOW) {
+                    let resting = is_resting(&workspace, size);
+                    // Only the way in hands the keyboard over and hides the pointer: on the way out this
+                    // first look still sees the rest, and must not hide the pointer that just ended it.
+                    let entering = resting && !RESTING.swap(resting, std::sync::atomic::Ordering::SeqCst);
+                    note_frame(&workspace);
+                    // Leaving the rest, tao gives the title bar back asynchronously after the resize
+                    // that reported it, so the check above still sees the rest. Look again once the
+                    // style has landed, on every resize, and correct the island if it changed.
+                    let again = window.app_handle().clone();
+                    let measured = *size;
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(200));
+                        let app = again.clone();
+                        let _ = again.run_on_main_thread(move || {
+                            let Some(workspace) = app.get_webview_window(WINDOW) else { return };
+                            let now = is_resting(&workspace, &workspace.inner_size().unwrap_or(measured));
+                            if RESTING.swap(now, std::sync::atomic::Ordering::SeqCst) != now {
+                                island::suspend(&app, now);
+                            }
+                        });
+                    });
                     island::suspend(window.app_handle(), resting);
-                    if resting {
+                    if entering {
                         // After the style change settles, both the window and its web view take
                         // the keyboard: key status alone left the page without key or move events.
                         let app = window.app_handle().clone();
