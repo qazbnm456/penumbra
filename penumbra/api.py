@@ -186,6 +186,7 @@ from .orbit import (
     promote_note,
     remove_source,
     slug,
+    sweep_orphan_locks,
 )
 from .parsers.web import FetchError, page_source, selection_source, unwrap_url
 from .prose import polish
@@ -1508,6 +1509,8 @@ async def _clear_everything() -> dict:
             delete_orbit(orbit.id)
         for stem in unreadable:
             delete_orbit(stem)
+        # The lock files those orbits leave behind, which only a clear may remove (`orbit_lock`).
+        sweep_orphan_locks()
         traces = 0
         if _TRACE_DIR.is_dir():
             for path in _TRACE_DIR.glob("*.jsonl"):

@@ -195,6 +195,9 @@ def orbit_lock(orbit_id: str, *, base_dir: str | Path = DEFAULT_ORBITS_DIR) -> I
     file description, so `flock` sees a genuine second acquirer). Nothing passed to
     `mutate_orbit` may itself call `mutate_orbit`/`orbit_lock`.
 
+    The one exception to "never unlinked" is `sweep_orphan_locks`, run only while everything is being
+    cleared, when every write is refused and nothing runs.
+
     **POSIX only, stated rather than papered over.** Without `fcntl` (Windows), this degrades to a
     process-local `threading.Lock`: still correct for the single-process `uvicorn` deployment
     invariant 23 already describes as the only supported one, with no cross-process guarantee. A
@@ -219,6 +222,40 @@ def orbit_lock(orbit_id: str, *, base_dir: str | Path = DEFAULT_ORBITS_DIR) -> I
             yield
         finally:
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def sweep_orphan_locks(*, base_dir: str | Path = DEFAULT_ORBITS_DIR) -> int:
+    """Remove the lock files of orbits that no longer exist, and return how many went.
+
+    Only for clearing everything (`api.clear_all_endpoint`), when the server refuses every write and
+    has checked that nothing runs: that is what makes an unlink safe here when `orbit_lock` says it
+    never is. Even so each lock is taken without waiting first and skipped if anyone holds it, so a
+    writer from another process (the CLI) keeps its lock."""
+    base = Path(base_dir)
+    if not base.is_dir():
+        return 0
+    swept = 0
+    for lock_path in base.glob(".*.json.lock"):
+        if (base / lock_path.name[1:-len(".lock")]).exists():
+            continue
+        if fcntl is None:  # pragma: no cover - POSIX-only fallback: no cross-process lock to respect
+            lock_path.unlink(missing_ok=True)
+            swept += 1
+            continue
+        try:
+            with open(lock_path, "a+") as fh:
+                try:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError:
+                    continue  # held right now: leave it
+                try:
+                    lock_path.unlink(missing_ok=True)
+                    swept += 1
+                finally:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            continue
+    return swept
 
 
 def delete_orbit(orbit_id: str, *, base_dir: str | Path = DEFAULT_ORBITS_DIR) -> bool:

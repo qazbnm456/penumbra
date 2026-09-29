@@ -100,3 +100,15 @@ def test_writes_are_refused_while_clearing(client):
         assert client.get("/horizon").status_code == 200, "reads carry on"
     finally:
         api._CLEARING.clear()
+
+
+def test_clearing_sweeps_the_lock_files_of_deleted_orbits(client):
+    from penumbra.orbit import mutate_orbit, orbit_lock
+    mutate_orbit("kept-lock", lambda orb: None, create=True)
+    gone = Path("orbits/.gone.json.lock")
+    gone.write_text("", encoding="utf-8")
+    with orbit_lock("held"):  # held by someone: stays
+        held = Path("orbits/.held.json.lock")
+        assert client.post("/data/clear", json={"confirm": "clear everything"}).status_code == 200
+        assert held.exists()
+    assert not gone.exists() and not Path("orbits/.kept-lock.json.lock").exists()
