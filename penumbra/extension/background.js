@@ -153,6 +153,8 @@ async function checkOnline() {
   online = now;
   if (changed) {
     await paintIcon(now);
+    // A tab with a mark set its own icon, which the global one no longer reaches: paint those again.
+    await settleOrphans();
     await chrome.action.setTitle({ title: now ? msg("actionTitle") : msg((await pairing()) ? "offlineTitle" : "errorNotPaired") });
     await rebuildMenus();
   }
@@ -383,9 +385,35 @@ async function paintTab(tabId, state) {
   }
 }
 
+// A navigation ends the tab's state, except while its capture is still on its way: a frame inside the
+// page loading can report the tab as loading too, and that capture must still land and be marked.
 chrome.tabs.onUpdated.addListener((tabId, change) => {
-  if (change.status === "loading") void setTabState(tabId, null);
+  if (change.status === "loading" && !inFlight.has(tabId)) void setTabState(tabId, null);
 });
+
+//: A capture that was on its way when the service worker stopped never finishes here, so a stored
+//: `saving` found at startup (or older than Chrome lets a request run) is a failure the reader can
+//: retry, not a spinner that turns forever and a press that only ever says "Cancelling".
+const SAVING_LIMIT_MS = 5 * 60 * 1000;
+
+function stale(state) {
+  return state && state.state === "saving" && !inFlight.has(state.tabId)
+    && Date.now() - (state.startedAt || 0) > SAVING_LIMIT_MS;
+}
+
+async function settleOrphans() {
+  const all = await chrome.storage.session.get(null);
+  for (const [key, state] of Object.entries(all)) {
+    if (!key.startsWith("tab:") || !state) continue;
+    const tabId = Number(key.slice(4));
+    if (state.state === "saving" && !inFlight.has(tabId)) {
+      await setTabState(tabId, { ...state, state: "failed", cancel: false });
+    } else {
+      await paintTab(tabId, state);
+    }
+  }
+}
+void settleOrphans();
 chrome.tabs.onRemoved.addListener((tabId) => {
   spinning.delete(tabId);
   void chrome.storage.session.remove(tabKey(tabId));
@@ -394,10 +422,21 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 //: The icon pressed on a page: capture it, or act on the capture already made from it.
 async function pressIcon(tab) {
   const tabId = tab && tab.id;
-  const state = await tabState(tabId);
+  let state = await tabState(tabId);
+  if (stale(state)) {
+    state = { ...state, state: "failed" };
+    await setTabState(tabId, state);
+  }
   const here = state && (!state.url || !tab.url || state.url === tab.url);
   if (here && state.state === "saving") {
-    await setTabState(tabId, { ...state, cancel: true });
+    // Read again just before writing: the capture may have landed meanwhile, and writing the old
+    // `saving` back would leave the tab marked as on its way for good.
+    const now = await tabState(tabId);
+    if (!now || now.state !== "saving") {
+      if (now && now.state === "saved") await withdraw(tab, now);
+      return;
+    }
+    await setTabState(tabId, { ...now, cancel: true });
     await tell(tabId, { status: msg("cancelling"), title: state.title, busy: true, stay: true });
     return;
   }
@@ -526,7 +565,7 @@ async function send(tab, body) {
   lastBody.set(tabId, body);
   // Only a whole page is this tab's capture; a passage or a link is not the page the icon stands for.
   const mine = body.kind === "page";
-  if (mine) await setTabState(tabId, { state: "saving", url: body.url, title: shown });
+  if (mine) await setTabState(tabId, { state: "saving", url: body.url, title: shown, tabId, startedAt: Date.now() });
   await tell(tabId, { status: msg("saving"), title: shown, busy: true, stay: true });
   try {
     const got = await api("/extension/capture", {

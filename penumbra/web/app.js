@@ -1548,13 +1548,19 @@ function titleEditor(orbitId, current, done) {
   suggest.title = t("rename.suggestTip", "Ask the model for a name from what this orbit holds now. One model call.");
   wrap.appendChild(input);
   wrap.appendChild(suggest);
+  //: `settled` once it has ended (saved, or left with Escape); `committing` while a save is on its way.
+  //: Both are checked before any save, so Escape cannot be followed by a save from the blur its own
+  //: repaint causes, and Enter followed by a blur sends one rename, not two.
   let settled = false;
+  let committing = false;
   const finish = (title) => {
     if (settled) return;
     settled = true;
     done(title);
   };
   const commit = async () => {
+    if (settled || committing) return;
+    committing = true;
     const value = input.value.trim();
     if (!value || value === current) {
       finish(null);
@@ -1590,9 +1596,13 @@ function titleEditor(orbitId, current, done) {
   });
   // Leaving the field saves, unless the focus went to Suggest, which belongs to it.
   input.addEventListener("blur", (event) => {
-    if (event.relatedTarget === suggest) return;
-    setTimeout(() => { if (!wrap.contains(document.activeElement)) void commit(); }, 0);
+    if (settled || event.relatedTarget === suggest) return;
+    setTimeout(() => { if (!settled && !wrap.contains(document.activeElement)) void commit(); }, 0);
   });
+  // Pressing Suggest keeps the focus in the field: WebKit does not focus a clicked button, so the
+  // field's blur would otherwise save and close the editor before the suggestion arrived.
+  suggest.addEventListener("pointerdown", (event) => event.preventDefault());
+  suggest.addEventListener("mousedown", (event) => event.preventDefault());
   suggest.addEventListener("click", async () => {
     suggest.disabled = true;
     suggest.textContent = t("rename.suggesting", "Thinking\u2026");
@@ -1604,8 +1614,10 @@ function titleEditor(orbitId, current, done) {
     } finally {
       suggest.disabled = false;
       suggest.textContent = t("rename.suggest", "Suggest");
-      input.focus();
-      input.select();
+      if (!settled) {
+        input.focus();
+        input.select();
+      }
     }
   });
   suggest.addEventListener("blur", (event) => {

@@ -2312,13 +2312,17 @@ async def suggest_title_only(
     the only write (invariant 53). One model call a press, and only on a press."""
     orbit = _load_orbit_or_404(orbit_id)
     title = await _title_from_model(
-        orbit_id, orbit, request, _derive_run_id(orbit_id, body.run_id), fresh=True
+        orbit_id, orbit, request, _derive_run_id(orbit_id, body.run_id), fresh=True, strict=True
     )
     return {"title": normalize_title(str(title)) or str(title)}
 
 
-async def _title_from_model(orbit_id: str, orbit, request: Request, run_id: str, *, fresh: bool = False):
-    """The model's title for `orbit` from every source, falling back to the deterministic one."""
+async def _title_from_model(
+    orbit_id: str, orbit, request: Request, run_id: str, *, fresh: bool = False, strict: bool = False
+):
+    """The model's title for `orbit` from every source, falling back to the deterministic one, or,
+    with `strict` (a suggestion the reader asked for), raising: a busy orbit or a failed run must
+    not come back looking like a fresh name."""
     _require_sources(orbit, "title")
     origins = [s.origin for s in orbit.sources]
     titles = [s.preview.get("title", "") for s in orbit.sources]
@@ -2348,6 +2352,8 @@ async def _title_from_model(orbit_id: str, orbit, request: Request, run_id: str,
         # A failed/timed-out naming run must not deny the caller their orbit — fall back to the
         # deterministic title, the same "never lose what already succeeded" discipline invariant 19
         # applies to a TTS failure after a transcript exists.
+        if strict:
+            raise
         title = fallback_title(origins, titles)
     return title
 
