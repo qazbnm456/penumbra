@@ -255,6 +255,11 @@ fn remember(app: &AppHandle, key: &str, value: serde_json::Value) {
 /// Whether the workspace frame has been set since Penumbra started. The window is built at a fixed
 /// size, so without this every launch opened a 1440x900 window wherever the system put it.
 static FRAMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Whether the workspace is in the star map's rest, as the last resize found it (`is_resting`).
+static RESTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// What `workspace_frame` records: `2` is logical units. A frame without it was saved in pixels by an
+/// earlier build and is ignored, since read as points it would come back at twice the size on Retina.
+const FRAME_UNITS: u64 = 2;
 /// Bumped on every move or resize; a save runs only if no later one arrived while it waited.
 static FRAME_EDITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -268,6 +273,9 @@ fn restore_frame(app: &AppHandle, window: &WebviewWindow) -> bool {
         return false;
     }
     let saved = recall(app).get("workspace_frame").cloned().unwrap_or_default();
+    if saved.get("units").and_then(|v| v.as_u64()) != Some(FRAME_UNITS) {
+        return true;
+    }
     let num = |key: &str| saved.get(key).and_then(|v| v.as_f64());
     let (Some(x), Some(y), Some(w), Some(h)) = (num("x"), num("y"), num("w"), num("h")) else {
         return true;
@@ -308,19 +316,14 @@ fn note_frame(window: &WebviewWindow) {
             return;
         }
         let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size()) else { return };
-        let zoomed = window.is_maximized().unwrap_or(false);
-        let covers = !zoomed
-            && window
-                .current_monitor()
-                .ok()
-                .flatten()
-                .is_some_and(|m| m.size().width == size.width && m.size().height == size.height);
-        if covers {
+        if RESTING.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
+        let zoomed = window.is_maximized().unwrap_or(false);
         let factor = window.scale_factor().unwrap_or(1.0);
         let (pos, size) = (pos.to_logical::<f64>(factor), size.to_logical::<f64>(factor));
         let mut frame = recall(&app).get("workspace_frame").and_then(|v| v.as_object().cloned()).unwrap_or_default();
+        frame.insert("units".into(), serde_json::json!(FRAME_UNITS));
         frame.insert("zoomed".into(), serde_json::json!(zoomed));
         if !zoomed {
             frame.insert("x".into(), serde_json::json!(pos.x));
@@ -330,6 +333,35 @@ fn note_frame(window: &WebviewWindow) {
         }
         remember(&app, "workspace_frame", serde_json::Value::Object(frame));
     });
+}
+
+/// Whether the workspace is in the star map's rest. On macOS that is read from the window itself:
+/// simple full screen takes the title bar off (the workspace always has one, hidden under its
+/// header), so a missing `Titled` style is the rest and nothing else is. Comparing the window with
+/// the display misread a zoomed window as the rest whenever the menu bar and the Dock hide
+/// themselves, and could then miss the rest itself, which reports as zoomed on such a setup.
+/// Elsewhere the comparison is all there is. Called from the window event handler, on the main thread.
+fn is_resting(window: &tauri::Window, size: &tauri::PhysicalSize<u32>) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = size;
+        use objc2_app_kit::{NSWindow, NSWindowStyleMask};
+        let Ok(pointer) = window.ns_window() else { return false };
+        // SAFETY: Tauri hands back this window's live NSWindow, and window events arrive on the
+        // main thread.
+        let ns: &NSWindow = unsafe { &*(pointer as *const NSWindow) };
+        !ns.styleMask().contains(NSWindowStyleMask::Titled)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let covers = !window.is_maximized().unwrap_or(false)
+            && window
+                .current_monitor()
+                .ok()
+                .flatten()
+                .is_some_and(|m| m.size().width == size.width && m.size().height == size.height);
+        covers && !window.is_fullscreen().unwrap_or(false)
+    }
 }
 
 /// Bring the workspace forward: from the island, the Dock, or a failure it has to show.
@@ -1003,18 +1035,11 @@ pub fn run() {
             }
             if let tauri::WindowEvent::Resized(size) = event {
                 if window.label() == WINDOW {
+                    let resting = is_resting(window, size);
+                    RESTING.store(resting, std::sync::atomic::Ordering::SeqCst);
                     if let Some(workspace) = window.app_handle().get_webview_window(WINDOW) {
                         note_frame(&workspace);
                     }
-                    // A zoomed window can match the display when the menu bar and the Dock hide
-                    // themselves; that is the reader's zoom, not the rest.
-                    let covers = !window.is_maximized().unwrap_or(false)
-                        && window
-                            .current_monitor()
-                            .ok()
-                            .flatten()
-                            .is_some_and(|m| m.size().width == size.width && m.size().height == size.height);
-                    let resting = covers && !window.is_fullscreen().unwrap_or(false);
                     island::suspend(window.app_handle(), resting);
                     if resting {
                         // After the style change settles, both the window and its web view take
