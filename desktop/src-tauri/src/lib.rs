@@ -235,13 +235,21 @@ fn recall(app: &AppHandle) -> serde_json::Map<String, serde_json::Value> {
         .unwrap_or_default()
 }
 
+/// One writer at a time: the frame is remembered from a background thread while the port or the
+/// introduction may be remembered from another, and each rewrites the whole file.
+static REMEMBERING: Mutex<()> = Mutex::new(());
+
 fn remember(app: &AppHandle, key: &str, value: serde_json::Value) {
+    let _guard = REMEMBERING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut record = recall(app);
     record.insert(key.to_string(), value);
-    let _ = fs::write(
-        data_dir(app).join("desktop.json"),
-        serde_json::Value::Object(record).to_string(),
-    );
+    // Written aside and renamed into place, so a reader never sees a half-written file, which
+    // `recall` would read as empty and the next write would then save over every other key.
+    let path = data_dir(app).join("desktop.json");
+    let aside = path.with_extension("json.tmp");
+    if fs::write(&aside, serde_json::Value::Object(record).to_string()).is_ok() {
+        let _ = fs::rename(&aside, &path);
+    }
 }
 
 /// Whether the workspace frame has been set since Penumbra started. The window is built at a fixed
@@ -264,15 +272,19 @@ fn restore_frame(app: &AppHandle, window: &WebviewWindow) -> bool {
     let (Some(x), Some(y), Some(w), Some(h)) = (num("x"), num("y"), num("w"), num("h")) else {
         return true;
     };
+    // Logical units (points) throughout: they are one coordinate space across displays, where a
+    // physical frame saved on a 1x display came back at half size on the Retina one.
     let on_screen = window.available_monitors().unwrap_or_default().iter().any(|m| {
-        let (p, s) = (m.position(), m.size());
-        x >= p.x as f64 && y >= p.y as f64 && x < (p.x + s.width as i32) as f64 && y < (p.y + s.height as i32) as f64
+        let factor = m.scale_factor();
+        let p = m.position().to_logical::<f64>(factor);
+        let s = m.size().to_logical::<f64>(factor);
+        x >= p.x && y >= p.y && x < p.x + s.width && y < p.y + s.height
     });
     if !on_screen || w < 1.0 || h < 1.0 {
         return true;
     }
-    let _ = window.set_size(tauri::PhysicalSize::new(w as u32, h as u32));
-    let _ = window.set_position(tauri::PhysicalPosition::new(x as i32, y as i32));
+    let _ = window.set_size(tauri::LogicalSize::new(w, h));
+    let _ = window.set_position(tauri::LogicalPosition::new(x, y));
     saved.get("zoomed").and_then(|v| v.as_bool()).unwrap_or(false)
 }
 
@@ -296,16 +308,19 @@ fn note_frame(window: &WebviewWindow) {
             return;
         }
         let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size()) else { return };
-        let covers = window
-            .current_monitor()
-            .ok()
-            .flatten()
-            .is_some_and(|m| m.size().width == size.width && m.size().height == size.height);
+        let zoomed = window.is_maximized().unwrap_or(false);
+        let covers = !zoomed
+            && window
+                .current_monitor()
+                .ok()
+                .flatten()
+                .is_some_and(|m| m.size().width == size.width && m.size().height == size.height);
         if covers {
             return;
         }
+        let factor = window.scale_factor().unwrap_or(1.0);
+        let (pos, size) = (pos.to_logical::<f64>(factor), size.to_logical::<f64>(factor));
         let mut frame = recall(&app).get("workspace_frame").and_then(|v| v.as_object().cloned()).unwrap_or_default();
-        let zoomed = window.is_maximized().unwrap_or(false);
         frame.insert("zoomed".into(), serde_json::json!(zoomed));
         if !zoomed {
             frame.insert("x".into(), serde_json::json!(pos.x));
@@ -991,11 +1006,14 @@ pub fn run() {
                     if let Some(workspace) = window.app_handle().get_webview_window(WINDOW) {
                         note_frame(&workspace);
                     }
-                    let covers = window
-                        .current_monitor()
-                        .ok()
-                        .flatten()
-                        .is_some_and(|m| m.size().width == size.width && m.size().height == size.height);
+                    // A zoomed window can match the display when the menu bar and the Dock hide
+                    // themselves; that is the reader's zoom, not the rest.
+                    let covers = !window.is_maximized().unwrap_or(false)
+                        && window
+                            .current_monitor()
+                            .ok()
+                            .flatten()
+                            .is_some_and(|m| m.size().width == size.width && m.size().height == size.height);
                     let resting = covers && !window.is_fullscreen().unwrap_or(false);
                     island::suspend(window.app_handle(), resting);
                     if resting {
