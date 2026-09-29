@@ -12854,6 +12854,7 @@ function drawStarMap() {
   planetHover.slug = null;
   svg.classList.remove("has-lit");
   mapMotion.paused = false; // the planet under the pointer is rebuilt; it holds again on the next move
+  mapMotion.pointed = null;
   // The element a tooltip belongs to is about to be removed, and a removed element sends no
   // pointerleave, so the tip would stay on screen naming something that is gone.
   hideMapTip();
@@ -12944,10 +12945,15 @@ function drawStarMap() {
       horizonEl("starmap-svg").classList.toggle("has-lit", on || held);
       path.classList.toggle("is-lit", on || held || path.classList.contains("is-pinned"));
       label.classList.toggle("is-lit", on || held || label.classList.contains("is-pinned"));
-      scene.planets.forEach(({ p, group }) => {
-        group.classList.toggle("is-linked", on && (p.orbit.slug === bridge.a || p.orbit.slug === bridge.b));
-      });
-      mapMotion.paused = on;
+      if (held && !on) {
+        // Back to the pointed planet's own lighting, its neighbours included, until it is let go.
+        lightPlanetBridges(scene, planetHover.slug, true);
+      } else {
+        scene.planets.forEach(({ p, group }) => {
+          group.classList.toggle("is-linked", on && (p.orbit.slug === bridge.a || p.orbit.slug === bridge.b));
+        });
+      }
+      mapMotion.paused = on || held;
       if (on) {
         showMapTip(hit, `${titleA} \u2194 ${titleB}`, bridge.shared.join(t("list.sep", ", ")));
       } else {
