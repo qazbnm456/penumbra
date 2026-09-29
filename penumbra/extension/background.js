@@ -338,6 +338,14 @@ async function placement(got, chosenTitle) {
 
 const tabKey = (tabId) => `tab:${tabId}`;
 
+//: Whether two addresses are the same page: the fragment is left out, because the page's own
+//: `location.href` drops a `#:~:text=` directive the tab's URL keeps, and a jump to an anchor during
+//: a capture is still the same page.
+function samePage(a, b) {
+  const bare = (url) => String(url || "").split("#")[0];
+  return Boolean(a) && Boolean(b) && bare(a) === bare(b);
+}
+
 async function tabState(tabId) {
   if (!tabId) return null;
   return (await chrome.storage.session.get(tabKey(tabId)))[tabKey(tabId)] || null;
@@ -427,7 +435,7 @@ async function pressIcon(tab) {
     state = { ...state, state: "failed" };
     await setTabState(tabId, state);
   }
-  const here = state && (!state.url || !tab.url || state.url === tab.url);
+  const here = state && (!state.url || !tab.url || samePage(state.url, tab.url));
   if (here && state.state === "saving") {
     // Read again just before writing: the capture may have landed meanwhile, and writing the old
     // `saving` back would leave the tab marked as on its way for good.
@@ -577,12 +585,13 @@ async function send(tab, body) {
     const into = body.orbit ? (orbits.find((o) => o.id === body.orbit) || {}).title : "";
     if (mine) {
       const nodeId = got.node && got.node.id;
-      const before = await tabState(tabId);
       // Marked only if the tab still shows that page: after a navigation the tick would sit on a
       // page that was never kept. The URL is readable only while the press's grant lasts, which a
       // navigation ends, so an unreadable URL counts as moved on.
       const current = await chrome.tabs.get(tabId).catch(() => null);
-      const stillHere = Boolean(current && current.url && current.url === body.url);
+      const stillHere = Boolean(current && samePage(current.url, body.url));
+      // Read after that lookup, right before the write, so a cancel pressed meanwhile is not lost.
+      const before = await tabState(tabId);
       await setTabState(tabId, stillHere
         ? { state: "saved", url: body.url, title: shown, nodeId, mine: !got.duplicate }
         : null);

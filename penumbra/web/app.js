@@ -1555,9 +1555,13 @@ function titleEditor(orbitId, current, done, orbitSlug = orbitId) {
   //: repaint causes, and Enter followed by a blur sends one rename, not two.
   let settled = false;
   let committing = false;
+  let suggesting = null; // the run id while a suggestion is on its way
+  let stopped = false;
   const finish = (title) => {
     if (settled) return;
     settled = true;
+    // Closing the editor removes its Stop, so a suggestion still on its way is stopped with it.
+    if (suggesting) void stopSuggestion();
     done(title);
   };
   const commit = async () => {
@@ -1605,15 +1609,28 @@ function titleEditor(orbitId, current, done, orbitSlug = orbitId) {
   // field's blur would otherwise save and close the editor before the suggestion arrived.
   suggest.addEventListener("pointerdown", (event) => event.preventDefault());
   suggest.addEventListener("mousedown", (event) => event.preventDefault());
-  let suggesting = null; // the run id while a suggestion is on its way
-  let stopped = false;
+  //: Cancels exactly this run, not whatever else the orbit is doing. A press before the server has
+  //: announced the id gets a 404, so it asks again a few times while the reply is still awaited.
+  async function stopSuggestion() {
+    const runId = suggesting;
+    if (!runId) return;
+    stopped = true;
+    suggest.disabled = true;
+    suggest.textContent = t("run.stopping", "Stopping\u2026");
+    for (let attempt = 0; attempt < 5 && suggesting === runId; attempt += 1) {
+      try {
+        await api(`/orbits/${encodeURIComponent(orbitId)}/runs/${encodeURIComponent(runId)}/cancel`,
+          { method: "POST" });
+        return;
+      } catch (err) {
+        if (err.status !== 404) return;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+    }
+  }
   suggest.addEventListener("click", async () => {
     if (suggesting) {
-      // Stop: cancel exactly this run, not whatever else the orbit is doing.
-      stopped = true;
-      suggest.disabled = true;
-      await api(`/orbits/${encodeURIComponent(orbitId)}/runs/${encodeURIComponent(suggesting)}/cancel`,
-        { method: "POST" }).catch(() => {});
+      await stopSuggestion();
       return;
     }
     const token = crypto.randomUUID();

@@ -4633,3 +4633,28 @@ def test_a_title_suggestion_is_returned_and_never_saved(client, monkeypatch):
     assert seen["fresh"] is True, "each press can differ"
     assert load_orbit("myorbit").title == "First name", "a suggestion writes nothing"
     assert client.post("/orbits/nope/title/suggestion").status_code == 404
+
+
+def test_the_suggestion_run_id_is_the_one_the_page_predicts(client, monkeypatch):
+    """The page stops a suggestion by cancelling `<orbit slug>-<token>`; the server must derive that
+    same id, for an orbit named in Chinese (whose slug is a hash) as well."""
+    from penumbra.orbit import slug
+
+    for orbit_id in ("myorbit", "航海筆記"):
+        client.post(f"/orbits/{orbit_id}/sources", json={"sources": ["https://example.com/a"]})
+    seen = []
+
+    async def fake_run(orbit_id, dotted, kwargs, config, run_id, timeout=None, fresh=False):
+        seen.append(run_id)
+        return "A name"
+
+    async def no_language(*_args, **_kwargs):
+        return ""
+
+    monkeypatch.setattr(api, "_run_isolated", fake_run)
+    monkeypatch.setattr(api, "_config", lambda: api.PenumbraConfig())
+    monkeypatch.setattr(api, "_resolve_language", no_language)
+    token = "3f2a9c1e-7b4d-4e8f-9a01-23456789abcd"
+    for orbit_id in ("myorbit", "航海筆記"):
+        assert client.post(f"/orbits/{orbit_id}/title/suggestion", json={"run_id": token}).status_code == 200
+        assert seen[-1] == f"{slug(orbit_id)}-{token}"

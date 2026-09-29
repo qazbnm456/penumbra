@@ -247,3 +247,31 @@ def test_a_link_with_tracking_is_the_link_already_captured(client):
                         json={"kind": "link", "url": "https://www.example.com/read/?utm_source=x"}).json()
     assert first["duplicate"] is False and again["duplicate"] is True
     assert again["node"]["id"] == first["node"]["id"]
+
+
+def test_same_page_ignores_the_fragment():
+    """The icon's tick and a second press compare the tab's URL with the page's own, which drops a
+    `#:~:text=` directive, so the comparison leaves fragments out. Run from the shipped file."""
+    import re
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    assert node, "node must be on PATH (AGENTS.md, Verify)"
+    source = (Path(__file__).parent.parent / "penumbra" / "extension" / "background.js").read_text()
+    body = re.search(r"^function samePage\(a, b\) \{.*?^\}", source, re.DOTALL | re.MULTILINE).group(0)
+    script = body + """
+const cases = [
+  ["https://x.example/a", "https://x.example/a#:~:text=hello", true],
+  ["https://x.example/a#top", "https://x.example/a", true],
+  ["https://x.example/a", "https://x.example/b", false],
+  ["", "https://x.example/a", false],
+];
+for (const [a, b, want] of cases) {
+  if (samePage(a, b) !== want) { console.log("FAIL", a, b); process.exit(1); }
+}
+console.log("ok");
+"""
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30, check=False)
+    assert out.stdout.strip() == "ok", out.stdout + out.stderr
