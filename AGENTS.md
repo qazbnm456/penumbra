@@ -34,6 +34,7 @@ What exists:
 - A star map of the Horizon and a knowledge graph of each orbit, drawn from summaries' entities and tags (`topology.py`, `/horizon/topology`, `/horizon/graph`).
 - A browser extension (`penumbra/extension/`, Chromium MV3) that captures a rendered page, a selected passage with its page, or a link, into the Horizon or a chosen orbit. It pairs from the settings page (`pair.html`) and holds a capture-only key (`auth.capture_token`), not the API token.
 - Local relations (`vectors.py`): a downloaded embedding model and a `sqlite-vec` index in the Horizon's database, drawn as similarity lines in the graph and used for filing suggestions.
+- Clearing everything from the settings page (`POST /data/clear`), behind a typed warning: every orbit, capture, ask, alias, removal record and this project's traces, keeping the settings, model configuration, embedding model and extension pairing. It refuses while work runs, and every write is refused while it clears.
 - Summaries split by length: one call for a short capture, `DistillLongDocument` (`distill_long.py`) for a long one. Concept alignment (`align.py`) merges entity names into an alias table (`concepts.py`) that every reader applies, and filing suggestions (`filing.py`) are computed locally from shared entities and tags. In the automatic filing mode, `organize.py` places what they cannot at the end of a summary pass, with one model call a round and at most three rounds, filing into an orbit only when the capture is about its subject or a part of it, and opening a new orbit when none fits and two or more captures share the subject.
 
 The API is the only place a run is isolated in a subprocess (`runner.py` and `worker.py`); `cli.py` runs in-process.
@@ -51,7 +52,7 @@ Still unbuilt. Do not assume any of these exist because a design discussion ment
 - Folders and archives cannot be captured, because invariant 26 keeps local paths out of the API and the desktop shell does not supply them.
 - The browser extension is Chromium-only (Chrome, Arc, Brave, Edge), installed unpacked; there is no Firefox or Safari build and no store listing.
 - The desktop installers are not signed with a developer identity: macOS builds carry an ad-hoc signature, Windows and Linux builds none.
-- There is no export of everything: an artifact leaves only through Copy, the whole-orbit Markdown export and print. Clearing everything (`POST /data/clear`) exists, so its warning panel says there is no way back.
+- There is no export of everything: an artifact leaves only through Copy, the whole-orbit Markdown export and print.
 - Slides, Google Docs and legacy `.doc` files are not parsed (Word `.docx` is), and full audio transcription is not done. YouTube captions do ship.
 
 ## Invariants: do not break

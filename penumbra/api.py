@@ -134,6 +134,7 @@ from . import (
     topology,
     vectors,
 )
+from . import traces as trace_files
 from .align import AlignConcepts
 from .audio import GeneratePodcastScript
 from .citations import locate_answer_spans, strip_markers, verify_citations
@@ -358,6 +359,18 @@ def _presented_token(request: Request) -> str | None:
     if scheme.lower() == "bearer" and value.strip():
         return value.strip()
     return request.query_params.get(auth.QUERY_PARAM)
+
+
+@app.middleware("http")
+async def _refuse_writes_while_clearing(request: Request, call_next):
+    """While everything is being cleared (`_CLEARING`), refuse every write so no capture, run or
+    orbit edit starts against data that is going. Reads carry on. Registered before the token check,
+    so it runs after it: an unauthenticated request is still refused as one."""
+    if _CLEARING.is_set() and request.method not in ("GET", "HEAD", "OPTIONS"):
+        return JSONResponse(
+            status_code=409, content={"detail": "everything is being cleared; try again in a moment"}
+        )
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -1163,6 +1176,21 @@ def _overview_response(orbit: Orbit, corpus) -> OverviewResponse | None:
 
 
 @app.post("/orbits/{orbit_id}/sources", response_model=OrbitResponse)
+async def add_sources_endpoint(orbit_id: str, body: SourcesRequest) -> OrbitResponse:
+    """`add_sources`, counted while it runs so clearing everything waits for it (`_work_in_flight`).
+    Not an orbit hold: deleting one orbit deliberately wins over a slow add, which then does not
+    re-create it."""
+    _INGESTING["n"] += 1
+    try:
+        return await add_sources(orbit_id, body)
+    finally:
+        _INGESTING["n"] -= 1
+
+
+#: Source additions in flight, for the clear's check only (see `add_sources_endpoint`).
+_INGESTING = {"n": 0}
+
+
 async def add_sources(orbit_id: str, body: SourcesRequest) -> OrbitResponse:
     """Create `orbit_id` if it doesn't exist yet, and ingest+merge `body.sources` into it
     (deduped by origin — see `orbit.append_sources`). Always persists, unlike `cli.py`'s
@@ -1382,16 +1410,26 @@ class ClearAllRequest(BaseModel):
 
 
 _CLEAR_ALL_WORDS = "clear everything"
+#: Set while everything is being cleared. The check for running work and this flag are taken
+#: together under `_CLEARING_LOCK`, and while it is set every write request is refused
+#: (`_refuse_writes_while_clearing`), so nothing can start between the check and the clear and land
+#: half-deleted.
+_CLEARING = threading.Event()
+_CLEARING_LOCK = threading.Lock()
 
 
 def _work_in_flight() -> str:
     """What is still running, named for the refusal, or "" when nothing is."""
     if _RUN_PROCESSES or _ACTIVE_RUNS or any(_BUSY.values()):
         return "a question or a generation"
+    if _INGESTING["n"]:
+        return "adding sources to an orbit"
     if _DISTIL["running"]:
         return "a summary pass"
     if _ORGANIZE["running"]:
         return "automatic filing"
+    if _ALIGN["running"]:
+        return "concept alignment"
     if _VECTOR_DL["running"]:
         return "the local relations download"
     if _horizon_queue().status()["running"]:
@@ -1414,9 +1452,20 @@ async def clear_all_endpoint(body: ClearAllRequest) -> dict:
     token holder can already delete each of these one by one (invariant 25)."""
     if body.confirm != _CLEAR_ALL_WORDS:
         raise HTTPException(400, f"send confirm={_CLEAR_ALL_WORDS!r} to clear everything")
-    busy = _work_in_flight()
-    if busy:
-        raise HTTPException(409, f"{busy} is running; stop it first")
+    with _CLEARING_LOCK:
+        if _CLEARING.is_set():
+            raise HTTPException(409, "everything is already being cleared")
+        busy = _work_in_flight()
+        if busy:
+            raise HTTPException(409, f"{busy} is running; stop it first")
+        _CLEARING.set()
+    try:
+        return await _clear_everything()
+    finally:
+        _CLEARING.clear()
+
+
+async def _clear_everything() -> dict:
 
     def _clear() -> dict:
         orbits, unreadable = list_orbit_summaries()
@@ -1427,17 +1476,27 @@ async def clear_all_endpoint(body: ClearAllRequest) -> dict:
         traces = 0
         if _TRACE_DIR.is_dir():
             for path in _TRACE_DIR.glob("*.jsonl"):
-                path.unlink(missing_ok=True)
-                traces += 1
+                # Only this project's traces: `traces/` is a bare relative path, and another tool's
+                # `.jsonl` files beside them are not ours to delete (`traces._is_ours`).
+                if trace_files._is_ours(path):
+                    path.unlink(missing_ok=True)
+                    traces += 1
         base = _horizon_queue_base()
         captures = horizon.clear_all(base_dir=base)
         vectors.clear_index(base)
         return {"orbits": len(orbits) + len(unreadable), "captures": captures, "traces": traces}
 
     counts = await asyncio.to_thread(_clear)
-    _DISTIL["failures"] = []
-    _DISTIL["error"] = ""
+    # In-memory state that describes what is gone.
+    _DISTIL.update(failures=[], error="", done=0, total=0, failed=0)
     _ORGANIZE["error"] = ""
+    _ALIGN.update(error="", failures=0)
+    with _AUTO_FILED_LOCK:
+        _AUTO_FILED.clear()
+    with _FILE_ON_READY_LOCK:
+        _FILE_ON_READY.clear()
+    with _EXTENSION_RECENT_LOCK:
+        _EXTENSION_RECENT.clear()
     _forget_suggestions()
     return {"cleared": True, **counts}
 

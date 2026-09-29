@@ -3124,20 +3124,21 @@ async function clearEverything() {
   const error = document.getElementById("wipe-error");
   const words = t("wipe.words", "clear everything");
   document.getElementById("wipe-body").textContent = t("wipe.body",
-    "This deletes everything Penumbra holds for you. There is no export yet, so nothing can bring it back.");
+    "This deletes everything Penumbra holds for you, and nothing can restore it. To keep an orbit, export it as Markdown from the orbit first.");
   const goes = document.getElementById("wipe-goes");
-  goes.textContent = "";
-  const [orbits, captures] = await Promise.all([
-    api("/orbits").then((r) => (r.orbits || []).length).catch(() => null),
-    api("/horizon?limit=1").then((r) => r.total).catch(() => null),
-  ]);
-  [
-    orbits === null ? t("wipe.orbitsAll", "Every orbit, with its sources, notes, conversation, overview and audio")
-      : t("wipe.orbits", `${orbits} orbits, with their sources, notes, conversations, overviews and audio`, { n: orbits }),
-    captures === null ? t("wipe.capturesAll", "Every capture in the Horizon, with its text and summary")
-      : t("wipe.captures", `${captures} captures in the Horizon, with their text and summaries`, { n: captures }),
-    t("wipe.rest", "Every ask, alias and removal record, and every run's trace"),
-  ].forEach((line) => goes.appendChild(elt("li", "", line)));
+  // The list says what goes; the numbers arrive after the panel is open, so a slow reply never leaves
+  // the page with no dialog showing.
+  const paintGoes = (orbits, captures) => {
+    goes.textContent = "";
+    [
+      orbits === null ? t("wipe.orbitsAll", "Every orbit, with its sources, notes, conversation, overview and audio")
+        : t("wipe.orbits", `${orbits} orbit${orbits === 1 ? "" : "s"}, with their sources, notes, conversations, overviews and audio`, { n: orbits }),
+      captures === null ? t("wipe.capturesAll", "Every capture in the Horizon, with its text and summary")
+        : t("wipe.captures", `${captures} capture${captures === 1 ? "" : "s"} in the Horizon, with their text and summaries`, { n: captures }),
+      t("wipe.rest", "Every ask, alias and removal record, and every run's trace"),
+    ].forEach((line) => goes.appendChild(elt("li", "", line)));
+  };
+  paintGoes(null, null);
   // The words as a node of their own, never interpolated into markup.
   const label = document.getElementById("wipe-label");
   label.textContent = "";
@@ -3147,8 +3148,15 @@ async function clearEverything() {
   go.disabled = true;
   go.textContent = t("wipe.go", "Clear everything");
   error.hidden = true;
+  delete go.dataset.working;
+  document.getElementById("wipe-cancel").disabled = false;
   openModal(overlay);
   input.focus({ preventScroll: true });
+  const [orbits, captures] = await Promise.all([
+    api("/orbits").then((r) => (r.orbits || []).length).catch(() => null),
+    api("/horizon?limit=1").then((r) => r.total).catch(() => null),
+  ]);
+  if (!overlay.hidden) paintGoes(orbits, captures);
 }
 
 function initWipe() {
@@ -3192,13 +3200,13 @@ function initWipe() {
       delete go.dataset.working;
       return;
     }
-    closeModal(overlay);
-    notify(t("settings.cleared", `Cleared ${cleared.orbits} orbits and ${cleared.captures} captures.`,
-      { orbits: cleared.orbits, captures: cleared.captures }), { tone: "good", timeout: 4000 });
-    // Every view and cache on the page describes what is gone, so the page starts again from the
-    // Horizon rather than repainting each one.
+    // The panel stays up, both buttons off, until the page starts again: every view and cache on
+    // it describes what is gone, so it reloads from the Horizon rather than repainting each one.
+    document.getElementById("wipe-cancel").disabled = true;
+    go.textContent = t("settings.cleared", `Cleared ${cleared.orbits} orbits and ${cleared.captures} captures.`,
+      { orbits: cleared.orbits, captures: cleared.captures });
     syncAddressBar("", { replace: true });
-    setTimeout(() => window.location.reload(), 1200);
+    setTimeout(() => window.location.reload(), 600);
   });
 }
 

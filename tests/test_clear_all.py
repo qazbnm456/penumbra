@@ -51,7 +51,7 @@ def test_clearing_removes_what_the_reader_made_and_keeps_the_setup(client):
     (base / ".capture-token").write_text("paired", encoding="utf-8")
     Path("orbits/.settings").write_text("{}", encoding="utf-8")
     api._TRACE_DIR.mkdir(parents=True, exist_ok=True)
-    (api._TRACE_DIR / "run-1.jsonl").write_text("{}\n", encoding="utf-8")
+    (api._TRACE_DIR / "run-1.jsonl").write_text("", encoding="utf-8")  # a run reservation, ours
 
     assert client.post("/data/clear", json={"confirm": "nope"}).status_code == 400
     reply = client.post("/data/clear", json={"confirm": "clear everything"})
@@ -74,3 +74,29 @@ def test_nothing_is_cleared_while_work_is_running(client, monkeypatch):
     reply = client.post("/data/clear", json={"confirm": "clear everything"})
     assert reply.status_code == 409 and "summary pass" in reply.json()["detail"]
     assert horizon.get_node(node_id) is not None
+
+
+def test_another_tools_traces_survive(client):
+    api._TRACE_DIR.mkdir(parents=True, exist_ok=True)
+    ours = api._TRACE_DIR / "run-ours.jsonl"
+    ours.write_text("", encoding="utf-8")  # a reservation this project makes before a run
+    foreign = api._TRACE_DIR / "other-tool.jsonl"
+    foreign.write_text('{"tool": "someone else"}\n', encoding="utf-8")
+    assert client.post("/data/clear", json={"confirm": "clear everything"}).status_code == 200
+    assert not ours.exists()
+    assert foreign.exists(), "a .jsonl this project did not write is not ours to delete"
+
+
+def test_an_orbit_being_edited_holds_the_clear_off(client):
+    with api._working_on("reading"):
+        reply = client.post("/data/clear", json={"confirm": "clear everything"})
+    assert reply.status_code == 409
+
+
+def test_writes_are_refused_while_clearing(client):
+    api._CLEARING.set()
+    try:
+        assert client.post("/horizon", json={"texts": ["too late"]}).status_code == 409
+        assert client.get("/horizon").status_code == 200, "reads carry on"
+    finally:
+        api._CLEARING.clear()
