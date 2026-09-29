@@ -10783,3 +10783,148 @@ button.node-more:hover {
 .orbit-pick-new::before {
   content: "+";
 }
+
+/* The key to the marks (`renderMarks`). It is a key, not a document: every row is one real mark and
+   one sentence, so nothing here styles a dot, a chip or a citation; the samples are the product's own
+   classes. The head stays put while the groups scroll under it. */
+.marks-open {
+  font-family: var(--serif);
+  font-size: var(--text-lg);
+}
+
+.modal-marks {
+  width: min(820px, 100%);
+}
+
+.modal-head.marks-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-7);
+  padding-bottom: var(--space-4);
+}
+
+.marks-lede {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.marks-nav {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.marks-jump {
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-4);
+  cursor: pointer;
+}
+
+.marks-jump:hover,
+.marks-jump:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.marks-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-9);
+  scroll-padding-top: var(--space-5);
+}
+
+.marks-group {
+  padding-bottom: var(--space-8);
+  border-bottom: 1px solid var(--border);
+}
+
+.marks-group:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.marks-group-title {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.marks-group-note {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+}
+
+/* Two columns, because that is what a key is: the mark in a fixed slot, its sentence beside it. */
+.marks-rows {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-5) var(--space-7);
+  margin: var(--space-6) 0 0;
+}
+
+.marks-sample {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  margin: 0;
+  font-size: var(--text-md);
+  color: var(--text);
+}
+
+/* A sample is an exhibit, never a control: whatever cursor or hover its class carries elsewhere. */
+.marks-sample,
+.marks-sample * {
+  cursor: default !important;
+  pointer-events: none;
+}
+
+.marks-svg {
+  display: block;
+  overflow: visible;
+}
+
+.marks-keys {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.marks-text {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+@media (max-width: 560px) {
+  .marks-rows {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1) 0;
+  }
+
+  .marks-sample {
+    justify-content: flex-start;
+  }
+
+  .marks-text {
+    margin-bottom: var(--space-4);
+  }
+}
+
+.marks-sample .node-chips {
+  margin: 0;
+}

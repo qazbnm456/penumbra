@@ -3127,6 +3127,196 @@ function initSettings() {
   });
 }
 
+//: The key: every mark the product draws, grouped by WHERE it is drawn, because a reader arrives
+//: having seen a mark somewhere and needs to find that somewhere. Each sample builds the real
+//: element with its real class (a map dot, a graph pill, a citation), so the key is painted by the
+//: same CSS as the screen; a key that drew its own copy would be a second implementation and drift.
+function marksGroups() {
+  const mac = /Mac/.test(navigator.platform || navigator.userAgent || "");
+  const mod = mac ? "⌘" : "Ctrl ";
+  // A small SVG canvas centred on its origin, for the marks that only exist inside the map or graph.
+  const canvas = (w, h, draw) => () => {
+    const svg = svgEl("svg", { viewBox: `${-w / 2} ${-h / 2} ${w} ${h}`, width: w, height: h, "aria-hidden": "true" }, "marks-svg");
+    draw(svg);
+    return svg;
+  };
+  const dot = (cls) => canvas(18, 18, (svg) => svg.appendChild(svgEl("circle", { r: 4.5 }, cls)));
+  const line = (cls, style = "") => canvas(64, 18, (svg) => {
+    const l = svgEl("line", { x1: -28, y1: 0, x2: 28, y2: 0 }, cls);
+    if (style) l.setAttribute("style", style);
+    svg.appendChild(l);
+  });
+  const hue = (el, h) => {
+    el.style.setProperty("--hue", String(h));
+    return el;
+  };
+  const chip = (tag, cls, text, extra) => () => {
+    const el = elt(tag, cls, text);
+    if (extra) extra(el);
+    return el;
+  };
+  // The list's chips are styled as buttons inside `.node-chips`, so they are shown in that context;
+  // taken out of the tab order, since a sample is not a control.
+  const nodeChip = (cls, text) => () => {
+    const row = elt("span", "node-chips");
+    const el = elt("button", cls, text);
+    el.type = "button";
+    el.tabIndex = -1;
+    row.appendChild(el);
+    return row;
+  };
+  const keys = (...caps) => () => {
+    const box = elt("span", "marks-keys");
+    caps.forEach((cap) => box.appendChild(elt("kbd", "keycap", cap)));
+    return box;
+  };
+  return [
+    {
+      id: "map",
+      title: t("marks.g.map", "The star map"),
+      note: t("marks.g.mapNote", "Each orbit is a planet, circling the Horizon at the centre."),
+      rows: [
+        [canvas(40, 40, (svg) => {
+          drawWorld(svg, 12, planetSurface(12, stableHash("planet:marks")), "marks-clip");
+          svg.appendChild(svgEl("circle", { r: 12 }, "map-planet-rim"));
+        }), t("marks.map.planet", "An orbit. Its look comes from its name, so it is the same planet every visit; the more recently it gained something, the nearer the centre it sits.")],
+        [dot("map-dot is-done"), t("marks.map.moon", "A capture in that orbit, one moon each. Point at it for its name, click it to open it, drag it onto another planet to move it there.")],
+        [canvas(40, 40, (svg) => {
+          svg.appendChild(svgEl("circle", { r: 14 }, "map-hole-rim"));
+          svg.appendChild(svgEl("circle", { r: 13 }, "map-hole-core"));
+        }), t("marks.map.hole", "The Horizon, where every capture lands first. The dots circling it are in no orbit yet; click it to list them.")],
+        [line("map-bridge is-rest"), t("marks.map.rest", "Two orbits name the same entity. At rest each planet shows only its strongest link.")],
+        [line("map-bridge is-lit", "--w: 2px"), t("marks.map.lit", "Pointing at a planet lights all its links, thicker for more shared entities. Click a link to see what each side says.")],
+        [canvas(18, 18, (svg) => svg.appendChild(svgEl("circle", { r: 2.4 }, "map-planet-linkmark"))),
+          t("marks.map.linkmark", "From 15 planets up no link is drawn at rest, and this mark says a planet has some.")],
+        [chip("span", "lens", "#nasa", (el) => el.appendChild(elt("span", "lens-count", "5"))),
+          t("marks.map.lens", "A tag and how many captures carry it. Pressing it lights those captures and dims the rest; press several to combine them.")],
+      ],
+    },
+    {
+      id: "state",
+      title: t("marks.g.state", "Where a capture stands"),
+      note: t("marks.g.stateNote", "The moons on the map and the dots in the list use the same colours."),
+      rows: [
+        [dot("map-dot is-done"), t("marks.state.done", "Summarised: it has a summary, tags and entities.")],
+        [dot("map-dot"), t("marks.state.pending", "Not summarised yet. Its text is kept and readable; a summary pass adds the rest.")],
+        [dot("map-dot is-busy"), t("marks.state.busy", "Being read or summarised now.")],
+        [dot("map-dot is-failed"), t("marks.state.failed", "It could not be read or summarised. Open it to see why and try again.")],
+        [dot("map-dot is-local"), t("marks.state.local", "Added inside an orbit and not yet recorded in the Horizon; the next start records it.")],
+      ],
+    },
+    {
+      id: "graph",
+      title: t("marks.g.graph", "An orbit's knowledge graph"),
+      note: t("marks.g.graphNote", "Inside an orbit: its captures, and what they talk about."),
+      rows: [
+        [canvas(56, 34, (svg) => {
+          const g = hue(svgEl("g", {}, "graph-region"), GRAPH_HUES[1]);
+          g.appendChild(svgEl("rect", { x: -24, y: -13, width: 48, height: 26, rx: 13 }, "graph-region-shape"));
+          svg.appendChild(g);
+        }), t("marks.graph.region", "A tag. The coloured area gathers the captures that carry it, and its name presses the tag.")],
+        [canvas(18, 18, (svg) => {
+          const g = hue(svgEl("g", {}, "graph-cap"), GRAPH_HUES[1]);
+          g.appendChild(svgEl("circle", { r: GRAPH_CAPTURE_R }, "graph-cap-body"));
+          svg.appendChild(g);
+        }), t("marks.graph.capture", "A capture, in its tag's colour. Point at it for its name.")],
+        [canvas(92, 24, (svg) => {
+          const g = svgEl("g", {}, "graph-entity");
+          g.appendChild(svgEl("rect", { x: -44, y: -11, width: 88, height: 22, rx: 11 }, "graph-entity-body"));
+          g.appendChild(svgText(-34, 0, t("marks.graph.entityName", "Kuiper belt"), "graph-entity-label"));
+          g.appendChild(svgText(36, 0, "3", "graph-entity-count"));
+          svg.appendChild(g);
+        }), t("marks.graph.entity", "An entity: a person, place or idea that two or more captures name, with how many. Click it to light them.")],
+        [line("graph-link"), t("marks.graph.link", "This capture names that entity.")],
+        [line("graph-similar"), t("marks.graph.similar", "Close in content, from local relations, which are downloaded in Settings.")],
+      ],
+    },
+    {
+      id: "list",
+      title: t("marks.g.list", "The list"),
+      note: t("marks.g.listNote", "Everything kept, newest first, with removals where they happened."),
+      rows: [
+        [nodeChip("node-orbit", t("marks.list.orbitName", "Reading")), t("marks.list.orbit", "An orbit it is filed in. Click it to go there.")],
+        [nodeChip("node-tag", "#focus"), t("marks.list.tag", "A tag. Click it to find everything carrying it.")],
+        [nodeChip("node-more", "+3"), t("marks.list.more", "More tags than fit. Click it to show them all.")],
+        [chip("span", "node-removed-badge", t("find.removedBadge", "Removed")), t("marks.list.removed", "A removal, kept at the moment it happened, saying which orbits it was taken out of too.")],
+        [chip("span", "todo-tag", t("map.todoLeftTag", "waiting for a second")), t("marks.list.waiting", "On the waiting card: automatic filing found no orbit for it, and waits for a second capture on the same subject before opening one.")],
+      ],
+    },
+    {
+      id: "answers",
+      title: t("marks.g.answers", "Answers and citations"),
+      note: t("marks.g.answersNote", "Every claim in an answer points at a place in a source, and that place is checked."),
+      rows: [
+        [chip("span", "citation", t("marks.cite.claim", "a claim"), (el) => { el.dataset.reference = "1"; }),
+          t("marks.cite.ok", "A cited claim. The number matches a row in the references under the answer; point at it to see how far the claim runs.")],
+        [chip("span", "citation is-unverified", t("marks.cite.claim", "a claim"), (el) => { el.dataset.reference = "2"; }),
+          t("marks.cite.bad", "The place it points at is not in the source. A check confirms that the place exists, never that the words are faithful to it.")],
+        [chip("span", "reference-number", "1"), t("marks.cite.ref", "A row in the references. Open it to read the passage.")],
+        [chip("span", "ref-card-unverified", t("cite.unverifiedShort", "unverified")), t("marks.cite.refBad", "That reference did not check out.")],
+      ],
+    },
+    {
+      id: "keys",
+      title: t("marks.g.keys", "Keys"),
+      note: t("marks.g.keysNote", "Shortcuts that work anywhere in the workspace."),
+      rows: [
+        [keys(`${mod}K`), t("marks.keys.k", "Go to the field this screen is for: capturing on the Horizon, asking in an orbit.")],
+        [keys(`${mod}F`), t("marks.keys.f", "Find something kept.")],
+        [keys(`${mod},`), t("marks.keys.settings", "Settings.")],
+        [keys("/"), t("marks.keys.slash", "At the start of a question, choose what it asks about.")],
+        [keys("+", "−", "0"), t("marks.keys.zoom", "On the map: zoom in, zoom out, back to the whole view.")],
+        [keys("Esc"), t("marks.keys.esc", "Close what is open.")],
+      ],
+    },
+  ];
+}
+
+function renderMarks() {
+  const body = document.getElementById("marks-body");
+  const nav = document.getElementById("marks-nav");
+  body.textContent = "";
+  nav.textContent = "";
+  for (const group of marksGroups()) {
+    const section = elt("section", "marks-group");
+    section.id = `marks-${group.id}`;
+    section.appendChild(elt("h2", "marks-group-title", group.title));
+    section.appendChild(elt("p", "marks-group-note", group.note));
+    const rows = elt("dl", "marks-rows");
+    for (const [sample, text] of group.rows) {
+      const dt = elt("dt", "marks-sample");
+      dt.appendChild(sample());
+      rows.appendChild(dt);
+      rows.appendChild(elt("dd", "marks-text", text));
+    }
+    section.appendChild(rows);
+    body.appendChild(section);
+    const jump = elt("button", "marks-jump", group.title);
+    jump.type = "button";
+    jump.addEventListener("click", () => section.scrollIntoView({ block: "start", behavior: "smooth" }));
+    nav.appendChild(jump);
+  }
+}
+
+function initMarks() {
+  const overlay = document.getElementById("marks-overlay");
+  const close = () => closeModal(overlay);
+  document.getElementById("marks-open").addEventListener("click", () => {
+    closeSourceViewer(); // one overlay at a time, as settings does
+    // Built before it is shown, so the dialog opens at its real size.
+    renderMarks();
+    openModal(overlay);
+    document.getElementById("marks-body").scrollTop = 0;
+  });
+  document.getElementById("marks-close").addEventListener("click", close);
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) close();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !overlay.hidden) close();
+  });
+}
+
 function initOrbitTitle() {
   const el = document.getElementById("orbit-title");
   const button = document.getElementById("orbit-current");
@@ -7248,6 +7438,7 @@ window.addEventListener("ui-lang-changed", () => {
 
 initTheme();
 initSettings();
+initMarks();
 initOrbitTitle();
 initOrbitSwitch();
 initSourcesPanel();

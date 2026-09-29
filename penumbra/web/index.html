@@ -78,6 +78,9 @@
     </div>
 
     <div class="header-actions">
+    <button id="marks-open" class="header-btn marks-open" aria-label="What the marks mean" data-i18n-label="marks.open"
+            data-i18n-tip="marks.open" data-tip="What the marks mean">?</button>
+
     <button id="settings-open" class="header-btn" aria-label="Settings" data-i18n-label="app.settings"
             data-i18n-tip="app.settings" data-tip="Settings">⚙︎</button>
 
@@ -606,6 +609,22 @@
         <button type="button" class="modal-close" id="settings-close" aria-label="Close" data-i18n-label="modal.close">✕</button>
       </div>
       <div class="modal-body" id="settings-body"></div>
+    </div>
+  </div>
+
+  <!-- The key to every mark the product draws, grouped by where you meet it. The head (title, a
+       line saying what this is, and one button per group) stays put while the groups scroll under
+       it. The samples are built by `renderMarks` from the real classes, so the key is drawn by the
+       same CSS as the thing it describes and cannot drift from it. -->
+  <div class="modal-overlay" id="marks-overlay" hidden>
+    <div class="modal modal-marks" role="dialog" aria-modal="true" aria-labelledby="marks-title" tabindex="-1">
+      <div class="modal-head marks-head">
+        <div id="marks-title" class="modal-title" data-i18n="marks.title">What the marks mean</div>
+        <button type="button" class="modal-close" id="marks-close" aria-label="Close" data-i18n-label="modal.close">✕</button>
+        <p class="marks-lede" data-i18n="marks.lede">Every mark Penumbra draws, grouped by where you meet it. Nothing here changes a setting.</p>
+        <nav class="marks-nav" id="marks-nav" aria-label="Groups" data-i18n-label="marks.groups"></nav>
+      </div>
+      <div class="modal-body marks-body" id="marks-body"></div>
     </div>
   </div>
 
