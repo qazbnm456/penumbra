@@ -128,8 +128,12 @@ class _Names:
 
     def take(self, wanted: str, fallback: str) -> str:
         base = _safe(wanted, fallback)
+        # Windows refuses a reserved name before any extension too (`CON`, `Con.Air`), and a counter
+        # after it would not help, so the name gets a leading underscore instead.
+        if base.casefold().split(".", 1)[0].strip() in _RESERVED:
+            base = f"_{base}"
         name, n = base, 1
-        while name.casefold() in self.used or name.casefold() in _RESERVED:
+        while name.casefold() in self.used:
             n += 1
             name = f"{base} {n}"
         self.used.add(name.casefold())
@@ -449,7 +453,12 @@ def _orbit_markdown(out: _Zip, orbit, note: str, title: str, slug_stem: str, hor
         body.append(f"## {words['sources']}\n\n{listed}\n")
     if orbit.turns:
         # Beside the orbit's note, under a name of its own, so no two orbits' conversations share one.
-        chat_note = orbit_names.take(f"{note} {words['conversation']}", words["conversation"])
+        # The orbit's name is shortened first, so the word survives the byte budget and the note never
+        # reads as another orbit's.
+        word = words["conversation"]
+        room = _NAME_BYTES - len(word.encode("utf-8")) - 1
+        base = note.encode("utf-8")[:room].decode("utf-8", errors="ignore").rstrip()
+        chat_note = orbit_names.take(f"{base} {word}", word)
         body.append(f"## {words['conversation']}\n\n[[{chat_note}]]\n")
         chat = [f"# {title} · {words['conversation']}\n"]
         for i, turn in enumerate(orbit.turns, 1):

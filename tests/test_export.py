@@ -109,14 +109,16 @@ def test_the_notes_follow_a_chinese_interface(client):
 
 
 def test_names_never_clash_and_long_titles_fit_a_filesystem(client):
-    for title in ["Apple", "apple", "C#", "C", "CON", "漢" * 120]:
-        node_id = _capture(client, f"Text about {title}.")
+    texts = ["Orchards in spring.", "A phone maker's history.", "A language for systems.",
+             "The letter after B.", "Old console devices.", "A film about a prison plane.", "Characters."]
+    for title, text in zip(["Apple", "apple", "C#", "C", "CON", "Con.Air", "漢" * 120], texts):
+        node_id = _capture(client, text)
         horizon.update_node(node_id, title=title)
     names = [n for n in _export(client).namelist() if n.startswith("markdown/Captures/")]
     folded = [n.casefold() for n in names]
-    assert len(names) == 6 and len(set(folded)) == 6, names
+    assert len(names) == 7 and len(set(folded)) == 7, names
     assert all(len(n.rsplit("/", 1)[-1].encode("utf-8")) <= 200 for n in names)
-    assert "markdown/Captures/CON.md" not in names
+    assert "markdown/Captures/_CON.md" in names and "markdown/Captures/_Con.Air.md" in names
 
 
 def test_a_capture_row_that_does_not_parse_is_still_exported(client):
