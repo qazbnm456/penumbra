@@ -11864,11 +11864,15 @@ function placeStarMap() {
   });
   settleOverlaps(scene, at);
   scene.bridges.forEach(({ bridge, path, hit, label }) => {
+    // A link that is not drawn is not moved: most are hidden at rest, and each costs three writes.
+    const lit = path.classList.contains("is-lit");
+    if (!lit && !path.classList.contains("is-rest")) return;
     const a = at.get(bridge.a);
     const b = at.get(bridge.b);
     if (!a || !b) return;
     const g = bridgeGeometry(a, b);
     path.setAttribute("d", g.d);
+    if (!lit) return;
     hit.setAttribute("d", g.d);
     label.setAttribute("x", g.lx.toFixed(2));
     label.setAttribute("y", g.ly.toFixed(2));
@@ -11891,6 +11895,30 @@ function placeStarMap() {
 //: Nothing is allocated per frame beyond what the positions need: this runs sixty times a second,
 //: and garbage made at that rate is collected in pauses the orbit visibly stutters through.
 const overlapScratch = { order: [], behind: new Set() };
+
+//: From this many planets up no link is drawn at rest, only on demand.
+const BRIDGE_REST_LIMIT = 15;
+
+//: All of one planet's links, labelled and pointable, while it is pointed at or focused; the rest of
+//: the map dims. A link pinned by a selection or a lens stays lit when the pointer leaves.
+function lightPlanetBridges(scene, slug, on) {
+  if (!scene || !scene.bridges) return;
+  let any = false;
+  scene.bridges.forEach(({ bridge, path, hit, label }) => {
+    if (bridge.a !== slug && bridge.b !== slug) return;
+    any = true;
+    const lit = on || path.classList.contains("is-pinned");
+    [path, hit, label].forEach((el) => el.classList.toggle("is-lit", lit));
+    hit.setAttribute("tabindex", lit ? "0" : "-1");
+  });
+  if (!any) return;
+  horizonEl("starmap-svg").classList.toggle("has-lit", on);
+  scene.planets.forEach(({ p, group }) => {
+    const other = scene.bridges.some(({ bridge }) =>
+      (bridge.a === slug && bridge.b === p.orbit.slug) || (bridge.b === slug && bridge.a === p.orbit.slug));
+    group.classList.toggle("is-linked", on && (p.orbit.slug === slug || other));
+  });
+}
 
 //: Written into the object the planet already carries, so a frame makes no new one.
 function planetParts(p, pos, into) {
@@ -12838,25 +12866,41 @@ function drawStarMap() {
   // not recorded yet); its legend entry shows only while one is drawn.
   horizonEl("legend-local").hidden = !starMap.orbits.some((o) => (o.sources || 0) > o.captures);
 
-  (topo.bridges || []).forEach((bridge) => {
-    if (!planets.some((p) => p.orbit.slug === bridge.a) || !planets.some((p) => p.orbit.slug === bridge.b)) return;
-    // Thicker for more shared entities; a wide invisible twin makes the thin line easy to point at.
-    // Under a lens a bridge stays lit only between two planets the lens lit.
+  // Links are details on demand (`BRIDGE_REST_LIMIT`, `lightPlanetBridges`). At rest each planet
+  // shows only its strongest link, as a faint hairline with no label, so there are never more lines
+  // than planets; pointing at or picking a planet brings out all of its links, labelled; with many
+  // planets none is drawn at rest. Curves swept across a moving map by every shared name, dashed and
+  // labelled, would tangle as orbits grow.
+  const drawnBridges = (topo.bridges || []).filter((bridge) =>
+    planets.some((p) => p.orbit.slug === bridge.a) && planets.some((p) => p.orbit.slug === bridge.b));
+  const strongest = new Map();
+  drawnBridges.forEach((bridge) => [bridge.a, bridge.b].forEach((end) => {
+    if (!strongest.has(end) || strongest.get(end).weight < bridge.weight) strongest.set(end, bridge);
+  }));
+  const quiet = planets.length >= BRIDGE_REST_LIMIT || starMap.lenses.size > 0;
+  const atRest = quiet ? new Set() : new Set(strongest.values());
+  scene.linked = new Set(drawnBridges.flatMap((bridge) => [bridge.a, bridge.b]));
+  drawnBridges.forEach((bridge) => {
+    // Under a lens only the links between two planets the lens lit are drawn, at full strength.
     const ends = [bridge.a, bridge.b].map((key) => planets.find((p) => p.orbit.slug === key).orbit);
     const bridgeDim = ends.some((o) => dimmedByLens(o, starMap.lenses));
-    const path = svgEl("path", { d: "M 0 0" }, `map-bridge${bridgeDim ? " is-dim" : ""}`);
-    path.style.strokeWidth = String(1.2 + Math.min(bridge.weight || 1, 5) * 0.45);
-    const hit = svgEl("path", { d: "M 0 0", tabindex: 0, role: "button" }, "map-bridge-hit");
+    const pinned = starMap.selected === bridge.a || starMap.selected === bridge.b
+      || (starMap.lenses.size > 0 && !bridgeDim)
+      || (starMap.focus && starMap.focus.kind === "bridge" && starMap.focus.a === bridge.a && starMap.focus.b === bridge.b);
+    const state = `${atRest.has(bridge) ? " is-rest" : ""}${pinned ? " is-lit is-pinned" : ""}`;
+    const path = svgEl("path", { d: "M 0 0" }, `map-bridge${state}`);
+    path.style.setProperty("--w", `${(1 + Math.min(bridge.weight || 1, 5) * 0.35).toFixed(2)}px`);
+    const hit = svgEl("path", { d: "M 0 0", tabindex: pinned ? 0 : -1, role: "button" }, `map-bridge-hit${state}`);
     const extra = bridge.weight > 1 ? ` +${bridge.weight - 1}` : "";
-    const label = svgText(0, 0, `${shortLabel(bridge.shared[0], 14)}${extra}`, `map-bridge-label${bridgeDim ? " is-dim" : ""}`);
+    const label = svgText(0, 0, `${shortLabel(bridge.shared[0], 14)}${extra}`, `map-bridge-label${state}`);
     const titleA = orbitTitles.get(bridge.a) || bridge.a;
     const titleB = orbitTitles.get(bridge.b) || bridge.b;
     hit.setAttribute("aria-label", t("map.bridgeLabel", `${titleA} and ${titleB} both name ${bridge.shared.join(", ")}`,
       { a: titleA, b: titleB, names: bridge.shared.join(t("list.sep", ", ")) }));
     const light = (on) => {
       horizonEl("starmap-svg").classList.toggle("has-lit", on);
-      path.classList.toggle("is-lit", on);
-      label.classList.toggle("is-lit", on);
+      path.classList.toggle("is-lit", on || path.classList.contains("is-pinned"));
+      label.classList.toggle("is-lit", on || label.classList.contains("is-pinned"));
       scene.planets.forEach(({ p, group }) => {
         group.classList.toggle("is-linked", on && (p.orbit.slug === bridge.a || p.orbit.slug === bridge.b));
       });
@@ -12885,9 +12929,6 @@ function drawStarMap() {
         open();
       }
     });
-    if (starMap.focus && starMap.focus.kind === "bridge" && starMap.focus.a === bridge.a && starMap.focus.b === bridge.b) {
-      path.classList.add("is-selected");
-    }
     world.appendChild(path);
     world.appendChild(hit);
     world.appendChild(label);
@@ -13002,6 +13043,10 @@ function drawStarMap() {
       drawWorld(group, p.r, planetSurface(p.r, seed, kindHere), `pn-clip-${index}`);
     }
     group.appendChild(svgEl("circle", { r: p.r }, "map-planet-rim"));
+    // With many planets no link is drawn at rest; a small mark says this one has some to show.
+    if (quiet && scene.linked.has(orbit.slug)) {
+      group.appendChild(svgEl("circle", { cx: (p.r * 0.78).toFixed(2), cy: (-p.r * 0.78).toFixed(2), r: 2.6 }, "map-planet-linkmark"));
+    }
     group.appendChild(svgText(0, p.r + 30, shortLabel(orbit.title), "map-planet-label"));
     group.appendChild(svgText(0, p.r + 46, t("map.planetCount", `${orbit.sources} sources`, { n: orbit.sources }),
       "map-planet-sub"));
@@ -13027,8 +13072,16 @@ function drawStarMap() {
       }
     });
     // A planet holds still while it is pointed at or focused, so it can be read and clicked.
-    const hold = () => { mapMotion.paused = true; mapMotion.pointed = orbit.slug; };
-    const release = () => { mapMotion.paused = false; mapMotion.pointed = null; };
+    const hold = () => {
+      mapMotion.paused = true;
+      mapMotion.pointed = orbit.slug;
+      lightPlanetBridges(scene, orbit.slug, true);
+    };
+    const release = () => {
+      mapMotion.paused = false;
+      mapMotion.pointed = null;
+      lightPlanetBridges(scene, orbit.slug, false);
+    };
     group.addEventListener("pointerenter", hold);
     group.addEventListener("pointerleave", release);
     group.addEventListener("focus", hold);
@@ -14266,6 +14319,28 @@ function paintStarMapCard(mapCard) {
       why = t("map.noEntitiesNamed", "No entities: the summaries here did not name any.");
     }
     mapCard.appendChild(elt("p", "card-note", why));
+  }
+  // What it shares with other orbits, as a list: the lines on the map show only on demand, and a
+  // list stays readable however many orbits there are, and works from the keyboard.
+  const shares = ((starMap.data && starMap.data.bridges) || [])
+    .filter((bridge) => bridge.a === orbit.slug || bridge.b === orbit.slug)
+    .sort((x, y) => y.weight - x.weight);
+  if (shares.length) {
+    mapCard.appendChild(elt("h3", "card-section", t("map.sectionShares", "Shares with")));
+    const list = elt("ul", "card-list map-shares");
+    shares.forEach((bridge) => {
+      const other = bridge.a === orbit.slug ? bridge.b : bridge.a;
+      const row = elt("li", "card-row map-share");
+      const name = elt("button", "card-row-title", orbitTitles.get(other) || t("suggest.anOrbit", "an orbit"));
+      name.type = "button";
+      name.addEventListener("click", () => openMapFocus({ kind: "bridge", a: bridge.a, b: bridge.b }));
+      row.appendChild(name);
+      const chips = elt("div", "card-chips");
+      bridge.shared.forEach((entity) => chips.appendChild(elt("span", "card-chip", entity)));
+      row.appendChild(chips);
+      list.appendChild(row);
+    });
+    mapCard.appendChild(list);
   }
   // Its captures by name, the keyboard's way to what pointing at a moon does.
   if ((orbit.moons || []).length) {

@@ -7329,12 +7329,60 @@ body[data-view="horizon"] .orbit-picker {
 }
 
 
+/* A link between two planets is a detail on demand (`lightPlanetBridges`): hidden unless it is a
+   planet's strongest (`.is-rest`, a faint solid hairline) or lit by pointing, a selection or a lens
+   (`.is-lit`, full strength, thicker for more shared names, labelled). Solid, not dashed: dashes on
+   a path that changes every frame seem to crawl. */
 .map-bridge {
+  display: none;
   fill: none;
   stroke: var(--accent);
-  stroke-width: 1.5;
-  stroke-dasharray: 5 5;
-  opacity: 0.6;
+  stroke-width: 0.75px;
+  opacity: 0.18;
+}
+
+.map-bridge.is-rest {
+  display: inline;
+}
+
+.map-bridge.is-lit {
+  display: inline;
+  stroke-width: var(--w, 1.35px);
+  opacity: 1;
+}
+
+.map-bridge-hit,
+.map-bridge-label {
+  display: none;
+}
+
+.map-bridge-hit.is-lit,
+.map-bridge-label.is-lit {
+  display: inline;
+}
+
+.map-planet-linkmark {
+  fill: var(--accent);
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+.map-shares {
+  gap: var(--space-3);
+}
+
+.card-row.map-share {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+}
+
+.map-share .card-row-title {
+  text-align: left;
+}
+
+.map-share .card-chips {
+  justify-content: flex-start;
 }
 
 .map-bridge-label {
@@ -7462,7 +7510,7 @@ body.dock-open .pending-note {
 
 .legend-bridge {
   width: 18px;
-  border-top: 1.5px dashed var(--accent);
+  border-top: 1px solid var(--accent);
 }
 
 /* What the rings mean, written on them: the innermost is the most recent, the outermost the
@@ -9248,12 +9296,6 @@ body.is-resizing .cols {
   cursor: pointer;
 }
 
-.map-bridge.is-lit,
-.map-bridge.is-selected {
-  stroke: var(--accent);
-  opacity: 1;
-}
-
 .map-bridge-label.is-lit {
   fill: var(--accent-text);
 }
@@ -9728,11 +9770,6 @@ body:not([data-view="horizon"]) .capture-dock {
 
 .map-dot.is-faded {
   opacity: 0.15;
-}
-
-.map-bridge.is-dim,
-.map-bridge-label.is-dim {
-  opacity: 0.12;
 }
 
 .lens-heading {

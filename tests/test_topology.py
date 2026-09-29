@@ -188,3 +188,15 @@ def test_an_entity_scope_can_span_two_orbits():
     picked = search.select_for_ask("?", "entity", "Codex", orbit=["one", "two"], budget_chars=10_000,
                                    max_items=5, base_dir=BASE)
     assert set(picked.node_ids) == {a1, b1}
+
+
+def test_every_orbit_keeps_its_strongest_links_however_many_stronger_pairs_exist():
+    """A global top twelve could cut every link of a quiet orbit; each orbit keeps its own three."""
+    strong = [{"a": f"a{i}", "b": f"b{i}", "weight": 9} for i in range(20)]
+    quiet = [{"a": "q", "b": "a0", "weight": 1}]
+    kept = topology._strongest_per_orbit(strong + quiet, 3)
+    assert quiet[0] in kept, "the quiet orbit's only link was dropped"
+    assert all(b in kept for b in strong), "each strong pair is its orbits' strongest"
+    hub = [{"a": "hub", "b": f"o{i}", "weight": 10 - i} for i in range(6)]
+    kept = topology._strongest_per_orbit(hub, 3)
+    assert len(kept) == 6, "each spoke is its other end's strongest link, so it stays"

@@ -25,7 +25,9 @@ from .search import SEARCHABLE_STATES
 #: the response says how many were.
 MAX_ENTITIES = 60
 MAX_CAPTURES = 300
-MAX_BRIDGES = 12
+#: Links kept per orbit: each orbit's strongest few, so none of its links is silently missing, as a
+#: global top twelve left an orbit with every link cut once twelve stronger pairs existed elsewhere.
+BRIDGES_PER_ORBIT = 3
 TOP_PER_ORBIT = 6
 #: How many captures the map names one by one: the moons around one planet and the dots around the
 #: Horizon. The map draws no more than these, so a name for each drawn dot is all it needs.
@@ -161,11 +163,25 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
         if shared:
             bridges.append({"a": a, "b": b, "shared": sorted(shared)[:5], "weight": len(shared)})
     bridges.sort(key=lambda br: (-br["weight"], br["a"], br["b"]))
+    kept_bridges = _strongest_per_orbit(bridges, BRIDGES_PER_ORBIT)
     loose["items"] = _newest(loose_items, MAX_LOOSE)
     return {
-        "orbits": out_orbits, "loose": loose, "total": total, "bridges": bridges[:MAX_BRIDGES],
-        "omitted": {"bridges": max(0, len(bridges) - MAX_BRIDGES)},
+        "orbits": out_orbits, "loose": loose, "total": total, "bridges": kept_bridges,
+        "omitted": {"bridges": len(bridges) - len(kept_bridges)},
     }
+
+
+def _strongest_per_orbit(bridges: list[dict], per_orbit: int) -> list[dict]:
+    """The union of every orbit's `per_orbit` strongest links, strongest first (`bridges` is
+    already sorted that way)."""
+    count: dict[str, int] = {}
+    kept = []
+    for bridge in bridges:
+        if count.get(bridge["a"], 0) < per_orbit or count.get(bridge["b"], 0) < per_orbit:
+            kept.append(bridge)
+            count[bridge["a"]] = count.get(bridge["a"], 0) + 1
+            count[bridge["b"]] = count.get(bridge["b"], 0) + 1
+    return kept
 
 
 def graph(
