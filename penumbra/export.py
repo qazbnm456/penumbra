@@ -2,9 +2,9 @@
 
 The package has a lossless half and a readable half, side by side:
 
-- `data/` is canonical: every capture with its stored text, every orbit file exactly as stored, the
-  alias table, removal records and Horizon asks. It is what a later restore would read, and nothing
-  else in the zip is meant to be parsed back.
+- `data/` is canonical: every capture row as stored with its text file, every orbit file exactly as
+  stored, the alias table, removal records and Horizon asks. It is what a later restore would read,
+  and nothing else in the zip is meant to be parsed back.
 - `media/` holds the generated audio, one file per orbit.
 - `markdown/` is a folder of notes that Obsidian opens as a vault, and that Logseq, Capacities,
   Heptabase, Bear, Notion, Apple Notes and NotebookLM can import: one note per capture, per orbit
@@ -13,7 +13,8 @@ The package has a lossless half and a readable half, side by side:
 - `manifest.json` names the format, its version and the SHA-256 of every file.
 
 Model-written prose is tidied and stripped of corpus markers on the way out, as it is on screen
-(invariant 62); the stored files under `data/` are copied as they are.
+(invariant 62); the stored files under `data/` are copied as they are. Nothing is held for the whole
+run beyond names and ids: each capture's text and each orbit are read when their note is written.
 """
 
 from __future__ import annotations
@@ -27,27 +28,37 @@ import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from . import __version__, asks, concepts, horizon
 from .citations import strip_markers
 from .horizon import DEFAULT_HORIZON_DIR
-from .orbit import DEFAULT_ORBITS_DIR, find_audio, list_orbit_summaries, orbit_path
+from .orbit import DEFAULT_ORBITS_DIR, audio_path
 from .prose import polish
+from .schema import Node, Orbit
 
 FORMAT = "penumbra-export"
 #: Bumped when a file under `data/` changes shape; a restore refuses a major version it does not know.
 SCHEMA_VERSION = 1
 _PAGE = 500
-_NAME_CHARS = 80
+#: A note name's budget in UTF-8 bytes. Filesystems allow 255 bytes a component, and a name also
+#: carries a clash suffix and `.md`; counted in characters, a long Chinese title passed the limit.
+_NAME_BYTES = 150
+_CHUNK = 500
+#: Names Windows refuses as a file.
+_RESERVED = {
+    "con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10)),
+}
 
 #: The words the Markdown notes and the README are written in, following the reader's interface
 #: language: a vault read in Chinese should not be headed in English.
 _LABELS = {
     "en": {"text": "Text", "notes": "Notes", "sources": "Sources", "conversation": "Conversation",
            "overview": "Overview", "audio": "Audio overview", "named_by": "Named by:",
-           "audio_file": "in this export", "horizon": "Horizon"},
+           "audio_file": "in this export", "horizon": "Horizon", "orbit": "Orbit", "capture": "Capture"},
     "zh": {"text": "內容", "notes": "筆記", "sources": "來源", "conversation": "對話",
            "overview": "概覽", "audio": "語音概覽", "named_by": "提到它的收錄：",
-           "audio_file": "（在這份匯出裡）", "horizon": "視界"},
+           "audio_file": "（在這份匯出裡）", "horizon": "視界", "orbit": "軌道", "capture": "收錄"},
 }
 
 _README_ZH = """# Penumbra 匯出
@@ -56,7 +67,7 @@ _README_ZH = """# Penumbra 匯出
 
 - `markdown/` 可以直接用 Obsidian 打開，也能匯入 Logseq、Capacities、Heptabase、Bear、Notion、Apple Notes
   或 NotebookLM。`Captures/` 每則收錄一篇筆記，含摘要和全文；
-  `Orbits/` 每個軌道一篇，含概覽、筆記、來源和對話；
+  `Orbits/` 每個軌道一篇，含概覽、筆記、來源，對話另成一篇；
   `Entities/` 每個被提到的人、地方或概念一篇，列出它的其他名稱。
 - `bookmarks.html` 可以匯入任何瀏覽器或稍後閱讀工具（Raindrop、Pocket、Readwise Reader）。
 - `data/` 是完整紀錄（JSON），日後還原就讀這裡；`media/` 是語音概覽。
@@ -71,8 +82,8 @@ Everything this Penumbra held when it was exported: {captures} captures and {orb
 
 - `markdown/` opens as an Obsidian vault, and imports into Logseq, Capacities, Heptabase, Bear, Notion,
   Apple Notes or NotebookLM. `Captures/` holds one note per capture with its summary and full text,
-  `Orbits/` one note per orbit with its overview, notes, sources and conversation, and `Entities/` one
-  note per named person, place or idea, with the other names it goes by.
+  `Orbits/` one note per orbit with its overview, notes and sources, and its conversation beside it,
+  and `Entities/` one note per named person, place or idea, with the other names it goes by.
 - `bookmarks.html` imports into any browser or read-later app (Raindrop, Pocket, Readwise Reader).
 - `data/` is the complete record, in JSON: what a restore reads. `media/` holds the audio overviews.
 - `manifest.json` gives the format version and a SHA-256 for every file.
@@ -93,11 +104,36 @@ def _clean(text: str | None) -> str:
     return polish(strip_markers(text or ""))
 
 
+def _line(text: str | None) -> str:
+    """One line, for a heading: a line break inside a title or a question would end the heading."""
+    return " ".join((text or "").split())
+
+
 def _safe(name: str, fallback: str) -> str:
-    """A filename (and wikilink) part: no path separators or characters links treat specially."""
+    """A filename (and wikilink) part: no path separators or characters links treat specially, and
+    no more than `_NAME_BYTES` bytes of UTF-8, cut at a character boundary."""
     cleaned = re.sub(r'[\\/:*?"<>|#^\[\]\x00-\x1f]+', " ", name or "")
-    cleaned = " ".join(cleaned.split()).strip(" .")[:_NAME_CHARS].strip(" .")
+    cleaned = " ".join(cleaned.split()).strip(" .")
+    raw = cleaned.encode("utf-8")[:_NAME_BYTES]
+    cleaned = raw.decode("utf-8", errors="ignore").strip(" .")
     return cleaned or fallback
+
+
+class _Names:
+    """Unique note names within one folder, compared the way a case-insensitive disk compares them.
+    A clash, a reserved name or a name used by the conversation notes gets a counter suffix."""
+
+    def __init__(self, *taken: str):
+        self.used = {t.casefold() for t in taken}
+
+    def take(self, wanted: str, fallback: str) -> str:
+        base = _safe(wanted, fallback)
+        name, n = base, 1
+        while name.casefold() in self.used or name.casefold() in _RESERVED:
+            n += 1
+            name = f"{base} {n}"
+        self.used.add(name.casefold())
+        return name
 
 
 def _heading(locator: str) -> str:
@@ -123,10 +159,7 @@ def _frontmatter(fields: dict) -> str:
 
 
 def _blocks_markdown(source) -> str:
-    parts = []
-    for block in source.blocks:
-        parts.append(f"### {_heading(block.locator)}\n\n{block.text.strip()}\n")
-    return "\n".join(parts)
+    return "\n".join(f"### {_heading(b.locator)}\n\n{b.text.strip()}\n" for b in source.blocks)
 
 
 class _Zip:
@@ -141,42 +174,68 @@ class _Zip:
         self.hashes[path] = hashlib.sha256(raw).hexdigest()
         self.zf.writestr(path, raw)
 
-    def put_file(self, path: str, source: Path) -> None:
-        digest = hashlib.sha256()
-        with source.open("rb") as fh:
-            for chunk in iter(lambda: fh.read(1 << 20), b""):
-                digest.update(chunk)
-        self.hashes[path] = digest.hexdigest()
-        self.zf.write(source, path)
+    def put_file(self, path: str, source: Path) -> bool:
+        """Copy a file; False when it vanished since it was listed (a delete ran meanwhile)."""
+        try:
+            data = source.read_bytes()
+        except FileNotFoundError:
+            return False
+        self.put(path, data)
+        return True
 
     def close(self) -> None:
         self.zf.close()
 
 
-def _all_nodes(base_dir) -> list:
-    nodes, offset = [], 0
-    while True:
-        page = horizon.list_nodes(limit=_PAGE, offset=offset, sort="oldest", base_dir=base_dir)
-        nodes.extend(page)
-        if len(page) < _PAGE:
-            return nodes
-        offset += _PAGE
+def _node_rows(base_dir) -> list[dict]:
+    """Every capture row as stored, oldest first, JSON columns parsed where they parse and kept as
+    text where they do not: nothing is dropped for being malformed, since this is the copy a reader
+    is told to keep."""
+    with horizon._connect(base_dir) as conn:
+        rows = [dict(r) for r in conn.execute("SELECT * FROM nodes ORDER BY created_at ASC, id ASC")]
+    for row in rows:
+        for column in horizon._JSON_COLUMNS:
+            if isinstance(row.get(column), str):
+                try:
+                    row[column] = json.loads(row[column])
+                except ValueError:
+                    pass
+    return rows
+
+
+def _as_node(row: dict):
+    try:
+        return Node.model_validate(row)
+    except (ValidationError, AttributeError):
+        return None
+
+
+def _memberships(ids: list[str], base_dir) -> dict:
+    found: dict = {}
+    for start in range(0, len(ids), _CHUNK):
+        found.update(horizon.memberships_for_nodes(ids[start:start + _CHUNK], base_dir=base_dir))
+    return found
 
 
 def _all_asks(base_dir) -> list:
     found, offset = [], 0
     while True:
         page = asks.list_asks(limit=_PAGE, offset=offset, base_dir=base_dir)
-        found.extend(page)
-        if len(page) < _PAGE:
+        if not page:
             return found
-        offset += _PAGE
+        found.extend(page)
+        offset += len(page)
 
 
-def labels_for(language: str | None) -> str:
-    """`zh` for a Chinese interface, `en` otherwise."""
-    text = (language or "").lower()
-    return "zh" if ("chinese" in text or "中文" in text or text.startswith("zh")) else "en"
+def _orbit_files(orbits_dir: Path) -> list[Path]:
+    return sorted(orbits_dir.glob("*.json")) if orbits_dir.is_dir() else []
+
+
+def _load_orbit(path: Path) -> Orbit | None:
+    try:
+        return Orbit.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError, ValueError):
+        return None
 
 
 def write_export(
@@ -188,10 +247,10 @@ def write_export(
 ) -> dict:
     """Write the whole package to `target` and return its counts. `language` is the reader's
     interface language, which the notes' headings and the README follow."""
+    lang = labels_for(language)
     out = _Zip(Path(target))
     try:
-        counts = _write(out, Path(orbits_dir), Path(horizon_dir), _LABELS[labels_for(language)],
-                        labels_for(language))
+        counts = _write(out, Path(orbits_dir), Path(horizon_dir), _LABELS[lang], lang)
         manifest = {
             "format": FORMAT,
             "schema_version": SCHEMA_VERSION,
@@ -206,48 +265,59 @@ def write_export(
     return counts
 
 
+def labels_for(language: str | None) -> str:
+    """`zh` for a Chinese interface, `en` otherwise."""
+    text = (language or "").lower()
+    return "zh" if ("chinese" in text or "中文" in text or text.startswith("zh")) else "en"
+
+
 def _write(out: _Zip, orbits_dir: Path, horizon_dir: Path, words: dict, lang: str) -> dict:
-    nodes = _all_nodes(horizon_dir)
-    by_id = {n.id: n for n in nodes}
-    members = horizon.memberships_for_nodes(list(by_id), base_dir=horizon_dir) if by_id else {}
-    orbits, unreadable = list_orbit_summaries(base_dir=orbits_dir)
-    orbit_titles = {o.id: (o.title or (o.sources[0].preview.get("title") if o.sources else "") or o.id)
-                    for o in orbits}
-    orbit_notes = {o.id: f"{_safe(orbit_titles[o.id], 'Orbit')}--{_safe(o.id, 'orbit')}" for o in orbits}
-    slug_to_id = {}
-    for o in orbits:
-        slug_to_id[orbit_path(o.id, base_dir=orbits_dir).stem] = o.id
-    capture_notes = {n.id: f"{_safe(_clean(n.title) or n.preview.get('title', ''), 'Capture')}--{n.id[-6:]}"
-                     for n in nodes}
+    rows = _node_rows(horizon_dir)
+    ids = [r["id"] for r in rows]
+    members = _memberships(ids, horizon_dir) if ids else {}
+    nodes = {r["id"]: n for r in rows if (n := _as_node(r)) is not None}
+
+    # Orbits, first pass: names only, one file at a time.
+    orbit_names = _Names()
+    orbit_notes: dict[str, str] = {}      # file stem -> note name
+    orbit_titles: dict[str, str] = {}     # file stem -> title
+    unreadable: list[Path] = []
+    for path in _orbit_files(orbits_dir):
+        orbit = _load_orbit(path)
+        if orbit is None:
+            unreadable.append(path)
+            continue
+        title = _clean(orbit.title) or (orbit.sources[0].preview.get("title") if orbit.sources else "")
+        orbit_titles[path.stem] = _line(title) or words["orbit"]
+        orbit_notes[path.stem] = orbit_names.take(orbit_titles[path.stem], words["orbit"])
+        del orbit
+
+    capture_names = _Names()
+    capture_notes = {
+        node_id: capture_names.take(_line(_clean(n.title) or n.preview.get("title", "")), words["capture"])
+        for node_id, n in nodes.items()
+    }
     resolve = concepts.resolver(base_dir=horizon_dir)
     alias_table = concepts.aliases(base_dir=horizon_dir)
 
     # --- data/: the lossless half -------------------------------------------------------------
     lines = []
-    for node in nodes:
-        record = node.model_dump()
-        record["orbits"] = [m.model_dump() for m in members.get(node.id, [])]
-        lines.append(json.dumps(record, ensure_ascii=False))
+    for row in rows:
+        record = dict(row)
+        record["orbits"] = [m.model_dump() for m in members.get(row["id"], [])]
+        lines.append(json.dumps(record, ensure_ascii=False, default=str))
     out.put("data/captures.jsonl", "\n".join(lines) + ("\n" if lines else ""))
-    sources = {}
-    for node in nodes:
-        path = horizon.node_blocks_path(node.id, base_dir=horizon_dir)
-        if path.exists():
-            out.put_file(f"data/blocks/{node.id}.json", path)
-            try:
-                sources[node.id] = horizon.node_source(node.id, base_dir=horizon_dir)
-            except Exception:  # noqa: BLE001 - an unreadable text file is still copied as it is
-                sources[node.id] = None
-    for o in orbits:
-        path = orbit_path(o.id, base_dir=orbits_dir)
-        out.put_file(f"data/orbits/{path.name}", path)
-        audio = find_audio(o.id, base_dir=orbits_dir)
-        if audio is not None:
-            out.put_file(f"media/audio/{path.stem}{audio.suffix}", audio)
-    for stem in unreadable:
-        path = orbits_dir / f"{stem}.json"
-        if path.exists():
-            out.put_file(f"data/orbits/unreadable/{path.name}", path)
+    blocks_dir = horizon.horizon_dir(horizon_dir) / "nodes"
+    if blocks_dir.is_dir():
+        for path in sorted(blocks_dir.glob("*.json")):
+            if horizon.is_node_id(path.stem):
+                out.put_file(f"data/blocks/{path.name}", path)
+    for path in _orbit_files(orbits_dir):
+        folder = "data/orbits/unreadable" if path in unreadable else "data/orbits"
+        out.put_file(f"{folder}/{path.name}", path)
+        for suffix in (".mp3", ".wav"):
+            audio = audio_path(path.stem, base_dir=orbits_dir, suffix=suffix)
+            out.put_file(f"media/audio/{path.stem}{suffix}", audio)
     out.put("data/concepts.json", json.dumps(alias_table, ensure_ascii=False, indent=2))
     removals = horizon.removal_events(limit=horizon.MAX_REMOVAL_EVENTS, base_dir=horizon_dir)
     out.put("data/removals.jsonl", "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in removals))
@@ -255,52 +325,66 @@ def _write(out: _Zip, orbits_dir: Path, horizon_dir: Path, words: dict, lang: st
     out.put("data/asks.jsonl", "".join(a.model_dump_json() + "\n" for a in ask_list))
 
     # --- markdown/: the readable half ---------------------------------------------------------
+    entity_names = _Names()
+    entity_notes: dict[str, str] = {}
     entity_captures: dict[str, list[str]] = {}
-    for node in nodes:
-        names = sorted({resolve(e) for e in node.entities})
-        for name in names:
-            entity_captures.setdefault(name, []).append(node.id)
-        filed = [o_id for o_id in (slug_to_id.get(m.orbit_id, m.orbit_id) for m in members.get(node.id, []))
-                 if o_id in orbit_notes]
+    for node_id, node in nodes.items():
+        for name in sorted({_line(_clean(resolve(e))) for e in node.entities} - {""}):
+            if name not in entity_notes:
+                entity_notes[name] = entity_names.take(name, "Entity")
+            entity_captures.setdefault(name, []).append(node_id)
+    for node_id, node in nodes.items():
+        names = sorted({_line(_clean(resolve(e))) for e in node.entities} - {""})
+        filed = [orbit_notes[m.orbit_id] for m in members.get(node_id, []) if m.orbit_id in orbit_notes]
+        title = _line(_clean(node.title) or node.preview.get("title") or node.origin)
         head = _frontmatter({
             "id": node.id,
             "type": "capture",
-            "title": _clean(node.title) or node.preview.get("title", ""),
+            "title": title,
             "source": node.origin if node.origin.startswith(("http://", "https://")) else "",
             "kind": node.kind,
             "created": _iso(node.created_at),
             "tags": list(node.tags),
-            "entities": [f"[[{_safe(n, 'Entity')}]]" for n in names],
-            "orbits": [f"[[{orbit_notes[o]}]]" for o in filed],
+            "entities": [f"[[{entity_notes[n]}]]" for n in names],
+            "orbits": [f"[[{o}]]" for o in filed],
         })
-        body = [f"# {_clean(node.title) or node.preview.get('title') or node.origin}\n"]
+        body = [f"# {title}\n"]
         if node.summary:
             body.append(_clean(node.summary) + "\n")
-        source = sources.get(node.id)
+        try:
+            source = horizon.node_source(node_id, base_dir=horizon_dir)
+        except Exception:  # noqa: BLE001 - an unreadable text file is still copied under data/
+            source = None
         if source is not None and source.blocks:
             body.append(f"## {words['text']}\n\n" + _blocks_markdown(source))
-        out.put(f"markdown/Captures/{capture_notes[node.id]}.md", head + "\n".join(body))
+        out.put(f"markdown/Captures/{capture_notes[node_id]}.md", head + "\n".join(body))
 
-    also = {}
+    also: dict[str, list[str]] = {}
     for alias, canonical in alias_table.items():
-        also.setdefault(canonical, []).append(alias)
-    for name, ids in sorted(entity_captures.items()):
+        also.setdefault(_line(_clean(canonical)), []).append(alias)
+    for name, captured in sorted(entity_captures.items()):
         head = _frontmatter({"type": "entity", "aliases": sorted(also.get(name, []))})
-        links = "\n".join(f"- [[{capture_notes[i]}]]" for i in ids)
-        out.put(f"markdown/Entities/{_safe(name, 'Entity')}.md",
+        links = "\n".join(f"- [[{capture_notes[i]}]]" for i in captured)
+        out.put(f"markdown/Entities/{entity_notes[name]}.md",
                 f"{head}# {name}\n\n{words['named_by']}\n\n{links}\n")
 
-    for o in orbits:
-        stem = orbit_path(o.id, base_dir=orbits_dir).stem
-        _orbit_markdown(out, o, orbit_notes[o.id], orbit_titles[o.id], stem,
-                        horizon_dir, capture_notes, find_audio(o.id, base_dir=orbits_dir), words)
+    # Orbits, second pass: each read again as its note is written.
+    for path in _orbit_files(orbits_dir):
+        if path.stem not in orbit_notes:
+            continue
+        orbit = _load_orbit(path)
+        if orbit is None:
+            continue
+        audio = next((audio_path(path.stem, base_dir=orbits_dir, suffix=s) for s in (".mp3", ".wav")
+                      if audio_path(path.stem, base_dir=orbits_dir, suffix=s).exists()), None)
+        _orbit_markdown(out, orbit, orbit_notes[path.stem], orbit_titles[path.stem], path.stem,
+                        horizon_dir, capture_notes, audio, words, orbit_names)
 
-    # --- bookmarks.html ------------------------------------------------------------------------
-    out.put("bookmarks.html", _bookmarks(nodes, members, orbit_titles, slug_to_id, words["horizon"]))
+    out.put("bookmarks.html", _bookmarks(rows, nodes, members, orbit_titles, words["horizon"]))
 
     counts = {
-        "captures": len(nodes),
-        "orbits": len(orbits) + len(unreadable),
+        "captures": len(rows),
+        "orbits": len(orbit_notes) + len(unreadable),
         "entities": len(entity_captures),
         "asks": len(ask_list),
         "removals": len(removals),
@@ -311,7 +395,7 @@ def _write(out: _Zip, orbits_dir: Path, horizon_dir: Path, words: dict, lang: st
 
 def _answer_markdown(text: str, citations, target_for, prefix: str) -> str:
     """An answer's prose, then its citations as footnotes pointing at the source's heading."""
-    lines = [_clean(text)]
+    prose = _clean(text)
     notes = []
     seen: dict[tuple[str, str], int] = {}
     for citation in citations:
@@ -324,28 +408,32 @@ def _answer_markdown(text: str, citations, target_for, prefix: str) -> str:
         where = f"[[{target}#{_heading(citation.locator)}]]" if target else citation.source_id
         quote = " ".join((citation.quote or "").split())
         notes.append(f"[^{prefix}{n}]: “{quote}” {where}")
-    if notes:
-        # The references close the prose they back, rather than standing on a line of their own.
-        lines[0] = lines[0] + "".join(f"[^{prefix}{i}]" for i in range(1, len(notes) + 1))
-        lines.append("\n".join(notes))
-    return "\n\n".join(lines) + "\n"
+    if not notes:
+        return prose + "\n"
+    refs = "".join(f"[^{prefix}{i}]" for i in range(1, len(notes) + 1))
+    last = prose.rstrip().rsplit("\n", 1)[-1].lstrip()
+    # The references close the prose they back, except after a code fence or a table row, where
+    # they would open the fence again or join the table.
+    joined = f"{prose}\n\n{refs}" if last.startswith(("```", "~~~", "|")) or not prose else prose + refs
+    return f"{joined}\n\n" + "\n".join(notes) + "\n"
 
 
 def _orbit_markdown(out: _Zip, orbit, note: str, title: str, slug_stem: str, horizon_dir,
-                    capture_notes: dict, audio: Path | None, words: dict) -> None:
+                    capture_notes: dict, audio: Path | None, words: dict, orbit_names: _Names) -> None:
     from_capture = {m.source_id: m.node_id for m in horizon.nodes_in_orbit(slug_stem, base_dir=horizon_dir)}
+    source_names = _Names()
     source_notes = {}
     for source in orbit.sources:
         node_id = from_capture.get(source.id)
         if node_id in capture_notes:
             source_notes[source.id] = capture_notes[node_id]
-        else:
-            label = _safe(source.preview.get("title") or source.origin, "Source")
-            source_notes[source.id] = f"{note}/Sources/{source.id} {label}"
-            head = _frontmatter({"type": "source", "orbit": f"[[{note}]]", "source": source.origin
-                                 if source.origin.startswith(("http://", "https://")) else ""})
-            out.put(f"markdown/Orbits/{source_notes[source.id]}.md",
-                    f"{head}# {source.preview.get('title') or source.origin}\n\n{_blocks_markdown(source)}")
+            continue
+        label = source_names.take(f"{source.id} {source.preview.get('title') or source.origin}", source.id)
+        source_notes[source.id] = f"{note}/{label}"
+        head = _frontmatter({"type": "source", "orbit": f"[[{note}]]", "source": source.origin
+                             if source.origin.startswith(("http://", "https://")) else ""})
+        heading = _line(source.preview.get("title") or source.origin)
+        out.put(f"markdown/Orbits/{note}/{label}.md", f"{head}# {heading}\n\n{_blocks_markdown(source)}")
     target_for = source_notes.get
 
     head = _frontmatter({"id": orbit.id, "type": "orbit", "title": title, "language": orbit.output_language})
@@ -353,19 +441,21 @@ def _orbit_markdown(out: _Zip, orbit, note: str, title: str, slug_stem: str, hor
     if orbit.overview is not None and orbit.overview.text:
         overview = orbit.overview
         body.append(f"## {words['overview']}\n\n" + _answer_markdown(overview.text, overview.citations,
-                                                        target_for, "o"))
+                                                                    target_for, "o"))
     if orbit.notes:
         body.append(f"## {words['notes']}\n\n" + "\n\n".join(n.text.strip() for n in orbit.notes) + "\n")
     if orbit.sources:
         listed = "\n".join(f"- [[{source_notes[s.id]}]]" for s in orbit.sources)
         body.append(f"## {words['sources']}\n\n{listed}\n")
     if orbit.turns:
-        body.append(f"## {words['conversation']}\n\n[[{note}/Conversation]]\n")
-        chat = [f"# {title} \u00b7 {words['conversation']}\n"]
+        # Beside the orbit's note, under a name of its own, so no two orbits' conversations share one.
+        chat_note = orbit_names.take(f"{note} {words['conversation']}", words["conversation"])
+        body.append(f"## {words['conversation']}\n\n[[{chat_note}]]\n")
+        chat = [f"# {title} · {words['conversation']}\n"]
         for i, turn in enumerate(orbit.turns, 1):
-            chat.append(f"## {turn.question.strip()}\n\n"
+            chat.append(f"## {_line(turn.question)}\n\n"
                         + _answer_markdown(turn.answer.text, turn.answer.citations, target_for, f"t{i}-"))
-        out.put(f"markdown/Orbits/{note}/Conversation.md", "\n".join(chat))
+        out.put(f"markdown/Orbits/{chat_note}.md", "\n".join(chat))
     if orbit.podcast is not None and orbit.podcast.utterances:
         lines = [f"**{u.speaker}**: {_clean(u.text)}" for u in orbit.podcast.utterances]
         where = f"`media/audio/{slug_stem}{audio.suffix}` {words['audio_file']}\n\n" if audio else ""
@@ -373,27 +463,31 @@ def _orbit_markdown(out: _Zip, orbit, note: str, title: str, slug_stem: str, hor
     out.put(f"markdown/Orbits/{note}.md", head + "\n".join(body))
 
 
-def _bookmarks(nodes, members, orbit_titles: dict, slug_to_id: dict, loose: str) -> str:
+def _bookmarks(rows, nodes, members, orbit_titles: dict, loose: str) -> str:
     """The Netscape bookmark file: a folder per orbit, and the Horizon for what is filed nowhere."""
-    folders: dict[str, list] = {}
-    for node in nodes:
-        if not node.origin.startswith(("http://", "https://")):
+    folders: dict[str | None, list] = {}
+    for row in rows:
+        origin = str(row.get("origin") or "")
+        if not origin.startswith(("http://", "https://")):
             continue
-        filed = [slug_to_id.get(m.orbit_id, m.orbit_id) for m in members.get(node.id, [])]
-        for orbit_id in [o for o in filed if o in orbit_titles] or [None]:
-            folders.setdefault(orbit_id, []).append(node)
-    rows = ["<!DOCTYPE NETSCAPE-Bookmark-file-1>",
-            '<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">',
-            "<TITLE>Penumbra</TITLE>", "<H1>Penumbra</H1>", "<DL><p>"]
-    for orbit_id, items in folders.items():
-        name = orbit_titles[orbit_id] if orbit_id else loose
-        rows.append(f"    <DT><H3>{html.escape(name)}</H3>")
-        rows.append("    <DL><p>")
-        for node in items:
-            title = _clean(node.title) or node.preview.get("title") or node.origin
-            tags = html.escape(",".join(node.tags), quote=True)
-            rows.append(f'        <DT><A HREF="{html.escape(node.origin, quote=True)}" '
-                        f'ADD_DATE="{int(node.created_at)}" TAGS="{tags}">{html.escape(title)}</A>')
-        rows.append("    </DL><p>")
-    rows.append("</DL><p>")
-    return "\n".join(rows) + "\n"
+        filed = [m.orbit_id for m in members.get(row["id"], []) if m.orbit_id in orbit_titles]
+        for stem in filed or [None]:
+            folders.setdefault(stem, []).append(row)
+    lines = ["<!DOCTYPE NETSCAPE-Bookmark-file-1>",
+             '<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">',
+             "<TITLE>Penumbra</TITLE>", "<H1>Penumbra</H1>", "<DL><p>"]
+    for stem, items in folders.items():
+        name = orbit_titles[stem] if stem else loose
+        lines.append(f"    <DT><H3>{html.escape(name)}</H3>")
+        lines.append("    <DL><p>")
+        for row in items:
+            node = nodes.get(row["id"])
+            title = (_line(_clean(node.title)) or node.preview.get("title")) if node else ""
+            tags = row.get("tags") if isinstance(row.get("tags"), list) else []
+            lines.append(f'        <DT><A HREF="{html.escape(row["origin"], quote=True)}" '
+                         f'ADD_DATE="{int(row.get("created_at") or 0)}" '
+                         f'TAGS="{html.escape(",".join(map(str, tags)), quote=True)}">'
+                         f'{html.escape(title or row["origin"])}</A>')
+        lines.append("    </DL><p>")
+    lines.append("</DL><p>")
+    return "\n".join(lines) + "\n"

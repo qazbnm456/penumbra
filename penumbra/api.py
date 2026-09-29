@@ -1415,6 +1415,8 @@ async def export_everything(request: Request) -> FileResponse:
     and every orbit file, more than any other route, to any token holder; that is the point of it,
     and every one of those holders could already read each piece through the routes invariant 31
     lists. Built in a temporary file and deleted once sent."""
+    if _CLEARING.is_set():
+        raise HTTPException(409, "everything is being cleared; export before clearing, not during it")
     fd, name = tempfile.mkstemp(prefix="penumbra-export-", suffix=".zip")
     os.close(fd)
     target = Path(name)

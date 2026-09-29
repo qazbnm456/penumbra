@@ -79,14 +79,14 @@ def test_the_export_holds_the_data_a_vault_bookmarks_and_a_true_manifest(client)
     assert f"data/blocks/{filed}.json" in names and "data/orbits/crafts.json" in names
     assert "README.md" in names and "bookmarks.html" in names
 
-    note = next(n for n in names if n.startswith("markdown/Captures/Origami--"))
+    note = "markdown/Captures/Origami.md"
     text = zf.read(note).decode()
     assert text.startswith("---\n") and 'type: "capture"' in text and 'tags: ["craft"]' in text
     assert "[[Akira Yoshizawa]]" in text and "### whole" in text
     assert "[[SRC:" not in text, "markers never reach a note (invariant 62)"
     assert "markdown/Entities/Akira Yoshizawa.md" in names
 
-    chat = next(n for n in names if n.endswith("/Conversation.md"))
+    chat = next(n for n in names if n.startswith("markdown/Orbits/") and n.endswith(" Conversation.md"))
     conversation = zf.read(chat).decode()
     assert "## What is origami?" in conversation and "[[SRC:" not in conversation
     assert "#whole]]" in conversation and "“folding paper”" in conversation
@@ -106,3 +106,33 @@ def test_the_notes_follow_a_chinese_interface(client):
     assert zf.read("README.md").decode().startswith("# Penumbra 匯出")
     note = next(n for n in zf.namelist() if n.startswith("markdown/Captures/"))
     assert "## 內容" in zf.read(note).decode()
+
+
+def test_names_never_clash_and_long_titles_fit_a_filesystem(client):
+    for title in ["Apple", "apple", "C#", "C", "CON", "漢" * 120]:
+        node_id = _capture(client, f"Text about {title}.")
+        horizon.update_node(node_id, title=title)
+    names = [n for n in _export(client).namelist() if n.startswith("markdown/Captures/")]
+    folded = [n.casefold() for n in names]
+    assert len(names) == 6 and len(set(folded)) == 6, names
+    assert all(len(n.rsplit("/", 1)[-1].encode("utf-8")) <= 200 for n in names)
+    assert "markdown/Captures/CON.md" not in names
+
+
+def test_a_capture_row_that_does_not_parse_is_still_exported(client):
+    good = _capture(client, "A readable capture.")
+    bad = _capture(client, "A capture whose tags were written badly.")
+    later = _capture(client, "A capture after it.")
+    with horizon._connect() as conn:
+        conn.execute("UPDATE nodes SET tags = ? WHERE id = ?", ('{"not": "a list"}', bad))
+    zf = _export(client)
+    ids = {json.loads(line)["id"] for line in zf.read("data/captures.jsonl").decode().splitlines()}
+    assert {good, bad, later} <= ids
+
+
+def test_a_footnote_never_reopens_a_code_fence():
+    from penumbra.export import _answer_markdown
+    from penumbra.schema import Citation as C
+    text = _answer_markdown("Run this:\n\n```\nls\n```", [C(source_id="s1", locator="whole", quote="q")],
+                            {"s1": "Note"}.get, "t1-")
+    assert "```[^" not in text and "\n\n[^t1-1]\n\n[^t1-1]:" in text
