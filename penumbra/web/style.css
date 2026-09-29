@@ -7855,6 +7855,21 @@ body.is-resizing .orbit-graph {
   pointer-events: none;
 }
 
+/* The pressed capture: a wide copper halo round its moon, so it stands out among copper moons. */
+.graph-cap {
+  cursor: pointer;
+}
+
+.graph-cap.is-selected .graph-cap-body {
+  stroke: color-mix(in oklch, var(--accent) 45%, transparent);
+  stroke-width: 8;
+}
+
+.graph-cap.is-selected .graph-cap-label {
+  fill: var(--text);
+  font-weight: 600;
+}
+
 .graph-cap:hover .graph-cap-label,
 .graph-cap:focus-visible .graph-cap-label {
   fill: var(--text);
@@ -7947,12 +7962,39 @@ body.is-resizing .orbit-graph {
 }
 
 .graph-item {
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-md);
+}
+
+/* A row opens its capture, so it answers the pointer like the card rows on the map. */
+.graph-item-open {
   display: flex;
   flex-direction: column;
   gap: var(--space-0);
-  padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--border);
-  font-size: var(--text-md);
+  width: 100%;
+  padding: var(--space-3) var(--space-2);
+  margin: 0 calc(-1 * var(--space-2));
+  box-sizing: content-box;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.graph-item-open:hover,
+.graph-item-open:focus-visible {
+  background: var(--surface-2);
+}
+
+.graph-item-open:hover .graph-item-title {
+  color: var(--accent);
+}
+
+.graph-item-title {
+  overflow-wrap: anywhere;
 }
 
 .graph-item-origin {

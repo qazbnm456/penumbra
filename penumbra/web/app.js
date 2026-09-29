@@ -3219,7 +3219,7 @@ function marksGroups() {
           const g = hue(svgEl("g", {}, "graph-cap"), GRAPH_HUES[1]);
           g.appendChild(svgEl("circle", { r: GRAPH_CAPTURE_R }, "graph-cap-body"));
           svg.appendChild(g);
-        }), t("marks.graph.capture", "A capture, in its tag's colour. Point at it for its name.")],
+        }), t("marks.graph.capture", "A capture, in its tag's colour. Press it for its summary, what it names and what relates to it.")],
         [canvas(92, 24, (svg) => {
           const g = svgEl("g", {}, "graph-entity");
           g.appendChild(svgEl("rect", { x: -44, y: -11, width: 88, height: 22, rx: 11 }, "graph-entity-body"));
@@ -15346,7 +15346,9 @@ function initSuggestions() {
 
 // --- the knowledge graph --------------------------------------------------------------------------
 
-const graphState = { data: null, slug: null, selected: null, lenses: new Set(), generation: 0, layout: null };
+//: `capture` is the node id of a capture pressed on the graph; like `selected` (an entity) and `lenses`
+//: (tags), it is one of three ways to focus the graph, and setting one clears the other two.
+const graphState = { data: null, slug: null, selected: null, capture: null, lenses: new Set(), generation: 0, layout: null };
 
 async function renderGraph() {
   const slug = state.orbitSlug || state.orbitId;
@@ -15363,6 +15365,7 @@ async function renderGraph() {
   if (generation !== graphState.generation) return;
   if (graphState.slug !== slug) {
     graphState.selected = null;
+    graphState.capture = null;
     graphState.lenses = new Set();
   }
   const sameOrbit = graphState.slug === slug;
@@ -15390,6 +15393,7 @@ function paintGraphLenses() {
   renderLenses(horizonEl("graph-lenses"), data.tags || [], graphState.lenses, (name) => {
     graphState.lenses = toggledLenses(graphState.lenses, name);
     graphState.selected = null;
+    graphState.capture = null;
     paintGraphLenses();
     drawGraph();
   });
@@ -15784,7 +15788,18 @@ function drawGraph() {
       if (c.entities.includes(selected)) litCaptures.add(c.node_id);
     });
   }
-  const focus = Boolean(lenses.size || selected);
+  // A pressed capture lights itself, what it names, and every capture naming any of those.
+  const chosen = !lenses.size && !selected && graphState.capture
+    ? layout.captures.find((c) => c.node_id === graphState.capture) || null
+    : null;
+  if (chosen) {
+    litCaptures.add(chosen.node_id);
+    chosen.entities.forEach((n) => litEntities.add(n));
+    layout.captures.forEach((c) => {
+      if (c.entities.some((n) => litEntities.has(n))) litCaptures.add(c.node_id);
+    });
+  }
+  const focus = Boolean(lenses.size || selected || chosen);
   const keyLit = (key) => (key.startsWith("c:") ? litCaptures.has(key.slice(2)) : litEntities.has(key.slice(2)));
 
   // Each group is a soft region shaped round its own nodes (the convex hull, padded and rounded by
@@ -15826,6 +15841,7 @@ function drawGraph() {
     const press = () => {
       graphState.lenses = on ? new Set() : new Set([group.name]);
       graphState.selected = null;
+      graphState.capture = null;
       paintGraphLenses();
       drawGraph();
     };
@@ -15859,7 +15875,8 @@ function drawGraph() {
   layout.similar.forEach((e) => {
     const a = layout.pos.get(e.a);
     const b = layout.pos.get(e.b);
-    const line = svgEl("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y }, `graph-similar${focus ? " is-dim" : ""}`);
+    const touches = chosen && (e.a === `c:${chosen.node_id}` || e.b === `c:${chosen.node_id}`);
+    const line = svgEl("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y }, `graph-similar${focus && !touches ? " is-dim" : ""}`);
     refs.similar.push({ line, a: e.a, b: e.b });
     edgeLayer.appendChild(line);
   });
@@ -15870,8 +15887,9 @@ function drawGraph() {
     const p = layout.pos.get(key);
     const lit = !focus || litCaptures.has(c.node_id);
     const waiting = c.state === "ready_undistilled";
-    const group = svgEl("g", { tabindex: 0, role: "img", "aria-label": c.title },
-      `graph-cap${waiting ? " is-waiting" : ""}${lit ? "" : " is-dim"}`);
+    const isChosen = chosen === c;
+    const group = svgEl("g", { tabindex: 0, role: "button", "aria-label": c.title, "aria-pressed": isChosen ? "true" : "false" },
+      `graph-cap${waiting ? " is-waiting" : ""}${isChosen ? " is-selected" : ""}${lit ? "" : " is-dim"}`);
     if (hueOf.has(c.node_id)) group.style.setProperty("--hue", String(hueOf.get(c.node_id)));
     const body = svgEl("circle", { cx: p.x, cy: p.y, r: GRAPH_CAPTURE_R }, "graph-cap-body");
     const label = svgText(p.x, p.y + GRAPH_CAPTURE_R + 14, shortLabel(c.title, 18), "graph-cap-label");
@@ -15888,6 +15906,18 @@ function drawGraph() {
     group.addEventListener("focus", tip);
     group.addEventListener("pointerleave", hideGraphTip);
     group.addEventListener("blur", hideGraphTip);
+    // Pressing a capture opens it in the panel: its summary, what it names, what it relates to.
+    const press = () => {
+      if (graphDrag.suppress) return; // the click that ends a drag
+      pickGraphCapture(graphState.capture === c.node_id ? null : c.node_id);
+    };
+    group.addEventListener("click", press);
+    group.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        press();
+      }
+    });
     refs.nodes.set(key, { body, label, r: GRAPH_CAPTURE_R });
     world.appendChild(group);
   });
@@ -15938,6 +15968,7 @@ function drawGraph() {
       // The click that ends a drag is not a pick.
       if (graphDrag.suppress) return;
       graphState.selected = graphState.selected === entity.name ? null : entity.name;
+      graphState.capture = null;
       graphState.lenses = new Set();
       paintGraphLenses();
       drawGraph();
@@ -16193,8 +16224,9 @@ function initGraphCamera() {
       // A click on empty space, not the end of a pan, lets go of the entity or tags picked, the
       // way a click on the star map's empty space closes its card.
       if (event.type === "pointerup" && !graphDrag.name && !event.target.closest(".graph-entity, .graph-cap, .graph-region-label")
-        && (graphState.selected || graphState.lenses.size)) {
+        && (graphState.selected || graphState.capture || graphState.lenses.size)) {
         graphState.selected = null;
+        graphState.capture = null;
         graphState.lenses = new Set();
         paintGraphLenses();
         drawGraph();
@@ -16256,6 +16288,14 @@ function renderGraphPanel(litCaptures) {
   let heading;
   let near = [];
   let items;
+  const chosen = !graphState.lenses.size && !graphState.selected && graphState.capture
+    ? layout.captures.find((c) => c.node_id === graphState.capture) || null
+    : null;
+  if (chosen) {
+    renderGraphCapturePanel(panel, chosen);
+    if (keepFocus) restoreFocus(panel, keepFocus);
+    return;
+  }
   if (graphState.lenses.size) {
     kicker = graphState.lenses.size > 1 ? t("graph.tags", "Tags") : t("graph.tag", "Tag");
     heading = [...graphState.lenses].map((name) => `#${name}`).join(" + ");
@@ -16310,7 +16350,7 @@ function renderGraphPanel(litCaptures) {
   if (!graphState.lenses.size && !graphState.selected) {
     // How to read it, once, where the orbit is described: the drawing has no legend of its own.
     panel.appendChild(elt("p", "card-note", t("graph.legend",
-      "A dot is a capture. A pill is something two or more captures name, joined to each of them, with how many.")));
+      "A dot is a capture; press it to open it here. A pill is something two or more captures name, joined to each of them, with how many.")));
     panel.appendChild(elt("p", "card-note", t("graph.regionsNote",
       "A tinted region is a tag two or more captures here share, each capture in the region of its most shared tag; a capture whose tags are its own is in none. Press a region's name to see just those captures and ask about them.")));
     if ((data.similar || []).length) {
@@ -16334,6 +16374,7 @@ function renderGraphPanel(litCaptures) {
       chip.dataset.key = `chip:${name}`;
       chip.addEventListener("click", () => {
         graphState.selected = name;
+        graphState.capture = null;
         graphState.lenses = new Set();
         paintGraphLenses();
         drawGraph();
@@ -16342,14 +16383,7 @@ function renderGraphPanel(litCaptures) {
     });
     panel.appendChild(chips);
   }
-  const list = elt("ol", "graph-items");
-  items.slice(0, 40).forEach((c) => {
-    const row = elt("li", "graph-item");
-    row.appendChild(elt("span", "", c.title));
-    row.appendChild(elt("span", "graph-item-origin", c.origin));
-    list.appendChild(row);
-  });
-  panel.appendChild(list);
+  panel.appendChild(graphItemList(items.slice(0, 40)));
   if (graphState.selected || graphState.lenses.size) {
     const ask = elt("button", "btn btn-primary graph-ask", t("graph.ask", "Ask about this"));
     ask.type = "button";
@@ -16363,6 +16397,99 @@ function renderGraphPanel(litCaptures) {
       && !restoreFocus(horizonEl("graph-svg"), `entity:${keepFocus.slice(5)}`)) {
     restoreFocus(panel, keepFocus);
   }
+}
+
+//: Focus the graph on one capture (or on nothing), from a dot or from a row in the panel.
+function pickGraphCapture(nodeId) {
+  graphState.capture = nodeId;
+  graphState.selected = null;
+  graphState.lenses = new Set();
+  paintGraphLenses();
+  drawGraph();
+}
+
+//: Captures as rows that open: each one presses that capture, as its dot does.
+function graphItemList(captures) {
+  const list = elt("ol", "graph-items");
+  captures.forEach((c) => {
+    const row = elt("li", "graph-item");
+    const open = elt("button", "graph-item-open");
+    open.type = "button";
+    open.dataset.key = `item:${c.node_id}`;
+    open.appendChild(elt("span", "graph-item-title", c.title));
+    open.appendChild(elt("span", "graph-item-origin", c.origin));
+    open.addEventListener("click", () => pickGraphCapture(c.node_id));
+    row.appendChild(open);
+    list.appendChild(row);
+  });
+  return list;
+}
+
+//: The panel for one pressed capture: what it is, what it names (each a way to that entity), the
+//: captures it relates to (sharing an entity, or alike in content), and its full text a press away.
+//: The summary is fetched, because the graph carries only names.
+function renderGraphCapturePanel(panel, chosen) {
+  const data = graphState.data;
+  const layout = graphState.layout;
+  panel.appendChild(elt("p", "card-kicker", t("graph.capture", "Capture")));
+  panel.appendChild(elt("h2", "card-title", chosen.title));
+  if (chosen.origin) panel.appendChild(elt("p", "card-meta", chosen.origin));
+  const summary = elt("p", "card-summary", chosen.state === "ready_undistilled"
+    ? t("graph.notSummarised", "Not summarised yet") : t("cite.loading", "Loading…"));
+  panel.appendChild(summary);
+  const generation = graphState.generation;
+  const wanted = chosen.node_id;
+  let node = { id: chosen.node_id, title: chosen.title, origin: chosen.origin };
+  void api(`/horizon/${encodeURIComponent(chosen.node_id)}`).then((got) => {
+    if (graphState.generation !== generation || graphState.capture !== wanted || !summary.isConnected) return;
+    node = got.node || node;
+    if (node.summary) summary.textContent = node.summary;
+    else if (chosen.state !== "ready_undistilled") summary.remove();
+  }).catch(() => {
+    if (summary.isConnected && chosen.state !== "ready_undistilled") summary.remove();
+  });
+
+  if (chosen.entities.length) {
+    panel.appendChild(elt("p", "card-kicker", t("graph.itNames", "What it names")));
+    const chips = elt("div", "card-chips");
+    chosen.entities.forEach((name) => {
+      const chip = elt("button", "card-chip", name);
+      chip.type = "button";
+      chip.dataset.key = `chip:${name}`;
+      chip.addEventListener("click", () => {
+        graphState.selected = name;
+        graphState.capture = null;
+        graphState.lenses = new Set();
+        paintGraphLenses();
+        drawGraph();
+      });
+      chips.appendChild(chip);
+    });
+    panel.appendChild(chips);
+  }
+
+  // Related: most entities in common first, then those alike in content.
+  const mine = new Set(chosen.entities);
+  const alike = new Set((data.similar || [])
+    .filter((e) => e.a === `c:${chosen.node_id}` || e.b === `c:${chosen.node_id}`)
+    .map((e) => (e.a === `c:${chosen.node_id}` ? e.b : e.a).slice(2)));
+  const related = layout.captures
+    .filter((c) => c !== chosen)
+    .map((c) => ({ c, shared: c.entities.filter((n) => mine.has(n)).length, alike: alike.has(c.node_id) }))
+    .filter((r) => r.shared || r.alike)
+    .sort((x, y) => y.shared - x.shared || Number(y.alike) - Number(x.alike))
+    .slice(0, 12)
+    .map((r) => r.c);
+  panel.appendChild(elt("p", "card-kicker", t("graph.related", "Related here")));
+  if (related.length) panel.appendChild(graphItemList(related));
+  else panel.appendChild(elt("p", "card-note", t("graph.noRelated", "Nothing else in this orbit names what it names.")));
+
+  const actions = elt("div", "card-actions");
+  const read = elt("button", "btn btn-primary", t("map.readInList", "Read it"));
+  read.type = "button";
+  read.addEventListener("click", () => void showNodeReader(node));
+  actions.appendChild(read);
+  panel.appendChild(actions);
 }
 
 //: What the header shows for the open orbit: its title, or the label derived for it.
