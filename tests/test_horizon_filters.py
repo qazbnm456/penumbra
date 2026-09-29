@@ -87,3 +87,12 @@ def test_a_delete_that_fails_leaves_no_removal_record():
         conn.execute("DROP TRIGGER refuse")
     assert horizon.remove_node(a) and len(horizon.removal_events()) == 1
     assert not horizon.remove_node(a) and len(horizon.removal_events()) == 1, "a second press records nothing"
+
+
+def test_only_the_newest_removal_records_are_kept(monkeypatch):
+    monkeypatch.setattr(horizon, "MAX_REMOVAL_EVENTS", 3)
+    ids = [_node(f"https://x.example/r{i}") for i in range(5)]
+    for node_id in ids:
+        horizon.remove_node(node_id)
+    kept = [e["node_id"] for e in horizon.removal_events()]
+    assert sorted(kept) == sorted(ids[-3:]), "the two oldest records went"

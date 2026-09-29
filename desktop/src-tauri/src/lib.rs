@@ -260,8 +260,40 @@ static RESTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::n
 /// What `workspace_frame` records: `2` is logical units. A frame without it was saved in pixels by an
 /// earlier build and is ignored, since read as points it would come back at twice the size on Retina.
 const FRAME_UNITS: u64 = 2;
-/// Bumped on every move or resize; a save runs only if no later one arrived while it waited.
+/// A burst of moves and resizes (`note_frame`) and of resizes (the rest check) each keep one waiting
+/// thread at most, not one per event: a drag sends dozens.
 static FRAME_EDITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static FRAME_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static REST_EDITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static REST_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Run `act` once the calls sharing `edits` and `pending` have been quiet for `quiet`. The first call
+/// of a burst starts the one waiting thread; later calls only count, and the thread waits again while
+/// they keep arriving. `act` reads the window's live state, so acting once at the end loses nothing.
+fn after_quiet<F: FnOnce() + Send + 'static>(
+    edits: &'static std::sync::atomic::AtomicU64,
+    pending: &'static std::sync::atomic::AtomicBool,
+    quiet: Duration,
+    act: F,
+) {
+    use std::sync::atomic::Ordering::SeqCst;
+    edits.fetch_add(1, SeqCst);
+    if pending.swap(true, SeqCst) {
+        return;
+    }
+    thread::spawn(move || {
+        loop {
+            let seen = edits.load(SeqCst);
+            thread::sleep(quiet);
+            if edits.load(SeqCst) == seen {
+                break;
+            }
+        }
+        // Cleared before acting, so a call arriving from here on starts a thread of its own.
+        pending.store(false, SeqCst);
+        act();
+    });
+}
 
 /// Where the reader left the workspace (`workspace_frame` in `desktop.json`), put back the first
 /// time it shows after a launch: its position and size, and whether it was zoomed to the screen.
@@ -301,13 +333,8 @@ fn restore_frame(app: &AppHandle, window: &WebviewWindow) -> bool {
 /// was zoomed from, which is where un-zooming returns. The star map's rest (simple full screen) and a
 /// full-screen Space are the page's states, not a place the reader put the window, so they are skipped.
 fn note_frame(window: &WebviewWindow) {
-    let edit = FRAME_EDITS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
     let app = window.app_handle().clone();
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(500));
-        if FRAME_EDITS.load(std::sync::atomic::Ordering::SeqCst) != edit {
-            return;
-        }
+    after_quiet(&FRAME_EDITS, &FRAME_PENDING, Duration::from_millis(500), move || {
         let Some(window) = app.get_webview_window(WINDOW) else { return };
         if !window.is_visible().unwrap_or(false)
             || window.is_minimized().unwrap_or(false)
@@ -1048,11 +1075,10 @@ pub fn run() {
                     note_frame(&workspace);
                     // Leaving the rest, tao gives the title bar back asynchronously after the resize
                     // that reported it, so the check above still sees the rest. Look again once the
-                    // style has landed, on every resize, and correct the island if it changed.
+                    // style has landed, after each burst of resizes, and correct the island if it changed.
                     let again = window.app_handle().clone();
                     let measured = *size;
-                    std::thread::spawn(move || {
-                        std::thread::sleep(Duration::from_millis(200));
+                    after_quiet(&REST_EDITS, &REST_PENDING, Duration::from_millis(200), move || {
                         let app = again.clone();
                         let _ = again.run_on_main_thread(move || {
                             let Some(workspace) = app.get_webview_window(WINDOW) else { return };
@@ -1103,6 +1129,29 @@ pub fn run() {
 mod tests {
     use super::read_config;
     use std::io::Write;
+
+    #[test]
+    fn a_burst_of_calls_acts_once_after_it_goes_quiet() {
+        use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst};
+        use std::time::Duration;
+        static EDITS: AtomicU64 = AtomicU64::new(0);
+        static PENDING: AtomicBool = AtomicBool::new(false);
+        static RAN: AtomicUsize = AtomicUsize::new(0);
+        for _ in 0..20 {
+            super::after_quiet(&EDITS, &PENDING, Duration::from_millis(60), || {
+                RAN.fetch_add(1, SeqCst);
+            });
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        std::thread::sleep(Duration::from_millis(250));
+        assert_eq!(RAN.load(SeqCst), 1, "one act for the whole burst");
+        // A call after the burst has settled acts again.
+        super::after_quiet(&EDITS, &PENDING, Duration::from_millis(60), || {
+            RAN.fetch_add(1, SeqCst);
+        });
+        std::thread::sleep(Duration::from_millis(250));
+        assert_eq!(RAN.load(SeqCst), 2);
+    }
 
     #[test]
     fn config_reads_keys_values_quotes_and_skips_the_rest() {

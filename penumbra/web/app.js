@@ -8962,7 +8962,7 @@ function nodeMetaLine(node) {
 //: captures are still to load, only those within the stretch of time already shown.
 function findRemovalsInView() {
   const f = horizonState.filters;
-  if (!f.removed || !["newest", "oldest"].includes(f.sort)) return [];
+  if (!f.removed || !findTimeOrder(f.sort)) return [];
   const events = horizonState.removed || [];
   const more = horizonState.nodes.length < horizonState.total;
   if (!more || !horizonState.nodes.length) return events;
@@ -8970,14 +8970,14 @@ function findRemovalsInView() {
   return events.filter((event) => (f.sort === "oldest" ? event.at <= edge : event.at >= edge));
 }
 
-//: A capture that was removed, in the history where it would have been: when, its name, and from
-//: where it went.
 //: An orbit's name from its slug, for a record that may outlive the orbit: a deleted one says so
 //: rather than printing its handle (invariant 37).
 function orbitNameOrGone(slug) {
   return orbitTitles.get(slug) || t("horizon.filedInGone", "a deleted orbit");
 }
 
+//: A capture that was removed, in the history where it would have been: when, its name, and from
+//: where it went.
 function renderRemoval(event) {
   const row = elt("div", "node node-removed");
   row.setAttribute("role", "listitem");
@@ -10524,12 +10524,23 @@ async function paintFindPanel() {
     (value) => f.orbits.includes(value), (value) => { f.orbits = toggleIn(f.orbits, value); });
   findSection(panel, t("find.state", "State"), FIND_STATES.map(([value, key, fallback]) => [value, t(key, fallback)]),
     (value) => f.states.includes(value), (value) => { f.states = toggleIn(f.states, value); });
-  findSection(panel, t("find.show", "Show"),
+  // Removals have a moment, not a title or a length, so they are listed only in time order. In the
+  // other orders the choice is shown switched off with the reason, rather than on and doing nothing.
+  const timeOrder = findTimeOrder(f.sort);
+  const showTitle = t("find.show", "Show");
+  const show = findSection(panel, showTitle,
     [["added", t("find.showAdded", "Captures as they were added")], ["removed", t("find.showRemoved", "Captures that were removed")]],
-    (value) => f[value], (value) => {
+    (value) => f[value] && (value !== "removed" || timeOrder), (value) => {
+      if (value === "removed" && !timeOrder) return;
       f[value] = !f[value];
       if (!f.added && !f.removed) f.added = true; // showing nothing at all is never what was meant
     });
+  if (!timeOrder) {
+    const off = [...show.querySelectorAll("[data-key]")].find((el) => el.dataset.key === `find:${showTitle}:removed`);
+    if (off) off.disabled = true;
+    show.appendChild(elt("p", "find-note",
+      t("find.removedNeedsTime", "Removals are listed only newest or oldest first.")));
+  }
 
   const foot = elt("div", "find-foot");
   const clear = elt("button", "btn", t("find.clearAll", "Clear all"));
@@ -10551,6 +10562,11 @@ async function paintFindPanel() {
 function closeFindPanel() {
   horizonEl("find-panel").hidden = true;
   horizonEl("find-filter").setAttribute("aria-expanded", "false");
+}
+
+//: Whether the list is in time order, the only order removals can be placed in.
+function findTimeOrder(sort) {
+  return sort === "newest" || sort === "oldest";
 }
 
 const FIND_SORTS = [
@@ -10599,6 +10615,8 @@ function initFindTools() {
       item.setAttribute("aria-checked", horizonState.filters.sort === value ? "true" : "false");
       item.addEventListener("click", () => {
         horizonState.filters.sort = value;
+        // "Removed only" in an order that cannot list removals would show nothing at all.
+        if (!findTimeOrder(value)) horizonState.filters.added = true;
         closeMenu();
         sort.focus();
         findChanged();
@@ -14263,9 +14281,12 @@ function orbitPicker(nodeId, memberships = []) {
   const selected = new Map();
   for (const m of memberships || []) selected.set(m.orbit_id);
   //: A membership in an orbit the lists have not loaded yet (one "New orbit…" just opened, before
-  //: the rail refreshes) is still shown and counted, under whatever name is known for it.
+  //: the rail refreshes) is still shown and counted. Its name is asked of the server below, which
+  //: also tells a new orbit from one deleted since, so neither is called the other.
   const unknown = [...selected.keys()].filter((key) => !known.some((o) => (o.slug || o.id) === key));
-  const nameOf = (o) => labels.get(o.id) || orbitTitles.get(o.slug) || t("app.untitled", "Untitled orbit");
+  const gone = new Set();
+  const nameOf = (o) => labels.get(o.id) || orbitTitles.get(o.slug)
+    || (gone.has(o.slug) ? t("horizon.filedInGone", "a deleted orbit") : t("app.untitled", "Untitled orbit"));
   const orbits = [...known, ...unknown.map((key) => ({ id: key, slug: key }))]
     .sort((a, b) => nameOf(a).localeCompare(nameOf(b), uiLang()));
   const wrap = elt("div", "orbit-pick");
@@ -14286,6 +14307,19 @@ function orbitPicker(nodeId, memberships = []) {
     wrap.classList.toggle("is-empty", !chosen.length);
   };
   paintLabel();
+  if (unknown.length) {
+    void api("/orbits").then((listed) => {
+      const live = new Map((listed.orbits || []).map((o) => [o.slug || o.id, o]));
+      unknown.forEach((key) => {
+        const o = live.get(key);
+        if (o) orbitTitles.set(key, o.title || o.derived_title || t("app.untitled", "Untitled orbit"));
+        else gone.add(key);
+      });
+      if (!wrap.isConnected) return;
+      paintLabel();
+      if (!menu.hidden) paintMenu();
+    }).catch(() => {});
+  }
   wrap.appendChild(trigger);
   const menu = elt("div", "orbit-pick-menu");
   menu.setAttribute("role", "group");

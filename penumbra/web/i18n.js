@@ -166,6 +166,7 @@ const STRINGS = {
     "find.removeChip": "移除「{label}」",
     "find.noMatch": "沒有符合這些條件的收錄。",
     "find.removedBadge": "已移除",
+    "find.removedNeedsTime": "只有依時間排序（最新或最舊在前）時，才會列出移除紀錄。",
     "find.orbitQuoted": "「{name}」",
     "find.removedEverywhere": "已從視界移除，也從 {where} 刪除。",
     "find.removedHorizon": "已從視界移除，{where} 裡的那份還在。",

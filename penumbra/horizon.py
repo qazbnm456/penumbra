@@ -791,6 +791,11 @@ def claim_node(
     return bool(changed)
 
 
+#: The most removal records kept. The list shows them in time order and pages like the captures, so
+#: this is a bound on the database, not on what a reader can scroll back to in practice.
+MAX_REMOVAL_EVENTS = 5000
+
+
 def remove_node(
     node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR, detail: dict | None = None
 ) -> bool:
@@ -829,6 +834,12 @@ def remove_node(
                     "VALUES (?, ?, ?, ?, ?, ?)",
                     ("removed", node_id, row["title"] or preview_title or row["origin"], row["origin"],
                      json.dumps(record, ensure_ascii=False), time.time()),
+                )
+                # Past the bound, the oldest records go, in the same transaction.
+                conn.execute(
+                    "DELETE FROM horizon_events WHERE id <= "
+                    "(SELECT id FROM horizon_events ORDER BY id DESC LIMIT 1 OFFSET ?)",
+                    (MAX_REMOVAL_EVENTS,),
                 )
             conn.execute("COMMIT")
         except BaseException:

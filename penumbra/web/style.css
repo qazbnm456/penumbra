@@ -10521,6 +10521,18 @@ button.node-more:hover {
   justify-content: space-between;
 }
 
+/* Why a choice in the panel is switched off, under its chips. */
+.find-note {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.find-options .lens:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .find-heading {
   margin: 0;
   font-size: var(--text-xs);
