@@ -16,6 +16,7 @@ docstrings before adding a new write path.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import threading
 import unicodedata
@@ -187,16 +188,17 @@ def orbit_lock(orbit_id: str, *, base_dir: str | Path = DEFAULT_ORBITS_DIR) -> I
 
     A SIDECAR file rather than the orbit itself: `load_or_create` legitimately runs for a
     orbit that doesn't exist yet, and pre-creating the real path would break `load_orbit`'s
-    `path.exists()` contract. The lock file is never unlinked — deleting it would race with an
-    acquirer that already opened it — so one zero-byte file per orbit accumulates;
+    `path.exists()` contract. The lock file stays after its orbit is deleted, so one zero-byte file per
+    deleted orbit accumulates until a clear sweeps them (below);
     `list_orbit_summaries` globs `*.json`, so these stay invisible to it.
 
     **NOT reentrant.** A second acquisition from the same thread blocks forever (a different open
     file description, so `flock` sees a genuine second acquirer). Nothing passed to
     `mutate_orbit` may itself call `mutate_orbit`/`orbit_lock`.
 
-    The one exception to "never unlinked" is `sweep_orphan_locks`, run only while everything is being
-    cleared, when every write is refused and nothing runs.
+    The one place a lock file is unlinked is `sweep_orphan_locks`, while everything is being cleared.
+    That is safe because an acquirer checks, once it holds the lock, that the file it locked is still
+    the one at the path, and starts again if not.
 
     **POSIX only, stated rather than papered over.** Without `fcntl` (Windows), this degrades to a
     process-local `threading.Lock`: still correct for the single-process `uvicorn` deployment
@@ -216,12 +218,24 @@ def orbit_lock(orbit_id: str, *, base_dir: str | Path = DEFAULT_ORBITS_DIR) -> I
             yield
         return
 
-    with open(lock_path, "a+") as fh:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    # Locked, then checked that the file still has its name: an acquirer that opened the lock just
+    # before `sweep_orphan_locks` removed it would otherwise hold a lock on a nameless file while the
+    # next writer locks a new one, and two writers would both believe they hold it.
+    while True:
+        with open(lock_path, "a+") as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            try:
+                named = os.stat(lock_path).st_ino == os.fstat(fh.fileno()).st_ino
+            except FileNotFoundError:
+                named = False
+            if not named:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                continue
+            try:
+                yield
+            finally:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            return
 
 
 def sweep_orphan_locks(*, base_dir: str | Path = DEFAULT_ORBITS_DIR) -> int:
@@ -238,11 +252,11 @@ def sweep_orphan_locks(*, base_dir: str | Path = DEFAULT_ORBITS_DIR) -> int:
     for lock_path in base.glob(".*.json.lock"):
         if (base / lock_path.name[1:-len(".lock")]).exists():
             continue
-        if fcntl is None:  # pragma: no cover - POSIX-only fallback: no cross-process lock to respect
-            lock_path.unlink(missing_ok=True)
-            swept += 1
-            continue
         try:
+            if fcntl is None:  # pragma: no cover - POSIX-only fallback: no cross-process lock here
+                lock_path.unlink(missing_ok=True)
+                swept += 1
+                continue
             with open(lock_path, "a+") as fh:
                 try:
                     fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)

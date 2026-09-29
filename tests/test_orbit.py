@@ -821,3 +821,49 @@ def test_promoting_a_note_never_reuses_a_removed_sources_id():
     # The decisive pair: the survivor still means itself, and the promoted note is reachable at all.
     assert corpus.get("s3").blocks[0].text == "THREE"
     assert "promoted note text" in corpus.get("s4").blocks[0].text
+
+
+def test_a_writer_whose_lock_file_was_swept_starts_again(tmp_path):
+    """A waiter that opened the lock before the sweep removed it must not end up holding a nameless
+    file while the next writer locks a new one."""
+    import fcntl
+    import threading
+
+    from penumbra.orbit import orbit_lock
+
+    lock = tmp_path / ".x.json.lock"
+    got = threading.Event()
+    release = threading.Event()
+
+    def waiter():
+        with orbit_lock("x", base_dir=tmp_path):
+            got.set()
+            release.wait(5)
+
+    with orbit_lock("x", base_dir=tmp_path):
+        thread = threading.Thread(target=waiter)
+        thread.start()
+        import time
+        time.sleep(0.2)  # the waiter has opened the file and blocks in flock
+        lock.unlink()    # what the sweep does
+    assert got.wait(5)
+    # The waiter now holds the lock on the file at the path, so a newcomer cannot take it.
+    with open(lock, "a+") as fh:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            taken = True
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            taken = False
+    release.set()
+    thread.join(5)
+    assert not taken
+
+
+def test_the_sweep_keeps_the_lock_of_an_orbit_that_exists(tmp_path):
+    from penumbra.orbit import mutate_orbit, sweep_orphan_locks
+
+    mutate_orbit("alive", lambda orb: None, base_dir=tmp_path, create=True)
+    (tmp_path / ".dead.json.lock").write_text("", encoding="utf-8")
+    assert sweep_orphan_locks(base_dir=tmp_path) == 1
+    assert (tmp_path / ".alive.json.lock").exists() and not (tmp_path / ".dead.json.lock").exists()
