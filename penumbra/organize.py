@@ -50,17 +50,19 @@ questions about together.
 entities. `orbits` is a JSON list of the orbits that exist, each with an id, a title and what it holds.
 
 For each capture decide one of:
-- put it into an existing orbit whose subject it belongs to (use that orbit's id), and say how it fits in \
+- put it into an existing orbit (use that orbit's id), and say how it fits in \
 `fit`: "subject" when the capture is about the orbit's subject, "part" when it is about one part of it, \
 "loose" when all it shares is a word, a place, a person or a broad theme. A lighthouse is not astronomy \
-because both involve light or the sky; origami is not Taiwanese history because it is practised in Taiwan;
+because both involve light or the sky; origami is not Taiwanese history because it is practised in Taiwan. \
+A loose placement is not filed, so leave the capture instead;
 - put it into a NEW orbit, when no existing orbit fits and at least one other capture here shares its \
 subject. Captures on one new subject share one new orbit. A capture whose subject no other capture shares \
 and no existing orbit holds is left: it gets an orbit once a second capture on its subject arrives. Never \
 stretch an orbit to hold it. A \
 new orbit's name is short (2 to 6 words), names the subject broadly enough to hold more captures like \
 it, and is written in `language` when one is given, otherwise in the language most captures are written in;
-- leave it, only when it is too thin to place at all.
+- leave it, when it is too thin to place, or when no existing orbit is about its subject and no other \
+capture here shares it.
 
 Prefer an existing orbit when the capture is about its subject or a part of it. Never invent a new orbit \
 that duplicates an existing one. \
@@ -114,7 +116,8 @@ def plan_from(
     Only a capture it was shown, and each at most once; only an orbit that exists (`orbits` maps id
     to title); a new name equal to an existing orbit's title files into that orbit; new names are
     cut to a sensible length; a placement into an existing orbit counts only with a `fit` in
-    `FILING_FITS`, so a loose one leaves the capture; a new name only one capture was given is not opened
+    `FILING_FITS` (a new name equal to an existing title included), so a loose one leaves the capture;
+    a new name only one capture was given is not opened
     (`MIN_NEW_ORBIT`); and past `max_new` distinct new names the rest are dropped rather than
     opened.
     """
@@ -147,6 +150,10 @@ def plan_from(
             out.append((capture, "orbit", orbit))
         elif name:
             if _key(name) in by_title:
+                # A "new" name that is an existing orbit's title is that orbit, and it takes the same
+                # stated fit as any placement into an existing orbit.
+                if str(item.get("fit") or "").strip().lower() not in FILING_FITS:
+                    continue
                 seen.add(capture)
                 out.append((capture, "orbit", by_title[_key(name)]))
                 continue

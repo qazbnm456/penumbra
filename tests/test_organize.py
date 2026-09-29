@@ -24,7 +24,7 @@ def test_the_plan_keeps_only_what_it_was_shown():
         {"capture": "b", "orbit": "invented"},  # an orbit that does not exist, and no name
         {"capture": "c", "new_orbit": "  Solar   sails "},
         {"capture": "d", "new_orbit": "solar sails"},
-        {"capture": "e", "new_orbit": "Reading"},  # the title of an orbit that exists
+        {"capture": "e", "new_orbit": "Reading", "fit": "subject"},  # the title of an orbit that exists
         "not a placement",
     ]}
     plan = organize.plan_from(raw, captures={"a", "b", "c", "d", "e"}, orbits={"o1": "Reading", "o2": ""})
@@ -45,10 +45,14 @@ def test_a_loose_fit_leaves_the_capture_waiting():
         {"capture": "origami", "orbit": "taiwan"},  # no fit given
         {"capture": "hubble", "orbit": "space", "fit": "Part"},
         {"capture": "exoplanet", "orbit": "space", "fit": "subject"},
+        {"capture": "comet", "new_orbit": "Space exploration"},  # an existing title, fit unstated
+        {"capture": "lighthouse", "orbit": "space", "fit": "subject"},  # its second, stated placement
     ]}
-    plan = organize.plan_from(raw, captures={"lighthouse", "origami", "hubble", "exoplanet"},
+    plan = organize.plan_from(raw, captures={"lighthouse", "origami", "hubble", "exoplanet", "comet"},
                               orbits={"space": "Space exploration", "taiwan": "Taiwanese history"})
-    assert plan == [("hubble", "orbit", "space"), ("exoplanet", "orbit", "space")]
+    assert plan == [
+        ("hubble", "orbit", "space"), ("exoplanet", "orbit", "space"), ("lighthouse", "orbit", "space"),
+    ]
 
 
 def test_the_plan_opens_a_bounded_number_of_new_orbits():
