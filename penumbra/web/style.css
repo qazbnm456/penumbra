@@ -6353,16 +6353,6 @@ textarea::placeholder {
    The chevron is an inline SVG in a `background-image` data URI, which is the one place a URL is
    allowed here: it carries no request, so invariant 51's beacon problem does not arise. `currentColor`
    cannot be used inside a data URI, so the stroke is drawn from a token that reads on both themes. */
-/* Only what differs from the shared `select` rule above: a row control, so smaller and on the
-   row's own surface. */
-.file-into {
-  font-size: var(--text-sm);
-  padding: var(--space-1) var(--space-9) var(--space-1) var(--space-4);
-  border-color: var(--border-strong);
-  background-color: var(--surface-1);
-  background-position: right 0.55rem center;
-}
-
 /* A hairline at rest, so a destructive action reads as a CONTROL rather than as the label sitting
    two elements away from it. The colour still only arrives on hover, and the `confirm()` is still
    the real guard; this is about not disguising the button as text. */
@@ -6856,7 +6846,7 @@ body[data-view="horizon"] .orbit-picker {
  *
  * `button` resets only `font` and `color`, so every control added with the Horizon fell through to
  * the UA focus ring: a 2px blue that exists nowhere in this palette, hugging the text closely
- * enough to cut the descenders of a node title. `.file-into` and `.md-link` already had the copper
+ * enough to cut the descenders of a node title. `.md-link` already had the copper
  * ring, so the intent existed and simply never reached the new code.
  *
  * One rule for every interactive class on this surface. `.node-head` gets padding with a matching
@@ -8982,7 +8972,7 @@ body.is-resizing .orbit-graph {
   padding-bottom: var(--space-2);
 }
 
-.card-row.is-filing .card-file {
+.card-row.is-filing .orbit-pick {
   max-width: 100%;
 }
 
@@ -9013,18 +9003,6 @@ body.is-resizing .orbit-graph {
 
 .card-row-title:hover {
   color: var(--accent);
-}
-
-.card-file {
-  flex: none;
-  max-width: 130px;
-  font: inherit;
-  font-size: var(--text-sm);
-  color: var(--text);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--space-1) var(--space-2);
 }
 
 .card-summary {
@@ -10663,4 +10641,145 @@ button.node-more:hover {
   font-size: var(--text-sm);
   color: var(--text-faint);
   overflow-wrap: anywhere;
+}
+
+/* The orbits a capture is in (`orbitPicker`): a box that says where it is, opening a list of every
+   orbit with a tick on those it is in; the list stays open while several are chosen. */
+.orbit-pick {
+  position: relative;
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.orbit-pick-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: 100%;
+  min-height: 32px;
+  padding: 0 var(--space-3) 0 var(--space-4);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.orbit-pick.is-empty .orbit-pick-trigger {
+  color: var(--text-dim);
+}
+
+.orbit-pick-trigger:hover,
+.orbit-pick-trigger[aria-expanded="true"] {
+  border-color: var(--accent);
+}
+
+.orbit-pick-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orbit-pick-caret {
+  flex: none;
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+}
+
+.orbit-pick-menu {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: max(240px, 100%);
+  max-height: 320px;
+  padding: var(--space-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 14px 34px -16px rgb(0 0 0 / 0.7);
+}
+
+.orbit-pick.opens-up .orbit-pick-menu {
+  top: auto;
+  bottom: calc(100% + var(--space-1));
+}
+
+.orbit-pick-menu[hidden] {
+  display: none;
+}
+
+.orbit-pick-search {
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  padding: var(--space-2) var(--space-3);
+}
+
+.orbit-pick-list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.orbit-pick-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: left;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  background: none;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+}
+
+.orbit-pick-item::before {
+  content: "";
+  flex: none;
+  width: 14px;
+  text-align: center;
+  color: var(--accent);
+}
+
+.orbit-pick-item[aria-pressed="true"] {
+  color: var(--text);
+  background: color-mix(in oklch, var(--accent) 12%, transparent);
+}
+
+.orbit-pick-item[aria-pressed="true"]::before {
+  content: "\2713";
+}
+
+.orbit-pick-item:hover,
+.orbit-pick-item:focus-visible {
+  outline: none;
+  background: var(--surface-1);
+}
+
+.orbit-pick-item[aria-pressed="true"]:hover {
+  background: color-mix(in oklch, var(--accent) 18%, transparent);
+}
+
+.orbit-pick-new {
+  color: var(--accent-text);
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  margin-top: var(--space-1);
+}
+
+.orbit-pick-new::before {
+  content: "+";
 }

@@ -9648,81 +9648,15 @@ async function nodeActions(node, detail) {
     main.appendChild(retry);
   }
 
-  let books = { orbits: [] };
-  try {
-    books = await api("/orbits");
-  } catch {
-    // A picker with no orbits is still usable: the field below accepts a new name.
-  }
-  // `facetLabels`, not `book.title || book.id`. This is the one control in the product where the
-  // reader has to CHOOSE an orbit, and it was printing the raw handle - invariant 37's violation,
-  // one function away from the tripwire written for it, in the worst possible place.
-  const bookLabels = facetLabels(books.orbits || []);
-
   // **A node with no blocks cannot be filed, so it is not offered.** `promote_node` requires the
   // blocks file; a `failed`, `queued` or `parsing` node has none, and choosing an orbit returned
   // `400 no such node, or its blocks are missing` for a node visibly on screen. A control whose
   // only possible outcome contradicts what the reader can see is the "no UI control that lies about
   // what the API does" rule, and the state is knowable here without asking.
   if (node.state === "ready" || node.state === "ready_undistilled") {
-    // What the picker offers depends on where the capture already is. Filed nowhere: file it.
-    // Filed in one orbit: it shows that orbit, and choosing another MOVES it there, the same move
-    // as carrying its moon between planets. Filed in several: "move" would not say from where, so
-    // it offers the orbits it is not in yet. An orbit it is already in is never offered again.
-    const memberships = detail.orbits || [];
-    // Memberships name an orbit by its key, which is only ever looked up (invariant 37).
-    const bookBySlug = new Map((books.orbits || []).map((b) => [b.slug || b.id, b]));
-    const filedBooks = new Set();
-    memberships.forEach((m) => {
-      const book = bookBySlug.get(m.orbit_id);
-      if (book) filedBooks.add(book);
-    });
-    const others = (books.orbits || []).filter((b) => !filedBooks.has(b));
-    const picker = elt("select", "file-into");
-    const hereBook = memberships.length === 1 && filedBooks.size === 1 ? [...filedBooks][0] : null;
-    const here = hereBook ? hereBook.slug || hereBook.id : null;
-    const hereName = hereBook ? bookLabels.get(hereBook.id) : "";
-    const first = elt("option", null, here
-      ? t("horizon.filedHere", `In ${hereName}`, { name: hereName })
-      : memberships.length
-        ? t("horizon.alsoFile", "Also file into\u2026")
-        : t("horizon.fileIntoPlaceholder", "File into\u2026"));
-    first.value = "";
-    picker.appendChild(first);
-    picker.setAttribute("aria-label", here
-      ? t("horizon.moveLabel", `In ${hereName}; choose an orbit to move it to`, { name: hereName })
-      : t("horizon.fileInto", "File into an orbit"));
-    for (const book of others) {
-      const label = bookLabels.get(book.id);
-      const option = elt("option", null, here ? t("horizon.moveTo", `Move to ${label}`, { name: label }) : label);
-      option.value = book.id;
-      picker.appendChild(option);
-    }
-    if (!here) {
-      const fresh = elt("option", null, t("horizon.newOrbit", "New orbit\u2026"));
-      fresh.value = "__new__";
-      picker.appendChild(fresh);
-    }
-    appendTakeOutOptions(picker, memberships);
-    picker.addEventListener("change", () => {
-      if (!picker.value) return;
-      if (picker.value.startsWith(TAKE_OUT)) {
-        const from = decodeURIComponent(picker.value.slice(TAKE_OUT.length));
-        picker.value = "";
-        void unfileCapture(node.id, from);
-        return;
-      }
-      if (!here) {
-        void promoteNode(node, picker);
-        return;
-      }
-      const book = others.find((b) => b.id === picker.value);
-      picker.value = "";
-      if (book) {
-        void moveCapture({ id: node.id, orbit: here },
-          { id: book.id, slug: book.slug || book.id, title: bookLabels.get(book.id) });
-      }
-    });
+    // One control for every orbit it is in (`orbitPicker`): ticked where it is, pressed to file it
+    // into another or take it out. Memberships name an orbit by its key (invariant 37).
+    const picker = orbitPicker(node.id, detail.orbits || []);
     main.appendChild(picker);
     const read = elt("button", "btn", t("map.readInList", "Read it"));
     read.type = "button";
@@ -9736,27 +9670,6 @@ async function nodeActions(node, detail) {
     );
   }
 
-  // Same rule as the picker: a membership names an orbit, and an orbit is named by its LABEL.
-  // A membership whose orbit has since been deleted says so rather than falling back to the id.
-  //: **Keyed on the SLUG, because that is what a membership stores.** `promote_node` writes
-  //: `slug(orbit_id)` — deliberately, since the slug is what identifies the orbit FILE — and
-  //: `facetLabels` keys on the id, so the two never met. Every node filed into an orbit whose id
-  //: differs from its slug read "In a deleted orbit" while that orbit was listed, live, in
-  //: this row's own picker: `--orbit "reading list"` (slug `reading-list`), and every CJK name,
-  //: which invariant 10's `orbit-<hash>` fallback exists to make possible. A false statement about the
-  //: reader's own data whose next move is to re-file something already filed.
-  const bySlug = new Map(
-    (books.orbits || []).map((b) => [b.slug || b.id, bookLabels.get(b.id)])
-  );
-  const filed = (detail.orbits || []).map(
-    (m) =>
-      bySlug.get(m.orbit_id) ||
-      bookLabels.get(m.orbit_id) ||
-      t("horizon.filedInGone", "a deleted orbit")
-  );
-  // Where it is filed shows on the card's chips and in the trail above, not a third time here.
-  void filed;
-
   actions.appendChild(main);
 
   const remove = elt("button", "node-danger", t("horizon.forget", "Forget"));
@@ -9764,37 +9677,6 @@ async function nodeActions(node, detail) {
   remove.addEventListener("click", () => forgetNode(node));
   actions.appendChild(remove);
   return actions;
-}
-
-async function promoteNode(node, picker) {
-  let orbitId = picker.value;
-  if (!orbitId) return;
-  //: **Whether this id is NEW is something only this side knows**, and the server now asks. The
-  //: picker's other options come from the orbit list fetched when the Horizon rendered, so one can
-  //: name an orbit that has since been deleted — and promoting through a stale option used to
-  //: RE-CREATE it, same handle, holding one source and none of its title, sources, notes or turns.
-  const minted = orbitId === "__new__";
-  if (minted) {
-    // The id is a HANDLE and the UI mints it (invariant 37): a reader is never asked to invent one.
-    orbitId = `orbit-${crypto.randomUUID().slice(0, 8)}`;
-  }
-  picker.disabled = true;
-  try {
-    await api(`/horizon/${encodeURIComponent(node.id)}/promote`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ orbit_id: orbitId, create: minted }),
-    });
-  } catch (err) {
-    notify(t("horizon.promoteFailed", `Could not file it: ${err.message}`, { message: err.message }));
-    picker.disabled = false;
-    picker.value = "";
-    return;
-  }
-  picker.disabled = false;
-  picker.value = "";
-  await refreshHorizon({ reset: true });
-  renderStarMapCard();
 }
 
 //: Removing a capture from the map. Filed into orbits, it asks which: from the Horizon only (the
@@ -14142,46 +14024,143 @@ function mapCardClose(card) {
 }
 
 //: "File into…" for one capture. Only orbits it is not already in are offered.
-function filePicker(nodeId, orbits = starMap.orbits, { also = false, memberships = [] } = {}) {
-  const picker = document.createElement("select");
-  picker.className = "card-file";
-  const label = also ? t("horizon.alsoFile", "Also file into…") : t("map.fileInto", "File into…");
-  picker.setAttribute("aria-label", label);
-  picker.appendChild(new Option(label, ""));
-  orbits.forEach((o) => picker.appendChild(new Option(o.title, o.id)));
-  appendTakeOutOptions(picker, memberships);
-  picker.addEventListener("change", () => {
-    if (!picker.value) return;
-    if (picker.value.startsWith(TAKE_OUT)) {
-      const from = decodeURIComponent(picker.value.slice(TAKE_OUT.length));
-      picker.value = "";
-      void unfileCapture(nodeId, from);
-      return;
+//: Which capture's orbit menu was open, so the rebuild that follows each filing (the card and the
+//: list repaint on refresh) opens it again and the reader can keep choosing.
+const orbitPickOpen = { nodeId: null, wrap: null, close: null };
+
+//: One listener for every picker, not one per picker: the list repaints often, and each repaint
+//: would otherwise leave another listener on the document for a wrap that no longer exists.
+document.addEventListener("pointerdown", (event) => {
+  const { wrap, close } = orbitPickOpen;
+  if (close && !(wrap && wrap.contains(event.target))) close();
+});
+
+//: The orbits a capture is in, as one control: a box that says where it is (in no orbit, in one by
+//: name, or in several) and opens a list of every orbit with a tick on those it is in. Pressing an
+//: orbit files it there or takes it out, and the list stays open so several can be chosen. It
+//: replaces a native select, which could only do one thing at a time and could not show a capture
+//: being in several orbits at once.
+function orbitPicker(nodeId, memberships = []) {
+  //: The rail's own labels (`facetLabels`): never the handle, and two alike orbits told apart.
+  //: Sorted by name rather than in the rail's order, which follows counts: filing a capture changes
+  //: a count, and the row just pressed would jump under the pointer.
+  const known = facetView.orbits.length ? facetView.orbits : starMap.orbits;
+  const labels = facetLabels(known);
+  const nameOf = (o) => labels.get(o.id) || "";
+  const orbits = [...known].sort((a, b) => nameOf(a).localeCompare(nameOf(b), uiLang()));
+  //: Keys only: `has` is the one question asked of it.
+  const selected = new Map();
+  for (const m of memberships || []) selected.set(m.orbit_id);
+  const wrap = elt("div", "orbit-pick");
+  const trigger = elt("button", "orbit-pick-trigger");
+  trigger.type = "button";
+  trigger.setAttribute("aria-haspopup", "true");
+  trigger.setAttribute("aria-expanded", "false");
+  const label = elt("span", "orbit-pick-label");
+  trigger.appendChild(label);
+  trigger.appendChild(elt("span", "orbit-pick-caret", "\u25be"));
+  const paintLabel = () => {
+    const chosen = orbits.filter((o) => selected.has(o.slug || o.id));
+    label.textContent = !chosen.length
+      ? t("pick.none", "In no orbit yet")
+      : chosen.length === 1
+        ? t("pick.one", `In \u201c${nameOf(chosen[0])}\u201d`, { name: nameOf(chosen[0]) })
+        : t("pick.many", `In ${chosen.length} orbits`, { n: chosen.length });
+    wrap.classList.toggle("is-empty", !chosen.length);
+  };
+  paintLabel();
+  wrap.appendChild(trigger);
+  const menu = elt("div", "orbit-pick-menu");
+  menu.setAttribute("role", "group");
+  menu.hidden = true;
+  wrap.appendChild(menu);
+  let query = "";
+  const paintMenu = () => {
+    menu.textContent = "";
+    if (orbits.length > 6) {
+      const search = document.createElement("input");
+      search.type = "search";
+      search.className = "orbit-pick-search";
+      search.placeholder = t("pick.search", "Find an orbit");
+      search.value = query;
+      search.addEventListener("input", () => {
+        query = search.value;
+        paintItems();
+      });
+      menu.appendChild(search);
     }
-    void fileCapture(nodeId, picker.value, picker);
+    const list = elt("div", "orbit-pick-list");
+    menu.appendChild(list);
+    const paintItems = () => {
+      list.textContent = "";
+      const q = query.trim().toLowerCase();
+      orbits.filter((o) => !q || nameOf(o).toLowerCase().includes(q)).forEach((o) => {
+        const key = o.slug || o.id;
+        const item = elt("button", "orbit-pick-item", nameOf(o));
+        item.type = "button";
+        item.setAttribute("aria-pressed", selected.has(key) ? "true" : "false");
+        item.addEventListener("click", async () => {
+          orbitPickOpen.nodeId = nodeId;
+          item.disabled = true;
+          const was = selected.has(key);
+          const ok = was ? await unfileCapture(nodeId, key, { label: nameOf(o), orbitId: o.id }) : await fileCapture(nodeId, o.id, null, { label: nameOf(o) });
+          item.disabled = false;
+          if (ok === false) return;
+          if (was) selected.delete(key);
+          else selected.set(key);
+          item.setAttribute("aria-pressed", selected.has(key) ? "true" : "false");
+          paintLabel();
+        });
+        list.appendChild(item);
+      });
+      const fresh = elt("button", "orbit-pick-item orbit-pick-new", t("horizon.newOrbit", "New orbit\u2026"));
+      fresh.type = "button";
+      fresh.addEventListener("click", async () => {
+        orbitPickOpen.nodeId = nodeId;
+        await fileCapture(nodeId, `orbit-${crypto.randomUUID().slice(0, 8)}`, null, { create: true });
+      });
+      list.appendChild(fresh);
+    };
+    paintItems();
+  };
+  const open = () => {
+    paintMenu();
+    menu.hidden = false;
+    // Upwards when the space below cannot hold it: the picker often sits at the foot of a panel.
+    // Measured a frame later, because a picker reopened after a repaint is not on the page yet.
+    wrap.classList.remove("opens-up");
+    requestAnimationFrame(() => {
+      const room = menu.getBoundingClientRect();
+      if (room.bottom > window.innerHeight - 8 && wrap.getBoundingClientRect().top > room.height + 8) {
+        wrap.classList.add("opens-up");
+      }
+    });
+    trigger.setAttribute("aria-expanded", "true");
+    if (orbitPickOpen.close && orbitPickOpen.wrap !== wrap) orbitPickOpen.close();
+    Object.assign(orbitPickOpen, { nodeId, wrap, close });
+  };
+  const close = () => {
+    menu.hidden = true;
+    trigger.setAttribute("aria-expanded", "false");
+    if (orbitPickOpen.wrap === wrap) Object.assign(orbitPickOpen, { nodeId: null, wrap: null, close: null });
+  };
+  trigger.addEventListener("click", () => (menu.hidden ? open() : close()));
+  wrap.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !menu.hidden) {
+      event.stopPropagation();
+      close();
+      trigger.focus();
+    }
   });
-  return picker;
-}
-
-//: The value prefix of a picker option that takes the capture out of an orbit rather than into one.
-const TAKE_OUT = "__out__:";
-
-//: "Take out of X", one per orbit the capture is in, after the orbits it could go into: the undo
-//: for a filing into the wrong orbit, which used to mean opening that orbit's study columns and
-//: deleting the source there. Memberships name an orbit by its key, only looked up (invariant 37).
-function appendTakeOutOptions(picker, memberships) {
-  (memberships || []).forEach((m) => {
-    const name = orbitTitles.get(m.orbit_id) || t("suggest.anOrbit", "an orbit");
-    // The option's VALUE carries the key, encoded as the URL segment the request will use.
-    picker.appendChild(new Option(t("horizon.takeOut", `Take out of ${name}`, { name }),
-      TAKE_OUT + encodeURIComponent(m.orbit_id)));
-  });
+  // Rebuilt after a filing: open again where the reader left it.
+  if (orbitPickOpen.nodeId === nodeId) queueMicrotask(open);
+  return wrap;
 }
 
 //: Out of one orbit, back to the Horizon if it is in no other. Saved citations of it would be left
 //: unverified, so the server asks first when there are any, as a move does.
-async function unfileCapture(nodeId, orbitKey, { confirm = false } = {}) {
-  const name = orbitTitles.get(orbitKey) || t("suggest.anOrbit", "an orbit");
+async function unfileCapture(nodeId, orbitKey, { confirm = false, label = "", orbitId = "" } = {}) {
+  const name = label || orbitTitles.get(orbitKey) || t("suggest.anOrbit", "an orbit");
   try {
     await api(`/horizon/${encodeURIComponent(nodeId)}/unfile`, {
       method: "POST",
@@ -14194,39 +14173,43 @@ async function unfileCapture(nodeId, orbitKey, { confirm = false } = {}) {
       const ok = await confirmAction(t("map.unfileCited",
         `${n} saved citations in ${name} point at this. Taking it out leaves them unverified. Take it out anyway?`,
         { n, from: name }));
-      if (ok) await unfileCapture(nodeId, orbitKey, { confirm: true });
-      return;
+      return ok ? unfileCapture(nodeId, orbitKey, { confirm: true, label, orbitId }) : false;
     }
     notify(readableError(err.message));
-    return;
+    return false;
   }
   renderCaptureCard.cache = null;
   const orbit = starMap.orbits.find((o) => o.slug === orbitKey);
+  const backTo = orbitId || (orbit && orbit.id);
   notify(t("map.unfiled", `Taken out of ${name}.`, { name }), {
     tone: "good",
     timeout: 8000,
-    action: orbit ? { label: t("map.undo", "Undo"), run: () => void fileCapture(nodeId, orbit.id) } : null,
+    action: backTo
+      ? { label: t("map.undo", "Undo"), run: () => void fileCapture(nodeId, backTo, null, { label }) }
+      : null,
   });
   void refreshHorizon().then(() => renderStarMapCard());
   void renderStarMap();
+  return true;
 }
 
-async function fileCapture(nodeId, orbitId, control) {
+async function fileCapture(nodeId, orbitId, control, { create = false, label = "" } = {}) {
   if (control) control.disabled = true;
   let filed;
   try {
     filed = await api(`/horizon/${encodeURIComponent(nodeId)}/promote`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ orbit_id: orbitId, create: false }),
+      body: JSON.stringify({ orbit_id: orbitId, create }),
     });
   } catch (err) {
     if (control) control.disabled = false;
     notify(readableError(err.message));
     return false;
   }
+  // The caller's label first: the list view has not drawn the map, so `starMap.orbits` can be empty.
   const orbit = starMap.orbits.find((o) => o.id === orbitId);
-  const name = orbit ? orbit.title : t("suggest.anOrbit", "an orbit");
+  const name = label || (orbit && orbit.title) || t("suggest.anOrbit", "an orbit");
   // Undo only for a source THIS filing added: promotion returns the one already there when the
   // capture was filed in that orbit or the orbit holds the same text, and deleting that one would
   // remove a source that may be cited.
@@ -14289,7 +14272,7 @@ function renderHorizonCard(card, { standing = false } = {}) {
     name.type = "button";
     name.addEventListener("click", () => openMapFocus({ kind: "capture", ...item, orbit: null }));
     row.appendChild(name);
-    row.appendChild(filePicker(item.id));
+    row.appendChild(orbitPicker(item.id));
     list.appendChild(row);
   });
   card.appendChild(list);
@@ -14337,7 +14320,7 @@ function renderHorizonTodo(card, loose) {
       name.addEventListener("click", () => openMapFocus({ kind: "capture", ...item, orbit: null }));
       if (suggest.left.has(item.id)) name.appendChild(elt("span", "todo-tag", t("map.todoLeftTag", "waiting for a second")));
       row.appendChild(name);
-      row.appendChild(filePicker(item.id));
+      row.appendChild(orbitPicker(item.id));
       list.appendChild(row);
     });
     card.appendChild(list);
@@ -14619,15 +14602,13 @@ function renderCaptureCard(card, focus) {
     // Memberships name an orbit by its key, which is only ever looked up: into its label for the
     // "In …" line, and out of the orbits the picker offers (invariant 37).
     const memberships = got.orbits || [];
-    const offer = new Map(starMap.orbits.map((o) => [o.slug, o]));
-    memberships.forEach((m) => offer.delete(m.orbit_id));
     const where = memberships.map((m) => orbitTitles.get(m.orbit_id) || t("suggest.anOrbit", "an orbit"));
     if (where.length) {
       const joined = where.join(t("list.sep", ", "));
       detail.appendChild(elt("p", "card-meta", t("map.filedIn", `In ${joined}`, { where: joined })));
     }
     const actions = elt("div", "card-actions");
-    actions.appendChild(filePicker(focus.id, [...offer.values()], { also: memberships.length > 0, memberships }));
+    actions.appendChild(orbitPicker(focus.id, memberships));
     const read = elt("button", "btn", t("map.readInList", "Read it in full"));
     read.type = "button";
     read.addEventListener("click", () => void showNodeReader({ ...node, id: focus.id }));
