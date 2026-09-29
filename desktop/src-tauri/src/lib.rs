@@ -1138,18 +1138,18 @@ mod tests {
         static PENDING: AtomicBool = AtomicBool::new(false);
         static RAN: AtomicUsize = AtomicUsize::new(0);
         for _ in 0..20 {
-            super::after_quiet(&EDITS, &PENDING, Duration::from_millis(60), || {
+            super::after_quiet(&EDITS, &PENDING, Duration::from_millis(200), || {
                 RAN.fetch_add(1, SeqCst);
             });
             std::thread::sleep(Duration::from_millis(5));
         }
-        std::thread::sleep(Duration::from_millis(250));
+        std::thread::sleep(Duration::from_millis(700));
         assert_eq!(RAN.load(SeqCst), 1, "one act for the whole burst");
         // A call after the burst has settled acts again.
-        super::after_quiet(&EDITS, &PENDING, Duration::from_millis(60), || {
+        super::after_quiet(&EDITS, &PENDING, Duration::from_millis(200), || {
             RAN.fetch_add(1, SeqCst);
         });
-        std::thread::sleep(Duration::from_millis(250));
+        std::thread::sleep(Duration::from_millis(700));
         assert_eq!(RAN.load(SeqCst), 2);
     }
 

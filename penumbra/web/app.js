@@ -10533,7 +10533,8 @@ async function paintFindPanel() {
     (value) => f[value] && (value !== "removed" || timeOrder), (value) => {
       if (value === "removed" && !timeOrder) return;
       f[value] = !f[value];
-      if (!f.added && !f.removed) f.added = true; // showing nothing at all is never what was meant
+      // Showing nothing at all is never what was meant, and out of time order removals show nothing.
+      if (!f.added && !(f.removed && timeOrder)) f.added = true;
     });
   if (!timeOrder) {
     const off = [...show.querySelectorAll("[data-key]")].find((el) => el.dataset.key === `find:${showTitle}:removed`);
@@ -14312,10 +14313,12 @@ function orbitPicker(nodeId, memberships = []) {
       const live = new Map((listed.orbits || []).map((o) => [o.slug || o.id, o]));
       unknown.forEach((key) => {
         const o = live.get(key);
-        if (o) orbitTitles.set(key, o.title || o.derived_title || t("app.untitled", "Untitled orbit"));
-        else gone.add(key);
+        // Only the orbit's own words go into the shared cache, never a localised placeholder.
+        if (o && (o.title || o.derived_title)) orbitTitles.set(key, o.title || o.derived_title);
+        else if (!o) gone.add(key);
       });
       if (!wrap.isConnected) return;
+      orbits.sort((a, b) => nameOf(a).localeCompare(nameOf(b), uiLang()));
       paintLabel();
       if (!menu.hidden) paintMenu();
     }).catch(() => {});
