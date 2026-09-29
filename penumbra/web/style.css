@@ -10378,3 +10378,289 @@ button.node-more:hover {
   color: var(--bad);
   border-color: color-mix(in oklch, var(--bad) 45%, var(--border));
 }
+
+/* --- The list's conditions: a filter and an order beside the find field, the conditions in force
+   as removable chips under it, and removals shown where they happened. --- */
+.find {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.find[hidden] {
+  display: none;
+}
+
+.find-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.find-sort {
+  padding: 0 var(--space-2);
+}
+
+.find-tool {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 30px;
+  padding: 0 var(--space-3);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.find-tool svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.find-tool:hover,
+.find-tool[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--surface-1);
+  border-color: var(--border);
+}
+
+.find-count {
+  min-width: 18px;
+  padding: 0 5px;
+  font-size: var(--text-2xs);
+  line-height: 18px;
+  text-align: center;
+  color: var(--accent-text);
+  background: color-mix(in oklch, var(--accent) 20%, transparent);
+  border-radius: 999px;
+}
+
+.find-count[hidden] {
+  display: none;
+}
+
+.find-menu {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: var(--space-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 30px -14px rgb(0 0 0 / 0.7);
+}
+
+.find-menu[hidden] {
+  display: none;
+}
+
+.find-panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  width: min(560px, 100%);
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-6);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 40px -18px rgb(0 0 0 / 0.7);
+}
+
+.find-panel[hidden] {
+  display: none;
+}
+
+.find-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.find-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.find-heading {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.find-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.find-tags {
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.find-mode {
+  display: inline-flex;
+  padding: 2px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.find-mode-btn {
+  font: inherit;
+  font-size: var(--text-xs);
+  padding: 2px var(--space-3);
+  color: var(--text-dim);
+  background: none;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.find-mode-btn[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.find-range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.find-range-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.find-range-field input {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-1) var(--space-3);
+  color-scheme: light dark;
+}
+
+.find-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.find-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.find-chips[hidden] {
+  display: none;
+}
+
+.find-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--accent-text);
+  background: color-mix(in oklch, var(--accent) 12%, var(--surface-1));
+  border: 1px solid color-mix(in oklch, var(--accent) 40%, var(--border));
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-4);
+  cursor: pointer;
+}
+
+.find-chip-x {
+  color: var(--text-faint);
+}
+
+.find-chip:hover .find-chip-x {
+  color: var(--text);
+}
+
+.find-chip-clear {
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* A capture that was removed, where it would have been in the history: muted, struck through. */
+.node-removed-rail {
+  cursor: default;
+}
+
+.node-removed .node-dot {
+  background: var(--bg);
+  border: 1px solid var(--text-faint);
+  box-sizing: border-box;
+}
+
+.node-removed .node-col {
+  opacity: 0.72;
+}
+
+.node-removed-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.node-removed-badge {
+  flex: none;
+  font-size: var(--text-2xs);
+  color: var(--bad);
+  border: 1px solid color-mix(in oklch, var(--bad) 45%, var(--border));
+  border-radius: 999px;
+  padding: 0 var(--space-2);
+}
+
+.node-removed-title {
+  color: var(--text-dim);
+  text-decoration: line-through;
+  text-decoration-color: var(--text-faint);
+}
+
+.node-removed-note,
+.node-removed-origin {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}

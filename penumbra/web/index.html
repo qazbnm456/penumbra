@@ -189,7 +189,19 @@
                data-i18n-placeholder="horizon.find" placeholder="Find something you kept…" />
         <button type="button" class="find-clear" id="find-clear" hidden
                 data-i18n-title="horizon.findClear" title="Clear" aria-label="Clear" data-i18n-label="horizon.findClear">×</button>
+        <button type="button" class="find-tool" id="find-filter" aria-haspopup="dialog" aria-expanded="false"
+                aria-controls="find-panel" data-i18n-label="find.filter" aria-label="Filter">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M4.5 8h7M6.5 12h3"/></svg>
+          <span data-i18n="find.filter">Filter</span><span class="find-count" id="find-count" hidden></span>
+        </button>
+        <button type="button" class="find-tool find-sort" id="find-sort" aria-haspopup="menu" aria-expanded="false"
+                data-i18n-label="find.sort" aria-label="Order" data-i18n-title="find.sort" title="Order">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3v10M2.5 10.5 5 13l2.5-2.5M11 13V3M8.5 5.5 11 3l2.5 2.5"/></svg>
+        </button>
+        <div class="find-menu" id="find-sort-menu" role="menu" hidden></div>
+        <div class="find-panel" id="find-panel" role="dialog" aria-label="Filter" data-i18n-label="find.filter" hidden></div>
       </div>
+      <div class="find-chips" id="find-chips" hidden></div>
 
       <!-- The star map: the Horizon at the centre, each orbit a planet, captures its moons, and a
            link where two orbits share an entity, drawn on demand. Drawn from summaries only

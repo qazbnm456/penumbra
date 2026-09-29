@@ -8244,6 +8244,14 @@ const horizonState = {
   open: new Set(),
   query: "",
   findTimer: null,
+  //: The list's conditions beyond the text (`GET /horizon`), all ANDed: tags any or all of them,
+  //: orbits and states any, a date range, an order, and which actions to show.
+  filters: {
+    tags: [], tagMode: "any", orbits: [], states: [], date: "all", from: "", to: "",
+    sort: "newest", added: true, removed: true,
+  },
+  removed: [],
+  allTags: null,
   //: The summary pass's last reported state, kept here rather than read straight off the poll,
   //: because `updateStreamFoot` runs from several paths that have no status in hand.
   distil: { running: false, done: 0, total: 0, failed: 0, error: "" },
@@ -8759,6 +8767,48 @@ function nodeMetaLine(node) {
   return meta;
 }
 
+//: The removals to show among the loaded captures: only in the two orders by time, and, while more
+//: captures are still to load, only those within the stretch of time already shown.
+function findRemovalsInView() {
+  const f = horizonState.filters;
+  if (!f.removed || !["newest", "oldest"].includes(f.sort)) return [];
+  const events = horizonState.removed || [];
+  const more = horizonState.nodes.length < horizonState.total;
+  if (!more || !horizonState.nodes.length) return events;
+  const edge = horizonState.nodes[horizonState.nodes.length - 1].created_at;
+  return events.filter((event) => (f.sort === "oldest" ? event.at <= edge : event.at >= edge));
+}
+
+//: A capture that was removed, in the history where it would have been: when, its name, and from
+//: where it went.
+function renderRemoval(event) {
+  const row = elt("div", "node node-removed");
+  row.setAttribute("role", "listitem");
+  const time = elt("time", "node-time", clockTime(event.at));
+  time.dateTime = new Date(event.at * 1000).toISOString();
+  time.title = new Date(event.at * 1000).toLocaleString(uiLang());
+  row.appendChild(time);
+  // The rail's dot, hollow: it holds the column the capture's own dot button holds in a live row.
+  const rail = elt("span", "node-open node-removed-rail");
+  rail.appendChild(elt("span", "node-dot"));
+  row.appendChild(rail);
+  const col = elt("div", "node-col");
+  const head = elt("div", "node-removed-head");
+  head.appendChild(elt("span", "node-removed-badge", t("find.removedBadge", "Removed")));
+  head.appendChild(elt("span", "node-removed-title", captureName(event.title)));
+  col.appendChild(head);
+  const names = (event.orbits || []).map((slug) => orbitTitles.get(slug) || slug).join(t("list.sep", ", "));
+  const where = event.everywhere && names
+    ? t("find.removedEverywhere", `Removed from the Horizon and from ${names}.`, { where: names })
+    : names
+      ? t("find.removedHorizon", `Removed from the Horizon; ${names} kept its copy.`, { where: names })
+      : t("find.removedLoose", "Removed from the Horizon.");
+  col.appendChild(elt("p", "node-removed-note", where));
+  if (event.origin && /^https?:/.test(event.origin)) col.appendChild(elt("p", "node-removed-origin", event.origin));
+  row.appendChild(col);
+  return row;
+}
+
 function renderNode(node, { isNew = false } = {}) {
   const row = elt("div", "node");
   row.dataset.state = node.state;
@@ -9245,34 +9295,46 @@ function fillDistilError(errline) {
 
 function renderStream({ append = false, newIds = new Set() } = {}) {
   const stream = horizonEl("stream");
+  // Removals sit among the captures by time, so any in view means a full paint.
+  const removals = findRemovalsInView();
+  if (removals.length) append = false;
   if (!append) stream.textContent = "";
   const from = append ? Number(stream.dataset.rendered || 0) : 0;
   let lastDay = append ? stream.dataset.lastDay || "" : "";
-  for (const node of horizonState.nodes.slice(from)) {
-    const day = dayLabel(node.created_at);
-    if (day !== lastDay) {
+  const oldestFirst = horizonState.filters.sort === "oldest";
+  const items = horizonState.nodes.slice(from).map((node) => ({ at: node.created_at, node }));
+  if (removals.length) {
+    items.push(...removals.map((event) => ({ at: event.at, event })));
+    items.sort((a, b) => (oldestFirst ? a.at - b.at : b.at - a.at));
+  }
+  for (const item of items) {
+    const day = dayLabel(item.at);
+    if (day !== lastDay && ["newest", "oldest"].includes(horizonState.filters.sort)) {
       const line = elt("div", "dateline");
       line.appendChild(elt("span", "dateline-label", day));
       stream.appendChild(line);
       lastDay = day;
     }
-    stream.appendChild(renderNode(node, { isNew: newIds.has(node.id) }));
+    stream.appendChild(item.node ? renderNode(item.node, { isNew: newIds.has(item.node.id) }) : renderRemoval(item.event));
   }
   stream.dataset.rendered = String(horizonState.nodes.length);
   stream.dataset.lastDay = lastDay;
   const empty = horizonEl("stream-empty");
-  empty.hidden = horizonState.nodes.length > 0;
+  empty.hidden = horizonState.nodes.length > 0 || removals.length > 0;
   empty.classList.remove("is-error");
+  const filtering = findActive().length > 0;
   // "Nothing here yet" and "nothing matched what you typed" are different facts, and showing the
   // first while a query is active would tell the reader their Horizon is empty when it is not.
   if (!empty.hidden) {
     empty.textContent = horizonState.query
       ? t("horizon.noMatch", `Nothing matched \u201c${horizonState.query}\u201d.`, { q: horizonState.query })
-      : t("horizon.empty", "Nothing has landed yet. Paste a link above and Penny will keep it.");
+      : filtering
+        ? t("find.noMatch", "Nothing matches these conditions.")
+        : t("horizon.empty", "Nothing has landed yet. Paste a link above and Penny will keep it.");
   }
   // The first-run explanation belongs to an EMPTY Horizon, not to a search that found nothing: a
   // reader who just typed a query does not need to be told what a facet is.
-  const firstRun = empty.hidden === false && !horizonState.query;
+  const firstRun = empty.hidden === false && !horizonState.query && !filtering;
   horizonEl("first-run").hidden = !firstRun;
   //: **And nor does Find belong on a Horizon with nothing in it.** "Find something you kept" over
   //: an empty river offers a search of nothing, next to a first-run note explaining that this is
@@ -9320,6 +9382,7 @@ async function refreshHorizon({ reset = false, newIds = new Set() } = {}) {
     return;
   }
   horizonState.nodes = reset ? data.nodes : horizonState.nodes.concat(data.nodes);
+  horizonState.removed = data.removed || [];
   horizonState.offset = horizonState.nodes.length;
   horizonState.total = data.total;
   horizonState.undistilled = data.undistilled;
@@ -10140,7 +10203,333 @@ function paintFacets() {
 }
 
 function horizonQuery() {
-  return horizonState.query ? `&q=${encodeURIComponent(horizonState.query)}` : "";
+  const f = horizonState.filters;
+  const params = new URLSearchParams();
+  if (horizonState.query) params.set("q", horizonState.query);
+  f.tags.forEach((tag) => params.append("tag", tag));
+  if (f.tags.length > 1 && f.tagMode === "all") params.set("tag_mode", "all");
+  f.orbits.forEach((orbit) => params.append("orbit", orbit));
+  f.states.forEach((state) => params.append("states", state));
+  const range = findDateRange(f);
+  if (range.since !== null) params.set("since", String(range.since));
+  if (range.until !== null) params.set("until", String(range.until));
+  if (f.sort !== "newest") params.set("sort", f.sort);
+  if (!f.added) params.set("added", "false");
+  if (f.removed) params.set("removed", "true");
+  const text = params.toString();
+  return text ? `&${text}` : "";
+}
+
+//: A date choice as epoch seconds, `until` exclusive; the custom range is inclusive of its last day.
+function findDateRange(f) {
+  const day = 86400;
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const today = startOfToday.getTime() / 1000;
+  if (f.date === "today") return { since: today, until: null };
+  if (f.date === "week") return { since: today - 6 * day, until: null };
+  if (f.date === "month") return { since: today - 29 * day, until: null };
+  if (f.date === "custom") {
+    const at = (value) => (value ? new Date(`${value}T00:00:00`).getTime() / 1000 : null);
+    const to = at(f.to);
+    return { since: at(f.from), until: to === null ? null : to + day };
+  }
+  return { since: null, until: null };
+}
+
+//: How many conditions are on, for the Filter button's badge and the chips under the field.
+function findActive() {
+  const f = horizonState.filters;
+  const chips = [];
+  if (f.date !== "all") chips.push({ key: "date", label: findDateLabel(f) });
+  f.tags.forEach((tag) => chips.push({ key: `tag:${tag}`, label: `#${tag}` }));
+  if (f.tags.length > 1 && f.tagMode === "all") chips.push({ key: "tagMode", label: t("find.tagAll", "All of these tags") });
+  f.orbits.forEach((orbit) => chips.push({ key: `orbit:${orbit}`, label: orbit === "__none__"
+    ? t("find.noOrbit", "In no orbit") : orbitTitles.get(orbit) || orbit }));
+  f.states.forEach((state) => chips.push({ key: `state:${state}`, label: findStateLabel(state) }));
+  if (!f.added) chips.push({ key: "added", label: t("find.onlyRemoved", "Removed only") });
+  if (!f.removed) chips.push({ key: "removed", label: t("find.hideRemoved", "Removed hidden") });
+  return chips;
+}
+
+function findDateLabel(f) {
+  if (f.date === "today") return t("find.today", "Today");
+  if (f.date === "week") return t("find.week", "Last 7 days");
+  if (f.date === "month") return t("find.month", "Last 30 days");
+  return `${f.from || "\u2026"} \u2192 ${f.to || "\u2026"}`;
+}
+
+const FIND_STATES = [["ready", "find.stateReady", "Summarised"], ["ready_undistilled", "find.stateWaiting", "Not summarised yet"],
+  ["failed", "find.stateFailed", "Could not be read"]];
+
+function findStateLabel(state) {
+  const found = FIND_STATES.find(([value]) => value === state);
+  return found ? t(found[1], found[2]) : state;
+}
+
+//: Any change to a condition: repaint the chips and the panel, then reload the list once the
+//: reader pauses.
+function findChanged() {
+  paintFindChips();
+  if (!horizonEl("find-panel").hidden) paintFindPanel();
+  clearTimeout(horizonState.findTimer);
+  horizonState.findTimer = setTimeout(() => refreshHorizon({ reset: true }), 160);
+}
+
+function paintFindChips() {
+  const chips = findActive();
+  const findBadge = horizonEl("find-count");
+  findBadge.hidden = !chips.length;
+  findBadge.textContent = String(chips.length);
+  const chipRow = horizonEl("find-chips");
+  chipRow.textContent = "";
+  chipRow.hidden = !chips.length;
+  if (!chips.length) return;
+  chips.forEach(({ key, label }) => {
+    const chip = elt("button", "find-chip", label);
+    chip.type = "button";
+    chip.setAttribute("aria-label", t("find.removeChip", `Remove ${label}`, { label }));
+    chip.appendChild(elt("span", "find-chip-x", "\u00d7"));
+    chip.addEventListener("click", () => {
+      clearFindCondition(key);
+      findChanged();
+    });
+    chipRow.appendChild(chip);
+  });
+  const clear = elt("button", "find-chip-clear", t("find.clearAll", "Clear all"));
+  clear.type = "button";
+  clear.addEventListener("click", () => {
+    resetFindFilters();
+    findChanged();
+  });
+  chipRow.appendChild(clear);
+}
+
+function clearFindCondition(key) {
+  const f = horizonState.filters;
+  if (key === "date") f.date = "all";
+  else if (key === "tagMode") f.tagMode = "any";
+  else if (key === "added") f.added = true;
+  else if (key === "removed") f.removed = true;
+  else if (key.startsWith("tag:")) f.tags = f.tags.filter((tag) => tag !== key.slice(4));
+  else if (key.startsWith("orbit:")) f.orbits = f.orbits.filter((orbit) => orbit !== key.slice(6));
+  else if (key.startsWith("state:")) f.states = f.states.filter((state) => state !== key.slice(6));
+}
+
+function resetFindFilters() {
+  const sort = horizonState.filters.sort;
+  horizonState.filters = {
+    tags: [], tagMode: "any", orbits: [], states: [], date: "all", from: "", to: "",
+    sort, added: true, removed: true,
+  };
+}
+
+//: One section of the filter panel: a heading and toggle chips (`aria-pressed`).
+function findSection(panel, title, items, isOn, toggle) {
+  const section = elt("section", "find-section");
+  section.appendChild(elt("h3", "find-heading", title));
+  const list = elt("div", "find-options");
+  items.forEach(([value, label, count]) => {
+    const chip = elt("button", "lens", label);
+    chip.type = "button";
+    if (count !== undefined) chip.appendChild(elt("span", "lens-count", String(count)));
+    chip.setAttribute("aria-pressed", isOn(value) ? "true" : "false");
+    chip.addEventListener("click", () => {
+      toggle(value);
+      findChanged();
+    });
+    list.appendChild(chip);
+  });
+  section.appendChild(list);
+  panel.appendChild(section);
+  return section;
+}
+
+async function paintFindPanel() {
+  const panel = horizonEl("find-panel");
+  const f = horizonState.filters;
+  if (horizonState.allTags === null) {
+    horizonState.allTags = [];
+    try {
+      horizonState.allTags = (await api("/horizon/tags")).tags || [];
+    } catch {
+      // The panel works without tags; the section says there are none.
+    }
+  }
+  const scroll = panel.scrollTop;
+  panel.textContent = "";
+  const toggleIn = (list, value) => (list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
+
+  const date = findSection(panel, t("find.date", "When it was kept"),
+    [["all", t("find.anyTime", "Any time")], ["today", t("find.today", "Today")], ["week", t("find.week", "Last 7 days")],
+      ["month", t("find.month", "Last 30 days")], ["custom", t("find.custom", "Between dates")]],
+    (value) => f.date === value, (value) => { f.date = value; });
+  if (f.date === "custom") {
+    const range = elt("div", "find-range");
+    [["from", t("find.from", "From")], ["to", t("find.to", "To")]].forEach(([key, label]) => {
+      const field = document.createElement("label");
+      field.className = "find-range-field";
+      field.appendChild(elt("span", "", label));
+      const input = document.createElement("input");
+      input.type = "date";
+      input.value = f[key];
+      input.addEventListener("change", () => {
+        f[key] = input.value;
+        findChanged();
+      });
+      field.appendChild(input);
+      range.appendChild(field);
+    });
+    date.appendChild(range);
+  }
+
+  const tagSection = elt("section", "find-section");
+  const tagHead = elt("div", "find-heading-row");
+  tagHead.appendChild(elt("h3", "find-heading", t("find.tags", "Tags")));
+  const mode = elt("div", "find-mode");
+  [["any", t("find.tagAny", "Any")], ["all", t("find.tagAllShort", "All")]].forEach(([value, label]) => {
+    const button = elt("button", "find-mode-btn", label);
+    button.type = "button";
+    button.setAttribute("aria-pressed", f.tagMode === value ? "true" : "false");
+    button.addEventListener("click", () => {
+      f.tagMode = value;
+      findChanged();
+    });
+    mode.appendChild(button);
+  });
+  tagHead.appendChild(mode);
+  tagSection.appendChild(tagHead);
+  const tagSearch = document.createElement("input");
+  tagSearch.type = "search";
+  tagSearch.className = "lens-picker-search";
+  tagSearch.placeholder = t("lens.search", "Search tags");
+  tagSearch.value = horizonState.tagQuery || "";
+  const tagList = elt("div", "find-options find-tags");
+  const paintTags = () => {
+    const q = tagSearch.value.trim().toLowerCase();
+    horizonState.tagQuery = tagSearch.value;
+    tagList.textContent = "";
+    const chosen = horizonState.allTags.filter((tag) => f.tags.includes(tag.name));
+    const rest = horizonState.allTags.filter((tag) => !f.tags.includes(tag.name) && (!q || tag.name.toLowerCase().includes(q)));
+    [...chosen, ...rest].slice(0, 80).forEach((tag) => {
+      const chip = elt("button", "lens", `#${tag.name}`);
+      chip.type = "button";
+      chip.appendChild(elt("span", "lens-count", String(tag.count)));
+      chip.setAttribute("aria-pressed", f.tags.includes(tag.name) ? "true" : "false");
+      chip.addEventListener("click", () => {
+        f.tags = toggleIn(f.tags, tag.name);
+        findChanged();
+      });
+      tagList.appendChild(chip);
+    });
+    if (!tagList.children.length) tagList.appendChild(elt("p", "lens-picker-empty", t("lens.none", "No tag matches.")));
+  };
+  tagSearch.addEventListener("input", paintTags);
+  tagSection.appendChild(tagSearch);
+  tagSection.appendChild(tagList);
+  paintTags();
+  panel.appendChild(tagSection);
+
+  findSection(panel, t("find.orbits", "Orbits"),
+    [["__none__", t("find.noOrbit", "In no orbit")], ...facetView.orbits.map((o) => [o.slug, orbitTitles.get(o.slug) || o.derived_title || o.slug])],
+    (value) => f.orbits.includes(value), (value) => { f.orbits = toggleIn(f.orbits, value); });
+  findSection(panel, t("find.state", "State"), FIND_STATES.map(([value, key, fallback]) => [value, t(key, fallback)]),
+    (value) => f.states.includes(value), (value) => { f.states = toggleIn(f.states, value); });
+  findSection(panel, t("find.show", "Show"),
+    [["added", t("find.showAdded", "Captures as they were added")], ["removed", t("find.showRemoved", "Captures that were removed")]],
+    (value) => f[value], (value) => {
+      f[value] = !f[value];
+      if (!f.added && !f.removed) f.added = true; // showing nothing at all is never what was meant
+    });
+
+  const foot = elt("div", "find-foot");
+  const clear = elt("button", "btn", t("find.clearAll", "Clear all"));
+  clear.type = "button";
+  clear.addEventListener("click", () => {
+    resetFindFilters();
+    findChanged();
+  });
+  const done = elt("button", "btn btn-primary", t("find.done", "Done"));
+  done.type = "button";
+  done.addEventListener("click", closeFindPanel);
+  foot.appendChild(clear);
+  foot.appendChild(done);
+  panel.appendChild(foot);
+  panel.scrollTop = scroll;
+}
+
+function closeFindPanel() {
+  horizonEl("find-panel").hidden = true;
+  horizonEl("find-filter").setAttribute("aria-expanded", "false");
+}
+
+const FIND_SORTS = [
+  ["newest", () => t("find.sortNewest", "Newest first")],
+  ["oldest", () => t("find.sortOldest", "Oldest first")],
+  ["title", () => t("find.sortTitle", "By title")],
+  ["longest", () => t("find.sortLongest", "Longest first")],
+];
+
+function initFindTools() {
+  const filter = horizonEl("find-filter");
+  const panel = horizonEl("find-panel");
+  const sort = horizonEl("find-sort");
+  const menu = horizonEl("find-sort-menu");
+  filter.addEventListener("click", () => {
+    if (!panel.hidden) {
+      closeFindPanel();
+      return;
+    }
+    panel.hidden = false;
+    filter.setAttribute("aria-expanded", "true");
+    void paintFindPanel();
+  });
+  panel.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      closeFindPanel();
+      filter.focus();
+    }
+  });
+  const closeMenu = () => {
+    menu.hidden = true;
+    sort.setAttribute("aria-expanded", "false");
+  };
+  sort.addEventListener("click", () => {
+    if (!menu.hidden) {
+      closeMenu();
+      return;
+    }
+    menu.textContent = "";
+    FIND_SORTS.forEach(([value, label]) => {
+      const item = elt("button", "facet-sort-item", label());
+      item.type = "button";
+      item.setAttribute("role", "menuitemradio");
+      item.setAttribute("aria-checked", horizonState.filters.sort === value ? "true" : "false");
+      item.addEventListener("click", () => {
+        horizonState.filters.sort = value;
+        closeMenu();
+        sort.focus();
+        findChanged();
+      });
+      menu.appendChild(item);
+    });
+    menu.hidden = false;
+    sort.setAttribute("aria-expanded", "true");
+    menu.querySelector('[aria-checked="true"]')?.focus();
+  });
+  menu.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      closeMenu();
+      sort.focus();
+    }
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (!menu.hidden && !event.target.closest("#find-sort, #find-sort-menu")) closeMenu();
+    if (!panel.hidden && !event.target.closest("#find-filter, #find-panel, .find-chips")) closeFindPanel();
+  });
+  paintFindChips();
 }
 
 function setHorizonQuery(text) {
@@ -10432,6 +10821,7 @@ function initHorizon() {
 
 initHorizon();
 initFacetTools();
+initFindTools();
 
 // --- Asking the Horizon ------------------------------------------------------------------------
 //
