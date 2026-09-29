@@ -359,6 +359,14 @@ async function setTabState(tabId, state) {
 }
 
 const spinning = new Set();
+//: Tabs given an icon of their own, marked or not: the global icon no longer reaches them, so they
+//: are painted again when Penumbra goes on or offline.
+const painted = new Set();
+
+async function idleTitle() {
+  if (online !== false) return msg("actionTitle");
+  return msg((await pairing()) ? "offlineTitle" : "errorNotPaired");
+}
 let spinTimer = null;
 let spinFrame = 0;
 
@@ -379,11 +387,12 @@ async function paintTab(tabId, state) {
     clearInterval(spinTimer);
     spinTimer = null;
   }
+  painted.add(tabId);
   try {
     if (!mark) {
       if (online === false) await chrome.action.setIcon({ tabId, imageData: await drawIcon({ grey: true }) });
       else await chrome.action.setIcon({ tabId, path: { 16: "icons/16.png", 32: "icons/32.png" } });
-      await chrome.action.setTitle({ tabId, title: msg(online === false ? "offlineTitle" : "actionTitle") });
+      await chrome.action.setTitle({ tabId, title: await idleTitle() });
       return;
     }
     await chrome.action.setIcon({ tabId, imageData: await drawIcon({ grey: online === false, mark, frame: spinFrame }) });
@@ -411,6 +420,10 @@ function stale(state) {
 
 async function settleOrphans() {
   const all = await chrome.storage.session.get(null);
+  // Tabs painted without state (a capture taken back, a tab cleared) follow the global icon again.
+  for (const tabId of painted) {
+    if (!all[tabKey(tabId)]) await paintTab(tabId, null);
+  }
   for (const [key, state] of Object.entries(all)) {
     if (!key.startsWith("tab:") || !state) continue;
     const tabId = Number(key.slice(4));
@@ -424,6 +437,7 @@ async function settleOrphans() {
 void settleOrphans();
 chrome.tabs.onRemoved.addListener((tabId) => {
   spinning.delete(tabId);
+  painted.delete(tabId);
   void chrome.storage.session.remove(tabKey(tabId));
 });
 
@@ -667,7 +681,12 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (!message) return false;
   const tabId = sender.tab && sender.tab.id;
   if (message.type === "card-recapture") {
-    if (sender.tab) void capture(sender.tab, { kind: "page" });
+    // Keep again what was taken back: the page is read afresh, a passage or a link is sent as it was.
+    const body = lastBody.get(tabId);
+    if (sender.tab) {
+      if (!body || body.kind === "page") void capture(sender.tab, { kind: "page" });
+      else void send(sender.tab, { ...body, force: false });
+    }
     return false;
   }
   if (message.type === "card-again") {

@@ -1111,3 +1111,23 @@ def test_the_page_predicts_the_suggestion_run_id_and_every_editor_gets_a_slug():
     calls = re.findall(r"titleEditor\(([^;]*?)\)\);", source)
     assert len(calls) == 3, calls
     assert all(".slug" in call for call in calls), calls
+
+
+def test_the_title_editor_saves_once_never_after_escape_and_stops_its_suggestion():
+    """Runs the shipped `titleEditor` (tests/js/title_editor.mjs): Escape followed by the blur its
+    own repaint causes saves nothing; Enter then blur sends one rename; closing the editor while a
+    suggestion runs cancels that run by its predicted id; a Stop that meets a 404 asks again."""
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    script = Path(__file__).parent / "js" / "title_editor.mjs"
+    out = subprocess.run([shutil.which("node"), str(script)], capture_output=True, text=True,
+                         timeout=60, check=False)
+    assert out.returncode == 0, out.stderr
+    got = json.loads(out.stdout.strip().splitlines()[-1])
+    assert got["escape"] == {"puts": 0, "done": [None]}
+    assert got["enter"] == {"puts": 1, "done": ["New"]}
+    assert got["close"] == ["/orbits/orbit-a/runs/slug-a-tok1/cancel"]
+    assert got["retry"] == 3

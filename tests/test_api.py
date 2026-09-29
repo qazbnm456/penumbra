@@ -4658,3 +4658,21 @@ def test_the_suggestion_run_id_is_the_one_the_page_predicts(client, monkeypatch)
     for orbit_id in ("myorbit", "航海筆記"):
         assert client.post(f"/orbits/{orbit_id}/title/suggestion", json={"run_id": token}).status_code == 200
         assert seen[-1] == f"{slug(orbit_id)}-{token}"
+
+
+def test_a_failed_suggestion_says_so_while_automatic_titling_falls_back(client, monkeypatch):
+    client.post("/orbits/myorbit/sources", json={"sources": ["https://example.com/a"]})
+
+    async def failing_run(*_args, **_kwargs):
+        raise api.HTTPException(502, "the run failed")
+
+    async def no_language(*_args, **_kwargs):
+        return ""
+
+    monkeypatch.setattr(api, "_run_isolated", failing_run)
+    monkeypatch.setattr(api, "_config", lambda: api.PenumbraConfig())
+    monkeypatch.setattr(api, "_resolve_language", no_language)
+    assert client.post("/orbits/myorbit/title/suggestion").status_code == 502
+    assert load_orbit("myorbit").title is None, "nothing written"
+    titled = client.post("/orbits/myorbit/title")
+    assert titled.status_code == 200 and titled.json()["title"], "the automatic title still falls back"

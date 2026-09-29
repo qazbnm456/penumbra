@@ -2322,24 +2322,23 @@ async def _title_from_model(
 ):
     """The model's title for `orbit` from every source, falling back to the deterministic one, or,
     with `strict` (a suggestion the reader asked for), raising: a busy orbit or a failed run must
-    not come back looking like a fresh name."""
-    _require_sources(orbit, "title")
-    origins = [s.origin for s in orbit.sources]
-    titles = [s.preview.get("title", "") for s in orbit.sources]
-    config = _config()
-    try:
+    not come back looking like a fresh name.
+
+    Announced before any preparatory work, the source check included (invariant 46), so a Stop
+    pressed at once finds the run id instead of a 404."""
+    with _announced(run_id):
+        _require_sources(orbit, "title")
+        origins = [s.origin for s in orbit.sources]
+        titles = [s.preview.get("title", "") for s in orbit.sources]
+        config = _config()
         # EVERY source, not the first 8000 characters of the blob — see `Corpus.excerpt`.
         excerpt = corpus_of(orbit).excerpt(8000)
-        # The title follows the orbit's resolved language too. Consequence to accept: the UI
-        # calls this from an action that is about to run a model anyway (invariant 37), so if no
-        # question has been asked yet, resolution runs with two of its three signals and serialises
-        # two cheap calls into that path.
-        #
-        # Announced like every other run-taking endpoint. Today's UI never opens a ticker on the
-        # title run, but this endpoint accepts `run_id` exactly like the others, so a client CAN —
-        # and a rule with one silent exception is the kind that gets rediscovered as a bug.
-        with _announced(run_id):
-            language = await _resolve_language(orbit, request, config, run_id)
+        # The title follows the orbit's resolved language too (it never raises). Consequence to
+        # accept: the UI calls this from an action that is about to run a model anyway (invariant
+        # 37), so if no question has been asked yet, resolution runs with two of its three signals
+        # and serialises two cheap calls into that path.
+        language = await _resolve_language(orbit, request, config, run_id)
+    try:
         title = await _run_isolated(
             orbit_id,
             _dotted(SuggestTitle),

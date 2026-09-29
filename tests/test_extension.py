@@ -277,3 +277,26 @@ console.log("ok");
 """
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30, check=False)
     assert out.stdout.strip() == "ok", out.stdout + out.stderr
+
+
+def test_the_icon_state_machine_captures_withdraws_cancels_and_recovers():
+    """Runs the shipped background.js with a fake chrome (tests/js/extension_icon.mjs): a press keeps
+    the page and marks it, a second press takes it back, a press while it is on its way takes it
+    back as it lands, a `saving` left by a stopped worker becomes a failure, and a capture that lands
+    after the tab moved on marks nothing."""
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    script = Path(__file__).parent / "js" / "extension_icon.mjs"
+    out = subprocess.run([shutil.which("node"), str(script)], capture_output=True, text=True,
+                         timeout=60, check=False)
+    assert out.returncode == 0, out.stderr
+    got = json.loads(out.stdout.strip().splitlines()[-1])
+    assert got["afterCapture"]["state"] == "saved" and got["afterCapture"]["mine"] is True
+    assert got["withdrawn"] == {"undo": True, "state": None}
+    assert got["cancelFlag"] is True
+    assert got["cancelled"] == {"undo": True, "state": None}
+    assert got["orphan"] == "failed"
+    assert got["movedOn"] is None

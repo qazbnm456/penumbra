@@ -7001,6 +7001,16 @@ body[data-view="horizon"] .orbit-picker {
   }
 }
 
+/* The rail's rename, shown on hover or focus (and always without hover, below). */
+.facet-rename {
+  opacity: 0;
+}
+
+.facet-row:hover .facet-rename,
+.facet-rename:focus-visible {
+  opacity: 1;
+}
+
 /* **Every hover-revealed control, not one of them.** The touch argument was written for the rename
    pencil (`.orbit-row-rename`) and applied only there; `.src-remove` (destructive, on every source row) and
    `.save-as-note` (the only route into Notes) were both `opacity: 0` at rest with no touch escape,
@@ -7012,16 +7022,6 @@ body[data-view="horizon"] .orbit-picker {
    `.save-as-note { opacity: 0 }` — same specificity — beat it: on a phone the only route into
    Notes measured opacity 0. `test_the_touch_escape_comes_after_every_rule_it_overrides` pins
    the order. */
-/* The rail's rename, shown on hover or focus (and always without hover, below). */
-.facet-rename {
-  opacity: 0;
-}
-
-.facet-row:hover .facet-rename,
-.facet-rename:focus-visible {
-  opacity: 1;
-}
-
 @media (any-hover: none) {
   .orbit-row-rename,
   .facet-rename,

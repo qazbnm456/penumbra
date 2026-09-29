@@ -1566,6 +1566,7 @@ function titleEditor(orbitId, current, done, orbitSlug = orbitId) {
   const finish = (title) => {
     if (settled) return;
     settled = true;
+    wrap.dataset.done = "1";
     // Closing the editor removes its Stop, so a suggestion still on its way is stopped with it.
     if (suggesting) void stopSuggestion();
     done(title);
@@ -1609,7 +1610,12 @@ function titleEditor(orbitId, current, done, orbitSlug = orbitId) {
   // Leaving the field saves, unless the focus went to Suggest, which belongs to it.
   input.addEventListener("blur", (event) => {
     if (settled || event.relatedTarget === suggest) return;
-    setTimeout(() => { if (!settled && !wrap.contains(document.activeElement)) void commit(); }, 0);
+    setTimeout(() => {
+      if (settled) return;
+      // Taken off the page by something else: leave without saving what was half typed.
+      if (!wrap.isConnected) finish(null);
+      else if (!wrap.contains(document.activeElement)) void commit();
+    }, 0);
   });
   // Pressing Suggest keeps the focus in the field: WebKit does not focus a clicked button, so the
   // field's blur would otherwise save and close the editor before the suggestion arrived.
@@ -1677,6 +1683,13 @@ function titleEditor(orbitId, current, done, orbitSlug = orbitId) {
 function startRename(row, orb) {
   row.textContent = "";
   row.appendChild(titleEditor(orb.id, orb.title || "", () => void refreshOrbitList(), orb.slug || orb.id));
+}
+
+//: Whether a title editor is open inside `root`. The rail and the planet card are repainted by the
+//: Horizon's poll while intake or a summary runs, and a repaint would throw away what the reader is
+//: typing and the Stop of a running suggestion, so they wait until it closes.
+function editingTitleIn(root) {
+  return Boolean(root && root.querySelector(".title-editor:not([data-done])"));
 }
 
 //: After a rename from the map or the rail: every place that shows the name reads it again.
@@ -10468,6 +10481,7 @@ async function renderFacets() {
     return;
   }
   facetView.orbits = data.orbits || [];
+  if (editingTitleIn(list)) return;
   paintFacets();
 }
 
@@ -13933,6 +13947,8 @@ function starMapOrbit(o, topo) {
   return {
     id: o.id, slug: o.slug,
     title: o.title || o.derived_title || t("app.untitled", "Untitled orbit"),
+    // The name the reader or the model gave it, without the derived stand-in: what a rename starts from.
+    storedTitle: o.title || "",
     sources: o.source_count,
     captures: filed.captures,
     undistilled: filed.undistilled,
@@ -14647,6 +14663,8 @@ function orbitPicker(nodeId, memberships = []) {
       fresh.placeholder = t("pick.newPlaceholder", "New orbit: type a name, Enter");
       fresh.setAttribute("aria-label", t("horizon.newOrbit", "New orbit\u2026"));
       fresh.addEventListener("keydown", async (event) => {
+        // Escape still closes the picker; other keys stay in the field.
+        if (event.key === "Escape") return;
         event.stopPropagation();
         if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return;
         event.preventDefault();
@@ -15175,6 +15193,7 @@ function renderCaptureCard(card, focus) {
 
 function renderStarMapCard() {
   const mapCard = horizonEl("starmap-card");
+  if (editingTitleIn(mapCard)) return;
   // A button in the card that rebuilt the card took keyboard focus with it to <body>, where the
   // map's keys no longer reach. Focus goes back into the new card instead.
   const hadFocus = mapCard.contains(document.activeElement);
@@ -15276,7 +15295,7 @@ function paintStarMapCard(mapCard) {
   rename.setAttribute("aria-label", t("rename.labelled", `Rename ${orbit.title}`, { name: orbit.title }));
   rename.addEventListener("click", () => {
     heading.textContent = "";
-    heading.appendChild(titleEditor(orbit.id, orbit.title || "", () => afterRename(), orbit.slug || orbit.id));
+    heading.appendChild(titleEditor(orbit.id, orbit.storedTitle || "", () => afterRename(), orbit.slug || orbit.id));
   });
   heading.appendChild(rename);
   mapCard.appendChild(heading);
