@@ -1538,6 +1538,12 @@ function renderOrbitRow(orb) {
 //: press, never saved by itself). While it runs the button reads Stop and cancels that one run
 //: (invariant 47). `done(title|null)` runs once, with the saved title or null. `orbitSlug` is the
 //: orbit's file key, from which the run id is predictable, as for the overview.
+//: The run id the server derives for a suggestion (`api._derive_run_id`: the orbit's slug, then the
+//: token), which is what Stop cancels.
+function suggestionRunId(orbitSlug, token) {
+  return `${orbitSlug}-${token}`;
+}
+
 function titleEditor(orbitId, current, done, orbitSlug = orbitId) {
   const wrap = elt("div", "title-editor");
   const input = document.createElement("input");
@@ -1634,7 +1640,7 @@ function titleEditor(orbitId, current, done, orbitSlug = orbitId) {
       return;
     }
     const token = crypto.randomUUID();
-    suggesting = `${orbitSlug}-${token}`;
+    suggesting = suggestionRunId(orbitSlug, token);
     stopped = false;
     suggest.textContent = t("rename.stop", "Stop");
     suggest.classList.add("is-running");

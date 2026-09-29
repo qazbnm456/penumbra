@@ -338,11 +338,11 @@ async function placement(got, chosenTitle) {
 
 const tabKey = (tabId) => `tab:${tabId}`;
 
-//: Whether two addresses are the same page: the fragment is left out, because the page's own
-//: `location.href` drops a `#:~:text=` directive the tab's URL keeps, and a jump to an anchor during
-//: a capture is still the same page.
+//: Whether two addresses are the same page. Only a text directive (`:~:text=…`) is left out: the
+//: page's own `location.href` drops it while the tab's URL keeps it. Any other fragment counts, since
+//: an app that routes with the hash (`#/inbox`, `#/item/1`) shows a different page under each.
 function samePage(a, b) {
-  const bare = (url) => String(url || "").split("#")[0];
+  const bare = (url) => String(url || "").replace(/:~:.*$/, "").replace(/#$/, "");
   return Boolean(a) && Boolean(b) && bare(a) === bare(b);
 }
 

@@ -249,9 +249,10 @@ def test_a_link_with_tracking_is_the_link_already_captured(client):
     assert again["node"]["id"] == first["node"]["id"]
 
 
-def test_same_page_ignores_the_fragment():
+def test_same_page_ignores_only_a_text_directive():
     """The icon's tick and a second press compare the tab's URL with the page's own, which drops a
-    `#:~:text=` directive, so the comparison leaves fragments out. Run from the shipped file."""
+    `#:~:text=` directive, so that is left out; a hash route is a different page. Run from the
+    shipped file."""
     import re
     import shutil
     import subprocess
@@ -264,7 +265,8 @@ def test_same_page_ignores_the_fragment():
     script = body + """
 const cases = [
   ["https://x.example/a", "https://x.example/a#:~:text=hello", true],
-  ["https://x.example/a#top", "https://x.example/a", true],
+  ["https://x.example/a#top", "https://x.example/a#top:~:text=hi", true],
+  ["https://x.example/app#/inbox", "https://x.example/app#/item/1", false],
   ["https://x.example/a", "https://x.example/b", false],
   ["", "https://x.example/a", false],
 ];

@@ -1085,3 +1085,29 @@ def test_moving_from_one_planet_to_another_lets_the_first_ones_links_go():
     assert result["aLitWhileHeld"]
     assert result["afterMove"] == {"a": False, "b": True}, "the first planet's links stayed lit"
     assert result["afterRelease"] is False and result["paused"] is False and result["pointed"] is None
+
+
+def test_the_page_predicts_the_suggestion_run_id_and_every_editor_gets_a_slug():
+    """Stop cancels `suggestionRunId(slug, token)`, which must match the server's
+    `slug(orbit_id)-token`; and every place that opens a title editor passes the orbit's slug, since
+    for an orbit named in Chinese the slug is a hash the id does not show."""
+    import re
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    from penumbra.orbit import slug
+
+    source = (Path(__file__).parent.parent / "penumbra" / "web" / "app.js").read_text()
+    pattern = r"^function suggestionRunId\(orbitSlug, token\) \{.*?^\}"
+    body = re.search(pattern, source, re.DOTALL | re.MULTILINE).group(0)
+    token = "3f2a9c1e-7b4d-4e8f-9a01-23456789abcd"
+    orbit_slug = slug("航海筆記")
+    out = subprocess.run(
+        [shutil.which("node"), "-e", body + f"\nconsole.log(suggestionRunId({orbit_slug!r}, {token!r}));"],
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert out.stdout.strip() == f"{orbit_slug}-{token}", out.stderr
+    calls = re.findall(r"titleEditor\(([^;]*?)\)\);", source)
+    assert len(calls) == 3, calls
+    assert all(".slug" in call for call in calls), calls
