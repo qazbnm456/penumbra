@@ -257,6 +257,9 @@ async function api(path, options) {
   // and a header covers them all without a schema change each. See `i18n.js`'s header for why this
   // does not merge the two language settings.
   const opts = { ...(options || {}) };
+  //: `asBlob` asks for the body as a file (the export's zip) rather than JSON; it is not fetch's.
+  const asBlob = Boolean(opts.asBlob);
+  delete opts.asBlob;
   opts.headers = { ...(opts.headers || {}), "X-Penumbra-Interface-Language": uiLangName() };
   const token = apiToken();
   if (token) opts.headers.Authorization = `Bearer ${token}`;
@@ -296,6 +299,7 @@ async function api(path, options) {
     err.status = resp.status;
     throw err;
   }
+  if (asBlob) return resp.blob();
   return resp.status === 204 ? null : resp.json();
 }
 
@@ -2482,6 +2486,17 @@ function renderSettings(state_) {
     }
   });
   body.appendChild(save);
+  // Exporting everything, after Save and before clearing: taking a copy is what a reader should
+  // reach first. It saves nothing and acts at once.
+  const keep = elt("div", "setting-row setting-export");
+  keep.appendChild(elt("span", "setting-export-title", t("settings.export", "Export everything")));
+  keep.appendChild(elt("span", "setting-source", t("settings.exportHelp",
+    "One zip with every capture and orbit: Markdown notes that Obsidian, Logseq, Notion and other note apps can open, a bookmark file for browsers and read-later apps, and the complete data in JSON.")));
+  const keepButton = elt("button", "btn", t("settings.exportButton", "Export\u2026"));
+  keepButton.type = "button";
+  keepButton.addEventListener("click", () => void exportEverything(keepButton));
+  keep.appendChild(keepButton);
+  body.appendChild(keep);
   // Clearing everything sits after Save, apart from the settings and not saved with them: it acts at
   // once, after its own warning panel.
   const wipe = elt("div", "setting-row setting-danger");
@@ -3111,6 +3126,31 @@ async function loadSettings() {
   }
 }
 
+//: Export everything as one zip (`GET /data/export`), handed to the browser as a download, which the
+//: desktop shell saves to Downloads and reveals.
+async function exportEverything(button) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = t("settings.exporting", "Exporting\u2026");
+  try {
+    const blob = await api("/data/export", { asBlob: true });
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `penumbra-export-${stamp}.zip`;
+    link.click();
+    // Revoked a moment later: revoking at once can cancel the download in WebKit.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    notify(t("settings.exported", "The export is downloading."), { tone: "good", timeout: 3000 });
+  } catch (err) {
+    notify(readableError(err.message));
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
 //: Clear everything, from the settings page, through its own warning panel (`#wipe-overlay`): what
 //: goes, with counts, what stays, and a button that stays off until the reader types the words
 //: shown. The settings dialog closes first, because a dialog stacked on an open one takes over its
@@ -3124,7 +3164,7 @@ async function clearEverything() {
   const error = document.getElementById("wipe-error");
   const words = t("wipe.words", "clear everything");
   document.getElementById("wipe-body").textContent = t("wipe.body",
-    "This deletes everything Penumbra holds for you, and nothing can restore it. To keep an orbit, export it as Markdown from the orbit first.");
+    "This deletes everything Penumbra holds for you, and nothing can restore it. To keep a copy, use Export everything in Settings first.");
   const goes = document.getElementById("wipe-goes");
   // The list says what goes; the numbers arrive after the panel is open, so a slow reply never leaves
   // the page with no dialog showing.
@@ -3203,7 +3243,8 @@ function initWipe() {
     // The panel stays up, both buttons off, until the page starts again: every view and cache on
     // it describes what is gone, so it reloads from the Horizon rather than repainting each one.
     document.getElementById("wipe-cancel").disabled = true;
-    go.textContent = t("settings.cleared", `Cleared ${cleared.orbits} orbits and ${cleared.captures} captures.`,
+    go.textContent = t("settings.cleared",
+      `Cleared ${cleared.orbits} orbit${cleared.orbits === 1 ? "" : "s"} and ${cleared.captures} capture${cleared.captures === 1 ? "" : "s"}.`,
       { orbits: cleared.orbits, captures: cleared.captures });
     syncAddressBar("", { replace: true });
     setTimeout(() => window.location.reload(), 600);

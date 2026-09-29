@@ -28,7 +28,7 @@ What exists:
 - Citation-grounded chat over a persistent multi-turn `Orbit`, stored as one JSON file with no database.
 - An Orbit Guide (`guide.py`: summary, FAQ, timeline, insight) and an Audio Overview (the `audio.py` script plus `tts.py` synthesis).
 - An HTTP API (`api.py`, the `api` extra) with a live reasoning-trace stream and a Trajectory drawer.
-- A web UI (`penumbra/web/`) that is a real end-user product. It is the only way an artifact leaves the product: Copy (Markdown) on an answer, the overview or a guide, a whole-orbit Markdown export, and a print stylesheet that appends the reference list.
+- A web UI (`penumbra/web/`) that is a real end-user product. It is the only way an artifact leaves the product: Copy (Markdown) on an answer, the overview or a guide, a whole-orbit Markdown export, a print stylesheet that appends the reference list, and Export everything (`export.py`, `GET /data/export`): one zip with the lossless `data/`, the audio, a Markdown vault for other note apps, a bookmark file and a manifest.
 - `horizon.py`, Tier 0: a global capture Horizon (a SQLite index plus `horizon/nodes/<id>.json`) whose nodes are filed into orbits (invariant 78). `intake.py` is its serial capture queue (79), and `distill.py` is the separate summary pass (80). All three are reachable at `/horizon/*` and from the web UI, where the Horizon is the default screen. Its list filters on combined conditions (tags, orbits, state, dates, keyword; `horizon.NodeFilter`), and removals are recorded (`horizon_events`) and shown where they happened.
 - A Horizon ask: a question over everything kept, a tag or an entity. `search.py` is its full-text index (character pairs for CJK) and its selection, `asks.py` its history, and it is reachable at `/horizon/ask*` and from the ask dock at the foot of the screen.
 - A star map of the Horizon and a knowledge graph of each orbit, drawn from summaries' entities and tags (`topology.py`, `/horizon/topology`, `/horizon/graph`).
@@ -52,7 +52,6 @@ Still unbuilt. Do not assume any of these exist because a design discussion ment
 - Folders and archives cannot be captured, because invariant 26 keeps local paths out of the API and the desktop shell does not supply them.
 - The browser extension is Chromium-only (Chrome, Arc, Brave, Edge), installed unpacked; there is no Firefox or Safari build and no store listing.
 - The desktop installers are not signed with a developer identity: macOS builds carry an ad-hoc signature, Windows and Linux builds none.
-- There is no export of everything: an artifact leaves only through Copy, the whole-orbit Markdown export and print.
 - Slides, Google Docs and legacy `.doc` files are not parsed (Word `.docx` is), and full audio transcription is not done. YouTube captions do ship.
 
 ## Invariants: do not break
@@ -129,7 +128,7 @@ This index does not grow. An entry that has gained a second paragraph has taken 
 
 30. **No upload surface reopens invariant 26's local-path ban: not `sources/upload`, not `add_sources`'s `texts`, not `/horizon/upload`, not `/extension/capture`, not the fetch inside `parse_web`.** The size cap is checked before FastAPI parses the body, and `max_upload_bytes()` is deliberately not a `PenumbraConfig` field. ([why](docs/invariants/30-upload-and-paste-do-not-reopen-the-path-ban.md))
 
-31. **An endpoint that returns a whole document is a deliberate decision, stated openly. There are three: `sources/{source_id}`, the trace pair (29) and `/horizon/{node_id}/source`.** Before the first one, no caller could read more of a source than a citation's short `quote`. ([why](docs/invariants/31-the-source-text-endpoint-is-a-new-exposure.md))
+31. **An endpoint that returns a whole document is a deliberate decision, stated openly. There are four: `sources/{source_id}`, the trace pair (29), `/horizon/{node_id}/source` and `/data/export`.** Before the first one, no caller could read more of a source than a citation's short `quote`. ([why](docs/invariants/31-the-source-text-endpoint-is-a-new-exposure.md))
 
 32. **Notes (`schema.Note`, `Orbit.notes`) are free, uncited text, grounded and citable only once promoted into a real `Source`.** A note carries no citations and is never re-verified; note ids come from the highest live id, because length-based ids let two live notes share one. ([why](docs/invariants/32-notes-are-uncited-until-promoted.md))
 

@@ -11091,3 +11091,21 @@ button.node-more:hover {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* Export everything: below Save, above the danger row, headed like a setting. */
+.setting-export {
+  margin-top: var(--space-6);
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+  align-items: flex-start;
+}
+
+.setting-export-title {
+  font-weight: 600;
+  font-size: var(--text-md);
+  color: var(--text);
+}
+
+.setting-export .btn {
+  margin-top: var(--space-2);
+}

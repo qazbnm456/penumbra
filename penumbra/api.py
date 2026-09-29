@@ -117,6 +117,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from python_multipart.exceptions import MultipartParseError
+from starlette.background import BackgroundTask
 from starlette.formparsers import MultiPartException
 
 from . import (
@@ -125,6 +126,7 @@ from . import (
     concepts,
     dedupe,
     distill,
+    export,
     filing,
     horizon,
     intake,
@@ -1401,6 +1403,37 @@ async def delete_orbit_endpoint(orbit_id: str) -> dict:
         _log.warning("could not drop the horizon memberships for %s", orbit_id)
         forgotten = 0
     return {"deleted": True, "memberships_dropped": forgotten}
+
+
+@app.get("/data/export")
+async def export_everything(request: Request) -> FileResponse:
+    """Everything the reader has made, as one zip (`export.write_export`): the lossless `data/` a
+    restore would read, the audio, a Markdown vault for other note apps, a bookmark file and a
+    manifest.
+
+    **A whole-archive endpoint, stated openly (invariant 31).** It returns every capture's full text
+    and every orbit file, more than any other route, to any token holder; that is the point of it,
+    and every one of those holders could already read each piece through the routes invariant 31
+    lists. Built in a temporary file and deleted once sent."""
+    fd, name = tempfile.mkstemp(prefix="penumbra-export-", suffix=".zip")
+    os.close(fd)
+    target = Path(name)
+    try:
+        # The notes' headings follow the interface the request came from, or the one last seen.
+        language = request.headers.get("X-Penumbra-Interface-Language") or reader_language()
+        await asyncio.to_thread(
+            export.write_export, target, horizon_dir=_horizon_queue_base(), language=language
+        )
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    stamp = time.strftime("%Y%m%d-%H%M", time.localtime())
+    return FileResponse(
+        target,
+        media_type="application/zip",
+        filename=f"penumbra-export-{stamp}.zip",
+        background=BackgroundTask(target.unlink, missing_ok=True),
+    )
 
 
 class ClearAllRequest(BaseModel):
