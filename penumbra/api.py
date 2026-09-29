@@ -3277,7 +3277,7 @@ def _run_pass_once(
     return asyncio.run(go())
 
 
-def _run_long_distil(source, language: str):
+def _run_long_distil(source, language: str, known: str = ""):
     """Summarise one long document with `DistillLongDocument`. Raises on failure, which
     `distil_source` turns into a node left at `ready_undistilled` with the reason reported."""
     doc = source.model_copy(update={"id": "s1"})
@@ -3288,6 +3288,7 @@ def _run_long_distil(source, language: str):
             "sources": blob,
             "section_map": distill.section_map(doc),
             "output_language": language or _DEFAULT_DISTIL_LANGUAGE,
+            "known": known,
         },
         "horizon-distil",
         timeout_factor=_long_distil_timeout_factor(distill.text_length(doc)),

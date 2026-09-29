@@ -61,7 +61,9 @@ def test_an_entity_with_an_invented_coordinate_is_refused_before_submit():
 
     spy.__name__ = validator.__name__
     task.tools = [spy]
-    result = asyncio.run(task.arun(sources=_SOURCES, section_map="page:1 ...", output_language="English"))
+    result = asyncio.run(
+        task.arun(sources=_SOURCES, section_map="page:1 ...", output_language="English", known="")
+    )
     assert verdicts[0].startswith("Validation failed") and "Chapter One" in verdicts[0]
     assert not verdicts[1].startswith("Validation failed")
     assert result.entities[0].locator == "page:2"

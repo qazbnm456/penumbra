@@ -86,6 +86,10 @@ Write:
 
 Rules:
 - Write title and summary in the requested language. If none is given, use the document's own.
+- `known` lists the tags and entities this person's other captures already use. When one of them
+  means what you would write, write it exactly as it appears there, so related documents connect.
+  Add a new tag or entity only when none of them fits, and never use a known one just because it is
+  common. A new tag is written in the requested language when one is given.
   Never translate a proper noun that has no established translation.
 - The text contains `[[SRC:...]]` coordinate markers. They are not content. Never copy one into
   anything you write.
@@ -144,10 +148,10 @@ class DistillNode:
     """`worker.py`-compatible in shape (`arun(**kwargs)`), so this can be moved behind a subprocess
     later without changing its callers — the same contract `naming.SuggestTitle` satisfies.
 
-    `arun(sources=<corpus excerpt>, language=<resolved language>) -> Distillation`.
+    `arun(sources=<corpus excerpt>, language=<resolved language>, known=<labels in use>) -> Distillation`.
     """
 
-    async def arun(self, *, sources: str = "", language: str = "") -> Distillation:
+    async def arun(self, *, sources: str = "", language: str = "", known: str = "") -> Distillation:
         # Room for the marker lines `Corpus.excerpt` adds, so a document at the limit is read whole.
         excerpt = (sources or "")[: _EXCERPT_CHARS + 400]
         if not excerpt.strip():
@@ -156,12 +160,12 @@ class DistillNode:
 
         predictor = dspy.Predict(
             dspy.Signature(
-                "sources: str, language: str -> title: str, summary: str, tags: list[str], "
+                "sources: str, language: str, known: str -> title: str, summary: str, tags: list[str], "
                 "entities: list[str]",
                 _INSTRUCTIONS,
             )
         )
-        result = await predictor.acall(sources=excerpt, language=language or "")
+        result = await predictor.acall(sources=excerpt, language=language or "", known=known or "")
         return _sanitize(
             Distillation(
                 title=str(getattr(result, "title", "") or ""),
@@ -170,6 +174,49 @@ class DistillNode:
                 entities=_clean_list(getattr(result, "entities", []), 60, _MAX_ENTITIES),
             )
         )
+
+
+#: How many of the labels already in use a summary is shown: the most used first, so the list stays
+#: a few hundred words however large the Horizon grows (invariant 78: never a blob over it).
+KNOWN_TAGS = 80
+KNOWN_ENTITIES = 60
+
+
+def known_labels(*, base_dir: str | Path = horizon.DEFAULT_HORIZON_DIR) -> str:
+    """The tags and entity names other captures already use, most used first, for `known`.
+
+    Summarised one at a time with no view of the rest, two captures on one subject wrote `coffee`
+    and `咖啡`, or `finance` and `金融`, and a tag region or a shared entity then missed the pair.
+    Shown what is in use, a summary writes the same label when it means the same thing. Entity names
+    pass through the alias table first (`concepts.resolver`), so a merged name is offered once.
+    """
+    from . import concepts
+    from .search import SEARCHABLE_STATES
+
+    placeholders = ", ".join("?" for _ in SEARCHABLE_STATES)
+    with horizon._connect(base_dir) as conn:
+        rows = conn.execute(
+            f"""SELECT json_each.value AS name, COUNT(*) AS n
+                FROM (SELECT tags FROM nodes WHERE state IN ({placeholders})
+                      AND CASE WHEN json_valid(tags) THEN json_type(tags) = 'array' ELSE 0 END)
+                     AS readable, json_each(readable.tags)
+                WHERE json_each.type = 'text'
+                GROUP BY json_each.value""",
+            SEARCHABLE_STATES,
+        ).fetchall()
+    tags = sorted(((row["name"], int(row["n"])) for row in rows), key=lambda item: (-item[1], item[0]))
+    resolve = concepts.resolver(base_dir=base_dir)
+    entity_count: dict[str, int] = {}
+    for name, n in concepts.all_names(base_dir=base_dir).items():
+        canonical = resolve(name)
+        entity_count[canonical] = entity_count.get(canonical, 0) + n
+    entities = sorted(entity_count.items(), key=lambda item: (-item[1], item[0]))
+    lines = []
+    if tags:
+        lines.append("Tags in use: " + ", ".join(name for name, _ in tags[:KNOWN_TAGS]))
+    if entities:
+        lines.append("Entities in use: " + ", ".join(name for name, _ in entities[:KNOWN_ENTITIES]))
+    return "\n".join(lines)
 
 
 def text_length(source) -> int:
@@ -218,6 +265,7 @@ def distil_source(
     run: Callable[..., Distillation] | None = None,
     on_error: Callable[[Exception], None] | None = None,
     run_long: Callable[..., Distillation] | None = None,
+    known: str = "",
 ) -> Distillation | None:
     """Distil one already-parsed `Source`. Returns `None` if the model call failed.
 
@@ -257,12 +305,14 @@ def distil_source(
     long = run_long is not None and text_length(source) > SHORT_LIMIT
     excerpt = "" if long else Corpus(sources=[source]).excerpt(_EXCERPT_CHARS)
     try:
+        # `known` goes to the model paths only when there is any: an injected `run`/`run_long` keeps
+        # the two-argument shape the tests and other callers already use.
         if long:
-            result = run_long(source, language)
+            result = run_long(source, language, known=known) if known else run_long(source, language)
         elif run is not None:
             result = run(sources=excerpt, language=language)
         else:
-            result = asyncio.run(DistillNode().arun(sources=excerpt, language=language))
+            result = asyncio.run(DistillNode().arun(sources=excerpt, language=language, known=known))
     except Exception as exc:  # noqa: BLE001 - a missing summary must never cost a capture
         _log.exception("distill: could not summarise %s", getattr(source, "origin", "?"))
         if on_error is not None:
@@ -362,7 +412,9 @@ def distil_pending(
                 on_node()
             horizon.update_node(node.id, base_dir=base_dir, state="ready_undistilled")
             continue
-        result = distil_source(source, chosen, run=run, on_error=report, run_long=run_long)
+        # Read afresh for each capture, so one filed a moment ago in the same pass is offered too.
+        known = known_labels(base_dir=base_dir) if run is None else ""
+        result = distil_source(source, chosen, run=run, on_error=report, run_long=run_long, known=known)
         # Counted after the CALL, not before it: progress that runs ahead of the spend would tell a
         # reader a node was summarised while the model was still thinking about it (invariant 60).
         if on_node is not None:

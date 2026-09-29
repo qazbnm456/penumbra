@@ -620,3 +620,38 @@ def test_the_automatic_pass_leaves_long_captures_for_a_press(tmp_path):
                                   run_long=lambda *_: pytest.fail("a long document ran"), defer_long=True)
     assert done == [short_id]
     assert horizon.get_node(long_id, base_dir=base).state == "ready_undistilled"
+
+
+def test_the_labels_in_use_are_offered_most_used_first_with_aliases_merged():
+    """A summary is shown the tags and entities other captures use, so two captures on one subject
+    write the same label instead of `coffee` and `咖啡`."""
+    from penumbra import concepts
+
+    for i, (tags, entities) in enumerate([
+        (["coffee", "sleep"], ["Caffeine", "NASA"]),
+        (["coffee"], ["caffeine"]),
+        (["coffee", "baking"], ["Caffeine"]),
+    ]):
+        node = _captured(f"text {i}", origin=f"https://example.com/{i}")
+        horizon.update_node(node.id, state="ready", tags=tags, entities=entities)
+    concepts.apply_merges([("caffeine", "Caffeine")], {"caffeine", "Caffeine", "NASA"})
+    known = distill.known_labels()
+    tags_line, entities_line = known.splitlines()
+    assert tags_line.startswith("Tags in use: coffee,"), "the most used tag comes first"
+    assert entities_line == "Entities in use: Caffeine, NASA", "an alias is offered once, under its name"
+
+
+def test_nothing_in_use_offers_nothing():
+    assert distill.known_labels() == ""
+
+
+def test_the_labels_in_use_reach_a_long_document_run():
+    seen = {}
+
+    def run_long(source, language, known=""):
+        seen["known"] = known
+        return Distillation(title="t")
+
+    long_doc = _doc("y" * (distill.SHORT_LIMIT + 1))
+    distill.distil_source(long_doc, run_long=run_long, known="Tags in use: coffee")
+    assert seen["known"] == "Tags in use: coffee"

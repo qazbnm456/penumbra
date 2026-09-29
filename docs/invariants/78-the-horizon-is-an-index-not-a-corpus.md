@@ -61,6 +61,10 @@ The searchable states are derived from `schema.NodeState` minus `queued`, `parsi
 
 `topology.py` draws both from rows already in the index: `nodes.entities`, `nodes.tags` and `memberships`. It never reads a node's text and never calls a model, so drawing the Horizon costs one query however large it grows. Two entities are linked when one capture names both; two orbits are bridged when captures filed into each name the same entity. An unsummarised capture names nothing, so it is counted apart and offered for summarising rather than guessed into the picture. Orbits are keyed by `slug`, the token memberships are written with, which `/orbits` also reports, because an orbit's id and its filename can differ (invariant 10). Each drawing's output is capped (the 60 most-named entities, 300 captures, the 12 strongest bridges) and reports how much it left out; the graph's side panel says so when entities were dropped.
 
+## A summary sees labels, not the Horizon
+
+A summary is shown the tags and entities in use (`distill.known_labels`: the 80 and 60 most used, aliases merged), so a capture reuses a label that means the same thing. It is a bounded list of names, never other captures' text: feeding summaries or unsummarised sources as context would grow every call with the Horizon, which this invariant exists to prevent, and would let one document's content leak into another's summary.
+
 ## Not here
 
 There are no parsers beyond what `ingest_one` handles, no embeddings and no edges inferred from text. Traditional and Simplified spellings of the same word do not match each other in the index. The find box on the Horizon still matches the distilled fields by substring; the full-text index serves Horizon asks. WAL needs a real local filesystem and degrades or fails on a network share, as the orbit files already do, more quietly.

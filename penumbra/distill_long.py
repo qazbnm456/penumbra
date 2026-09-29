@@ -35,6 +35,10 @@ Write:
   only its opening. Start with the subject itself: no preamble in any language ("This
   document...", "本文件為", "本文介紹"), no closing "In summary" or "總的來說", and no dashes (— or –).
 - tags: up to 6 lowercase broad subjects a person would search by (sleep, memory, coffee).
+- `known` lists the tags and entities this person's other captures already use. When one of them
+  means what you would write, write it exactly as it appears there, so related documents connect.
+  Add a new one only when none of them fits, and never use a known one just because it is common.
+  A new tag is written in the `output_language`.
 - entities: up to 6 specific things the document is ABOUT: people, organisations, products,
   places, and named concepts such as a theory, a method, a condition, a stage or a part of the body.
   For each, give `name` and the `source_id` and `locator` COPIED VERBATIM from the marker of a block
@@ -60,7 +64,9 @@ class DistillLongDocument(GroundedTask):
     def __init__(self, **kw) -> None:
         super().__init__(**with_step_budget(kw, self.STEPS))
 
-    signature = "sources: str, section_map: str, output_language: str -> distillation: LongDistillation"
+    signature = (
+        "sources: str, section_map: str, output_language: str, known: str -> distillation: LongDistillation"
+    )
     output_field = "distillation"
     output_model = LongDistillation
     instructions = _INSTRUCTIONS
