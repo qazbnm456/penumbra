@@ -59,3 +59,14 @@ def test_removing_everywhere_takes_it_out_of_every_orbit_too(client):
     assert sorted(reply.json()["orbits"]) == ["music", "theory"]
     assert horizon.get_node(node_id) is None
     assert load_orbit("music").sources == [] and load_orbit("theory").sources == []
+
+
+def test_removing_everywhere_reaches_an_orbit_named_in_chinese(client):
+    """An orbit named in Chinese has a hashed id (invariant 10); its memberships hold that slug, and
+    the everywhere delete must open the same file."""
+    from penumbra.orbit import slug
+
+    node_id = _filed(client, "tea ceremony", "茶道")
+    reply = client.delete(f"/horizon/{node_id}", params={"everywhere": "true"})
+    assert reply.status_code == 200 and reply.json()["orbits"] == [slug("茶道")]
+    assert load_orbit("茶道").sources == []

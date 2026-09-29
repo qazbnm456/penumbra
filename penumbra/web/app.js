@@ -9742,7 +9742,7 @@ async function removeCapture(nodeId, orbitNames) {
   if (orbitNames.length) {
     const names = orbitNames.join(t("list.sep", ", "));
     const answer = await chooseAction(
-      t("map.removeWhere", `It is also in ${names}. Remove it from there too, or only from the Horizon?`, { where: names }),
+      t("map.removeWhere", `It is also in ${names}. Remove it from there too, or only from the Horizon? Removed from an orbit, any saved answer that cites it there can no longer be checked.`, { where: names }),
       { yes: t("map.removeEverywhere", "Remove from orbits too"), alt: t("map.removeHorizonOnly", "Horizon only") },
     );
     if (!answer) return;
@@ -11231,7 +11231,7 @@ function mascotLines() {
   return [
     t("mascot.line1", "Hi, I'm Penny. Half of me is lit and half is in shadow, and the soft edge between them is a penumbra. That's where the name comes from."),
     t("mascot.line2", "Whatever you throw in lands on the Horizon first. I go through it one piece at a time with this lantern, and what it lights up becomes a summary."),
-    t("mascot.line3", "Things that seem related, I tie together with thread: those are the dashed lines on the star map. Once something has a home, it goes into an orbit."),
+    t("mascot.line3", "Things that seem related, I tie together with thread: point at a planet on the star map and its threads show. Once something has a home, it goes into an orbit."),
     t("mascot.line4", "Unless you change the setting, I only get to work when you press something, so I never spend your credits behind your back. Now, throw something in!"),
   ];
 }
@@ -11912,6 +11912,9 @@ function lightPlanetBridges(scene, slug, on) {
     hit.setAttribute("tabindex", lit ? "0" : "-1");
   });
   if (!any) return;
+  // Geometry for the links just lit: with motion off the frame loop is not running, and a link lit
+  // now would otherwise sit at the origin.
+  if (on) placeStarMap();
   horizonEl("starmap-svg").classList.toggle("has-lit", on);
   scene.planets.forEach(({ p, group }) => {
     const other = scene.bridges.some(({ bridge }) =>
@@ -12913,8 +12916,22 @@ function drawStarMap() {
     };
     const open = () => openMapFocus({ kind: "bridge", a: bridge.a, b: bridge.b });
     [hit, label].forEach((el) => {
-      el.addEventListener("pointerenter", () => light(true));
-      el.addEventListener("pointerleave", () => light(false));
+      el.addEventListener("pointerenter", () => {
+        clearTimeout(scene.release);
+        light(true);
+      });
+      el.addEventListener("pointerleave", () => {
+        light(false);
+        // Leaving a link lit from a planet lets that planet's links go too.
+        if (mapMotion.pointed === bridge.a || mapMotion.pointed === bridge.b) {
+          const slug = mapMotion.pointed;
+          scene.release = setTimeout(() => {
+            mapMotion.paused = false;
+            mapMotion.pointed = null;
+            lightPlanetBridges(scene, slug, false);
+          }, 220);
+        }
+      });
       el.addEventListener("click", (event) => {
         event.stopPropagation();
         light(false);
@@ -13073,14 +13090,20 @@ function drawStarMap() {
     });
     // A planet holds still while it is pointed at or focused, so it can be read and clicked.
     const hold = () => {
+      clearTimeout(scene.release);
       mapMotion.paused = true;
       mapMotion.pointed = orbit.slug;
       lightPlanetBridges(scene, orbit.slug, true);
     };
+    // Let go a moment later, so the pointer can travel from the planet onto one of its lit links
+    // and click it; a lit link's own pointerenter cancels the release (`scene.release`).
     const release = () => {
-      mapMotion.paused = false;
-      mapMotion.pointed = null;
-      lightPlanetBridges(scene, orbit.slug, false);
+      clearTimeout(scene.release);
+      scene.release = setTimeout(() => {
+        mapMotion.paused = false;
+        mapMotion.pointed = null;
+        lightPlanetBridges(scene, orbit.slug, false);
+      }, 220);
     };
     group.addEventListener("pointerenter", hold);
     group.addEventListener("pointerleave", release);

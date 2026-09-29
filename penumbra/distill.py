@@ -86,11 +86,11 @@ Write:
 
 Rules:
 - Write title and summary in the requested language. If none is given, use the document's own.
+  Never translate a proper noun that has no established translation.
 - `known` lists the tags and entities this person's other captures already use. When one of them
   means what you would write, write it exactly as it appears there, so related documents connect.
   Add a new tag or entity only when none of them fits, and never use a known one just because it is
   common. A new tag is written in the requested language when one is given.
-  Never translate a proper noun that has no established translation.
 - The text contains `[[SRC:...]]` coordinate markers. They are not content. Never copy one into
   anything you write.
 - Say only what the text supports. If it is too short or too garbled to summarise, give an empty
@@ -180,6 +180,8 @@ class DistillNode:
 #: a few hundred words however large the Horizon grows (invariant 78: never a blob over it).
 KNOWN_TAGS = 80
 KNOWN_ENTITIES = 60
+#: Captures between two readings of the labels in use during one pass.
+KNOWN_REFRESH = 10
 
 
 def known_labels(*, base_dir: str | Path = horizon.DEFAULT_HORIZON_DIR) -> str:
@@ -371,6 +373,8 @@ def distil_pending(
     if defer_long:
         # Left waiting for a press rather than summarised from a prefix: see the auto pass.
         candidates = [node for node in candidates if node.chars <= SHORT_LIMIT][:limit]
+    known: str | None = None
+    done_here = 0
     for node in candidates:
         if should_stop is not None and should_stop():
             break
@@ -412,9 +416,12 @@ def distil_pending(
                 on_node()
             horizon.update_node(node.id, base_dir=base_dir, state="ready_undistilled")
             continue
-        # Read afresh for each capture, so one filed a moment ago in the same pass is offered too.
-        known = known_labels(base_dir=base_dir) if run is None else ""
-        result = distil_source(source, chosen, run=run, on_error=report, run_long=run_long, known=known)
+        # Read afresh every few captures, so labels written earlier in a long pass are offered too
+        # without an aggregation over the whole Horizon for every one of up to 500.
+        if run is None and (known is None or done_here % KNOWN_REFRESH == 0):
+            known = known_labels(base_dir=base_dir)
+        done_here += 1
+        result = distil_source(source, chosen, run=run, on_error=report, run_long=run_long, known=known or "")
         # Counted after the CALL, not before it: progress that runs ahead of the spend would tell a
         # reader a node was summarised while the model was still thinking about it (invariant 60).
         if on_node is not None:
