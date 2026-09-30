@@ -27,8 +27,7 @@ There is no published installer yet, so you build it yourself on a Mac with macO
 
 ```bash
 git clone https://github.com/qazbnm456/penumbra && cd penumbra
-uv run python desktop/scripts/build_runtime.py   # the bundled Python, about 800 MB
-cd desktop/src-tauri && cargo tauri build        # Penumbra.app and a .dmg in target/release/bundle/
+uv run python desktop/scripts/build_desktop.py   # the bundled Python (about 800 MB), then Penumbra.app and a .dmg in desktop/src-tauri/target/release/bundle/
 ```
 
 The app carries an ad-hoc signature, not a developer identity, so it runs on the Mac that built it, and another Mac asks once in System Settings > Privacy & Security. The same code builds for Windows and Linux, but those builds have not been run yet. `desktop/README.md` covers where data lives, signing and developing the shell.

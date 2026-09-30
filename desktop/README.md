@@ -38,9 +38,11 @@ Tesseract is not bundled. RapidOCR is the primary OCR engine and is included; te
 Each platform is built on that platform, because the wheels inside the bundled Python are platform-specific. You need Rust, [uv](https://docs.astral.sh/uv/) and the Tauri CLI (`cargo install tauri-cli --version "^2" --locked`); on Linux, also the WebKitGTK development packages listed in `.github/workflows/desktop.yml`.
 
 ```bash
-uv run python desktop/scripts/build_runtime.py   # assembles desktop/src-tauri/runtime/ (about 800 MB)
-cd desktop/src-tauri && cargo tauri build        # installers in target/release/bundle/
+uv run python desktop/scripts/build_desktop.py                  # runtime, then the app and installers in target/release/bundle/
+uv run python desktop/scripts/build_desktop.py --skip-runtime   # reuse desktop/src-tauri/runtime/
 ```
+
+`build_desktop.py` runs `build_runtime.py` (which assembles `desktop/src-tauri/runtime/`, about 800 MB) and then `cargo tauri build -vv`, and keeps the whole output in `desktop/src-tauri/target/build-logs/`. On macOS the disk-image step (`bundle_dmg.sh`) has failed now and then while the `.app` beside it was fine, and Tauri's default output said only that the script failed; nine runs with full output, some under heavy load, never reproduced it. So when a build fails in that step, the wrapper says where create-dmg stopped, detaches any image it left mounted, deletes its `rw.*.dmg` and tries once more with `cargo tauri bundle --bundles app,dmg -vv`. It names `app` because `tauri bundle` deletes any bundle it was not asked for, the `.app` included. It ends by checking that the bundled Python imports `litellm`, `dspy` and `penumbra.api`.
 
 For development against a source checkout, skip the runtime and point the shell at the checkout's own interpreter:
 

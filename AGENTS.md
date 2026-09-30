@@ -39,7 +39,7 @@ What exists:
 
 The API is the only place a run is isolated in a subprocess (`runner.py` and `worker.py`); `cli.py` runs in-process.
 
-`desktop/` is a Tauri 2 shell for macOS, Windows and Linux (only the macOS build has been run) that bundles a Python with Penumbra installed plus deno, starts `serve` on loopback and runs as a background app: its only presence at rest is the island in the notch (`penumbra/web/island.*`, `desktop/src-tauri/src/island.rs`), which swallows drops and opens the workspace window (invariant 81). `desktop/scripts/build_runtime.py` assembles the runtime on each platform, and `.github/workflows/desktop.yml` checks the shell and builds the installers on all three, run by hand only.
+`desktop/` is a Tauri 2 shell for macOS, Windows and Linux (only the macOS build has been run) that bundles a Python with Penumbra installed plus deno, starts `serve` on loopback and runs as a background app: its only presence at rest is the island in the notch (`penumbra/web/island.*`, `desktop/src-tauri/src/island.rs`), which swallows drops and opens the workspace window (invariant 81). `desktop/scripts/build_runtime.py` assembles the runtime on each platform, `desktop/scripts/build_desktop.py` runs it and the Tauri build with the full log kept and one retry of a failed disk image, and `.github/workflows/desktop.yml` checks the shell and builds the installers on all three, run by hand only.
 
 `penumbra serve` starts the API and the web UI on loopback by default (invariant 25). The `Dockerfile` carries the two system binaries no Python manifest can express: `deno`, which every live run needs (invariant 9), and `tesseract`, the OCR fallback (invariant 7).
 
