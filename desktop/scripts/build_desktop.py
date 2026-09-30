@@ -14,7 +14,9 @@ step, it detaches any disk image the step left mounted, deletes its `rw.*.dmg`, 
 `cargo tauri bundle --bundles app,dmg -vv` again. `app` is named on purpose, because
 `tauri bundle` deletes any bundle it was not asked for, the `.app` included.
 
-It ends by checking that the bundled Python imports the modules a live run needs.
+On macOS it ends by checking that the bundled Python imports the modules a live run needs. The retry
+does not recompile: it copies the runtime into the `.app` again and signs it again, which takes a
+minute or two.
 """
 
 from __future__ import annotations
@@ -36,14 +38,16 @@ DMG_RETRIES = 1
 
 def dmg_step_failed(log_text: str) -> bool:
     """Whether a Tauri build failed in the disk-image step, rather than anywhere else."""
-    if "error running bundle_dmg.sh" in log_text:
-        return True
-    return "failed to run" in log_text and "bundle_dmg.sh" in log_text
+    # Tauri's own words for this step's failure. `-vv` also prints the script's command line on every
+    # build, so the script's name alone would match any later failure.
+    return "error running bundle_dmg.sh" in log_text
 
 
 def dmg_failure_reason(log_text: str) -> str:
     """The create-dmg lines that say where it stopped, for the report."""
-    markers = ("Failed running AppleScript", "Resource busy", "Wait a moment", "hdiutil:", "exit code",
+    # create-dmg's own messages are English; hdiutil's follow the system language, so its lines are
+    # caught by the `hdiutil:` prefix rather than by their wording.
+    markers = ("Failed running AppleScript", "Wait a moment", "hdiutil:", "exit code",
                "Unmounting disk image", "Running AppleScript", "Creating disk image")
     lines = [line.strip() for line in log_text.splitlines() if any(m in line for m in markers)]
     return "\n".join(lines[-6:]) or "(no create-dmg output before the failure)"
@@ -74,17 +78,27 @@ def run_logged(cmd: list[str], cwd: Path, log) -> tuple[int, str]:
     seen: list[str] = []
     for line in proc.stdout:
         sys.stdout.write(line)
+        sys.stdout.flush()
         log.write(line)
+        log.flush()  # a killed build keeps its tail
         seen.append(line)
-    log.flush()
     return proc.wait(), "".join(seen)
 
 
 def clean_disk_image_leftovers(log) -> None:
-    info = subprocess.run(["hdiutil", "info"], capture_output=True, text=True, check=False).stdout
+    info = subprocess.run(["hdiutil", "info"], capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", check=False).stdout
+    stuck = False
     for device in leftover_images(info, BUNDLE):
         log.write(f"detaching leftover {device}\n")
-        subprocess.run(["hdiutil", "detach", "-force", device], capture_output=True, check=False)
+        done = subprocess.run(["hdiutil", "detach", "-force", device], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", check=False)
+        if done.returncode != 0:
+            stuck = True
+            log.write(f"could not detach {device} ({done.returncode}): {done.stderr.strip()}\n")
+    if stuck:
+        log.write("keeping the rw images, since one is still mounted\n")
+        return
     for path in (BUNDLE / "macos").glob("rw.*.dmg"):
         log.write(f"deleting leftover {path.name}\n")
         path.unlink(missing_ok=True)
@@ -94,14 +108,19 @@ def check_runtime(log) -> bool:
     resources = BUNDLE / "macos" / "Penumbra.app" / "Contents" / "Resources"
     python = resources / "runtime" / "python" / "bin" / "python3"
     if not python.exists():
-        return True  # not a macOS bundle; nothing to check here
-    got = subprocess.run([str(python), "-c", "import litellm, dspy, penumbra.api"], capture_output=True,
-                         text=True, check=False)
+        return True  # macOS only: other platforms lay the bundle out differently
+    # Isolated (`-I`) and run from inside the bundle, so the checkout's `penumbra` or an exported
+    # PYTHONPATH cannot answer for the bundled one.
+    got = subprocess.run([str(python), "-I", "-c", "import litellm, dspy, penumbra.api"], cwd=resources,
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     log.write(f"runtime import check: {'ok' if got.returncode == 0 else got.stderr}\n")
     return got.returncode == 0
 
 
 def main() -> int:
+    # A console that cannot show hdiutil's localized output gets replacement characters, not a crash.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--skip-runtime", action="store_true", help="reuse desktop/src-tauri/runtime/")
     args = parser.parse_args()

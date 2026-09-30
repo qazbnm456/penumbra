@@ -26,6 +26,11 @@ def test_a_disk_image_failure_is_told_from_other_failures():
     assert build_desktop.dmg_step_failed(FAILED)
     assert not build_desktop.dmg_step_failed("error[E0425]: cannot find value `x` in this scope")
     assert not build_desktop.dmg_step_failed("Disk image done\n    Finished 2 bundles")
+    # `-vv` prints the script's command line on every build; a later, unrelated failure is not this.
+    assert not build_desktop.dmg_step_failed(
+        "Running Command `/x/dmg/bundle_dmg.sh --volname Penumbra`\nDisk image done\n"
+        "Error failed to bundle project: failed to run codesign"
+    )
 
 
 def test_the_report_says_where_create_dmg_stopped():
