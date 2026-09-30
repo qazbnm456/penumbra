@@ -96,3 +96,31 @@ def test_a_failed_disk_image_is_retried_once_with_the_app_kept(tmp_path, monkeyp
     assert "trying it again" in out and "Built after retrying the disk image" in out
     log = next((tmp_path / "logs").glob("*.log")).read_text()
     assert "retry 1" in log and "Disk image done" in log
+
+
+def test_an_image_that_will_not_detach_is_kept_and_the_reason_logged(tmp_path, monkeypatch):
+    import io
+
+    bundle = tmp_path / "bundle"
+    (bundle / "macos").mkdir(parents=True)
+    rw = bundle / "macos" / "rw.9.Penumbra.dmg"
+    rw.write_bytes(b"x")
+    info = (
+        "================================================\n"
+        f"image-path      : {rw}\n"
+        "/dev/disk7\tGUID_partition_scheme\t\n"
+    )
+
+    def fake_run(cmd, **_kwargs):
+        if cmd[:2] == ["hdiutil", "info"]:
+            return type("R", (), {"stdout": info, "returncode": 0, "stderr": ""})()
+        busy = "hdiutil: couldn't eject disk7: Resource busy"
+        return type("R", (), {"stdout": "", "returncode": 16, "stderr": busy})()
+
+    monkeypatch.setattr(build_desktop, "BUNDLE", bundle)
+    monkeypatch.setattr(build_desktop.subprocess, "run", fake_run)
+    log = io.StringIO()
+    build_desktop.clean_disk_image_leftovers(log)
+    assert rw.exists(), "a still-mounted image is not deleted from under its mount"
+    assert "could not detach /dev/disk7 (16)" in log.getvalue()
+    assert "keeping the rw images" in log.getvalue()
