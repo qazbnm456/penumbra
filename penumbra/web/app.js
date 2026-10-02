@@ -14053,14 +14053,7 @@ function drawStarMap() {
   const empty = !starMap.orbits.length && !topo.total.count;
   horizonEl("starmap-empty").textContent = t("map.empty", "Capture something and the map starts to grow.");
   horizonEl("starmap-empty").hidden = !empty;
-  // Penny keeps an empty map company: one scene, chosen when the map becomes empty and kept while
-  // it stays so (a redraw does not swap her for another).
-  const sceneBox = horizonEl("starmap-empty-scene");
-  if (empty && sceneBox.hidden && window.PennyScenes) {
-    const lang = typeof uiLang === "function" && uiLang().startsWith("zh") ? "zh" : "en";
-    window.PennyScenes.mount(sceneBox, { lang });
-  }
-  sceneBox.hidden = !empty;
+  syncEmptyScene(horizonEl("starmap-empty-scene"), empty);
   svg.appendChild(starMapDefs());
   // Everything drawn lives in one group the camera moves (`applyCamera`), so zooming and panning
   // are one transform and nothing below needs to know about them.
@@ -15184,6 +15177,16 @@ function paintMapSettings(panel) {
     drawStarMap();
   });
   panel.appendChild(reset);
+}
+
+//: Penny keeps an empty map company: one scene, chosen when the map becomes empty and kept while it
+//: stays so (a redraw does not swap her for another), and a new one the next time it empties.
+function syncEmptyScene(sceneBox, empty) {
+  if (empty && sceneBox.hidden && window.PennyScenes) {
+    const lang = typeof uiLang === "function" && uiLang().startsWith("zh") ? "zh" : "en";
+    window.PennyScenes.mount(sceneBox, { lang });
+  }
+  sceneBox.hidden = !empty;
 }
 
 //: Penny's caption on an empty map follows the interface language: the same scene, mounted again.

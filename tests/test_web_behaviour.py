@@ -1112,6 +1112,16 @@ def test_a_saver_keeps_one_request_in_flight_and_the_newest_value_wins():
     assert (r["idleAtStart"], r["idleInFlight"], r["idleAtEnd"]) == (True, False, True)
 
 
+def test_an_empty_map_keeps_one_penny_scene_through_redraws():
+    """The map redraws often (the poll, a pick, a language switch); Penny must not change scene on
+    each, only when the map has filled and emptied again."""
+    r = _run("emptyMapScene")
+    assert r["first"] == {"mounts": 1, "hidden": False}
+    assert r["redrawn"] == 1, "a redraw of a still-empty map mounted another scene"
+    assert r["filled"] == {"mounts": 1, "hidden": True}
+    assert r["emptiedAgain"] == 2, "a map that emptied again kept a hidden, stale scene"
+
+
 def test_dragging_a_graph_node_pulls_its_neighbours_by_distance_in_links():
     result = _run("graphDrag")
     assert result["B"] == 0.6 and result["E"] == 0.6, "one link away follows most"

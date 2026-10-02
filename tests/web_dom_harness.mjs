@@ -2061,6 +2061,24 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     return { inFlightWhileFirst, afterFirst, doneAfter, failed, idleAtStart, idleInFlight, idleAtEnd: saver.idle() };
   },
 
+  //: An empty map mounts one Penny scene and keeps it through redraws while it stays empty.
+  emptyMapScene() {
+    let mounts = 0;
+    const window = { PennyScenes: { mount: () => { mounts += 1; } } };
+    const sync = new Function("window", "uiLang", `${extract("syncEmptyScene")}\nreturn syncEmptyScene;`)(
+      window, () => "zh-TW");
+    const box = { hidden: true };
+    sync(box, true);
+    const first = { mounts, hidden: box.hidden };
+    sync(box, true);
+    sync(box, true);
+    const redrawn = mounts;
+    sync(box, false);
+    const filled = { mounts, hidden: box.hidden };
+    sync(box, true);
+    return { first, redrawn, filled, emptiedAgain: mounts };
+  },
+
   //: A PDF's printed line breaks, joined back inside sentences, kept at list items, blank lines and
   //: sentence ends, and never changing the length (so a quote's offsets still hold).
   pdfReflow() {
