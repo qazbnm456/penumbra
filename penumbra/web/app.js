@@ -12387,8 +12387,12 @@ function renderLenses(lensRow, tags, active, onToggle) {
     lensRow.querySelectorAll(".lens").forEach((button) => {
       button.querySelector(".lens-count").textContent = String(counts.get(button.dataset.tag));
     });
-    syncOpenLensPicker(lensRow, tags, active);
-    return;
+    // A count that gained a digit can push the last buttons out of the one line; only then is the
+    // row built and fitted again.
+    if (!(lensRow.clientWidth > 0 && lensRow.scrollWidth > lensRow.clientWidth + 1)) {
+      syncOpenLensPicker(lensRow, tags, active);
+      return;
+    }
   }
   lensRow.lensLayout = layout;
   lensRow.textContent = "";
@@ -12495,6 +12499,10 @@ function openLensPicker(lensRow, tags, active, { focus }) {
     shown.tags = nextTags;
     shown.active = nextActive;
     panel.setAttribute("aria-label", t("lens.all", `All tags · ${nextTags.length}`, { n: nextTags.length }));
+    // The words a rebuild used to redo, in case the interface language changed while it was open.
+    search.placeholder = t("lens.search", "Search tags");
+    search.setAttribute("aria-label", t("lens.search", "Search tags"));
+    empty.textContent = t("lens.none", "No tag matches.");
     paint();
     // A click on a chip drops focus to <body> in WebKit, which does not focus a pressed button; it
     // goes back to the search field so typing carries on. Focus the reader put elsewhere stays.
