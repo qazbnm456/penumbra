@@ -33,6 +33,10 @@ const WINDOW: &str = "main";
 /// How long the first start may take. The first launch compiles nothing, but it imports numpy,
 /// an ONNX runtime and dspy, which is several seconds on a cold disk.
 const START_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long the start screen stays up when someone can see it, so Penny's scene is seen through
+/// (one loop is three to five seconds) rather than flashed and cut off by a fast start. A hidden
+/// window (the app at rest in the notch) waits for nothing.
+const SPLASH_MIN: Duration = Duration::from_millis(3200);
 /// `serve` shuts down gracefully in about three seconds (`timeout_graceful_shutdown=3`), killing
 /// each run's process group on the way out. This is the margin before the shell stops asking.
 const STOP_GRACE: Duration = Duration::from_secs(8);
@@ -665,6 +669,7 @@ fn boot(app: AppHandle) {
             thread::sleep(Duration::from_millis(300));
         }
         splash(&window, "starting", false, "");
+        let splash_shown = Instant::now();
 
         let state = app.state::<ServerState>();
         // Taken out first, THEN stopped: holding the lock through an up-to-8s stop would block the
@@ -711,6 +716,11 @@ fn boot(app: AppHandle) {
         // wrote the token into `server.log`, the file "Show Server Log" invites people to share.
         // `menu` is the language the menu bar is written in, which follows the OS, not the page's
         // interface language, so the page can quote a menu item the way the reader will see it.
+        if window.is_visible().unwrap_or(false) {
+            if let Some(left) = SPLASH_MIN.checked_sub(splash_shown.elapsed()) {
+                thread::sleep(left);
+            }
+        }
         let target = workspace_url(port, &token);
         if let Ok(url) = url::Url::parse(&target) {
             let _ = window.navigate(url);

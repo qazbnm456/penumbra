@@ -1,0 +1,77 @@
+/* Penny's scenes (`penny-scenes.js`). One source, copied byte for byte to `desktop/splash/`; a test
+   fails when the two differ. Every loop is a few seconds long, and reduced motion stills them all.
+   `--pn-bg` is the background the scene sits on, which a mooncake's bites are cut in, and `--pn-star`
+   the colour of its stars, which must show on it. */
+.penny-scene {
+  margin: 0 auto;
+  width: min(240px, 100%);
+  text-align: center;
+}
+
+.penny-scene svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.penny-caption {
+  margin-top: 0.4rem;
+  font-size: 0.82rem;
+  opacity: 0.75;
+}
+
+.penny-scene g,
+.penny-scene circle,
+.penny-scene path,
+.penny-scene text {
+  transform-box: view-box;
+}
+
+.pn-bob { animation: pn-bob 3.2s ease-in-out infinite; }
+.pn-breathe { animation: pn-breathe 3.6s ease-in-out infinite; }
+.pn-chew { animation: pn-chew 0.7s ease-in-out infinite; }
+.pn-chop { animation: pn-chop 1.1s ease-in-out infinite; }
+.pn-pound { animation: pn-pound 0.9s ease-in-out infinite; }
+.pn-rise { animation: pn-rise 4s ease-in infinite; }
+.pn-tumble { transform: rotate(-16deg) translateY(4px); }
+.pn-tear { animation: pn-tear 1.2s ease-in infinite; }
+.pn-spin { animation: pn-spin 2.4s linear infinite; }
+.pn-sip { animation: pn-sip 2.4s ease-in infinite; }
+.pn-bite { fill: var(--pn-bg, #1d1820); opacity: 0; animation: pn-bite 3.6s steps(1, end) infinite; }
+.pn-float { animation: pn-float 5s ease-in infinite; }
+.pn-wobble { animation: pn-wobble 2.4s ease-in-out infinite; }
+.pn-z { opacity: 0; animation: pn-z 2.4s ease-out infinite; }
+.pn-orbit { animation: pn-orbit 3s linear infinite; }
+.pn-twinkle { fill: var(--pn-star, #ffe7b3); animation: pn-twinkle 2s ease-in-out infinite; }
+
+@keyframes pn-bob { 50% { transform: translateY(-3px); } }
+@keyframes pn-breathe { 50% { transform: scale(1.03); } }
+@keyframes pn-chew { 50% { transform: scaleX(1.03) scaleY(0.98); } }
+@keyframes pn-chop { 0%, 100% { transform: rotate(-35deg); } 45% { transform: rotate(20deg); } }
+@keyframes pn-pound { 0%, 100% { transform: translateY(-6px); } 50% { transform: translateY(2px); } }
+@keyframes pn-rise {
+  0% { transform: translate(0, 10px); opacity: 0; }
+  15% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { transform: translate(22px, -30px) scale(0.6); opacity: 0; }
+}
+@keyframes pn-tear { 0% { transform: translateY(0); opacity: 0; } 20% { opacity: 1; } 100% { transform: translateY(18px); opacity: 0; } }
+@keyframes pn-spin { to { transform: rotate(360deg); } }
+@keyframes pn-sip { 0% { transform: translateY(0); opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { transform: translateY(-64px); opacity: 0; } }
+@keyframes pn-bite { 0% { opacity: 0; } 20% { opacity: 1; } 90% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes pn-float {
+  0% { transform: translateY(20px); opacity: 0; }
+  15% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { transform: translateY(-70px) scale(0.7); opacity: 0; }
+}
+@keyframes pn-wobble { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(4deg); } }
+@keyframes pn-z { 0% { transform: translate(0, 0); opacity: 0; } 30% { opacity: 1; } 100% { transform: translate(8px, -16px); opacity: 0; } }
+@keyframes pn-orbit { to { transform: rotate(360deg); } }
+@keyframes pn-twinkle { 50% { opacity: 0.3; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .penny-scene * { animation: none !important; }
+  .pn-bite, .pn-z { opacity: 1; }
+}

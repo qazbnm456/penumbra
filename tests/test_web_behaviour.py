@@ -1071,6 +1071,17 @@ def test_the_studio_holds_the_card_only_while_it_should():
     assert not any(r[key] for key in ("infoTab", "otherPlanet", "gone", "focused", "renamed")), r
 
 
+def test_every_one_of_pennys_scenes_builds_with_a_caption_in_both_languages():
+    r = _run("pennyScenes")
+    assert len(r["names"]) == 10
+    for name, scene in r["out"].items():
+        assert scene["chosen"] == name
+        assert scene["parts"] > 8, f"{name} drew next to nothing"
+        assert scene["zh"] and scene["en"] and scene["zh"] != scene["en"], name
+        assert scene["label"] == scene["zh"], "the picture is named by its caption for a screen reader"
+    assert r["randomIsKnown"]
+
+
 def test_dragging_a_graph_node_pulls_its_neighbours_by_distance_in_links():
     result = _run("graphDrag")
     assert result["B"] == 0.6 and result["E"] == 0.6, "one link away follows most"

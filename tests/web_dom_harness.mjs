@@ -1931,6 +1931,35 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     };
   },
 
+  //: Every one of Penny's scenes builds: an SVG with something in it and a caption in each language,
+  //: through the DOM (a fake one that has no innerHTML at all, so using it would throw).
+  pennyScenes() {
+    const scenes = readFileSync(new URL("../penumbra/web/penny-scenes.js", import.meta.url), "utf8");
+    const node = (tag) => ({
+      tag, attrs: {}, children: [], style: {}, dataset: {}, textContent: "",
+      setAttribute(k, v) { this.attrs[k] = v; },
+      appendChild(c) { this.children.push(c); return c; },
+      count() { return 1 + this.children.reduce((n, c) => n + c.count(), 0); },
+    });
+    const document = { createElementNS: (_ns, tag) => node(tag), createElement: (tag) => node(tag) };
+    const window = {};
+    new Function("document", "window", scenes)(document, window);
+    const out = {};
+    for (const name of window.PennyScenes.names) {
+      const box = node("div");
+      const chosen = window.PennyScenes.mount(box, { name, lang: "zh" });
+      const figure = box.children[0];
+      const svg = figure.children[0];
+      const zh = figure.children[1].textContent;
+      const enBox = node("div");
+      window.PennyScenes.mount(enBox, { name, lang: "en" });
+      out[name] = { chosen, parts: svg.count(), zh, en: enBox.children[0].children[1].textContent,
+        label: svg.attrs["aria-label"] };
+    }
+    const random = node("div");
+    return { names: window.PennyScenes.names, out, randomIsKnown: window.PennyScenes.names.includes(window.PennyScenes.mount(random)) };
+  },
+
   //: A PDF's printed line breaks, joined back inside sentences, kept at list items, blank lines and
   //: sentence ends, and never changing the length (so a quote's offsets still hold).
   pdfReflow() {

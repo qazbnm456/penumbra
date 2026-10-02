@@ -4,6 +4,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 <link rel="stylesheet" href="/style.css" />
+<link rel="stylesheet" href="/penny-scenes.css" />
 
 <!-- The first tab stop on the page, and the only way past a facet rail that grows with the number
      of orbits: without it the capture field on the screen built for capture was the sixteenth
@@ -213,6 +214,8 @@
         <div class="lenses" id="starmap-lenses" role="group" aria-label="Tags" data-i18n-label="map.lenses"></div>
         <svg class="starmap-svg" id="starmap-svg" viewBox="0 0 1000 640" preserveAspectRatio="xMidYMid meet"
              role="img" aria-label="Star map" data-i18n-label="mode.map"></svg>
+        <!-- Penny keeps an empty map company (`penny-scenes.js`). -->
+        <div class="starmap-empty-scene" id="starmap-empty-scene" hidden></div>
         <p class="starmap-empty" id="starmap-empty" hidden data-i18n="map.empty">
           Capture something and the map starts to grow.
         </p>
@@ -788,4 +791,5 @@
 </div>
 
 <script src="/i18n.js"></script>
+<script src="/penny-scenes.js"></script>
 <script src="/app.js"></script>

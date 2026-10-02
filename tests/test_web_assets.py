@@ -3538,3 +3538,16 @@ def test_the_header_cannot_be_selected_like_a_page():
     assert "user-select: none" in header
     moon = re.search(r"^\.wordmark-moon \{([^}]*)\}", css, re.MULTILINE).group(1)
     assert "pointer-events: none" in moon and "-webkit-user-drag: none" in moon
+
+
+def test_the_start_screen_carries_the_same_penny_scenes_as_the_workspace():
+    """The start screen is shown before the server exists, so it cannot read the workspace's
+    `penny-scenes.*`; `desktop/splash/` carries copies. One source in two places drifts the first
+    time only one is edited, so they must be byte for byte the same."""
+    splash = WEB.parent.parent / "desktop" / "splash"
+    for name in ("penny-scenes.js", "penny-scenes.css"):
+        assert (splash / name).read_bytes() == (WEB / name).read_bytes(), (
+            f"desktop/splash/{name} differs from penumbra/web/{name}: edit the web copy, then copy it over"
+        )
+    page = (splash / "index.html").read_text(encoding="utf-8")
+    assert 'src="penny-scenes.js"' in page and 'href="penny-scenes.css"' in page

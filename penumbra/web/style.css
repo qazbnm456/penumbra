@@ -7479,6 +7479,20 @@ body[data-view="horizon"] .orbit-picker {
   color: var(--text-dim);
 }
 
+/* Penny on an empty map, just above the line that says how it starts to grow. */
+.starmap-empty-scene {
+  position: absolute;
+  inset: calc(40% - 11rem) 0 auto;
+  --pn-bg: var(--bg);
+  --pn-star: var(--text-faint);
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+.starmap-empty-scene[hidden] {
+  display: none;
+}
+
 .starmap-legend,
 .pending-note {
   transition: opacity 200ms ease;
