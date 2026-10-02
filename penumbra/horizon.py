@@ -161,6 +161,8 @@ _MIGRATIONS = (
         "CREATE TABLE map_planets (orbit_id TEXT PRIMARY KEY, ring INTEGER NOT NULL, angle REAL NOT NULL, "
         "placed_at REAL NOT NULL)"
     ),
+    # 4. The star map's own settings (`mapstore.settings`): one JSON row.
+    "CREATE TABLE map_settings (id INTEGER PRIMARY KEY CHECK (id = 1), value TEXT NOT NULL)",
 )
 
 

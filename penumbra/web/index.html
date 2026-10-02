@@ -235,7 +235,13 @@
           <!-- Rest: the interface steps aside and the map runs as a living wallpaper. -->
           <button type="button" class="map-camera-btn map-rest" id="map-rest" aria-label="Rest the screen" title="Rest the screen"
                   data-i18n-label="map.rest" data-i18n-title="map.rest">&#x263E;</button>
+          <!-- The map's own settings: ring sizes, planets per ring, how often each sky event comes. -->
+          <button type="button" class="map-camera-btn" id="map-settings-open" aria-haspopup="dialog" aria-expanded="false"
+                  aria-controls="map-settings" aria-label="Map settings" title="Map settings"
+                  data-i18n-label="mapSettings.open" data-i18n-title="mapSettings.open">&#x2699;&#xFE0E;</button>
         </div>
+        <div class="map-settings" id="map-settings" role="dialog" aria-label="Map settings"
+             data-i18n-label="mapSettings.open" hidden></div>
       </div>
 
 

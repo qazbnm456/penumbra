@@ -12764,6 +12764,14 @@ const starMap = {
   // map had turned when it was dropped, so it stays where it was let go (the stored angle is its
   // place at the start of the turn, which is where a fresh page shows it).
   places: {}, dropShift: new Map(),
+  // The map's settings (`mapstore.SETTING_BOUNDS`), from the server with the places.
+  settings: null,
+};
+
+//: What the server answers before the reader has chosen anything (`mapstore.DEFAULT_SETTINGS`).
+const MAP_SETTINGS_DEFAULT = {
+  inner_ring: 260, ring_gap: 160, first_ring_slots: 3, slots_step: 3,
+  events: { meteor: "normal", shower: "normal", comet: "normal", rock: "normal" },
 };
 
 const MAP_CENTRE = { x: 500, y: 330 };
@@ -12771,7 +12779,9 @@ const MAP_CENTRE = { x: 500, y: 330 };
 //: clears one on the next where the ellipses are closest (top and bottom); at 60 apart they collided
 //: every time two passed. The inner ring clears the Horizon's name and count under the centre (to +110).
 function ringGeometry(i) {
-  return { rx: 260 + 160 * i, ry: 175 + 100 * i, period: 240 + 140 * i };
+  // Sized by the reader's settings; the ellipse keeps the map's tilt (ry is about two thirds of rx).
+  const { inner_ring: inner, ring_gap: gap } = starMap.settings || MAP_SETTINGS_DEFAULT;
+  return { rx: inner + gap * i, ry: Math.round(inner * 0.673 + gap * 0.625 * i), period: 240 + 140 * i };
 }
 
 //: The outermost ring a planet sits on, or -1 with none.
@@ -12836,6 +12846,7 @@ async function renderStarMap({ quiet = false } = {}) {
   const bySlug = new Map((topo.orbits || []).map((o) => [o.slug, o]));
   orbitTitles.clear();
   starMap.places = placed.planets || {};
+  starMap.settings = placed.settings || MAP_SETTINGS_DEFAULT;
   // In the order the planets were placed, which is the order the keyboard and the lists walk them.
   const placedAt = (o) => (starMap.places[o.slug] ? starMap.places[o.slug].placed_at : Infinity);
   starMap.orbits = (listed.orbits || []).map((o) => {
@@ -13557,26 +13568,38 @@ function skyTempo() {
     : { meteor: [7000, 18000], shower: 240000, comet: 300000, rock: 150000 };
 }
 
+//: How often each kind of sky event comes, from the map's settings: a rate against the usual pace,
+//: 0 for never.
+const SKY_LEVELS = { off: 0, rare: 0.4, normal: 1, often: 2.5 };
+
+function skyRate(kind) {
+  const level = ((starMap.settings || MAP_SETTINGS_DEFAULT).events || {})[kind];
+  return SKY_LEVELS[level] ?? 1;
+}
+
 function skyTick() {
   const tempo = skyTempo();
   if (skyOnScreen() && skyLayer()) {
     const now = Date.now();
-    skyMeteor();
-    if (now - skyWeather.lastShower > tempo.shower * (0.7 + Math.random() * 0.6)) {
+    if (skyRate("meteor") > 0) skyMeteor();
+    const due = (kind, last) => skyRate(kind) > 0
+      && now - last > (tempo[kind] / skyRate(kind)) * (0.7 + Math.random() * 0.6);
+    if (due("shower", skyWeather.lastShower)) {
       skyWeather.lastShower = now;
       skyShower();
     }
-    if (now - skyWeather.lastComet > tempo.comet * (0.7 + Math.random() * 0.6)) {
+    if (due("comet", skyWeather.lastComet)) {
       skyWeather.lastComet = now;
       skyComet();
     }
-    if (now - skyWeather.lastRock > tempo.rock * (0.7 + Math.random() * 0.6)) {
+    if (due("rock", skyWeather.lastRock)) {
       skyWeather.lastRock = now;
       skyRock();
     }
   }
+  // The meteors set the tick's pace; with them off the tick keeps the usual pace for the others.
   const [lo, hi] = tempo.meteor;
-  skyWeather.timer = setTimeout(skyTick, lo + Math.random() * (hi - lo));
+  skyWeather.timer = setTimeout(skyTick, (lo + Math.random() * (hi - lo)) / (skyRate("meteor") || 1));
 }
 
 function initSkyWeather() {
@@ -14891,6 +14914,134 @@ function initDesktopContextMenu() {
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed) return;
     event.preventDefault();
+  });
+}
+
+// --- the map's own settings -----------------------------------------------------------------------
+//
+// After Rest in the corner: how big the rings are and how far apart, how many planets each ring
+// holds (which is also how far apart they sit), and how often each kind of sky event comes. Kept on
+// the server (`PUT /horizon/map/settings`) with the planets' places. A change to how many a ring
+// holds rearranges every planet in the order the orbits began, the ones the reader dragged included,
+// and the panel says so beside those controls.
+
+const mapSettingsUi = { saveTimer: 0 };
+
+async function saveMapSettings(next) {
+  try {
+    const got = await api("/horizon/map/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(next),
+    });
+    starMap.settings = got.settings;
+    // New places for every planet: read them, and the map with them.
+    if (got.rearranged) {
+      starMap.dropShift.clear();
+      await renderStarMap();
+    }
+  } catch (err) {
+    notify(t("err.mapSettings", `Could not save the map settings: ${err.message}`, { message: err.message }));
+  }
+}
+
+function paintMapSettings(panel) {
+  panel.textContent = "";
+  const current = () => starMap.settings || MAP_SETTINGS_DEFAULT;
+  panel.appendChild(elt("h3", "map-settings-title", t("mapSettings.open", "Map settings")));
+  const range = (key, label, min, max, step, { live }) => {
+    const row = elt("label", "map-settings-row");
+    const name = elt("span", "map-settings-name", label);
+    const value = elt("span", "map-settings-value", String(current()[key]));
+    const input = document.createElement("input");
+    input.type = "range";
+    input.min = String(min);
+    input.max = String(max);
+    input.step = String(step);
+    input.value = String(current()[key]);
+    input.addEventListener("input", () => {
+      value.textContent = input.value;
+      if (!live) return;
+      // Sizes are drawn as they change and saved once the reader pauses.
+      starMap.settings = { ...current(), [key]: Number(input.value) };
+      drawStarMap();
+      clearTimeout(mapSettingsUi.saveTimer);
+      mapSettingsUi.saveTimer = setTimeout(() => void saveMapSettings(current()), 400);
+    });
+    // A count rearranges the planets, so it is saved once, when the reader lets go.
+    if (!live) input.addEventListener("change", () => void saveMapSettings({ ...current(), [key]: Number(input.value) }));
+    row.append(name, value, input);
+    return row;
+  };
+  panel.appendChild(elt("h4", "map-settings-section", t("mapSettings.rings", "Rings")));
+  panel.appendChild(range("inner_ring", t("mapSettings.innerRing", "Inner ring size"), 180, 480, 10, { live: true }));
+  panel.appendChild(range("ring_gap", t("mapSettings.ringGap", "Space between rings"), 80, 320, 10, { live: true }));
+  panel.appendChild(elt("h4", "map-settings-section", t("mapSettings.planets", "Planets per ring")));
+  panel.appendChild(range("first_ring_slots", t("mapSettings.firstRing", "On the inner ring"), 1, 12, 1, { live: false }));
+  panel.appendChild(range("slots_step", t("mapSettings.slotsStep", "More on each ring outward"), 0, 8, 1, { live: false }));
+  panel.appendChild(elt("p", "map-settings-note", t("mapSettings.rearrangeNote",
+    "Fewer places on a ring set its planets further apart. Changing these rearranges every planet in the order its orbit began, including ones you dragged.")));
+  panel.appendChild(elt("h4", "map-settings-section", t("mapSettings.sky", "Sky events")));
+  const kinds = [
+    ["meteor", t("mapSettings.meteor", "Meteors")], ["shower", t("mapSettings.shower", "Meteor showers")],
+    ["comet", t("mapSettings.comet", "Comets")], ["rock", t("mapSettings.rock", "Passing rocks")],
+  ];
+  const levels = [
+    ["off", t("mapSettings.off", "Off")], ["rare", t("mapSettings.rare", "Rare")],
+    ["normal", t("mapSettings.normal", "Usual")], ["often", t("mapSettings.often", "Often")],
+  ];
+  kinds.forEach(([kind, label]) => {
+    const row = elt("label", "map-settings-row");
+    const select = document.createElement("select");
+    levels.forEach(([level, word]) => {
+      const option = document.createElement("option");
+      option.value = level;
+      option.textContent = word;
+      select.appendChild(option);
+    });
+    select.value = current().events[kind];
+    select.addEventListener("change", () => {
+      void saveMapSettings({ ...current(), events: { ...current().events, [kind]: select.value } });
+    });
+    row.append(elt("span", "map-settings-name", label), select);
+    panel.appendChild(row);
+  });
+  const reset = elt("button", "btn map-settings-reset", t("mapSettings.reset", "Back to the defaults"));
+  reset.type = "button";
+  reset.addEventListener("click", async () => {
+    await saveMapSettings(MAP_SETTINGS_DEFAULT);
+    paintMapSettings(panel);
+    drawStarMap();
+  });
+  panel.appendChild(reset);
+}
+
+function initMapSettings() {
+  const open = horizonEl("map-settings-open");
+  const panel = horizonEl("map-settings");
+  const close = () => {
+    panel.hidden = true;
+    open.setAttribute("aria-expanded", "false");
+  };
+  open.addEventListener("click", () => {
+    if (!panel.hidden) {
+      close();
+      return;
+    }
+    paintMapSettings(panel);
+    panel.hidden = false;
+    open.setAttribute("aria-expanded", "true");
+    panel.querySelector("input, select")?.focus();
+  });
+  panel.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    event.stopPropagation();
+    close();
+    open.focus();
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (panel.hidden || panel.contains(event.target) || open.contains(event.target)) return;
+    close();
   });
 }
 
@@ -17469,6 +17620,7 @@ initAmbient();
 initPanels();
 initStarMapCamera();
 initMapKeys();
+initMapSettings();
 initDesktopContextMenu();
 initWindowChrome();
 initViewModes();

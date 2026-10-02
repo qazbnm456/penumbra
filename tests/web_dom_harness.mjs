@@ -1728,6 +1728,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       paintStarMapLenses: () => {}, drawStarMap: () => { fakes.draws += 1; fakes.starMap.scene = {}; },
       syncStarMapContext: () => {}, mapMotion: { held: false }, focusCameraOn: () => {},
       uiLang: () => fakes.lang,
+      MAP_SETTINGS_DEFAULT: { inner_ring: 260, ring_gap: 160 },
     };
     const names = Object.keys(deps);
     const renderStarMap = new Function(...names, `${extract("renderStarMap")}\nreturn renderStarMap;`)(
@@ -1830,7 +1831,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       `${extract("ringGeometry")}\n${extract("outermostRing")}\n${extract("mapRings")}\n` +
       `${extract("planetPlace")}\n${extract("planetLayout")}\n${extract("ringNear")}\n` +
       "return { planetLayout, mapRings, ringNear, ringGeometry };",
-    )({ orbits, places, dropShift }, { clock: 0 }, { x: 500, y: 330 }, 40);
+    )({ orbits, places, dropShift, settings: { inner_ring: 260, ring_gap: 160 } }, { clock: 0 }, { x: 500, y: 330 }, 40);
     const orbit = (slug) => ({ slug, sources: 1, captures: 1 });
     const places = { a: { ring: 0, angle: 1 }, b: { ring: 2, angle: -2 } };
     const at = (layout) => Object.fromEntries(
@@ -1876,6 +1877,20 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       moonDown: go("ArrowDown", "a", capture("m2", "a")),
       fromLens: go("ArrowRight", null, { kind: "lens" }),
       empty: mapKeyMove("ArrowRight", [], null, null),
+    };
+  },
+
+  //: The map's settings reach what is drawn: ring sizes, and how often each sky event comes.
+  mapSettingsDrawn() {
+    const make = (settings) => new Function("starMap", "MAP_SETTINGS_DEFAULT", "SKY_LEVELS",
+      `${extract("ringGeometry")}\n${extract("skyRate")}\nreturn { ringGeometry, skyRate };`,
+    )({ settings }, { inner_ring: 260, ring_gap: 160, events: {} }, { off: 0, rare: 0.4, normal: 1, often: 2.5 });
+    const chosen = make({ inner_ring: 300, ring_gap: 200, events: { comet: "off", meteor: "often", rock: "rare" } });
+    const none = make(null);
+    return {
+      ring1: chosen.ringGeometry(1).rx, defaultRing0: none.ringGeometry(0),
+      comet: chosen.skyRate("comet"), meteor: chosen.skyRate("meteor"), rock: chosen.skyRate("rock"),
+      shower: chosen.skyRate("shower"),
     };
   },
 

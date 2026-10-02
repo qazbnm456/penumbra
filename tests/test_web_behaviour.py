@@ -1053,6 +1053,13 @@ def test_the_arrow_keys_walk_planets_then_moons_and_back():
     assert r["empty"] is None
 
 
+def test_the_map_settings_size_the_rings_and_pace_the_sky():
+    r = _run("mapSettingsDrawn")
+    assert r["ring1"] == 500, "ring i is the inner ring plus i gaps"
+    assert r["defaultRing0"] == {"rx": 260, "ry": 175, "period": 240}, "the defaults draw the map as before"
+    assert (r["comet"], r["meteor"], r["rock"], r["shower"]) == (0, 2.5, 0.4, 1)
+
+
 def test_dragging_a_graph_node_pulls_its_neighbours_by_distance_in_links():
     result = _run("graphDrag")
     assert result["B"] == 0.6 and result["E"] == 0.6, "one link away follows most"

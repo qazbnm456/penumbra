@@ -15,6 +15,7 @@ ring beyond its slots; the map fades whichever is behind while two overlap.
 
 from __future__ import annotations
 
+import json
 import math
 import time
 from pathlib import Path
@@ -26,26 +27,52 @@ from . import horizon
 MAX_RING = 40
 
 
-def ring_slots(ring: int) -> int:
+#: The star map's settings and their bounds: the reader's choices for how the map is drawn, kept
+#: with their arrangement (`map_settings`). Presentation only (invariant 41): every value here
+#: changes how the map looks and where new planets go, and none bounds anything else.
+#: `inner_ring` and `ring_gap` are in map units (the inner ring's half-width, and how much wider
+#: each ring is than the one inside it); `first_ring_slots` and `slots_step` decide how many planets
+#: automatic placement puts on each ring, and so how far apart they sit.
+SETTING_BOUNDS = {
+    "inner_ring": (180, 480),
+    "ring_gap": (80, 320),
+    "first_ring_slots": (1, 12),
+    "slots_step": (0, 8),
+}
+EVENT_KINDS = ("meteor", "shower", "comet", "rock")
+EVENT_LEVELS = ("off", "rare", "normal", "often")
+DEFAULT_SETTINGS = {
+    "inner_ring": 260,
+    "ring_gap": 160,
+    "first_ring_slots": 3,
+    "slots_step": 3,
+    "events": {kind: "normal" for kind in EVENT_KINDS},
+}
+#: The settings that decide automatic placement: changing one rearranges every planet.
+_LAYOUT = ("first_ring_slots", "slots_step")
+
+
+def ring_slots(ring: int, settings: dict | None = None) -> int:
     """How many evenly spaced places automatic placement uses on `ring`: the outer rings are longer."""
-    return 3 + 3 * ring
+    chosen = settings or DEFAULT_SETTINGS
+    return chosen["first_ring_slots"] + chosen["slots_step"] * ring
 
 
-def slot_angle(ring: int, slot: int) -> float:
-    return -math.pi / 2 + (slot / ring_slots(ring)) * math.pi * 2 + ring * 0.7
+def slot_angle(ring: int, slot: int, settings: dict | None = None) -> float:
+    return -math.pi / 2 + (slot / ring_slots(ring, settings)) * math.pi * 2 + ring * 0.7
 
 
-def _free_place(taken: dict[int, list[float]]) -> tuple[int, float]:
+def _free_place(taken: dict[int, list[float]], settings: dict) -> tuple[int, float]:
     """The first ring with a free slot, and that slot's angle. A slot is free when no planet on the
     ring sits within half a slot's width of it, so a planet dragged onto a slot takes it."""
     for ring in range(MAX_RING + 1):
-        width = math.pi * 2 / ring_slots(ring)
-        for slot in range(ring_slots(ring)):
-            angle = slot_angle(ring, slot)
+        width = math.pi * 2 / ring_slots(ring, settings)
+        for slot in range(ring_slots(ring, settings)):
+            angle = slot_angle(ring, slot, settings)
             others = taken.get(ring, [])
             if all(abs(math.remainder(angle - other, math.pi * 2)) >= width / 2 for other in others):
                 return ring, angle
-    return MAX_RING, slot_angle(MAX_RING, 0)
+    return MAX_RING, slot_angle(MAX_RING, 0, settings)
 
 
 def _created(conn, orbits: list[tuple[str, float]]) -> dict[str, float]:
@@ -82,11 +109,12 @@ def placements(
             for row in rows.values():
                 taken.setdefault(row["ring"], []).append(row["angle"])
             created = _created(conn, orbits)
+            chosen = _settings(conn)
             now = time.time()
             # A microsecond apart, so orbits placed in one batch keep their order (`placed_at` is the
             # order the map's keyboard and lists walk the planets).
             for index, key in enumerate(sorted(present - set(rows), key=lambda k: (created[k], k))):
-                ring, angle = _free_place(taken)
+                ring, angle = _free_place(taken, chosen)
                 at = now + index * 1e-6
                 conn.execute(
                     "INSERT INTO map_planets (orbit_id, ring, angle, placed_at) VALUES (?, ?, ?, ?)",
@@ -132,3 +160,61 @@ def place(
             (orbit_slug, ring, angle, now),
         )
     return {"ring": ring, "angle": angle}
+
+
+def _settings(conn) -> dict:
+    row = conn.execute("SELECT value FROM map_settings WHERE id = 1").fetchone()
+    stored = json.loads(row["value"]) if row is not None else {}
+    merged = {**DEFAULT_SETTINGS, **{k: v for k, v in stored.items() if k in DEFAULT_SETTINGS}}
+    merged["events"] = {**DEFAULT_SETTINGS["events"], **stored.get("events", {})}
+    return merged
+
+
+def settings(*, base_dir: str | Path = horizon.DEFAULT_HORIZON_DIR) -> dict:
+    """The star map's settings: what the reader chose, over the defaults for anything not chosen."""
+    with horizon._connect(base_dir) as conn:
+        return _settings(conn)
+
+
+def validate_settings(value: dict) -> dict:
+    """A complete settings object, checked against `SETTING_BOUNDS`, `EVENT_KINDS` and
+    `EVENT_LEVELS`. Raises `ValueError` naming what is wrong; never clamps, so the reader is not shown
+    a value they did not choose."""
+    if set(value) != set(DEFAULT_SETTINGS):
+        raise ValueError(f"settings must name exactly {sorted(DEFAULT_SETTINGS)}")
+    for key, (low, high) in SETTING_BOUNDS.items():
+        number = value[key]
+        if isinstance(number, bool) or not isinstance(number, int) or not low <= number <= high:
+            raise ValueError(f"{key} must be a whole number from {low} to {high}")
+    events = value["events"]
+    if not isinstance(events, dict) or set(events) != set(EVENT_KINDS):
+        raise ValueError(f"events must name exactly {list(EVENT_KINDS)}")
+    for kind, level in events.items():
+        if level not in EVENT_LEVELS:
+            raise ValueError(f"events.{kind} must be one of {list(EVENT_LEVELS)}")
+    return {**value, "events": dict(events)}
+
+
+def save_settings(value: dict, *, base_dir: str | Path = horizon.DEFAULT_HORIZON_DIR) -> tuple[dict, bool]:
+    """Store the reader's settings; `(settings, rearranged)`. When the rule for how many planets a
+    ring holds changes, every place is dropped in the same transaction, so the next read places every
+    planet again under the new rule, in the order the orbits began. The reader chose that: a change
+    to the rule rearranges the whole map, the planets they dragged included."""
+    checked = validate_settings(value)
+    with horizon._connect(base_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            before = _settings(conn)
+            conn.execute(
+                "INSERT INTO map_settings (id, value) VALUES (1, ?) "
+                "ON CONFLICT(id) DO UPDATE SET value = excluded.value",
+                (json.dumps(checked),),
+            )
+            rearranged = any(before[key] != checked[key] for key in _LAYOUT)
+            if rearranged:
+                conn.execute("DELETE FROM map_planets")
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+    return checked, rearranged

@@ -2111,3 +2111,14 @@ def test_an_unreadable_orbit_file_keeps_its_planets_place(client):
     assert client.get("/horizon/map").json()["planets"]["alpha"]["ring"] == 3
     path.write_text(good, encoding="utf-8")
     assert client.get("/horizon/map").json()["planets"]["alpha"]["ring"] == 3
+
+
+def test_the_star_maps_settings_are_kept_on_the_server_and_checked(client):
+    got = client.get("/horizon/map").json()
+    assert got["settings"]["first_ring_slots"] == 3
+    chosen = {**got["settings"], "ring_gap": 200}
+    saved = client.put("/horizon/map/settings", json=chosen)
+    assert saved.status_code == 200 and saved.json() == {"settings": chosen, "rearranged": False}
+    assert client.get("/horizon/map").json()["settings"]["ring_gap"] == 200
+    assert client.put("/horizon/map/settings", json={**chosen, "ring_gap": 9999}).status_code == 422
+    assert client.put("/horizon/map/settings", json={**chosen, "slots_step": 1}).json()["rearranged"] is True

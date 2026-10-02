@@ -77,3 +77,37 @@ def test_all_places_reads_what_is_stored_for_the_export():
     mapstore.place("a", 4, 0.5)
     stored = mapstore.all_places()["a"]
     assert (stored["ring"], stored["angle"]) == (4, 0.5)
+
+
+def test_settings_default_and_a_new_slot_rule_rearranges_every_planet():
+    """The reader chose this: changing how many planets a ring holds rearranges the whole map,
+    dragged planets included. Changing only the ring sizes or the sky moves nothing."""
+    assert mapstore.settings() == mapstore.DEFAULT_SETTINGS
+    mapstore.placements([("a", 1.0), ("b", 2.0), ("c", 3.0)])
+    mapstore.place("a", 5, 1.0)
+    events = {**mapstore.DEFAULT_SETTINGS["events"], "comet": "off"}
+    bigger = {**mapstore.DEFAULT_SETTINGS, "inner_ring": 300, "events": events}
+    _, rearranged = mapstore.save_settings(bigger)
+    assert not rearranged and mapstore.all_places()["a"]["ring"] == 5
+    assert mapstore.settings()["events"]["comet"] == "off"
+    one_each = {**bigger, "first_ring_slots": 1, "slots_step": 1}
+    _, rearranged = mapstore.save_settings(one_each)
+    assert rearranged and mapstore.all_places() == {}
+    got = mapstore.placements([("a", 1.0), ("b", 2.0), ("c", 3.0)])
+    assert [got[k]["ring"] for k in ("a", "b", "c")] == [0, 1, 1], "ring 0 holds one, ring 1 two"
+
+
+def test_settings_out_of_bounds_are_refused_never_clamped():
+    good = mapstore.DEFAULT_SETTINGS
+    for bad in (
+        {**good, "inner_ring": 50},
+        {**good, "first_ring_slots": 0},
+        {**good, "ring_gap": 1.5},
+        {**good, "slots_step": True},
+        {**good, "events": {**good["events"], "comet": "always"}},
+        {**good, "events": {"meteor": "off"}},
+        {k: v for k, v in good.items() if k != "ring_gap"},
+        {**good, "extra": 1},
+    ):
+        with pytest.raises(ValueError):
+            mapstore.validate_settings(bad)

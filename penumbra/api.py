@@ -5230,9 +5230,35 @@ async def horizon_map() -> dict:
                 present.append((path.stem, path.stat().st_mtime))
             except OSError:  # deleted between the listing and the stat: it is gone
                 continue
-        return mapstore.placements(present)
+        return {"planets": mapstore.placements(present), "settings": mapstore.settings()}
 
-    return {"planets": await asyncio.to_thread(read)}
+    return await asyncio.to_thread(read)
+
+
+class MapSettingsRequest(BaseModel):
+    """The star map's settings, every field named (`extra="forbid"`): a typo'd key must not leave a
+    setting quietly at its old value. The bounds are checked by `mapstore.validate_settings`."""
+
+    model_config = {"extra": "forbid"}
+
+    inner_ring: int
+    ring_gap: int
+    first_ring_slots: int
+    slots_step: int
+    events: dict[str, str]
+
+
+@app.put("/horizon/map/settings")
+async def save_map_settings(body: MapSettingsRequest) -> dict:
+    """The star map's settings, the whole object as the reader left it: ring sizes, how many planets
+    each ring holds, and how often each kind of sky event comes (`mapstore.SETTING_BOUNDS`). A value
+    out of bounds is refused, never clamped. Changing how many planets a ring holds rearranges every
+    planet, which the reader is told before they change it (`rearranged` in the answer)."""
+    try:
+        saved, rearranged = await asyncio.to_thread(mapstore.save_settings, body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"settings": saved, "rearranged": rearranged}
 
 
 class PlanetPlaceRequest(BaseModel):

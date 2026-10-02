@@ -8972,6 +8972,88 @@ body.is-resizing .orbit-graph {
   gap: var(--space-1);
 }
 
+/* The map's settings, opened from the gear under Rest: a panel to the left of the camera buttons. */
+.map-settings {
+  position: absolute;
+  right: calc(var(--space-5) + 32px + var(--space-3));
+  bottom: calc(var(--space-11) + var(--space-5));
+  z-index: 3;
+  width: 280px;
+  max-height: calc(100% - var(--space-11) * 2);
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: var(--space-5);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.map-settings[hidden] {
+  display: none;
+}
+
+.map-settings-title {
+  margin: 0;
+  font-size: var(--text-md);
+}
+
+.map-settings-section {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-faint);
+  letter-spacing: 0.04em;
+}
+
+.map-settings-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.map-settings-row input[type="range"] {
+  grid-column: 1 / -1;
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.map-settings-name {
+  min-width: 0;
+}
+
+.map-settings-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.map-settings-row select {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-1) var(--space-2);
+}
+
+.map-settings-note {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+
+.map-settings-reset {
+  align-self: flex-start;
+  margin-top: var(--space-3);
+}
+
 .map-camera-btn {
   width: 32px;
   height: 32px;
