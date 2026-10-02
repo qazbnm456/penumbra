@@ -39,6 +39,28 @@ def test_the_report_says_where_create_dmg_stopped():
     assert build_desktop.dmg_failure_reason("nothing useful") == "(no create-dmg output before the failure)"
 
 
+# osascript's own error line is the only one that names the cause. These are the lines from a build
+# whose Automation prompt for Finder went unanswered: the AppleEvent waited out its 120 seconds.
+TIMED_OUT = """Creating disk image...
+Running AppleScript to make Finder stuff pretty: /usr/bin/osascript "/tmp/a" "dmg.X"
+/tmp/a:394:406: execution error: Finder got an error: AppleEvent timed out. (-1712)
+Failed running AppleScript
+Unmounting disk image...
+Error failed to bundle project: error running bundle_dmg.sh: `failed to run /x/dmg/bundle_dmg.sh`
+"""
+
+
+def test_the_report_keeps_the_applescript_error_and_says_what_it_means():
+    reason = build_desktop.dmg_failure_reason(TIMED_OUT)
+    assert "execution error: Finder got an error: AppleEvent timed out. (-1712)" in reason
+    assert "Automation" in reason
+    denied = TIMED_OUT.replace("AppleEvent timed out. (-1712)", "Not authorized to send Apple events "
+                               "to Finder. (-1743)")
+    assert "Privacy & Security > Automation" in build_desktop.dmg_failure_reason(denied)
+    # A failure with no osascript error gets no hint, so the hint cannot be printed unconditionally.
+    assert "Automation" not in build_desktop.dmg_failure_reason(FAILED)
+
+
 def test_only_this_builds_rw_images_are_found_to_detach():
     bundle = Path("/b/target/release/bundle")
     info = """framework       : 685

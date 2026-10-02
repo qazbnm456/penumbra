@@ -6,10 +6,12 @@
 It runs `build_runtime.py`, then `cargo tauri build -vv` in `desktop/src-tauri`, with every line
 written to `desktop/src-tauri/target/build-logs/<time>.log` as well as the terminal.
 
-**Why a wrapper.** On macOS the disk-image step (`bundle_dmg.sh`, from create-dmg) failed now and
-then while the `.app` beside it was fine, and Tauri's default output records only that the script
-failed. Nine runs with full output, including runs under heavy load, never reproduced it, so this
-keeps the full output of every build and gives the step one more try: when the build fails in that
+**Why a wrapper.** On macOS the disk-image step (`bundle_dmg.sh`, from create-dmg) can fail while
+the `.app` beside it is fine, and Tauri's default output records only that the script failed. One
+cause is known: create-dmg's AppleScript drives Finder, macOS holds the first Apple event from a
+terminal until its Automation prompt is answered, and with nobody at the screen the event times out
+after 120 seconds (`-1712`). So this keeps the full output of every build, reports osascript's own
+error with what it means, and gives the step one more try: when the build fails in that
 step, it detaches any disk image the step left mounted, deletes its `rw.*.dmg`, and runs
 `cargo tauri bundle --bundles app,dmg -vv` again. `app` is named on purpose, because
 `tauri bundle` deletes any bundle it was not asked for, the `.app` included.
@@ -47,10 +49,22 @@ def dmg_failure_reason(log_text: str) -> str:
     """The create-dmg lines that say where it stopped, for the report."""
     # create-dmg's own messages are English; hdiutil's follow the system language, so its lines are
     # caught by the `hdiutil:` prefix rather than by their wording.
-    markers = ("Failed running AppleScript", "Wait a moment", "hdiutil:", "exit code",
+    # osascript's `execution error` line is the only one that names the cause; its message follows the
+    # system language too, so the hints below key on the error number.
+    markers = ("Failed running AppleScript", "Wait a moment", "hdiutil:", "exit code", "execution error",
                "Unmounting disk image", "Running AppleScript", "Creating disk image")
     lines = [line.strip() for line in log_text.splitlines() if any(m in line for m in markers)]
-    return "\n".join(lines[-6:]) or "(no create-dmg output before the failure)"
+    reason = "\n".join(lines[-6:]) or "(no create-dmg output before the failure)"
+    errors = [line for line in lines if "execution error" in line]
+    if errors and "(-1712)" in errors[-1]:
+        # TCC holds the first Apple event to Finder until its Automation prompt is answered, and the
+        # event's 120-second timeout expires first when nobody is at the screen.
+        reason += ("\nThe Apple event to Finder timed out: macOS asks once per terminal whether it may"
+                   " control Finder (Automation), and nobody answered. Allow it when the prompt appears.")
+    elif errors and "(-1743)" in errors[-1]:
+        reason += ("\nThis terminal may not control Finder. Allow it under System Settings > Privacy &"
+                   " Security > Automation, then build again.")
+    return reason
 
 
 def leftover_images(hdiutil_info: str, bundle_dir: Path) -> list[str]:
