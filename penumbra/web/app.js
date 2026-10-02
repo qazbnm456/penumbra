@@ -15142,7 +15142,12 @@ function initMapSettings() {
   // Escape closes it from anywhere, not only with focus inside it, unless a dialog is open above it.
   // In the capture phase, so it wins over the map's own Escape (which would close the planet card).
   document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || panel.hidden || event.defaultPrevented || aModalIsOpen()) return;
+    if (event.key !== "Escape" || event.defaultPrevented || aModalIsOpen()) return;
+    // Only while it is on screen, and never taking Escape from a field, menu, picker or other dialog
+    // that has focus (they close on it themselves); from inside the panel it is the panel's.
+    if (panel.hidden || panel.closest("[hidden]")) return;
+    if (!viewIsHorizon() || viewMode("horizon") !== "map") return;
+    if (!panel.contains(event.target) && arrowsTakenElsewhere(event)) return;
     event.preventDefault();
     event.stopPropagation();
     close();
@@ -15152,7 +15157,7 @@ function initMapSettings() {
 
 // --- walking the map with the arrow keys ---------------------------------------------------------
 //
-// Left and Right step from planet to planet, in the order they were placed (`starMap.orbits`). Down
+// Left and Right step from planet to planet, clockwise as they stand on screen (`planetsOnScreen`). Down
 // goes into the chosen planet's moons, where Left and Right step from moon to moon, and Up comes back
 // to the planet. Pointing at a small moving planet is hard; these keys make every one reachable.
 
@@ -15245,15 +15250,22 @@ function announceMapStep(move) {
     const ring = planetPlace(orbit).ring + 1;
     words = t("map.announcePlanet", `${orbit.title}, ring ${ring}`, { name: orbit.title, n: ring });
   }
-  horizonEl("map-announce").textContent = words;
+  // Emptied first, so the same words twice (Up back to the planet just left) are still read.
+  const say = horizonEl("map-announce");
+  say.textContent = "";
+  requestAnimationFrame(() => { say.textContent = words; });
 }
 
 const MAP_ZOOM_KEYS = { "+": 1.25, "=": 1.25, "-": 0.8, "_": 0.8 };
 
 function initMapKeys() {
-  horizonEl("starmap").addEventListener("pointerdown", () => {
-    horizonEl("starmap-card").setAttribute("aria-live", "polite");
-  });
+  // The card speaks again as soon as the reader does anything but walk: a pointer anywhere, or any
+  // key other than the arrows (a keyboard reader who walked once would otherwise never hear it).
+  const voice = () => horizonEl("starmap-card").setAttribute("aria-live", "polite");
+  document.addEventListener("pointerdown", voice, true);
+  document.addEventListener("keydown", (event) => {
+    if (!event.key.startsWith("Arrow")) voice();
+  }, true);
   document.addEventListener("keydown", (event) => {
     // Zoom from anywhere on the map's screen, not only with focus inside the map: + and - (with or
     // without Shift, as keyboards place them) and 0 for the whole view.
