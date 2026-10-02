@@ -1007,3 +1007,39 @@ def test_an_older_database_is_migrated_and_a_new_one_starts_at_the_latest_versio
             assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS)
             horizon._migrate(conn)  # nothing left to apply
             assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS)
+
+
+def test_processes_opening_an_old_database_at_once_apply_each_step_exactly_once(tmp_path):
+    """Invariant 84's concurrency claim, executed: six processes open one database written before
+    any step, at once. Each step runs inside `BEGIN IMMEDIATE` with the version read inside it, so
+    none fails on a column another just added, every row survives, and the version ends at the last
+    step. An independent review probed this by hand; this keeps it."""
+    import subprocess
+    import sys
+    import time
+
+    old = tmp_path / "old"
+    old.mkdir()
+    with sqlite3.connect(horizon.index_path(old)) as conn:
+        conn.executescript(horizon._SCHEMA)
+        conn.execute(
+            "INSERT INTO nodes (id, kind, origin, state, created_at, updated_at) "
+            "VALUES ('nd-0000000000000001', 'text', 'pasted:x', 'ready', 1, 1)"
+        )
+    probe = (
+        "import sys, time; from penumbra import horizon; time.sleep(float(sys.argv[2])); "
+        "print(horizon.get_node('nd-0000000000000001', base_dir=sys.argv[1]).edited)"
+    )
+    # All start together and wait for a common moment, so their first connections overlap.
+    start = time.time() + 1.5
+    runs = [
+        subprocess.Popen([sys.executable, "-c", probe, str(old), str(start - time.time())],
+                         cwd=str(_REPO_ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        for _ in range(6)
+    ]
+    results = [run.communicate(timeout=60) for run in runs]
+    assert all(run.returncode == 0 for run in runs), [err for _, err in results]
+    assert all(out.strip() == "[]" for out, _ in results)
+    with sqlite3.connect(horizon.index_path(old)) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS)
+        assert conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0] == 1
