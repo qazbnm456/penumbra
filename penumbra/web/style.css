@@ -7532,6 +7532,10 @@ body.dock-open .pending-note {
   cursor: grabbing;
 }
 
+.map-ring.is-beyond {
+  stroke-dasharray: 4 6;
+}
+
 .map-ring.is-landing {
   stroke: var(--accent);
   opacity: 0.9;

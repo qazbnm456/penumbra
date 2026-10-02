@@ -30,7 +30,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from . import __version__, asks, concepts, horizon
+from . import __version__, asks, concepts, horizon, mapstore
 from .citations import strip_markers
 from .horizon import DEFAULT_HORIZON_DIR
 from .orbit import DEFAULT_ORBITS_DIR, audio_path
@@ -323,6 +323,8 @@ def _write(out: _Zip, orbits_dir: Path, horizon_dir: Path, words: dict, lang: st
             audio = audio_path(path.stem, base_dir=orbits_dir, suffix=suffix)
             out.put_file(f"media/audio/{path.stem}{suffix}", audio)
     out.put("data/concepts.json", json.dumps(alias_table, ensure_ascii=False, indent=2))
+    places = mapstore.all_places(base_dir=horizon_dir)
+    out.put("data/map.json", json.dumps(places, ensure_ascii=False, indent=2))
     removals = horizon.removal_events(limit=horizon.MAX_REMOVAL_EVENTS, base_dir=horizon_dir)
     out.put("data/removals.jsonl", "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in removals))
     ask_list = _all_asks(horizon_dir)

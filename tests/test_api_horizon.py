@@ -2095,3 +2095,19 @@ def test_a_planet_can_be_placed_on_a_ring_by_hand(client):
     assert client.put("/horizon/map/planets/nowhere", json={"ring": 1, "angle": 0}).status_code == 404
     assert client.put("/horizon/map/planets/alpha", json={"ring": -1, "angle": 0}).status_code == 422
     assert client.put("/horizon/map/planets/alpha", json={"ring": 1, "angle": 0, "x": 1}).status_code == 422
+
+
+def test_an_unreadable_orbit_file_keeps_its_planets_place(client):
+    """Places follow the orbit FILES, so a file that fails to parse is not taken for a deleted orbit
+    and its planet keeps its place until the file is repaired."""
+    from penumbra.orbit import orbit_path
+
+    assert client.post("/orbits/alpha/sources", json={"texts": ["a note"]}).status_code == 200
+    client.get("/horizon/map")
+    client.put("/horizon/map/planets/alpha", json={"ring": 3, "angle": 0.5})
+    path = orbit_path("alpha")
+    good = path.read_text(encoding="utf-8")
+    path.write_text("{ not json", encoding="utf-8")
+    assert client.get("/horizon/map").json()["planets"]["alpha"]["ring"] == 3
+    path.write_text(good, encoding="utf-8")
+    assert client.get("/horizon/map").json()["planets"]["alpha"]["ring"] == 3

@@ -1,6 +1,6 @@
 # Invariant 85: A planet keeps its place until the reader moves it
 
-**Where an orbit sits on the star map is a ring and an angle, given once by `mapstore.placements` (outward in creation order, into the first free slot) and changed only by the reader dragging it (`PUT /horizon/map/planets/{orbit}`). Nothing about an orbit's activity, size or order in a list decides where its planet is drawn.**
+**Where an orbit sits on the star map is a ring and an angle, given once by `mapstore.placements` (outward in the order orbits began, into the first free slot) and changed only by the reader dragging it (`PUT /horizon/map/planets/{orbit}`). Nothing about an orbit's activity, size or order in a list decides where its planet is drawn.**
 
 ## Why a place is not derived
 
@@ -8,7 +8,11 @@ Planets used to be placed by their index in the orbit list sorted by recency, th
 
 ## Why the server keeps it
 
-A place is presentation, but it is the reader's arrangement, so it lives with their data rather than in one browser: in the Horizon's database (`map_planets`, created by migration step 3), which travels with Export everything and is emptied by clearing everything. A place for an orbit that no longer exists is dropped when the map is next read, which frees its slot. Writing a place never touches the orbit file, so its mtime, and everything that reads it, is unaffected.
+A place is presentation, but it is the reader's arrangement, so it lives with their data rather than in one browser: in the Horizon's database (`map_planets`, created by migration step 3). Export everything writes it to `data/map.json`, and clearing everything empties it. A place for an orbit that no longer exists is dropped when the map is next read, which frees its slot. Writing a place never touches the orbit file, so its mtime, and everything that reads it, is unaffected.
+
+## When an orbit began
+
+The order is the first capture filed into each orbit (`memberships.promoted_at`), and an orbit's file time only for an orbit nothing was ever filed into. The file's birth time is not usable: `orbit.save_orbit` writes a new file and renames it over the old one, so its birth time is its last save, and ordering by it would place planets by activity again. The places come from the orbit files by their stems, so an orbit whose file does not parse keeps its planet's place rather than being taken for deleted.
 
 ## The shape of a place
 

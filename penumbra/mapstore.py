@@ -48,15 +48,30 @@ def _free_place(taken: dict[int, list[float]]) -> tuple[int, float]:
     return MAX_RING, slot_angle(MAX_RING, 0)
 
 
+def _created(conn, orbits: list[tuple[str, float]]) -> dict[str, float]:
+    """When each orbit began, as far as anything durable says: the first capture filed into it
+    (`memberships.promoted_at`), else the time the caller supplied. Not the file's birth time, which
+    every save resets (`orbit.save_orbit` writes a new file and renames it over the old one)."""
+    first = {
+        row[0]: row[1]
+        for row in conn.execute("SELECT orbit_id, MIN(promoted_at) FROM memberships GROUP BY orbit_id")
+    }
+    return {key: first.get(key, fallback) for key, fallback in orbits}
+
+
 def placements(
     orbits: list[tuple[str, float]], *, base_dir: str | Path = horizon.DEFAULT_HORIZON_DIR
 ) -> dict:
     """Every orbit's place, `{slug: {"ring", "angle", "placed_at"}}`, for `orbits` given as
-    `(slug, created)` pairs. An orbit without a place gets the first free slot, in the order the
-    orbits were created; a place whose orbit no longer exists is dropped, so its slot is free again.
-    One transaction, so two maps opening at once cannot give two orbits the same slot."""
+    `(slug, fallback_created)` pairs. An orbit without a place gets the first free slot, in the order
+    the orbits began (`_created`); a place whose orbit no longer exists is dropped, so its slot is
+    free again. Read first, and only when something must be added or dropped is it done again inside
+    one `BEGIN IMMEDIATE`, so two maps opening at once cannot give two orbits the same slot."""
     present = {key for key, _ in orbits}
     with horizon._connect(base_dir) as conn:
+        rows = {row["orbit_id"]: dict(row) for row in conn.execute("SELECT * FROM map_planets")}
+        if set(rows) == present:
+            return _shape(rows)
         conn.execute("BEGIN IMMEDIATE")
         try:
             rows = {row["orbit_id"]: dict(row) for row in conn.execute("SELECT * FROM map_planets")}
@@ -66,24 +81,37 @@ def placements(
             taken: dict[int, list[float]] = {}
             for row in rows.values():
                 taken.setdefault(row["ring"], []).append(row["angle"])
+            created = _created(conn, orbits)
             now = time.time()
-            unplaced = sorted((o for o in orbits if o[0] not in rows), key=lambda o: (o[1], o[0]))
-            for key, _created in unplaced:
+            # A microsecond apart, so orbits placed in one batch keep their order (`placed_at` is the
+            # order the map's keyboard and lists walk the planets).
+            for index, key in enumerate(sorted(present - set(rows), key=lambda k: (created[k], k))):
                 ring, angle = _free_place(taken)
+                at = now + index * 1e-6
                 conn.execute(
                     "INSERT INTO map_planets (orbit_id, ring, angle, placed_at) VALUES (?, ?, ?, ?)",
-                    (key, ring, angle, now),
+                    (key, ring, angle, at),
                 )
-                rows[key] = {"orbit_id": key, "ring": ring, "angle": angle, "placed_at": now}
+                rows[key] = {"orbit_id": key, "ring": ring, "angle": angle, "placed_at": at}
                 taken.setdefault(ring, []).append(angle)
             conn.execute("COMMIT")
         except BaseException:
             conn.execute("ROLLBACK")
             raise
+    return _shape(rows)
+
+
+def _shape(rows: dict) -> dict:
     return {
         key: {"ring": row["ring"], "angle": row["angle"], "placed_at": row["placed_at"]}
         for key, row in rows.items()
     }
+
+
+def all_places(*, base_dir: str | Path = horizon.DEFAULT_HORIZON_DIR) -> dict:
+    """Every stored place as it is, for Export everything (`data/map.json`)."""
+    with horizon._connect(base_dir) as conn:
+        return _shape({row["orbit_id"]: dict(row) for row in conn.execute("SELECT * FROM map_planets")})
 
 
 def place(

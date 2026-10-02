@@ -46,3 +46,34 @@ def test_place_refuses_a_ring_out_of_range_or_a_non_finite_angle():
     for ring, angle in ((-1, 0.0), (mapstore.MAX_RING + 1, 0.0), (0, math.nan), (0, math.inf)):
         with pytest.raises(ValueError):
             mapstore.place("a", ring, angle)
+
+
+def test_the_order_comes_from_the_first_capture_filed_not_the_file_time():
+    """Every save writes a new orbit file and renames it over the old one, so a file's birth time is
+    its last save. The first capture filed into an orbit does not move."""
+    from penumbra import horizon
+    from penumbra.schema import Source, SourceBlock
+
+    def filed(orbit_id: str, origin: str, at: float) -> None:
+        block = SourceBlock(locator="whole", text="x")
+        node = horizon.add_node(Source(id="s1", kind="text", origin=origin, blocks=[block]))
+        with horizon._connect() as conn:
+            conn.execute(
+                "INSERT INTO memberships (node_id, orbit_id, source_id, promoted_at) VALUES (?, ?, 's1', ?)",
+                (node.id, orbit_id, at),
+            )
+
+    filed("late", "pasted:a", 50.0)
+    filed("early", "pasted:b", 10.0)
+    # The fallbacks say the opposite; the memberships win. "bare" has none, so its fallback counts.
+    got = mapstore.placements([("late", 1.0), ("early", 99.0), ("bare", 30.0)])
+    order = sorted(got, key=lambda key: got[key]["placed_at"])
+    assert order == ["early", "bare", "late"]
+    assert got["early"]["angle"] == pytest.approx(mapstore.slot_angle(0, 0))
+
+
+def test_all_places_reads_what_is_stored_for_the_export():
+    mapstore.placements([("a", 1.0)])
+    mapstore.place("a", 4, 0.5)
+    stored = mapstore.all_places()["a"]
+    assert (stored["ring"], stored["angle"]) == (4, 0.5)

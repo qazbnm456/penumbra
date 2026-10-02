@@ -167,6 +167,7 @@ from .guide import GenerateFAQ, GenerateKeyInsight, GenerateSummary, GenerateTim
 from .ingest import ingest_pasted_text, ingest_uploaded_file, is_url, with_injection_flags
 from .naming import SuggestLanguage, SuggestTitle, fallback_title, normalize_title
 from .orbit import (
+    DEFAULT_ORBITS_DIR,
     add_note,
     append_sources,
     audio_path,
@@ -5213,25 +5214,18 @@ async def horizon_topology() -> dict:
     return await asyncio.to_thread(topology.star_map)
 
 
-def _orbit_created(orbit_id: str) -> float:
-    """When an orbit's file came into being, as far as the file system says: its birth time where the
-    platform keeps one (macOS, Windows), its change time otherwise. Only the ORDER matters, for
-    placing new planets outward (`mapstore.placements`)."""
-    try:
-        info = orbit_path(orbit_id).stat()
-    except (OSError, ValueError):
-        return time.time()
-    return getattr(info, "st_birthtime", None) or info.st_ctime
-
-
 @app.get("/horizon/map")
 async def horizon_map() -> dict:
     """Where each planet sits on the star map, `{"planets": {slug: {ring, angle, placed_at}}}`. An
     orbit the map has not seen yet is placed here, outward in creation order, and keeps that place
     until the reader moves it (`mapstore.py`)."""
     def read() -> dict:
-        orbits, _unreadable = list_orbit_summaries()
-        return mapstore.placements([(slug(orb.id), _orbit_created(orb.id)) for orb in orbits])
+        # Every orbit FILE, by its stem (which is `slug(id)`): an unreadable file still keeps its
+        # planet's place, and nothing is parsed. Its mtime stands in for when it began only when no
+        # capture was ever filed into it (`mapstore._created`).
+        folder = Path(DEFAULT_ORBITS_DIR)
+        files = sorted(folder.glob("*.json")) if folder.is_dir() else []
+        return mapstore.placements([(path.stem, path.stat().st_mtime) for path in files])
 
     return {"planets": await asyncio.to_thread(read)}
 

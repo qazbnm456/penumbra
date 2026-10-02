@@ -66,8 +66,13 @@ def test_the_export_holds_the_data_a_vault_bookmarks_and_a_true_manifest(client)
                       citations=[Citation(source_id=source_id, locator="whole", quote="folding paper")]),
     )), create=False)
 
+    client.get("/horizon/map")
+    assert client.put("/horizon/map/planets/crafts", json={"ring": 2, "angle": 0.5}).status_code == 200
+
     zf = _export(client)
     names = set(zf.namelist())
+    # The reader's arrangement of the map is theirs too (invariant 85).
+    assert json.loads(zf.read("data/map.json"))["crafts"]["ring"] == 2
     manifest = json.loads(zf.read("manifest.json"))
     assert manifest["format"] == "penumbra-export" and manifest["schema_version"] == 1
     assert manifest["counts"]["captures"] == 2 and manifest["counts"]["orbits"] == 1

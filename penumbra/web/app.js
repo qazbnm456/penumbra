@@ -14384,7 +14384,8 @@ function moonHit(x, y, item) {
   hit.addEventListener("click", (event) => {
     event.stopPropagation();
     hideMapTip();
-    if (mapDrag.moved) return;
+    // The click that ends a drag (of this moon, or of its planet by a hollow moon) is not an open.
+    if (mapDrag.moved || planetDrag.dropped) return;
     if (item.kind === "local") {
       openMapFocus({ kind: "planet", orbit: item.orbit });
     } else {
@@ -14438,6 +14439,7 @@ const planetDrag = { dropped: false };
 //: drag (`startMoonDrag`), which stops the press before it reaches the planet.
 function startPlanetDrag(event, p, group) {
   if (event.button !== 0 || mapDrag.id !== null) return;
+  event.preventDefault(); // a move, not a text selection; the click still fires
   const start = { x: event.clientX, y: event.clientY };
   const id = event.pointerId;
   let moving = false;
@@ -14453,6 +14455,15 @@ function startPlanetDrag(event, p, group) {
       mapMotion.paused = true;
       hideMapTip();
       group.classList.add("is-moving");
+      // The ring one beyond the outermost is offered while dragging, drawn faint, so taking a planet
+      // further out has somewhere to land that the reader can see.
+      if (rings <= MAP_MAX_RING) {
+        const { rx, ry } = ringGeometry(rings);
+        const beyond = svgEl("ellipse", { cx: MAP_CENTRE.x, cy: MAP_CENTRE.y, rx, ry },
+          `map-ring ring-${rings} is-beyond`);
+        const last = ringEls().pop();
+        if (last) last.after(beyond);
+      }
     }
     landing = ringNear(worldAt(e.clientX, e.clientY), rings);
     const { rx, ry } = ringGeometry(landing.ring);
@@ -14470,6 +14481,7 @@ function startPlanetDrag(event, p, group) {
     if (!moving) return;
     group.classList.remove("is-moving");
     ringEls().forEach((el) => el.classList.remove("is-landing"));
+    starMap.world.querySelector(".map-ring.is-beyond")?.remove();
     mapMotion.paused = false;
     planetDrag.dropped = true;
     setTimeout(() => { planetDrag.dropped = false; }, 0);
