@@ -3534,6 +3534,8 @@ function marksGroups() {
         [keys(`${mod},`), t("marks.keys.settings", "Settings.")],
         [keys("/"), t("marks.keys.slash", "At the start of a question, choose what it asks about.")],
         [keys("+", "−", "0"), t("marks.keys.zoom", "On the map: zoom in, zoom out, back to the whole view.")],
+        [keys("←", "→", "↓", "↑"), t("marks.keys.arrows",
+          "On the map: step from planet to planet, go into a planet's moons and step between them, back to the planet.")],
         [keys("Esc"), t("marks.keys.esc", "Close what is open.")],
       ],
     },
@@ -14939,6 +14941,10 @@ function arrowsTakenElsewhere(event) {
   return [...document.querySelectorAll("[aria-modal='true']")].some((dialog) => !dialog.closest("[hidden]"));
 }
 
+//: When the arrow keys last moved, so a held key steps at a walking pace instead of redrawing the
+//: map and refetching a card for every auto-repeat.
+const mapKeyPace = { at: 0 };
+
 function initMapKeys() {
   document.addEventListener("keydown", (event) => {
     if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
@@ -14948,6 +14954,8 @@ function initMapKeys() {
     const move = mapKeyMove(event.key, starMap.orbits, starMap.selected, starMap.focus);
     if (!move) return;
     event.preventDefault();
+    if (event.repeat && performance.now() - mapKeyPace.at < 120) return;
+    mapKeyPace.at = performance.now();
     openMapFocus(move);
     // Focus follows to the planet, so a screen reader names where the keys went and the planet holds
     // still while it is read.
