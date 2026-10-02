@@ -232,12 +232,20 @@
       caption: { zh: "整理一下星星", en: "Tidying the planets" },
       draw(svg, defs) {
         penny(svg, 120, 100, 30, "happy", defs);
-        const ring = group(svg, "pn-orbit", "120px 70px");
+        el("ellipse", { cx: 120, cy: 70, rx: 42, ry: 16, fill: "none", stroke: "#c9a37a", "stroke-width": 1, "stroke-dasharray": "2 4", opacity: 0.6 }, svg);
+        // Each planet travels the dashed orbit itself (SMIL motion along the ellipse); a plain
+        // rotation of the group swung them far off it. Left out under reduced motion, like the rest.
+        const orbit = "M162 70 A42 16 0 1 1 78 70 A42 16 0 1 1 162 70";
+        const still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
         [["#3e6ec3", 0], ["#d9663a", 1], ["#5a8f42", 2]].forEach(([color, i]) => {
           const a = (i / 3) * Math.PI * 2;
-          el("circle", { cx: 120 + Math.cos(a) * 42, cy: 70 + Math.sin(a) * 16, r: 7, fill: color }, ring);
+          if (still) {
+            el("circle", { cx: 120 + Math.cos(a) * 42, cy: 70 + Math.sin(a) * 16, r: 7, fill: color }, svg);
+            return;
+          }
+          const planet = el("circle", { cx: 0, cy: 0, r: 7, fill: color }, svg);
+          el("animateMotion", { path: orbit, dur: "3s", begin: `${-i}s`, repeatCount: "indefinite" }, planet);
         });
-        el("ellipse", { cx: 120, cy: 70, rx: 42, ry: 16, fill: "none", stroke: "#c9a37a", "stroke-width": 1, "stroke-dasharray": "2 4", opacity: 0.6 }, svg);
       },
     },
   };
@@ -252,9 +260,9 @@
     const box = document.createElement("figure");
     box.className = "penny-scene";
     box.dataset.scene = chosen;
-    const svg = el("svg", { viewBox: "0 0 240 150", role: "img" });
+    // The caption below says what the picture shows, so the picture itself is not read out too.
+    const svg = el("svg", { viewBox: "0 0 240 150", "aria-hidden": "true" });
     const caption = scene.caption[lang === "zh" ? "zh" : "en"];
-    svg.setAttribute("aria-label", caption);
     const defs = el("defs", {}, svg);
     scene.draw(svg, defs);
     box.appendChild(svg);

@@ -42,7 +42,6 @@
 .pn-float { animation: pn-float 5s ease-in infinite; }
 .pn-wobble { animation: pn-wobble 2.4s ease-in-out infinite; }
 .pn-z { opacity: 0; animation: pn-z 2.4s ease-out infinite; }
-.pn-orbit { animation: pn-orbit 3s linear infinite; }
 .pn-twinkle { fill: var(--pn-star, #ffe7b3); animation: pn-twinkle 2s ease-in-out infinite; }
 
 @keyframes pn-bob { 50% { transform: translateY(-3px); } }
@@ -68,7 +67,6 @@
 }
 @keyframes pn-wobble { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(4deg); } }
 @keyframes pn-z { 0% { transform: translate(0, 0); opacity: 0; } 30% { opacity: 1; } 100% { transform: translate(8px, -16px); opacity: 0; } }
-@keyframes pn-orbit { to { transform: rotate(360deg); } }
 @keyframes pn-twinkle { 50% { opacity: 0.3; } }
 
 @media (prefers-reduced-motion: reduce) {

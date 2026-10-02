@@ -1078,7 +1078,7 @@ def test_every_one_of_pennys_scenes_builds_with_a_caption_in_both_languages():
         assert scene["chosen"] == name
         assert scene["parts"] > 8, f"{name} drew next to nothing"
         assert scene["zh"] and scene["en"] and scene["zh"] != scene["en"], name
-        assert scene["label"] == scene["zh"], "the picture is named by its caption for a screen reader"
+        assert scene["hidden"] == "true", "the caption names the picture; it is not read twice"
     assert r["randomIsKnown"]
 
 

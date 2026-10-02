@@ -81,7 +81,11 @@
     document.getElementById("hint").hidden = !error;
     document.getElementById("main").classList.toggle("error", !!error);
     // A start that failed is Penny who tripped.
-    if (error && window.PennyScenes) window.PennyScenes.mount(scene, { name: "trip", lang });
+    // The shell sends a failure several times over a few seconds; the scene starts once.
+    const showing = scene.firstElementChild && scene.firstElementChild.dataset.scene;
+    if (error && window.PennyScenes && showing !== "trip") {
+      window.PennyScenes.mount(scene, { name: "trip", lang });
+    }
   };
 </script>
 </body>

@@ -712,15 +712,16 @@ fn boot(app: AppHandle) {
             thread::sleep(Duration::from_millis(150));
         }
 
-        // In the FRAGMENT, which the browser never sends: in the query string uvicorn's access log
-        // wrote the token into `server.log`, the file "Show Server Log" invites people to share.
-        // `menu` is the language the menu bar is written in, which follows the OS, not the page's
-        // interface language, so the page can quote a menu item the way the reader will see it.
+        // A start screen on view stays up long enough for Penny's scene to be seen (`SPLASH_MIN`).
         if window.is_visible().unwrap_or(false) {
             if let Some(left) = SPLASH_MIN.checked_sub(splash_shown.elapsed()) {
                 thread::sleep(left);
             }
         }
+        // In the FRAGMENT, which the browser never sends: in the query string uvicorn's access log
+        // wrote the token into `server.log`, the file "Show Server Log" invites people to share.
+        // `menu` is the language the menu bar is written in, which follows the OS, not the page's
+        // interface language, so the page can quote a menu item the way the reader will see it.
         let target = workspace_url(port, &token);
         if let Ok(url) = url::Url::parse(&target) {
             let _ = window.navigate(url);

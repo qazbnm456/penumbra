@@ -15066,6 +15066,15 @@ function paintMapSettings(panel) {
   panel.appendChild(reset);
 }
 
+//: Penny's caption on an empty map follows the interface language: the same scene, mounted again.
+window.addEventListener("ui-lang-changed", () => {
+  const box = document.getElementById("starmap-empty-scene");
+  const showing = box && !box.hidden && box.querySelector(".penny-scene");
+  if (!showing || !window.PennyScenes) return;
+  const lang = typeof uiLang === "function" && uiLang().startsWith("zh") ? "zh" : "en";
+  window.PennyScenes.mount(box, { name: showing.dataset.scene, lang });
+});
+
 function initMapSettings() {
   const open = horizonEl("map-settings-open");
   const panel = horizonEl("map-settings");

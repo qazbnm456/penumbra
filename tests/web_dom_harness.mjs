@@ -1954,7 +1954,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       const enBox = node("div");
       window.PennyScenes.mount(enBox, { name, lang: "en" });
       out[name] = { chosen, parts: svg.count(), zh, en: enBox.children[0].children[1].textContent,
-        label: svg.attrs["aria-label"] };
+        hidden: svg.attrs["aria-hidden"] };
     }
     const random = node("div");
     return { names: window.PennyScenes.names, out, randomIsKnown: window.PennyScenes.names.includes(window.PennyScenes.mount(random)) };
