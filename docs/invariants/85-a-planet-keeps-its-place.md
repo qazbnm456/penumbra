@@ -18,6 +18,7 @@ The order is the first capture filed into each orbit (`memberships.promoted_at`)
 
 - The angle is the planet's place at the start of its turn; the map turns it from there at its ring's pace. A planet dropped while the map has been turning for a while is shifted in that page by how far the map had turned (`starMap.dropShift`), so it stays where it was let go, and a fresh page shows it at the stored angle.
 - Automatic placement uses `first + step × i` evenly spaced slots on ring `i` (3 and 3 by default, set in the map's settings), so fewer slots set planets further apart. Changing either number rearranges every planet, the dragged ones included, because the reader asked for a new arrangement; changing the ring sizes moves nothing, since a place is a ring and an angle and the planet scales with its ring.
+- Automatic placement fills rings out to `mapstore.MAX_RING` (40). With one place on the inner ring and none added per ring, that is 41 places, and every orbit past them shares the outermost ring's first slot until the reader drags it or chooses more places per ring.
 - A slot is free when no planet sits within half a slot's width of it. A dragged planet can sit at any angle, and several may share a ring past its slots; the map fades whichever is behind while two overlap.
 - A drag snaps to the ring whose ellipse is nearest, out to one ring beyond the outermost in use, so the map grows outward only when the reader takes a planet there.
 

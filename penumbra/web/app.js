@@ -14925,15 +14925,23 @@ function initDesktopContextMenu() {
 // holds rearranges every planet in the order the orbits began, the ones the reader dragged included,
 // and the panel says so beside those controls.
 
-const mapSettingsUi = { saveTimer: 0 };
+const mapSettingsUi = { saveTimer: 0, sent: 0 };
 
+//: Every save carries the whole object, and the newest one wins: it becomes the map's settings
+//: before it is sent (so a later change builds on it), it cancels a size save still waiting, and an
+//: answer to an older request is ignored. Otherwise a debounced size save could send the count the
+//: reader had just changed back to its old value.
 async function saveMapSettings(next) {
+  clearTimeout(mapSettingsUi.saveTimer);
+  starMap.settings = next;
+  const mine = ++mapSettingsUi.sent;
   try {
     const got = await api("/horizon/map/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(next),
     });
+    if (mine !== mapSettingsUi.sent) return;
     starMap.settings = got.settings;
     // New places for every planet: read them, and the map with them.
     if (got.rearranged) {

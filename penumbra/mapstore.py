@@ -8,9 +8,10 @@ order the orbits were created, and keeps it until the reader drags it somewhere 
 no further part.
 
 The angle is the planet's place at the start of its orbit; the map turns it from there. Ring `i`
-offers `3 + 3i` evenly spaced slots for automatic placement, each ring turned a little so planets do
-not line up radially. A dragged planet can sit at any angle on any ring, and several may share a
-ring beyond its slots; the map fades whichever is behind while two overlap.
+offers `first_ring_slots + slots_step * i` evenly spaced slots for automatic placement (3 and 3 by
+default, set in the map's settings), each ring turned a little so planets do not line up radially.
+A dragged planet can sit at any angle on any ring, and several may share a ring beyond its slots;
+the map fades whichever is behind while two overlap.
 """
 
 from __future__ import annotations

@@ -8978,7 +8978,8 @@ body.is-resizing .orbit-graph {
   right: calc(var(--space-5) + 32px + var(--space-3));
   bottom: calc(var(--space-11) + var(--space-5));
   z-index: 3;
-  width: 280px;
+  /* Narrower than 280px when the stage is: it never runs off the left edge. */
+  width: min(280px, calc(100% - var(--space-5) * 2 - 32px - var(--space-3)));
   max-height: calc(100% - var(--space-11) * 2);
   overflow-y: auto;
   box-sizing: border-box;
@@ -10222,6 +10223,7 @@ body:not([data-view="horizon"]) .capture-dock {
 .is-ambient .starmap-legend,
 .is-ambient .lenses,
 .is-ambient .map-camera,
+.is-ambient .map-settings,
 .is-ambient .notice,
 .is-ambient .intake-strip {
   opacity: 0;
