@@ -16093,6 +16093,10 @@ const planetCard = { tab: "info", saveTimer: 0, sent: 0 };
 //: alone: they rebuild the card, and a rebuilt studio drops the slider under the reader's pointer.
 function studioHolds(mapCard) {
   if (planetCard.tab !== "studio" || starMap.focus || !starMap.selected) return false;
+  // Not once the planet is gone (its orbit deleted), and not after a rename in the heading has
+  // finished, which needs the card rebuilt to show the new name.
+  if (!starMap.orbits.some((orbit) => orbit.slug === starMap.selected)) return false;
+  if (mapCard.querySelector(".title-editor[data-done]")) return false;
   const studio = mapCard.querySelector(".planet-studio");
   return Boolean(studio && studio.dataset.slug === starMap.selected);
 }
@@ -16137,8 +16141,11 @@ function planetCardTabs(mapCard, orbit, infoFrom) {
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
       event.preventDefault();
       const next = tabs[(i + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+      const key = next.dataset.tab;
       next.click();
-      next.focus();
+      // Going back to Info rebuilds the card, so the tab to focus is the new card's.
+      const fresh = [...horizonEl("starmap-card").querySelectorAll(".planet-card-tab")];
+      fresh.find((el) => el.dataset.tab === key)?.focus();
     });
     strip.appendChild(tab);
   });
@@ -16149,6 +16156,14 @@ function planetCardTabs(mapCard, orbit, infoFrom) {
 //: Save a planet's style: the newest wins, as with the map's settings (`saveMapSettings`).
 async function savePlanetStyle(orbit, next) {
   clearTimeout(planetCard.saveTimer);
+  // A new orbital pace keeps the planet where it is now: its position is base + clock × pace, so the
+  // shift grows by how far the new pace would otherwise have carried it.
+  const before = planetStyle(orbit);
+  if (before.orbit !== next.orbit) {
+    const { ring } = planetPlace(orbit);
+    const gained = mapMotion.clock * (planetOmega(ring, next) - planetOmega(ring, before));
+    starMap.dropShift.set(orbit.slug, (starMap.dropShift.get(orbit.slug) || 0) + gained);
+  }
   setPlace(orbit, { style: next });
   drawStarMap();
   const mine = ++planetCard.sent;

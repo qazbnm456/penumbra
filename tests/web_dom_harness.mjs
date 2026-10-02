@@ -1827,13 +1827,13 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
   //: in a list sorted by recency. And a point of the map is snapped to the ring it is nearest.
   starMapPlaces() {
     const make = (orbits, places, dropShift = new Map()) => new Function(
-      "starMap", "mapMotion", "MAP_CENTRE", "MAP_MAX_RING", "PLANET_STYLE_DEFAULT", "PLANET_PACES",
+      "starMap", "mapMotion", "MAP_CENTRE", "MAP_MAX_RING",
+      `${constant("PLANET_STYLE_DEFAULT")}\n${constant("PLANET_PACES")}\n` +
       `${extract("ringGeometry")}\n${extract("outermostRing")}\n${extract("mapRings")}\n` +
       `${extract("planetPlace")}\n${extract("planetStyle")}\n${extract("planetOmega")}\n` +
       `${extract("planetLayout")}\n${extract("ringNear")}\n` +
       "return { planetLayout, mapRings, ringNear, ringGeometry };",
-    )({ orbits, places, dropShift, settings: { inner_ring: 260, ring_gap: 160 } }, { clock: 0 }, { x: 500, y: 330 }, 40,
-      { kind: null, size: 1, orbit: "usual", spin: "usual", rings: "auto" }, { still: 0, slow: 0.5, usual: 1, fast: 2 });
+    )({ orbits, places, dropShift, settings: { inner_ring: 260, ring_gap: 160 } }, { clock: 0 }, { x: 500, y: 330 }, 40);
     const orbit = (slug) => ({ slug, sources: 1, captures: 1 });
     const places = { a: { ring: 0, angle: 1 }, b: { ring: 2, angle: -2 } };
     const at = (layout) => Object.fromEntries(
@@ -1898,6 +1898,36 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       ring1: chosen.ringGeometry(1).rx, defaultRing0: none.ringGeometry(0),
       comet: chosen.skyRate("comet"), meteor: chosen.skyRate("meteor"), rock: chosen.skyRate("rock"),
       shower: chosen.skyRate("shower"),
+    };
+  },
+
+  //: The studio holds the card against the map's redraws only while it is the selected planet's
+  //: studio, the planet still exists, nothing else is focused, and no rename has just finished.
+  studioHolding() {
+    const holds = (state) => new Function("planetCard", "starMap",
+      `${extract("studioHolds")}\nreturn studioHolds;`)(state.card, state.map)(state.el);
+    const card = (slug, doneRename = false) => {
+      const el = new El("starmap-card");
+      const studio = new El("", "div");
+      studio.className = "planet-studio";
+      studio.dataset.slug = slug;
+      el.append(studio);
+      if (doneRename) {
+        const editor = new El("", "div");
+        editor.className = "title-editor";
+        editor.dataset.done = "1";
+        el.append(editor);
+      }
+      return el;
+    };
+    const map = (over = {}) => ({ selected: "a", focus: null, orbits: [{ slug: "a" }], ...over });
+    return {
+      held: holds({ card: { tab: "studio" }, map: map(), el: card("a") }),
+      infoTab: holds({ card: { tab: "info" }, map: map(), el: card("a") }),
+      otherPlanet: holds({ card: { tab: "studio" }, map: map(), el: card("b") }),
+      gone: holds({ card: { tab: "studio" }, map: map({ orbits: [] }), el: card("a") }),
+      focused: holds({ card: { tab: "studio" }, map: map({ focus: { kind: "lens" } }), el: card("a") }),
+      renamed: holds({ card: { tab: "studio" }, map: map(), el: card("a", true) }),
     };
   },
 

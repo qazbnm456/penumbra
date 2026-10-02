@@ -1062,6 +1062,15 @@ def test_the_map_settings_size_the_rings_and_pace_the_sky():
     assert (r["comet"], r["meteor"], r["rock"], r["shower"]) == (0, 2.5, 0.4, 1)
 
 
+def test_the_studio_holds_the_card_only_while_it_should():
+    """A held card is not rebuilt by the map's redraws, so the studio's slider survives a drag. It
+    must let go when the planet is deleted, when something else is focused, and after a rename in
+    the heading finishes (or the finished editor stays on screen)."""
+    r = _run("studioHolding")
+    assert r["held"] is True
+    assert not any(r[key] for key in ("infoTab", "otherPlanet", "gone", "focused", "renamed")), r
+
+
 def test_dragging_a_graph_node_pulls_its_neighbours_by_distance_in_links():
     result = _run("graphDrag")
     assert result["B"] == 0.6 and result["E"] == 0.6, "one link away follows most"
