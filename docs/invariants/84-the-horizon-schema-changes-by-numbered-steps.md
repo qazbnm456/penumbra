@@ -14,7 +14,7 @@ Two processes can open an old database at the same moment (the server and a CLI 
 
 Without a version, `CREATE TABLE IF NOT EXISTS` cannot add a column to a database that already exists. The first two steps add `edited` and `distilled_at` for the reader's own labels (invariant 83), and the persisted `readable` flag that `_READABLE`'s comment asks for is one more step. This is the usual way an embedded SQLite database evolves.
 
-Tables owned by other modules in the same file (`search.py`, `vectors.py`, `asks.py`, `concepts.py`) still create themselves with `IF NOT EXISTS`. A change to an existing column in one of them belongs in `_MIGRATIONS` too, since there is one `user_version` per file.
+Tables owned by other modules in the same file (`search.py`, `vectors.py`, `asks.py`, `concepts.py`) still create themselves with `IF NOT EXISTS`, and they do so after `_migrate` has run. A step in `_MIGRATIONS` can therefore change only the tables in `_SCHEMA`: on a new database, a step that alters one of the others finds no such table and fails every time. Changing one of those tables needs that module's own guarded step, or its table moved into `_SCHEMA` first.
 
 ---
 

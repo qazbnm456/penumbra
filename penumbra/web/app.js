@@ -10131,18 +10131,26 @@ function captureTagEditor(node) {
   box.appendChild(elt("h4", "node-section", t("tags.section", "Tags")));
   const list = elt("div", "tag-editor-list");
   box.appendChild(list);
-  const save = async (tags) => {
-    try {
-      const got = await api(`/horizon/${encodeURIComponent(node.id)}/tags`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tags }),
-      });
-      afterCaptureEdit(got.node);
-    } catch (err) {
-      notify(t("err.retag", `Could not change the tags: ${err.message}`, { message: err.message }));
-      renderStarMapCard();
-    }
+  // Saves run one after another, each a change applied to the list the last one saved. Two at once
+  // (a typed tag saved by the field's blur while a remove is pressed) were both computed from the
+  // same old list, and the second dropped the tag just typed.
+  let latest = [...(node.tags || [])];
+  let queue = Promise.resolve();
+  const save = (change) => {
+    queue = queue.then(async () => {
+      try {
+        const got = await api(`/horizon/${encodeURIComponent(node.id)}/tags`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tags: change(latest) }),
+        });
+        latest = got.node.tags || [];
+        afterCaptureEdit(got.node);
+      } catch (err) {
+        notify(t("err.retag", `Could not change the tags: ${err.message}`, { message: err.message }));
+        renderStarMapCard();
+      }
+    });
   };
   (node.tags || []).forEach((tag) => {
     const chip = elt("span", "tag-chip");
@@ -10155,7 +10163,7 @@ function captureTagEditor(node) {
     remove.type = "button";
     remove.setAttribute("aria-label", t("tags.remove", `Remove the tag ${tag}`, { tag }));
     remove.title = remove.getAttribute("aria-label");
-    remove.addEventListener("click", () => void save((node.tags || []).filter((other) => other !== tag)));
+    remove.addEventListener("click", () => save((tags) => tags.filter((other) => other !== tag)));
     chip.appendChild(remove);
     list.appendChild(chip);
   });
@@ -10174,7 +10182,7 @@ function captureTagEditor(node) {
       settled = true;
       wrap.dataset.done = "1";
       const typed = (value || "").split(/[,\uff0c]/).map((part) => part.trim()).filter(Boolean);
-      if (typed.length) void save([...(node.tags || []), ...typed]);
+      if (typed.length) save((tags) => [...tags, ...typed]);
       else renderStarMapCard();
     };
     input.addEventListener("keydown", (event) => {
