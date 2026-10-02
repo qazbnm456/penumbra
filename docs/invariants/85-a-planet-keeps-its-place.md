@@ -8,7 +8,7 @@ Planets used to be placed by their index in the orbit list sorted by recency, th
 
 ## Why the server keeps it
 
-A place is presentation, but it is the reader's arrangement, so it lives with their data rather than in one browser: in the Horizon's database (`map_planets`, created by migration step 3). Export everything writes it to `data/map.json`, and clearing everything empties it. A place for an orbit that no longer exists is dropped when the map is next read, which frees its slot. Writing a place never touches the orbit file, so its mtime, and everything that reads it, is unaffected.
+A place is presentation, but it is the reader's arrangement, so it lives with their data rather than in one browser: in the Horizon's database (`map_planets`, created by migration step 3). Export everything writes it to `data/map.json`, and clearing everything empties it. Deleting an orbit drops its planet in the same transaction as its memberships (`horizon.forget_orbit`), so an orbit later created under the same name starts as a new planet; a place whose orbit vanished some other way (its file removed by hand) is dropped when the map is next read, which frees its slot. Writing a place never touches the orbit file, so its mtime, and everything that reads it, is unaffected.
 
 ## When an orbit began
 

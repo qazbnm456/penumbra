@@ -14536,7 +14536,7 @@ function ringNear(point, rings) {
 
 //: The server's bound on a ring (`mapstore.MAX_RING`).
 const MAP_MAX_RING = 40;
-const planetDrag = { dropped: false };
+const planetDrag = { dropped: false, savers: new Map() };
 
 //: Dragging a planet puts it somewhere else: it follows the pointer along the nearest ring and
 //: stays where it is let go (`PUT /horizon/map/planets/{orbit}`), turning on from there. A press
@@ -14592,17 +14592,27 @@ function startPlanetDrag(event, p, group) {
     setTimeout(() => { planetDrag.dropped = false; }, 0);
     const slug = p.orbit.slug;
     if (e.type === "pointerup" && landing) {
+      const was = { ring: planetPlace(p.orbit).ring, angle: planetPlace(p.orbit).angle };
+      const shiftWas = starMap.dropShift.get(slug);
       setPlace(p.orbit, landing);
       starMap.dropShift.set(slug, mapMotion.clock * planetOmega(landing.ring, planetStyle(p.orbit)));
-      try {
-        await api(`/horizon/map/planets/${encodeURIComponent(p.orbit.id)}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(landing),
-        });
-      } catch (err) {
-        notify(t("err.placePlanet", `Could not move the planet: ${err.message}`, { message: err.message }));
+      // Through a `latestSaver`, like every other write the map makes; a failed move puts it back.
+      if (!planetDrag.savers.has(slug)) {
+        planetDrag.savers.set(slug, latestSaver((value) => api(
+          `/horizon/map/planets/${encodeURIComponent(p.orbit.id)}`,
+          { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) },
+        ), {
+          confirmed: was,
+          failed: (err, confirmed) => {
+            setPlace(p.orbit, confirmed);
+            if (shiftWas === undefined) starMap.dropShift.delete(slug);
+            else starMap.dropShift.set(slug, shiftWas);
+            drawStarMap();
+            notify(t("err.placePlanet", `Could not move the planet: ${err.message}`, { message: err.message }));
+          },
+        }));
       }
+      planetDrag.savers.get(slug).save(landing);
     }
     mapDrag.id = null;
     mapDrag.redraw = false;
@@ -15004,32 +15014,82 @@ function initDesktopContextMenu() {
 // holds rearranges every planet in the order the orbits began, the ones the reader dragged included,
 // and the panel says so beside those controls.
 
-const mapSettingsUi = { saveTimer: 0, sent: 0 };
-
-//: Every save carries the whole object, and the newest one wins: it becomes the map's settings
-//: before it is sent (so a later change builds on it), it cancels a size save still waiting, and an
-//: answer to an older request is ignored. Otherwise a debounced size save could send the count the
-//: reader had just changed back to its old value.
-async function saveMapSettings(next) {
-  clearTimeout(mapSettingsUi.saveTimer);
-  starMap.settings = next;
-  const mine = ++mapSettingsUi.sent;
-  try {
-    const got = await api("/horizon/map/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(next),
-    });
-    if (mine !== mapSettingsUi.sent) return;
-    starMap.settings = got.settings;
-    // New places for every planet: read them, and the map with them.
-    if (got.rearranged) {
-      starMap.dropShift.clear();
-      await renderStarMap();
+//: **One save in flight per thing saved, and the newest value wins.** Each save carries the whole
+//: object, so the order the server receives them in decides what it keeps; with two in flight an
+//: older one could land last and the server keep a value the screen no longer showed. A saver sends
+//: one request at a time and, when it comes back, the newest value asked for meanwhile (every value
+//: between is skipped). A failure puts back the last value the server confirmed, so the screen never
+//: shows what was not saved. `confirmed` starts as the value before the first change.
+function latestSaver(send, { confirmed, done, failed }) {
+  let inflight = false;
+  let pending;
+  let waiting = false;
+  const pump = async () => {
+    if (inflight || !waiting) return;
+    const value = pending;
+    waiting = false;
+    inflight = true;
+    try {
+      const reply = await send(value);
+      confirmed = value;
+      if (!waiting && done) done(reply, value);
+    } catch (err) {
+      if (!waiting && failed) failed(err, confirmed);
+    } finally {
+      inflight = false;
+      void pump();
     }
-  } catch (err) {
-    notify(t("err.mapSettings", `Could not save the map settings: ${err.message}`, { message: err.message }));
+  };
+  return {
+    save(value) {
+      pending = value;
+      waiting = true;
+      void pump();
+    },
+  };
+}
+
+const mapSettingsUi = { saveTimer: 0, saver: null, rearranged: false };
+
+//: The map's settings, saved through one `latestSaver`. A change becomes the map's settings at once
+//: (so a later change builds on it) and cancels a size save still waiting out its pause.
+function saveMapSettings(next) {
+  clearTimeout(mapSettingsUi.saveTimer);
+  if (!mapSettingsUi.saver) {
+    mapSettingsUi.saver = latestSaver(async (value) => {
+      const got = await api("/horizon/map/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(value),
+      });
+      // Any save in a run that rearranged the planets means new places, even if the last did not.
+      mapSettingsUi.rearranged = mapSettingsUi.rearranged || got.rearranged;
+      return got;
+    }, {
+      confirmed: starMap.settings || MAP_SETTINGS_DEFAULT,
+      done: (got) => {
+        starMap.settings = got.settings;
+        if (mapSettingsUi.rearranged) {
+          mapSettingsUi.rearranged = false;
+          starMap.dropShift.clear();
+          void renderStarMap();
+        }
+      },
+      failed: (err, confirmed) => {
+        starMap.settings = confirmed;
+        const panel = horizonEl("map-settings");
+        if (!panel.hidden) paintMapSettings(panel);
+        drawStarMap();
+        if (mapSettingsUi.rearranged) {
+          mapSettingsUi.rearranged = false;
+          void renderStarMap();
+        }
+        notify(t("err.mapSettings", `Could not save the map settings: ${err.message}`, { message: err.message }));
+      },
+    });
   }
+  starMap.settings = next;
+  mapSettingsUi.saver.save(next);
 }
 
 function paintMapSettings(panel) {
@@ -16231,7 +16291,7 @@ function paintStarMapCard(mapCard) {
 // (`PUT /horizon/map/planets/{orbit}/style`).
 
 //: Which tab the planet card shows; kept while the reader moves from planet to planet.
-const planetCard = { tab: "info", saveTimer: 0, sent: 0 };
+const planetCard = { tab: "info", saveTimer: 0, savers: new Map() };
 
 //: Whether the card belongs to the planet's studio right now, which the map's redraws must leave
 //: alone: they rebuild the card, and a rebuilt studio drops the slider under the reader's pointer.
@@ -16298,7 +16358,7 @@ function planetCardTabs(mapCard, orbit, infoFrom) {
 }
 
 //: Save a planet's style: the newest wins, as with the map's settings (`saveMapSettings`).
-async function savePlanetStyle(orbit, next) {
+function savePlanetStyle(orbit, next) {
   clearTimeout(planetCard.saveTimer);
   // A new orbital pace keeps the planet where it is now: its position is base + clock × pace, so the
   // shift grows by how far the new pace would otherwise have carried it.
@@ -16308,21 +16368,23 @@ async function savePlanetStyle(orbit, next) {
     const gained = mapMotion.clock * (planetOmega(ring, next) - planetOmega(ring, before));
     starMap.dropShift.set(orbit.slug, (starMap.dropShift.get(orbit.slug) || 0) + gained);
   }
+  if (!planetCard.savers.has(orbit.slug)) {
+    planetCard.savers.set(orbit.slug, latestSaver((value) => api(
+      `/horizon/map/planets/${encodeURIComponent(orbit.id)}/style`,
+      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) },
+    ), {
+      confirmed: before,
+      failed: (err, confirmed) => {
+        setPlace(orbit, { style: confirmed });
+        drawStarMap();
+        notify(t("err.planetStyle", `Could not save how the planet looks: ${err.message}`,
+          { message: err.message }));
+      },
+    }));
+  }
   setPlace(orbit, { style: next });
   drawStarMap();
-  const mine = ++planetCard.sent;
-  try {
-    await api(`/horizon/map/planets/${encodeURIComponent(orbit.id)}/style`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(next),
-    });
-  } catch (err) {
-    if (mine === planetCard.sent) {
-      notify(t("err.planetStyle", `Could not save how the planet looks: ${err.message}`,
-        { message: err.message }));
-    }
-  }
+  planetCard.savers.get(orbit.slug).save(next);
 }
 
 function planetStudio(orbit) {

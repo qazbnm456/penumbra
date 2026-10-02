@@ -3703,6 +3703,8 @@ def _apply_organize_plan(
             kept += 1
         else:
             delete_orbit(target)
+            # Its planet too, so nothing of an orbit that never held anything outlives it.
+            horizon.forget_orbit(target, base_dir=base)
     return kept, filed
 
 

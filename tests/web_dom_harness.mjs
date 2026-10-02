@@ -2024,6 +2024,40 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     return { order: run().map((o) => o.slug), fallback: noScene().map((o) => o.slug) };
   },
 
+  //: One save in flight per thing saved, the newest value winning, and a failure putting back the
+  //: last value the server confirmed.
+  async latestSaving() {
+    const { latestSaver } = new Function(`${extract("latestSaver")}\nreturn { latestSaver };`)();
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const calls = [];
+    const send = (value) => new Promise((resolve, reject) => calls.push({ value, resolve, reject }));
+    const done = [];
+    const failed = [];
+    const saver = latestSaver(send, { confirmed: "v0", done: (reply, value) => done.push(value),
+      failed: (err, confirmed) => failed.push(confirmed) });
+    saver.save("v1");
+    await flush();
+    saver.save("v2");
+    saver.save("v3");
+    saver.save("v4");
+    await flush();
+    const inFlightWhileFirst = calls.length;
+    calls[0].resolve("ok1");
+    await flush();
+    await flush();
+    const afterFirst = calls.map((c) => c.value);
+    calls[1].resolve("ok4");
+    await flush();
+    await flush();
+    const doneAfter = [...done];
+    saver.save("v5");
+    await flush();
+    calls[2].reject(new Error("offline"));
+    await flush();
+    await flush();
+    return { inFlightWhileFirst, afterFirst, doneAfter, failed };
+  },
+
   //: A PDF's printed line breaks, joined back inside sentences, kept at list items, blank lines and
   //: sentence ends, and never changing the length (so a quote's offsets still hold).
   pdfReflow() {

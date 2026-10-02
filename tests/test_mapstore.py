@@ -145,3 +145,12 @@ def test_the_server_knows_exactly_the_kinds_of_world_the_map_draws():
     block = app[app.index("const PLANET_KINDS = {"):app.index("};", app.index("const PLANET_KINDS = {"))]
     drawn = re.findall(r"^\s{2}(\w+):", block, re.MULTILINE)
     assert tuple(drawn) == mapstore.PLANET_KINDS
+
+
+def test_forgetting_an_orbit_drops_its_planet_with_its_memberships():
+    from penumbra import horizon
+
+    mapstore.placements([("gone", 1.0), ("kept", 2.0)])
+    mapstore.set_style("gone", {**mapstore.DEFAULT_STYLE, "kind": "lava"})
+    horizon.forget_orbit("gone")
+    assert set(mapstore.all_places()) == {"kept"}

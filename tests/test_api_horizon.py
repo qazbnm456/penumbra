@@ -2134,3 +2134,17 @@ def test_a_planet_can_be_styled_in_its_studio(client):
     assert client.put("/horizon/map/planets/nowhere/style", json=style).status_code == 404
     assert client.put("/horizon/map/planets/alpha/style", json={**style, "size": 9}).status_code == 422
     assert client.put("/horizon/map/planets/alpha/style", json={**style, "colour": "red"}).status_code == 422
+
+
+def test_an_orbit_recreated_under_the_same_name_starts_as_a_new_planet(client):
+    """Deleting an orbit drops its planet at once, so a new orbit with the same name, made before the
+    map is read again, does not inherit the old place and style."""
+    assert client.post("/orbits/again/sources", json={"texts": ["a note"]}).status_code == 200
+    client.get("/horizon/map")
+    style = {"kind": "lava", "size": 2.0, "orbit": "still", "spin": "fast", "rings": "on"}
+    assert client.put("/horizon/map/planets/again/style", json=style).status_code == 200
+    assert client.put("/horizon/map/planets/again", json={"ring": 6, "angle": 1.0}).status_code == 200
+    assert client.delete("/orbits/again").status_code == 200
+    assert client.post("/orbits/again/sources", json={"texts": ["another note"]}).status_code == 200
+    planet = client.get("/horizon/map").json()["planets"]["again"]
+    assert planet["ring"] == 0 and planet["style"]["kind"] is None

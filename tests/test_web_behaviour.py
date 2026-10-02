@@ -1098,6 +1098,15 @@ def test_the_arrow_keys_take_the_planets_clockwise_from_the_top():
     r = _run("planetsClockwise")
     assert r["order"] == ["top", "right", "bottom", "left"]
     assert r["fallback"] == ["bottom", "left", "top", "right"]
+def test_a_saver_keeps_one_request_in_flight_and_the_newest_value_wins():
+    """Two whole-object saves in flight could reach the server in either order and leave it with an
+    older value than the screen showed. One at a time, the newest value next, and a failure puts back
+    what the server last confirmed."""
+    r = _run("latestSaving")
+    assert r["inFlightWhileFirst"] == 1, "a second save went out while the first was in flight"
+    assert r["afterFirst"] == ["v1", "v4"], "the saves made meanwhile were not reduced to the newest"
+    assert r["doneAfter"] == ["v4"], "a reply was reported although a newer value was waiting"
+    assert r["failed"] == ["v4"], "a failure did not put back the last value the server confirmed"
 
 
 def test_dragging_a_graph_node_pulls_its_neighbours_by_distance_in_links():

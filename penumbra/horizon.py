@@ -1175,10 +1175,22 @@ def forget_orbit(orbit_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -
 
     Nodes themselves are untouched: promotion COPIES (invariant 78), so a node outlives any orbit
     it was filed into, which is the same reasoning `remove_node` uses in the other direction.
+
+    The orbit's planet goes with it (`map_planets`: its place and how the reader made it look), in
+    the same transaction. Otherwise a new orbit created under the same name before the map was read
+    again inherited the old planet's place and style (invariant 85).
     """
+    key = slug(orbit_id)
     with _connect(base_dir) as conn:
-        cur = conn.execute("DELETE FROM memberships WHERE orbit_id = ?", (slug(orbit_id),))
-        return cur.rowcount or 0
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            count = conn.execute("DELETE FROM memberships WHERE orbit_id = ?", (key,)).rowcount or 0
+            conn.execute("DELETE FROM map_planets WHERE orbit_id = ?", (key,))
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+    return count
 
 
 def nodes_in_orbit(orbit_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> list[NodeMembership]:
