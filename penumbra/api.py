@@ -5235,6 +5235,40 @@ async def horizon_map() -> dict:
     return await asyncio.to_thread(read)
 
 
+class PlanetStyleRequest(BaseModel):
+    """How the reader made a planet look, every field named (`extra="forbid"`). `kind` null means the
+    world its name gives it. Bounds are checked by `mapstore.validate_style`."""
+
+    model_config = {"extra": "forbid"}
+
+    kind: str | None
+    size: float
+    orbit: str
+    spin: str
+    rings: str
+
+
+@app.put("/horizon/map/planets/{orbit_id}/style")
+async def style_planet(orbit_id: str, body: PlanetStyleRequest) -> dict:
+    """Make a planet look the way the reader chose in its studio: its kind of world, its size, how
+    fast it orbits and turns, and its rings. Presentation only; the orbit file is untouched."""
+    try:
+        key = slug(orbit_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not await asyncio.to_thread(lambda: orbit_path(orbit_id).exists()):
+        raise HTTPException(404, f"no orbit {orbit_id!r}")
+    try:
+        styled = await asyncio.to_thread(mapstore.set_style, key, body.model_dump())
+        if styled is None:
+            # The planet has no place yet: reading the map places it, then the style is kept.
+            await horizon_map()
+            styled = await asyncio.to_thread(mapstore.set_style, key, body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"style": styled}
+
+
 class MapSettingsRequest(BaseModel):
     """The star map's settings, every field named (`extra="forbid"`): a typo'd key must not leave a
     setting quietly at its old value. The bounds are checked by `mapstore.validate_settings`."""

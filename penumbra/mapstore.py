@@ -132,7 +132,10 @@ def placements(
 
 def _shape(rows: dict) -> dict:
     return {
-        key: {"ring": row["ring"], "angle": row["angle"], "placed_at": row["placed_at"]}
+        key: {
+            "ring": row["ring"], "angle": row["angle"], "placed_at": row["placed_at"],
+            "style": {**DEFAULT_STYLE, **json.loads(row.get("style") or "{}")},
+        }
         for key, row in rows.items()
     }
 
@@ -198,9 +201,9 @@ def validate_settings(value: dict) -> dict:
 
 def save_settings(value: dict, *, base_dir: str | Path = horizon.DEFAULT_HORIZON_DIR) -> tuple[dict, bool]:
     """Store the reader's settings; `(settings, rearranged)`. When the rule for how many planets a
-    ring holds changes, every place is dropped in the same transaction, so the next read places every
-    planet again under the new rule, in the order the orbits began. The reader chose that: a change
-    to the rule rearranges the whole map, the planets they dragged included."""
+    ring holds changes, every planet is placed again under the new rule in the same transaction, in
+    the order the orbits began (`_reflow`). The reader chose that: a change to the rule rearranges the
+    whole map, the planets they dragged included. How each planet looks is kept."""
     checked = validate_settings(value)
     with horizon._connect(base_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -213,9 +216,66 @@ def save_settings(value: dict, *, base_dir: str | Path = horizon.DEFAULT_HORIZON
             )
             rearranged = any(before[key] != checked[key] for key in _LAYOUT)
             if rearranged:
-                conn.execute("DELETE FROM map_planets")
+                _reflow(conn, checked)
             conn.execute("COMMIT")
         except BaseException:
             conn.execute("ROLLBACK")
             raise
     return checked, rearranged
+
+
+def _reflow(conn, chosen: dict) -> None:
+    """Every planet to a new slot under `chosen`, in the order its orbit began (the first capture
+    filed, else when it was first placed), keeping each planet's style. In place, not by dropping
+    the rows, because a row also holds how the reader made the planet look."""
+    rows = [dict(row) for row in conn.execute("SELECT orbit_id, placed_at FROM map_planets")]
+    created = _created(conn, [(row["orbit_id"], row["placed_at"]) for row in rows])
+    taken: dict[int, list[float]] = {}
+    for key in sorted(created, key=lambda k: (created[k], k)):
+        ring, angle = _free_place(taken, chosen)
+        conn.execute("UPDATE map_planets SET ring = ?, angle = ? WHERE orbit_id = ?", (ring, angle, key))
+        taken.setdefault(ring, []).append(angle)
+
+
+#: Every kind of world the map draws (`PLANET_KINDS` in app.js; a test keeps the two the same).
+PLANET_KINDS = (
+    "terran", "archipelago", "desert", "lava", "ice", "gas", "barren", "jungle", "toxic", "ringed",
+    "iceGiant", "hotJupiter", "ocean", "eyeball", "carbon", "sulfur", "cloudy", "red", "binary",
+)
+PACES = ("still", "slow", "usual", "fast")
+RING_CHOICES = ("auto", "on", "off")
+SIZE_BOUNDS = (0.5, 2.0)
+#: How a planet looks until the reader makes it otherwise: its kind from its name, its usual size,
+#: pace and turn, and rings where its kind has them.
+DEFAULT_STYLE = {"kind": None, "size": 1.0, "orbit": "usual", "spin": "usual", "rings": "auto"}
+
+
+def validate_style(value: dict) -> dict:
+    """A complete style, checked; raises `ValueError` naming what is wrong, never clamps."""
+    if set(value) != set(DEFAULT_STYLE):
+        raise ValueError(f"style must name exactly {sorted(DEFAULT_STYLE)}")
+    if value["kind"] is not None and value["kind"] not in PLANET_KINDS:
+        raise ValueError(f"kind must be one of {list(PLANET_KINDS)} or null")
+    size = value["size"]
+    low, high = SIZE_BOUNDS
+    if isinstance(size, bool) or not isinstance(size, (int, float)) or not low <= size <= high:
+        raise ValueError(f"size must be a number from {low} to {high}")
+    for key in ("orbit", "spin"):
+        if value[key] not in PACES:
+            raise ValueError(f"{key} must be one of {list(PACES)}")
+    if value["rings"] not in RING_CHOICES:
+        raise ValueError(f"rings must be one of {list(RING_CHOICES)}")
+    return {**value, "size": float(size)}
+
+
+def set_style(
+    orbit_slug: str, style: dict, *, base_dir: str | Path = horizon.DEFAULT_HORIZON_DIR
+) -> dict | None:
+    """How the reader made this planet look, from now on; `None` when the planet has no place yet
+    (the map has not been read since its orbit appeared)."""
+    checked = validate_style(style)
+    with horizon._connect(base_dir) as conn:
+        changed = conn.execute(
+            "UPDATE map_planets SET style = ? WHERE orbit_id = ?", (json.dumps(checked), orbit_slug)
+        ).rowcount
+    return checked if changed else None

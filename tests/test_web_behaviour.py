@@ -1030,6 +1030,8 @@ def test_each_planet_sits_at_its_own_place_whatever_the_order_or_the_neighbours(
     assert result["shiftedBase"] == 0.75, "a planet dropped in this page must stay where it was let go"
     assert result["snapped"]["ring"] == 1 and abs(result["snapped"]["angle"]) < 1e-9
     assert result["snappedTop"]["ring"] == 0 and abs(result["snappedTop"]["angle"] + 1.5707963) < 1e-6
+    # The studio's size scales the planet, and a planet told to stand still does not go round.
+    assert result["styled"] == {"r": 2, "omega": 0, "plainOmega": True}
 
 
 def test_the_arrow_keys_walk_planets_then_moons_and_back():

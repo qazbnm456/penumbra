@@ -163,6 +163,8 @@ _MIGRATIONS = (
     ),
     # 4. The star map's own settings (`mapstore.settings`): one JSON row.
     "CREATE TABLE map_settings (id INTEGER PRIMARY KEY CHECK (id = 1), value TEXT NOT NULL)",
+    # 5. How the reader made each planet look (`mapstore.set_style`): kind, size, pace, rings.
+    "ALTER TABLE map_planets ADD COLUMN style TEXT NOT NULL DEFAULT '{}'",
 )
 
 

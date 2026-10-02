@@ -2122,3 +2122,15 @@ def test_the_star_maps_settings_are_kept_on_the_server_and_checked(client):
     assert client.get("/horizon/map").json()["settings"]["ring_gap"] == 200
     assert client.put("/horizon/map/settings", json={**chosen, "ring_gap": 9999}).status_code == 422
     assert client.put("/horizon/map/settings", json={**chosen, "slots_step": 1}).json()["rearranged"] is True
+
+
+def test_a_planet_can_be_styled_in_its_studio(client):
+    assert client.post("/orbits/alpha/sources", json={"texts": ["a note"]}).status_code == 200
+    style = {"kind": "ice", "size": 1.4, "orbit": "slow", "spin": "fast", "rings": "off"}
+    # Styling before the map was ever read places the planet first.
+    done = client.put("/horizon/map/planets/alpha/style", json=style)
+    assert done.status_code == 200, done.text
+    assert client.get("/horizon/map").json()["planets"]["alpha"]["style"] == style
+    assert client.put("/horizon/map/planets/nowhere/style", json=style).status_code == 404
+    assert client.put("/horizon/map/planets/alpha/style", json={**style, "size": 9}).status_code == 422
+    assert client.put("/horizon/map/planets/alpha/style", json={**style, "colour": "red"}).status_code == 422

@@ -20,6 +20,7 @@ The order is the first capture filed into each orbit (`memberships.promoted_at`)
 - Automatic placement uses `first + step × i` evenly spaced slots on ring `i` (3 and 3 by default, set in the map's settings), so fewer slots set planets further apart. Changing either number rearranges every planet, the dragged ones included, because the reader asked for a new arrangement; changing the ring sizes moves nothing, since a place is a ring and an angle and the planet scales with its ring.
 - Automatic placement fills rings out to `mapstore.MAX_RING` (40). With one place on the inner ring and none added per ring, that is 41 places, and every orbit past them shares the outermost ring's first slot until the reader drags it or chooses more places per ring.
 - A slot is free when no planet sits within half a slot's width of it. A dragged planet can sit at any angle, and several may share a ring past its slots; the map fades whichever is behind while two overlap.
+- A planet's row also holds how the reader made it look in its studio (`style`: kind, size, orbit and turning pace, rings). That is why a new planets-per-ring rule places the planets again in place (`mapstore._reflow`) rather than by dropping the rows: dropping them would also forget every planet's look.
 - A drag snaps to the ring whose ellipse is nearest, out to one ring beyond the outermost in use, so the map grows outward only when the reader takes a planet there.
 
 ---

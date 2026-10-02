@@ -12893,18 +12893,40 @@ function motionAllowed() {
   return !window.matchMedia || !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
+//: How the reader made a planet look in its studio (`mapstore.DEFAULT_STYLE` until they did).
+const PLANET_STYLE_DEFAULT = { kind: null, size: 1, orbit: "usual", spin: "usual", rings: "auto" };
+//: A pace against the usual: how fast a planet orbits, and how fast its surface turns.
+const PLANET_PACES = { still: 0, slow: 0.5, usual: 1, fast: 2 };
+
+//: Change part of a planet's entry in `starMap.places` (its place or its style), keeping the rest.
+function setPlace(orbit, change) {
+  const before = starMap.places[orbit.slug] || planetPlace(orbit);
+  starMap.places = { ...starMap.places, [orbit.slug]: { ...before, ...change } };
+}
+
+function planetStyle(orbit) {
+  const place = starMap.places[orbit.slug];
+  return { ...PLANET_STYLE_DEFAULT, ...((place && place.style) || {}) };
+}
+
+//: How fast a planet on `ring` goes round, at the pace its studio chose.
+function planetOmega(ring, style) {
+  return ((Math.PI * 2) / ringGeometry(ring).period) * (PLANET_PACES[style.orbit] ?? 1);
+}
+
 //: Every planet at its own place (`planetPlace`): nothing about one planet depends on another, so
 //: filing a capture, a chat turn or a new orbit never moves the planets already there.
 function planetLayout() {
   return starMap.orbits.map((orbit) => {
     const { ring, angle } = planetPlace(orbit);
-    const { rx, ry, period } = ringGeometry(ring);
+    const { rx, ry } = ringGeometry(ring);
+    const style = planetStyle(orbit);
     const size = Math.max(orbit.sources, orbit.captures);
     return {
       orbit, rx, ry, ring,
       base: angle - (starMap.dropShift.get(orbit.slug) || 0),
-      omega: (Math.PI * 2) / period,
-      r: Math.min(30, 11 + Math.sqrt(size) * 2.6),
+      omega: planetOmega(ring, style),
+      r: Math.min(30, 11 + Math.sqrt(size) * 2.6) * style.size,
     };
   });
 }
@@ -14201,8 +14223,15 @@ function drawStarMap() {
     group.appendChild(moonRing);
     // Its world, from the orbit's name: the same planet every visit, unlike its neighbours. A
     // double planet is two worlds turning round each other in the planet's place.
-    const kindHere = kinds.get(orbit.slug);
+    const style = planetStyle(orbit);
+    const kindHere = style.kind || kinds.get(orbit.slug);
     const seed = stableHash(`planet:${orbit.slug}`);
+    // The studio's rings and turning pace, applied to the world its kind draws.
+    const styled = (terrain) => {
+      if (style.rings !== "auto") terrain.ringed = style.rings === "on";
+      terrain.spin /= PLANET_PACES[style.spin] || 1;
+      return terrain;
+    };
     if (kindHere === "binary") {
       // Both worlds sit inside the planet's circle with a gap between them, so the moons, which
       // circle just outside it, never cross a body, and the pair reads as two worlds, not one
@@ -14218,14 +14247,20 @@ function drawStarMap() {
         const counter = svgEl("g", {}, "map-binary-body");
         counter.dataset.phase = `binary:${orbit.slug}:${n}`;
         counter.style.animationDuration = pair.style.animationDuration;
-        drawWorld(counter, p.r * size, planetSurface(p.r * size, seed + n * 0.37, kindsA[Math.floor(rnd() * kindsA.length)]),
+        const kindN = kindsA[Math.floor(rnd() * kindsA.length)];
+        drawWorld(counter, p.r * size, styled(planetSurface(p.r * size, seed + n * 0.37, kindN)),
           `pn-clip-${index}-${n}`, `world:${orbit.slug}:${n}`);
         place.appendChild(counter);
         pair.appendChild(place);
       });
       group.appendChild(pair);
     } else {
-      drawWorld(group, p.r, planetSurface(p.r, seed, kindHere), `pn-clip-${index}`, `world:${orbit.slug}`);
+      drawWorld(group, p.r, styled(planetSurface(p.r, seed, kindHere)), `pn-clip-${index}`,
+        `world:${orbit.slug}`);
+    }
+    // A surface told to stand still holds where it is.
+    if (style.spin === "still") {
+      group.querySelectorAll(".map-planet-spin").forEach((el) => { el.style.animationPlayState = "paused"; });
     }
     group.appendChild(svgEl("circle", { r: p.r }, "map-planet-rim"));
     // With many planets no link is drawn at rest; a small mark says this one has some to show.
@@ -14512,9 +14547,8 @@ function startPlanetDrag(event, p, group) {
     setTimeout(() => { planetDrag.dropped = false; }, 0);
     const slug = p.orbit.slug;
     if (e.type === "pointerup" && landing) {
-      const { period } = ringGeometry(landing.ring);
-      starMap.places = { ...starMap.places, [slug]: { ...planetPlace(p.orbit), ...landing } };
-      starMap.dropShift.set(slug, mapMotion.clock * ((Math.PI * 2) / period));
+      setPlace(p.orbit, landing);
+      starMap.dropShift.set(slug, mapMotion.clock * planetOmega(landing.ring, planetStyle(p.orbit)));
       try {
         await api(`/horizon/map/planets/${encodeURIComponent(p.orbit.id)}`, {
           method: "PUT",
@@ -15851,7 +15885,7 @@ function renderCaptureCard(card, focus) {
 
 function renderStarMapCard() {
   const mapCard = horizonEl("starmap-card");
-  if (editingTitleIn(mapCard)) return;
+  if (editingTitleIn(mapCard) || studioHolds(mapCard)) return;
   // A button in the card that rebuilt the card took keyboard focus with it to <body>, where the
   // map's keys no longer reach. Focus goes back into the new card instead.
   const hadFocus = mapCard.contains(document.activeElement);
@@ -15958,6 +15992,8 @@ function paintStarMapCard(mapCard) {
   });
   heading.appendChild(rename);
   mapCard.appendChild(heading);
+  // What follows is the Info tab; the Studio tab is built beside it at the end (`planetCardTabs`).
+  const infoFrom = mapCard.children.length;
   mapCard.appendChild(elt("p", "card-meta", orbit.captures
     ? t("map.cardCounts", `${orbit.sources} sources, ${orbit.captures} filed from the Horizon`,
       { n: orbit.sources, m: orbit.captures })
@@ -16039,7 +16075,170 @@ function paintStarMapCard(mapCard) {
   if (orbit.undistilled) {
     mapCard.appendChild(distilOrbitControl(orbit.slug, orbit.undistilled));
   }
+  planetCardTabs(mapCard, orbit, infoFrom);
   mapCard.hidden = false;
+}
+
+// --- a planet's studio ------------------------------------------------------------------------------
+//
+// The planet's card has two tabs: what it is (Info) and how it looks (Studio), where the reader picks
+// its kind of world, its size, how fast it orbits and turns, and its rings, like making a character
+// in a game. Each choice is drawn at once and kept on the server with the planet's place
+// (`PUT /horizon/map/planets/{orbit}/style`).
+
+//: Which tab the planet card shows; kept while the reader moves from planet to planet.
+const planetCard = { tab: "info", saveTimer: 0, sent: 0 };
+
+//: Whether the card belongs to the planet's studio right now, which the map's redraws must leave
+//: alone: they rebuild the card, and a rebuilt studio drops the slider under the reader's pointer.
+function studioHolds(mapCard) {
+  if (planetCard.tab !== "studio" || starMap.focus || !starMap.selected) return false;
+  const studio = mapCard.querySelector(".planet-studio");
+  return Boolean(studio && studio.dataset.slug === starMap.selected);
+}
+
+function planetCardTabs(mapCard, orbit, infoFrom) {
+  const info = elt("div", "planet-card-body");
+  info.dataset.tab = "info";
+  [...mapCard.children].slice(infoFrom).forEach((child) => info.appendChild(child));
+  const studio = planetStudio(orbit);
+  const strip = elt("div", "planet-card-tabs");
+  strip.setAttribute("role", "tablist");
+  strip.setAttribute("aria-label", orbit.title);
+  const labels = [["info", t("planet.tabInfo", "Info")], ["studio", t("planet.tabStudio", "Studio")]];
+  const tabs = labels.map(([key, label]) => {
+    const tab = elt("button", "planet-card-tab", label);
+    tab.type = "button";
+    tab.dataset.tab = key;
+    tab.setAttribute("role", "tab");
+    return tab;
+  });
+  const show = (key) => {
+    planetCard.tab = key;
+    tabs.forEach((tab) => {
+      const on = tab.dataset.tab === key;
+      tab.setAttribute("aria-selected", on ? "true" : "false");
+      tab.tabIndex = on ? 0 : -1;
+    });
+    info.hidden = key !== "info";
+    studio.hidden = key !== "studio";
+  };
+  tabs.forEach((tab, i) => {
+    // Back to Info rebuilds the card, so what it says is current after a while in the studio.
+    tab.addEventListener("click", () => {
+      if (tab.dataset.tab === "info" && planetCard.tab === "studio") {
+        planetCard.tab = "info";
+        renderStarMapCard();
+        return;
+      }
+      show(tab.dataset.tab);
+    });
+    tab.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      const next = tabs[(i + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+      next.click();
+      next.focus();
+    });
+    strip.appendChild(tab);
+  });
+  mapCard.append(strip, info, studio);
+  show(planetCard.tab);
+}
+
+//: Save a planet's style: the newest wins, as with the map's settings (`saveMapSettings`).
+async function savePlanetStyle(orbit, next) {
+  clearTimeout(planetCard.saveTimer);
+  setPlace(orbit, { style: next });
+  drawStarMap();
+  const mine = ++planetCard.sent;
+  try {
+    await api(`/horizon/map/planets/${encodeURIComponent(orbit.id)}/style`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(next),
+    });
+  } catch (err) {
+    if (mine === planetCard.sent) {
+      notify(t("err.planetStyle", `Could not save how the planet looks: ${err.message}`,
+        { message: err.message }));
+    }
+  }
+}
+
+function planetStudio(orbit) {
+  const box = elt("div", "planet-studio");
+  box.dataset.slug = orbit.slug;
+  box.setAttribute("role", "tabpanel");
+  const style = () => planetStyle(orbit);
+  const choice = (label, key, options) => {
+    const row = elt("label", "map-settings-row");
+    const select = document.createElement("select");
+    options.forEach(([value, word]) => {
+      const option = document.createElement("option");
+      option.value = value === null ? "" : value;
+      option.textContent = word;
+      select.appendChild(option);
+    });
+    select.value = style()[key] === null ? "" : style()[key];
+    select.addEventListener("change", () => {
+      void savePlanetStyle(orbit, { ...style(), [key]: select.value === "" ? null : select.value });
+    });
+    row.append(elt("span", "map-settings-name", label), select);
+    return row;
+  };
+  const kindNames = {
+    terran: t("planet.kind.terran", "Earth-like"), archipelago: t("planet.kind.archipelago", "Archipelago"),
+    desert: t("planet.kind.desert", "Desert"), lava: t("planet.kind.lava", "Lava"),
+    ice: t("planet.kind.ice", "Ice"),
+    gas: t("planet.kind.gas", "Gas giant"), barren: t("planet.kind.barren", "Barren rock"),
+    jungle: t("planet.kind.jungle", "Jungle"), toxic: t("planet.kind.toxic", "Toxic haze"),
+    ringed: t("planet.kind.ringed", "Ringed giant"), iceGiant: t("planet.kind.iceGiant", "Ice giant"),
+    hotJupiter: t("planet.kind.hotJupiter", "Hot Jupiter"), ocean: t("planet.kind.ocean", "Ocean"),
+    eyeball: t("planet.kind.eyeball", "Eyeball world"), carbon: t("planet.kind.carbon", "Carbon"),
+    sulfur: t("planet.kind.sulfur", "Sulfur"), cloudy: t("planet.kind.cloudy", "Cloudy"),
+    red: t("planet.kind.red", "Red"),
+    binary: t("planet.kind.binary", "Double planet"),
+  };
+  const paces = [
+    ["still", t("planet.pace.still", "Still")], ["slow", t("planet.pace.slow", "Slow")],
+    ["usual", t("planet.pace.usual", "Usual")], ["fast", t("planet.pace.fast", "Fast")],
+  ];
+  const kinds = Object.keys(PLANET_KINDS).map((kind) => [kind, kindNames[kind] || kind]);
+  box.appendChild(choice(t("planet.kind", "Kind of world"), "kind",
+    [[null, t("planet.kindAuto", "From its name")], ...kinds]));
+  const sizeRow = elt("label", "map-settings-row");
+  const sizeValue = elt("span", "map-settings-value", `${style().size.toFixed(1)}×`);
+  const size = document.createElement("input");
+  size.type = "range";
+  size.min = "0.5";
+  size.max = "2";
+  size.step = "0.1";
+  size.value = String(style().size);
+  size.addEventListener("input", () => {
+    sizeValue.textContent = `${Number(size.value).toFixed(1)}×`;
+    // Drawn as it changes; saved once the reader pauses.
+    setPlace(orbit, { style: { ...style(), size: Number(size.value) } });
+    drawStarMap();
+    clearTimeout(planetCard.saveTimer);
+    planetCard.saveTimer = setTimeout(() => void savePlanetStyle(orbit, style()), 400);
+  });
+  sizeRow.append(elt("span", "map-settings-name", t("planet.size", "Size")), sizeValue, size);
+  box.appendChild(sizeRow);
+  box.appendChild(choice(t("planet.orbit", "Orbit"), "orbit", paces));
+  box.appendChild(choice(t("planet.spin", "Turning"), "spin", paces));
+  box.appendChild(choice(t("planet.rings", "Rings"), "rings", [
+    ["auto", t("planet.ringsAuto", "As its kind has them")], ["on", t("planet.ringsOn", "Always")],
+    ["off", t("planet.ringsOff", "Never")],
+  ]));
+  const reset = elt("button", "btn map-settings-reset", t("planet.reset", "Back to how it was"));
+  reset.type = "button";
+  reset.addEventListener("click", async () => {
+    await savePlanetStyle(orbit, { ...PLANET_STYLE_DEFAULT });
+    box.replaceWith(planetStudio(orbit));
+  });
+  box.appendChild(reset);
+  return box;
 }
 
 // --- summarising one orbit's captures -------------------------------------------------------------

@@ -92,9 +92,10 @@ def test_settings_default_and_a_new_slot_rule_rearranges_every_planet():
     assert mapstore.settings()["events"]["comet"] == "off"
     one_each = {**bigger, "first_ring_slots": 1, "slots_step": 1}
     _, rearranged = mapstore.save_settings(one_each)
-    assert rearranged and mapstore.all_places() == {}
-    got = mapstore.placements([("a", 1.0), ("b", 2.0), ("c", 3.0)])
-    assert [got[k]["ring"] for k in ("a", "b", "c")] == [0, 1, 1], "ring 0 holds one, ring 1 two"
+    # Placed again at once, in place and in the order they began: ring 0 holds one, ring 1 two, and
+    # the planet the reader had dragged to ring 5 is rearranged with the rest.
+    got = mapstore.all_places()
+    assert rearranged and [got[k]["ring"] for k in ("a", "b", "c")] == [0, 1, 1]
 
 
 def test_settings_out_of_bounds_are_refused_never_clamped():
@@ -111,3 +112,36 @@ def test_settings_out_of_bounds_are_refused_never_clamped():
     ):
         with pytest.raises(ValueError):
             mapstore.validate_settings(bad)
+
+
+def test_a_planets_style_is_kept_and_survives_a_rearrangement():
+    """How the reader made a planet look lives with its place, so a new planets-per-ring rule, which
+    places every planet again, must keep it."""
+    got = mapstore.placements([("a", 1.0), ("b", 2.0)])
+    assert got["a"]["style"] == mapstore.DEFAULT_STYLE
+    mine = {**mapstore.DEFAULT_STYLE, "kind": "lava", "size": 1.5, "orbit": "still", "rings": "on"}
+    assert mapstore.set_style("a", mine) == mine
+    assert mapstore.set_style("nowhere", mine) is None
+    mapstore.save_settings({**mapstore.DEFAULT_SETTINGS, "first_ring_slots": 1, "slots_step": 1})
+    after = mapstore.all_places()
+    assert after["a"]["style"] == mine and after["a"]["ring"] == 0 and after["b"]["ring"] == 1
+
+
+def test_a_style_out_of_bounds_is_refused():
+    good = mapstore.DEFAULT_STYLE
+    for bad in (
+        {**good, "kind": "dragon"}, {**good, "size": 3}, {**good, "size": True}, {**good, "orbit": "warp"},
+        {**good, "spin": None}, {**good, "rings": "maybe"}, {k: v for k, v in good.items() if k != "rings"},
+    ):
+        with pytest.raises(ValueError):
+            mapstore.validate_style(bad)
+
+
+def test_the_server_knows_exactly_the_kinds_of_world_the_map_draws():
+    import re
+    from pathlib import Path
+
+    app = (Path(__file__).resolve().parents[1] / "penumbra" / "web" / "app.js").read_text(encoding="utf-8")
+    block = app[app.index("const PLANET_KINDS = {"):app.index("};", app.index("const PLANET_KINDS = {"))]
+    drawn = re.findall(r"^\s{2}(\w+):", block, re.MULTILINE)
+    assert tuple(drawn) == mapstore.PLANET_KINDS

@@ -1827,11 +1827,13 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
   //: in a list sorted by recency. And a point of the map is snapped to the ring it is nearest.
   starMapPlaces() {
     const make = (orbits, places, dropShift = new Map()) => new Function(
-      "starMap", "mapMotion", "MAP_CENTRE", "MAP_MAX_RING",
+      "starMap", "mapMotion", "MAP_CENTRE", "MAP_MAX_RING", "PLANET_STYLE_DEFAULT", "PLANET_PACES",
       `${extract("ringGeometry")}\n${extract("outermostRing")}\n${extract("mapRings")}\n` +
-      `${extract("planetPlace")}\n${extract("planetLayout")}\n${extract("ringNear")}\n` +
+      `${extract("planetPlace")}\n${extract("planetStyle")}\n${extract("planetOmega")}\n` +
+      `${extract("planetLayout")}\n${extract("ringNear")}\n` +
       "return { planetLayout, mapRings, ringNear, ringGeometry };",
-    )({ orbits, places, dropShift, settings: { inner_ring: 260, ring_gap: 160 } }, { clock: 0 }, { x: 500, y: 330 }, 40);
+    )({ orbits, places, dropShift, settings: { inner_ring: 260, ring_gap: 160 } }, { clock: 0 }, { x: 500, y: 330 }, 40,
+      { kind: null, size: 1, orbit: "usual", spin: "usual", rings: "auto" }, { still: 0, slow: 0.5, usual: 1, fast: 2 });
     const orbit = (slug) => ({ slug, sources: 1, captures: 1 });
     const places = { a: { ring: 0, angle: 1 }, b: { ring: 2, angle: -2 } };
     const at = (layout) => Object.fromEntries(
@@ -1850,6 +1852,11 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       shiftedBase: shifted.planetLayout()[0].base,
       snapped: one.ringNear({ x: 500 + g1.rx, y: 330 }, 3),
       snappedTop: one.ringNear({ x: 500, y: 330 - one.ringGeometry(0).ry }, 3),
+      styled: (() => {
+        const lay = make([orbit("a")], { a: { ring: 0, angle: 0, style: { size: 2, orbit: "still" } } }).planetLayout()[0];
+        const plain = make([orbit("a")], { a: { ring: 0, angle: 0 } }).planetLayout()[0];
+        return { r: lay.r / plain.r, omega: lay.omega, plainOmega: plain.omega > 0 };
+      })(),
     };
   },
 

@@ -9055,6 +9055,47 @@ body.is-resizing .orbit-graph {
   margin-top: var(--space-3);
 }
 
+/* A planet's card: Info and Studio tabs under its name. */
+.planet-card-tabs {
+  display: flex;
+  gap: var(--space-1);
+  margin: var(--space-3) 0 var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.planet-card-tab {
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: var(--space-2) var(--space-4);
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+
+.planet-card-tab[aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.planet-card-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.planet-studio {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.planet-studio[hidden],
+.planet-card-body[hidden] {
+  display: none;
+}
+
 .map-camera-btn {
   width: 32px;
   height: 32px;
