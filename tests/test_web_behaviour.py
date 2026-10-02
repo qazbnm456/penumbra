@@ -1092,6 +1092,12 @@ def test_the_busy_poll_leaves_a_row_with_an_open_orbit_picker_alone():
     )
     assert r["after"]["replaced"] == ["a"] or r["after"]["rendered"] == 1, r["after"]
     assert r["after"]["count"] == 3
+def test_the_arrow_keys_take_the_planets_clockwise_from_the_top():
+    """Right goes to the next planet clockwise on screen, not the next one placed, so the keys go
+    where the eye goes. Before the map is drawn the placed order stands in."""
+    r = _run("planetsClockwise")
+    assert r["order"] == ["top", "right", "bottom", "left"]
+    assert r["fallback"] == ["bottom", "left", "top", "right"]
 
 
 def test_dragging_a_graph_node_pulls_its_neighbours_by_distance_in_links():

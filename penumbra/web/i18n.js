@@ -850,6 +850,8 @@ const STRINGS = {
     "map.zoomHome": "回到整張星圖",
     "map.legendBridge": "兩個軌道有共同的實體（指到星球看全部）",
     "map.ringKicker": "第 {n} 環",
+    "map.announcePlanet": "{name}，第 {n} 環",
+    "map.announceMoon": "{name}，{orbit}的第 {n} 顆，共 {total} 顆",
     "mapSettings.open": "星圖設定",
     "planet.tabInfo": "資訊",
     "planet.tabStudio": "客製化",

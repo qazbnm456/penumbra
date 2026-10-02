@@ -15139,6 +15139,15 @@ function initMapSettings() {
     if (panel.hidden || panel.contains(event.target) || open.contains(event.target)) return;
     close();
   });
+  // Escape closes it from anywhere, not only with focus inside it, unless a dialog is open above it.
+  // In the capture phase, so it wins over the map's own Escape (which would close the planet card).
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || panel.hidden || event.defaultPrevented || aModalIsOpen()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    close();
+    open.focus();
+  }, true);
 }
 
 // --- walking the map with the arrow keys ---------------------------------------------------------
@@ -15185,24 +15194,84 @@ function arrowsTakenElsewhere(event) {
     "[role='slider']", "[role='dialog']", "[role='alertdialog']", ".lens-picker",
   ].join(", ");
   if (target && target.closest && target.closest(owners)) return true;
+  return aModalIsOpen();
+}
+
+//: Whether any dialog that takes the whole page (`aria-modal`) is open.
+function aModalIsOpen() {
   return [...document.querySelectorAll("[aria-modal='true']")].some((dialog) => !dialog.closest("[hidden]"));
+}
+
+//: Whether a key press is the map's to take: on the map's screen, with no modifier but Shift, not
+//: mid-composition, not already taken, and not owned by a field, menu, picker or dialog.
+function mapKeyFree(event) {
+  if (event.defaultPrevented || event.isComposing) return false;
+  if (event.metaKey || event.ctrlKey || event.altKey) return false;
+  return viewIsHorizon() && viewMode("horizon") === "map" && !arrowsTakenElsewhere(event);
 }
 
 //: When the arrow keys last moved, so a held key steps at a walking pace instead of redrawing the
 //: map and refetching a card for every auto-repeat.
 const mapKeyPace = { at: 0 };
 
+//: The planets in the order they stand on screen: clockwise by angle round the Horizon, starting at
+//: the top, as the map turns now. Right is the next one clockwise, so the keys go where the eye goes
+//: rather than in the order the planets were placed.
+function planetsOnScreen() {
+  if (!starMap.scene) return starMap.orbits;
+  const angle = new Map(starMap.scene.planets.map(({ p }) => {
+    const at = planetAt(p);
+    const turn = Math.atan2(at.y - MAP_CENTRE.y, at.x - MAP_CENTRE.x) + Math.PI / 2;
+    return [p.orbit.slug, ((turn % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)];
+  }));
+  return [...starMap.orbits].sort((a, b) => (angle.get(a.slug) ?? 0) - (angle.get(b.slug) ?? 0));
+}
+
+//: A few words for a screen reader about where the keys went. The card, which a step rebuilds, is
+//: kept quiet while the keys walk (its own `aria-live` would read all of it at every step) and
+//: speaks again once the pointer is back on the map.
+function announceMapStep(move) {
+  const card = horizonEl("starmap-card");
+  card.setAttribute("aria-live", "off");
+  const orbit = starMap.orbits.find((o) => o.slug === move.orbit);
+  if (!orbit) return;
+  let words;
+  if (move.kind === "capture") {
+    const moons = orbit.moons || [];
+    const at = moons.findIndex((moon) => moon.id === move.id) + 1;
+    words = t("map.announceMoon", `${captureName(move.title)}, ${at} of ${moons.length} in ${orbit.title}`,
+      { name: captureName(move.title), n: at, total: moons.length, orbit: orbit.title });
+  } else {
+    const ring = planetPlace(orbit).ring + 1;
+    words = t("map.announcePlanet", `${orbit.title}, ring ${ring}`, { name: orbit.title, n: ring });
+  }
+  horizonEl("map-announce").textContent = words;
+}
+
+const MAP_ZOOM_KEYS = { "+": 1.25, "=": 1.25, "-": 0.8, "_": 0.8 };
+
 function initMapKeys() {
+  horizonEl("starmap").addEventListener("pointerdown", () => {
+    horizonEl("starmap-card").setAttribute("aria-live", "polite");
+  });
   document.addEventListener("keydown", (event) => {
+    // Zoom from anywhere on the map's screen, not only with focus inside the map: + and - (with or
+    // without Shift, as keyboards place them) and 0 for the whole view.
+    const zoom = MAP_ZOOM_KEYS[event.key];
+    if ((zoom || event.key === "0") && mapKeyFree(event)) {
+      event.preventDefault();
+      if (zoom) zoomBy(zoom);
+      else cameraHome();
+      return;
+    }
     if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
-    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
-    if (event.isComposing || !viewIsHorizon() || viewMode("horizon") !== "map") return;
-    if (arrowsTakenElsewhere(event)) return;
-    const move = mapKeyMove(event.key, starMap.orbits, starMap.selected, starMap.focus);
+    if (event.shiftKey || !mapKeyFree(event)) return;
+    const move = mapKeyMove(event.key, planetsOnScreen(), starMap.selected, starMap.focus);
     if (!move) return;
     event.preventDefault();
     if (event.repeat && performance.now() - mapKeyPace.at < 120) return;
     mapKeyPace.at = performance.now();
+    announceMapStep(move);
     openMapFocus(move);
     // Focus follows to the planet, so a screen reader names where the keys went and the planet holds
     // still while it is read.

@@ -2011,6 +2011,19 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     return { first, whileOpen, after: { replaced: [...replaced], rendered, count: deps.horizonState.nodes.length } };
   },
 
+  //: The arrow keys walk the planets in the order they stand on screen: clockwise from the top.
+  planetsClockwise() {
+    const at = { top: [500, 100], right: [800, 330], bottom: [500, 600], left: [200, 330] };
+    const orbits = ["bottom", "left", "top", "right"].map((slug) => ({ slug }));
+    const scene = { planets: orbits.map((orbit) => ({ p: { orbit } })) };
+    const run = new Function("starMap", "MAP_CENTRE", "planetAt",
+      `${extract("planetsOnScreen")}\nreturn planetsOnScreen;`)(
+      { orbits, scene }, { x: 500, y: 330 }, (p) => ({ x: at[p.orbit.slug][0], y: at[p.orbit.slug][1] }));
+    const noScene = new Function("starMap", "MAP_CENTRE", "planetAt",
+      `${extract("planetsOnScreen")}\nreturn planetsOnScreen;`)({ orbits, scene: null }, {}, () => ({}));
+    return { order: run().map((o) => o.slug), fallback: noScene().map((o) => o.slug) };
+  },
+
   //: A PDF's printed line breaks, joined back inside sentences, kept at list items, blank lines and
   //: sentence ends, and never changing the length (so a quote's offsets still hold).
   pdfReflow() {
