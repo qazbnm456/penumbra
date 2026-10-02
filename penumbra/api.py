@@ -5461,6 +5461,56 @@ async def get_horizon_node(node_id: str) -> dict:
     return {"node": _node_view(node), "orbits": [m.model_dump() for m in memberships]}
 
 
+class NodeTitleRequest(BaseModel):
+    """A capture's name, as the reader typed it. `extra="forbid"` like `RenameRequest`: a typo'd key
+    must not rename a capture to nothing."""
+
+    model_config = {"extra": "forbid"}
+
+    title: str
+
+
+class NodeTagsRequest(BaseModel):
+    """A capture's tags, the whole list as the reader left it. `extra="forbid"` for the same reason."""
+
+    model_config = {"extra": "forbid"}
+
+    tags: list[str]
+
+
+@app.put("/horizon/{node_id}/title")
+async def rename_horizon_node(node_id: str, body: NodeTitleRequest) -> dict:
+    """Rename a capture, as a bookmark is renamed. Its text stays what it was; only the label the
+    list, the map and search show changes, and a later summary pass leaves it alone
+    (`horizon.edit_node`). No model involved, and it REFUSES an empty name rather than deriving one,
+    as renaming an orbit does (invariant 53)."""
+    await asyncio.to_thread(_node_or_404, node_id)
+    title = normalize_title(body.title)
+    if not title:
+        raise HTTPException(422, "title is empty after normalisation")
+    node = await asyncio.to_thread(horizon.edit_node, node_id, title=title)
+    if node is None:
+        raise HTTPException(404, f"no capture {node_id!r}")
+    return {"node": _node_view(node)}
+
+
+@app.put("/horizon/{node_id}/tags")
+async def retag_horizon_node(node_id: str, body: NodeTagsRequest) -> dict:
+    """Set a capture's tags to the reader's list: one removed, one added, or all of them gone. They
+    are cleaned exactly as the summary pass cleans its own (`distill.clean_tags`), so a typed tag
+    joins the existing ones, and a later summary pass leaves them alone. Growing past the summary
+    pass's own cap is refused rather than cut, so nothing the reader typed vanishes; removing is
+    always allowed, even from a list already over it."""
+    current = await asyncio.to_thread(_node_or_404, node_id)
+    tags = distill.clean_tags(body.tags, count=len(body.tags) + 1)
+    if len(tags) > distill.MAX_TAGS and len(tags) > len(current.tags):
+        raise HTTPException(422, f"at most {distill.MAX_TAGS} tags")
+    node = await asyncio.to_thread(horizon.edit_node, node_id, tags=tags)
+    if node is None:
+        raise HTTPException(404, f"no capture {node_id!r}")
+    return {"node": _node_view(node)}
+
+
 @app.get("/horizon/{node_id}/source")
 async def get_horizon_node_source(node_id: str) -> dict:
     """A node's FULL text, every block.

@@ -9554,6 +9554,85 @@ body:not([data-view="horizon"]) .capture-dock {
   cursor: pointer;
 }
 
+/* A capture's tags in the details column and the map's card: each a pill holding the tag (which
+   finds the others carrying it) and a remove button, then a "+ Tag" that becomes a field. */
+.tag-editor {
+  margin-top: var(--space-5);
+}
+
+.tag-editor-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+
+.tag-chip .node-tag {
+  font-size: inherit;
+}
+
+.tag-remove,
+.tag-add {
+  font: inherit;
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  border-radius: 999px;
+}
+
+.tag-remove {
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+  line-height: 1.2;
+}
+
+.tag-remove:hover,
+.tag-remove:focus-visible {
+  color: var(--bad);
+  background: var(--surface-2);
+}
+
+.tag-add {
+  font-size: var(--text-xs);
+  padding: 0 var(--space-3);
+  border: 1px dashed var(--border);
+}
+
+.tag-add:hover,
+.tag-add:focus-visible {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+/* The "+ Tag" field in place of the button: a title editor (so a repaint waits for it), inline. */
+.title-editor.tag-add-editor {
+  display: inline-flex;
+  width: auto;
+}
+
+.tag-add-input {
+  font: inherit;
+  font-size: var(--text-xs);
+  width: 9rem;
+  padding: 0 var(--space-3);
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--surface-1);
+  color: var(--text);
+}
+
 .node-orbit {
   color: var(--accent-text);
   background: color-mix(in oklch, var(--accent) 14%, transparent);

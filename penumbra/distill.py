@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -102,6 +103,19 @@ def _clean(value: object, limit: int) -> str:
     return strip_markers(str(value or "")).strip()[:limit].strip()
 
 
+#: How long one tag may be. A tag is a label to filter and join by, the same for the model's tags and
+#: the reader's own (`clean_tags`).
+MAX_TAG_CHARS = 40
+MAX_TAGS = _MAX_TAGS
+
+
+def clean_tags(value: object, count: int = _MAX_TAGS) -> list[str]:
+    """Tags as the Horizon stores them, whoever chose them: lowercased, trimmed to `MAX_TAG_CHARS`,
+    deduplicated in order, at most `count`. One function for the summary pass and the reader's edit,
+    so a tag the reader types joins the ones the model wrote."""
+    return _clean_list(value, MAX_TAG_CHARS, count, lower=True)
+
+
 def _clean_list(value: object, limit: int, count: int, *, lower: bool = False) -> list[str]:
     """Deduplicated and order-preserving. A model handed a `list[str]` signature can still return a
     comma-joined string, so both shapes are accepted.
@@ -139,7 +153,7 @@ def _sanitize(result: Distillation) -> Distillation:
     return Distillation(
         title=_clean(result.title, _MAX_TITLE_CHARS),
         summary=_clean(result.summary, _MAX_SUMMARY_CHARS),
-        tags=_clean_list(result.tags, 40, _MAX_TAGS, lower=True),
+        tags=clean_tags(result.tags),
         entities=_clean_list(result.entities, 60, _MAX_ENTITIES),
     )
 
@@ -170,7 +184,7 @@ class DistillNode:
             Distillation(
                 title=str(getattr(result, "title", "") or ""),
                 summary=str(getattr(result, "summary", "") or ""),
-                tags=_clean_list(getattr(result, "tags", []), 40, _MAX_TAGS, lower=True),
+                tags=clean_tags(getattr(result, "tags", [])),
                 entities=_clean_list(getattr(result, "entities", []), 60, _MAX_ENTITIES),
             )
         )
@@ -434,7 +448,10 @@ def distil_pending(
         horizon.update_node(
             node.id,
             base_dir=base_dir,
+            # A title or tags the reader set, even while this call was running, stay theirs.
+            respect_edits=True,
             state="ready",
+            distilled_at=time.time(),
             # A summary that now exists clears the reason an earlier attempt failed (`api`
             # records it on the node so the waiting card can say so after a restart).
             error=None,

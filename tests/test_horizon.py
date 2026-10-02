@@ -943,3 +943,67 @@ def test_an_underscore_in_a_search_is_a_character_not_a_wildcard(tmp_path):
     assert [n.origin for n in horizon.list_nodes(query="bang!bang", base_dir=tmp_path)] == [
         "bang!bang.txt"
     ]
+
+
+def test_a_readers_title_and_tags_survive_a_later_summary():
+    """The reader's own label is theirs. `edit_node` writes it and records the edit; the summary
+    pass's write (`respect_edits=True`) then leaves the edited fields alone and still writes the rest.
+    A capture renamed before its summary landed kept that name only because of this."""
+    node = horizon.add_node(_source())
+    edited = horizon.edit_node(node.id, title="My name for it", tags=["mine"])
+    assert (edited.title, edited.tags) == ("My name for it", ["mine"])
+    assert horizon.edited_fields(node.id) == ["title", "tags"]
+    after = horizon.update_node(
+        node.id, respect_edits=True, state="ready", title="Model title", tags=["model"], summary="S."
+    )
+    assert (after.title, after.tags) == ("My name for it", ["mine"])
+    assert (after.summary, after.state) == ("S.", "ready")
+    # Any other writer is not filtered: this is the summary pass's rule, not a lock on the row.
+    assert horizon.update_node(node.id, title="Forced").title == "Forced"
+
+
+def test_editing_only_the_title_leaves_the_tags_to_the_summary():
+    node = horizon.add_node(_source())
+    horizon.edit_node(node.id, title="Renamed")
+    horizon.edit_node(node.id, title="Renamed again")
+    assert horizon.edited_fields(node.id) == ["title"]
+    after = horizon.update_node(node.id, respect_edits=True, title="Model", tags=["model"])
+    assert (after.title, after.tags) == ("Renamed again", ["model"])
+
+
+def test_edit_node_refuses_the_body_and_answers_none_for_a_missing_node():
+    node = horizon.add_node(_source())
+    for bad in ({"summary": "x"}, {"state": "ready"}, {}):
+        with pytest.raises(ValueError, match="not editable"):
+            horizon.edit_node(node.id, **bad)
+    assert horizon.edit_node("nd-nope", title="x") is None
+
+
+def test_edited_is_part_of_the_row_and_says_which_names_are_the_readers():
+    node = horizon.add_node(_source())
+    assert node.edited == []
+    assert horizon.edit_node(node.id, tags=["x"]).edited == ["tags"]
+    assert horizon.edit_node(node.id, title="T").edited == ["title", "tags"]
+
+
+def test_an_older_database_is_migrated_and_a_new_one_starts_at_the_latest_version(tmp_path):
+    """`_SCHEMA` is the first shape and `_MIGRATIONS` its history, counted in `user_version`. A
+    database written before the `edited` column keeps its rows and gains the column; a new one runs
+    every step; running the steps again changes nothing."""
+    old = tmp_path / "old"
+    old.mkdir()
+    with sqlite3.connect(horizon.index_path(old)) as conn:
+        conn.executescript(horizon._SCHEMA)
+        conn.execute(
+            "INSERT INTO nodes (id, kind, origin, state, created_at, updated_at) "
+            "VALUES ('nd-0000000000000001', 'text', 'pasted:x', 'ready', 1, 1)"
+        )
+    kept = horizon.get_node("nd-0000000000000001", base_dir=old)
+    assert kept is not None and kept.edited == [] and kept.distilled_at is None
+    fresh = tmp_path / "fresh"
+    horizon.add_node(_source(), base_dir=fresh)
+    for base in (old, fresh):
+        with sqlite3.connect(horizon.index_path(base)) as conn:
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS)
+            horizon._migrate(conn)  # nothing left to apply
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS)

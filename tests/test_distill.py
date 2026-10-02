@@ -655,3 +655,22 @@ def test_the_labels_in_use_reach_a_long_document_run():
     long_doc = _doc("y" * (distill.SHORT_LIMIT + 1))
     distill.distil_source(long_doc, run_long=run_long, known="Tags in use: coffee")
     assert seen["known"] == "Tags in use: coffee"
+
+
+def test_a_summary_never_overwrites_a_title_or_tags_the_reader_set():
+    """The reader renamed the capture before its summary landed. Through `distil_pending`, as the
+    product runs it: the summary, entities and state are written, the reader's title and tags stay."""
+    node = _captured()
+    horizon.edit_node(node.id, title="What I call it", tags=["mine"])
+
+    def run(*, sources: str, language: str) -> Distillation:
+        return Distillation(title="Model title", summary="It says things.", tags=["model"], entities=["ACME"])
+
+    assert distill.distil_pending(run=run) == [node.id]
+    stored = horizon.get_node(node.id)
+    assert (stored.title, stored.tags) == ("What I call it", ["mine"])
+    assert (stored.summary, stored.entities, stored.state) == ("It says things.", ["ACME"], "ready")
+    # The summary's own time, which a later edit does not move (the trail dates the summary by it).
+    assert stored.distilled_at is not None
+    renamed = horizon.edit_node(node.id, title="Renamed later")
+    assert renamed.distilled_at == stored.distilled_at and renamed.updated_at >= stored.updated_at

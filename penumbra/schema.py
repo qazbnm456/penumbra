@@ -108,6 +108,11 @@ class Node(BaseModel):
     preview: dict[str, str] = Field(default_factory=dict)
     #: `injection_scan.py`'s deterministic flags (invariant 6) — additive metadata, never a gate.
     flags: list[str] = Field(default_factory=list)
+    #: Which of the title and tags the reader set themselves (`horizon.edit_node`). A summary pass
+    #: never overwrites these, and the interface can say the name is the reader's own.
+    edited: list[Literal["title", "tags"]] = Field(default_factory=list)
+    #: When the summary pass last wrote this node's summary; `None` before it has.
+    distilled_at: float | None = None
     #: Total characters across every block, so a listing can show weight without loading the text.
     chars: int = 0
     created_at: float

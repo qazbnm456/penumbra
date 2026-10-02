@@ -87,13 +87,14 @@ _BUSY_TIMEOUT_SECONDS = 15.0
 
 #: Columns stored as JSON text. Named once so `_row_to_node` and `update_node` cannot disagree about
 #: which ones need encoding — two lists that must match are two lists that will drift.
-_JSON_COLUMNS = ("tags", "entities", "preview", "flags")
+_JSON_COLUMNS = ("tags", "entities", "preview", "flags", "edited")
 
 #: Every column `update_node` will write. A field not in here is rejected rather than silently
 #: ignored: a typo'd keyword that quietly does nothing is the failure mode this is guarding, and it
 #: also keeps `id`/`created_at` out of reach, which are the two things that must never change.
 _UPDATABLE = frozenset(
-    {"kind", "origin", "state", "error", "title", "summary", "tags", "entities", "preview", "flags", "chars"}
+    {"kind", "origin", "state", "error", "title", "summary", "tags", "entities", "preview", "flags", "chars",
+     "distilled_at"}
 )
 
 #: One validator per `Node` field, built once. `_UPDATABLE` checks the column NAME; this checks the
@@ -143,6 +144,40 @@ CREATE TABLE IF NOT EXISTS horizon_events (
 );
 CREATE INDEX IF NOT EXISTS horizon_events_at ON horizon_events(at DESC);
 """
+
+#: **How the schema changes after `_SCHEMA`'s first shape**: one step per entry, applied in order and
+#: counted in SQLite's own `PRAGMA user_version`, the usual way an embedded SQLite database evolves.
+#: `_SCHEMA` stays the FIRST shape on purpose: a new database runs every step from 0 and an older one
+#: runs only the steps it lacks, so both end identical and no step has to guess which it is facing.
+#: Append; never edit or reorder a step that has shipped.
+_MIGRATIONS = (
+    # 1. Which of `EDITABLE` the reader has set (`edit_node`), so a summary leaves them alone.
+    "ALTER TABLE nodes ADD COLUMN edited TEXT NOT NULL DEFAULT '[]'",
+    # 2. When the summary landed. `updated_at` moves with every write, an edit included, so a trail
+    #    that dated the summary by it said "summarised just now" after a rename.
+    "ALTER TABLE nodes ADD COLUMN distilled_at REAL",
+)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring the schema up to `_MIGRATIONS`, one step per transaction. The version is read INSIDE
+    `BEGIN IMMEDIATE`, so two processes opening an old database at once cannot both apply a step:
+    the second waits, then reads the version the first wrote. A step that fails rolls back with its
+    version unbumped, and runs again next time. A database newer than this code is left alone."""
+    conn.isolation_level = None
+    while True:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if version >= len(_MIGRATIONS):
+                conn.execute("COMMIT")
+                return
+            conn.execute(_MIGRATIONS[version])
+            conn.execute(f"PRAGMA user_version = {version + 1}")
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
 
 
 def horizon_dir(base_dir: str | Path = DEFAULT_HORIZON_DIR) -> Path:
@@ -295,6 +330,7 @@ def _initialize(path: Path) -> None:
                 if str(mode).lower() != "wal":
                     raise sqlite3.OperationalError(f"journal_mode is {mode!r}, not wal")
                 conn.executescript(_SCHEMA)
+                _migrate(conn)
             except sqlite3.OperationalError as exc:
                 last = exc
                 time.sleep(0.02 * (attempt + 1))
@@ -572,11 +608,10 @@ def _search_clause(query: str | None) -> tuple[str, list[object]]:
 #: aims at thousands of nodes.
 #:
 #: Kept anyway, because the alternative is the disagreement above — a spend action announcing a
-#: total it can never reach. The way out is a persisted `readable` flag maintained on write, which
-#: needs a schema migration this database has no mechanism for (`CREATE TABLE IF NOT EXISTS` and no
-#: `user_version`); that mechanism is the prerequisite and is recorded as such rather than being
-#: bolted on under a performance fix. At the scale the product actually runs at — hundreds to low
-#: thousands — 12ms is a cost worth paying for a number that is true.
+#: total it can never reach. The way out is a persisted `readable` flag maintained on write, one
+#: `_MIGRATIONS` step away now that the schema has a version; it waits for a scale that needs it. At
+#: the scale the product actually runs at — hundreds to low thousands — 12ms is a cost worth paying
+#: for a number that is true.
 #:
 #: **Stated limit:** this catches a column that is not JSON, which is the reproduced case and the
 #: likely one (a hand-edit, a partial restore). A column that is VALID JSON of the wrong shape still
@@ -706,9 +741,15 @@ def count_nodes(
         return int(conn.execute(f"SELECT COUNT(*) FROM nodes{where}", params).fetchone()[0])
 
 
-def update_node(node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR, **fields: object) -> Node | None:
+def update_node(
+    node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR, respect_edits: bool = False, **fields: object
+) -> Node | None:
     """Apply a DELTA — only the fields named — and return the node as it now is, or `None` if there
     is no such node.
+
+    `respect_edits` is the summary pass's write: it leaves out every field the reader has edited
+    (`edit_node`), checked inside the same transaction as the write, so an edit made while the model
+    was thinking is not overwritten by the answer.
 
     **This is invariant 34's rule at Tier 0, and the signature is what enforces it.** There is
     deliberately no `save_node(node)`: a whole-object write is precisely the fault invariant 34
@@ -722,20 +763,80 @@ def update_node(node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR, **f
     unknown = set(fields) - _UPDATABLE
     if unknown:
         raise ValueError(f"not updatable: {sorted(unknown)} (updatable: {sorted(_UPDATABLE)})")
-    assignments = []
-    params: list[object] = []
-    for column, value in fields.items():
+    checked = {
         # The VALUE, not just the column name — see `_FIELD_ADAPTERS`. Raises before anything is
         # written, so a rejected delta leaves the row exactly as it was.
-        checked = _FIELD_ADAPTERS[column].validate_python(value)
-        assignments.append(f"{column} = ?")
-        params.append(json.dumps(checked, ensure_ascii=False) if column in _JSON_COLUMNS else checked)
+        column: _FIELD_ADAPTERS[column].validate_python(value)
+        for column, value in fields.items()
+    }
+    with _connect(base_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if respect_edits:
+                for column in _edited(conn, node_id):
+                    checked.pop(column, None)
+            _write_fields(conn, node_id, checked)
+            row = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+    return _row_to_node(row) if row is not None else None
+
+
+def _write_fields(conn: sqlite3.Connection, node_id: str, checked: dict[str, object]) -> None:
+    assignments = [f"{column} = ?" for column in checked]
+    params: list[object] = [
+        json.dumps(value, ensure_ascii=False) if column in _JSON_COLUMNS else value
+        for column, value in checked.items()
+    ]
     assignments.append("updated_at = ?")
     params.extend([time.time(), node_id])
+    conn.execute(f"UPDATE nodes SET {', '.join(assignments)} WHERE id = ?", params)
+
+
+#: What a reader may change on a capture. The body is the source of truth and is never editable;
+#: the title and the tags are labels for finding it, like a bookmark's name, and the summary pass
+#: chose them for the reader rather than with them.
+EDITABLE = ("title", "tags")
+
+
+def _edited(conn: sqlite3.Connection, node_id: str) -> list[str]:
+    row = conn.execute("SELECT edited FROM nodes WHERE id = ?", (node_id,)).fetchone()
+    return json.loads(row["edited"]) if row is not None else []
+
+
+def edited_fields(node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> list[str]:
+    """Which of `EDITABLE` the reader has set on this node, in that order."""
     with _connect(base_dir) as conn:
-        conn.execute(f"UPDATE nodes SET {', '.join(assignments)} WHERE id = ?", params)
-        row = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
-    return _row_to_node(row) if row is not None else None
+        return _edited(conn, node_id)
+
+
+def edit_node(
+    node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR, **fields: object
+) -> Node | None:
+    """The reader's own title or tags, written as a delta (invariant 78) and recorded in the row's
+    `edited` in the same write, so a later summary (`update_node(respect_edits=True)`) leaves them
+    alone. No model call (invariant 80). The caller cleans the values; this validates
+    their type. `None` when there is no such node."""
+    unknown = set(fields) - set(EDITABLE)
+    if unknown or not fields:
+        raise ValueError(f"not editable: {sorted(unknown)} (editable: {list(EDITABLE)})")
+    checked = {column: _FIELD_ADAPTERS[column].validate_python(value) for column, value in fields.items()}
+    with _connect(base_dir) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if conn.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone() is None:
+                conn.execute("ROLLBACK")
+                return None
+            marked = [column for column in EDITABLE if column in set(_edited(conn, node_id)) | set(checked)]
+            _write_fields(conn, node_id, {**checked, "edited": marked})
+            row = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+    return _row_to_node(row)
 
 
 #: The states that mean "a process owns this node RIGHT NOW", and what each one falls back to once

@@ -9423,7 +9423,10 @@ function nodeTrail(node, detail) {
     steps.push([m.promoted_at, t("horizon.trailFiled", `Filed into ${name}`, { name })]);
   });
   const current = detail.node || node;
-  if (current.state === "ready") steps.push([current.updated_at, t("horizon.trailSummarised", "Summarised")]);
+  // `distilled_at`, not `updated_at`: every write moves the second, a rename included.
+  if (current.state === "ready") {
+    steps.push([current.distilled_at || current.updated_at, t("horizon.trailSummarised", "Summarised")]);
+  }
   steps.sort((a, b) => a[0] - b[0]);
   const list = elt("ol", "node-trail");
   steps.forEach(([when, what]) => {
@@ -10019,13 +10022,205 @@ function selectNode(node, row) {
 function renderNodeCard(card, node) {
   mapCardClose(card);
   card.appendChild(elt("p", "card-kicker", stampTime(node.created_at)));
-  card.appendChild(elt("h2", "card-title", nodeHeadline(node) || originLabel(node.origin)));
+  card.appendChild(captureTitleRow(node, nodeHeadline(node) || originLabel(node.origin)));
   if (node.summary) card.appendChild(elt("p", "card-summary", node.summary));
-  const chips = nodeChips(node, { all: true });
+  // The orbits it is in, as chips; its tags have their own editable section below.
+  const chips = nodeChips({ ...node, tags: [] }, { all: true });
   if (chips) card.appendChild(chips);
+  card.appendChild(captureTagEditor(node));
   const inner = elt("div", "node-panel-body");
   card.appendChild(inner);
   void fillNodeBody(node, null, inner);
+}
+
+// --- a capture's own name and tags --------------------------------------------------------------
+//
+// The body is the source of truth and never changes; the title and the tags are labels for finding
+// it, like a bookmark's name, and the summary pass chose them for the reader. So the reader can set
+// both (`PUT /horizon/{id}/title`, `/tags`), and a later summary leaves what they set alone. Both
+// editors carry `title-editor`, so a repaint of the card waits while one is open (`editingTitleIn`).
+
+//: The card's heading with a rename button beside it, as an orbit's card has.
+function captureTitleRow(node, headline) {
+  const row = elt("div", "card-title-row");
+  const title = elt("h2", "card-title", headline);
+  if ((node.edited || []).includes("title")) title.title = t("capture.namedByYou", "You named this.");
+  row.appendChild(title);
+  const rename = elt("button", "card-rename", "\u270e\ufe0e");
+  rename.type = "button";
+  rename.title = t("app.rename", "Rename");
+  rename.setAttribute("aria-label", t("rename.labelled", `Rename ${headline}`, { name: headline }));
+  rename.addEventListener("click", () => {
+    row.textContent = "";
+    row.appendChild(captureTitleEditor(node, node.title || headline, (saved) => {
+      if (saved) afterCaptureEdit(saved);
+      else renderStarMapCard();
+    }));
+  });
+  row.appendChild(rename);
+  return row;
+}
+
+//: A field over the title: Enter or leaving it saves, Escape leaves without saving, and an empty or
+//: unchanged name saves nothing (the server refuses an empty one, invariant 53).
+function captureTitleEditor(node, current, done) {
+  const wrap = elt("div", "title-editor");
+  const input = document.createElement("input");
+  input.className = "orbit-rename-input";
+  input.value = current || "";
+  input.maxLength = 120;
+  input.setAttribute("aria-label", t("app.rename", "Rename"));
+  wrap.appendChild(input);
+  let settled = false;
+  let committing = false;
+  const finish = (saved) => {
+    if (settled) return;
+    settled = true;
+    wrap.dataset.done = "1";
+    done(saved);
+  };
+  const commit = async () => {
+    if (settled || committing) return;
+    committing = true;
+    const value = input.value.trim();
+    if (!value || value === current) {
+      finish(null);
+      return;
+    }
+    try {
+      const got = await api(`/horizon/${encodeURIComponent(node.id)}/title`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: value }),
+      });
+      finish(got.node);
+    } catch (err) {
+      notify(t("err.rename", `Could not rename: ${err.message}`, { message: err.message }));
+      finish(null);
+    }
+  };
+  input.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      // Mid-composition Enter commits an IME candidate, not the name.
+      if (event.isComposing || event.keyCode === 229) return;
+      event.preventDefault();
+      void commit();
+    }
+    if (event.key === "Escape") finish(null);
+  });
+  input.addEventListener("blur", () => {
+    setTimeout(() => {
+      if (settled) return;
+      if (!wrap.isConnected) finish(null);
+      else void commit();
+    }, 0);
+  });
+  queueMicrotask(() => {
+    input.focus();
+    input.select();
+  });
+  return wrap;
+}
+
+//: The capture's tags, each with a remove button, and a field to add one. Every change saves the
+//: whole list at once; the server cleans a typed tag exactly as it cleans the model's, so `Rust`
+//: joins `rust`.
+function captureTagEditor(node) {
+  const box = elt("div", "tag-editor");
+  box.appendChild(elt("h4", "node-section", t("tags.section", "Tags")));
+  const list = elt("div", "tag-editor-list");
+  box.appendChild(list);
+  const save = async (tags) => {
+    try {
+      const got = await api(`/horizon/${encodeURIComponent(node.id)}/tags`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags }),
+      });
+      afterCaptureEdit(got.node);
+    } catch (err) {
+      notify(t("err.retag", `Could not change the tags: ${err.message}`, { message: err.message }));
+      renderStarMapCard();
+    }
+  };
+  (node.tags || []).forEach((tag) => {
+    const chip = elt("span", "tag-chip");
+    const name = elt("button", "node-tag", `#${tag}`);
+    name.type = "button";
+    name.title = t("tags.find", `Find captures tagged ${tag}`, { tag });
+    name.addEventListener("click", () => setHorizonQuery(tag));
+    chip.appendChild(name);
+    const remove = elt("button", "tag-remove", "\u00d7");
+    remove.type = "button";
+    remove.setAttribute("aria-label", t("tags.remove", `Remove the tag ${tag}`, { tag }));
+    remove.title = remove.getAttribute("aria-label");
+    remove.addEventListener("click", () => void save((node.tags || []).filter((other) => other !== tag)));
+    chip.appendChild(remove);
+    list.appendChild(chip);
+  });
+  const add = elt("button", "tag-add", t("tags.add", "+ Tag"));
+  add.type = "button";
+  add.addEventListener("click", () => {
+    const wrap = elt("span", "title-editor tag-add-editor");
+    const input = document.createElement("input");
+    input.className = "tag-add-input";
+    input.maxLength = 40;
+    input.setAttribute("aria-label", t("tags.addLabel", "Add a tag"));
+    wrap.appendChild(input);
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      wrap.dataset.done = "1";
+      const typed = (value || "").split(/[,\uff0c]/).map((part) => part.trim()).filter(Boolean);
+      if (typed.length) void save([...(node.tags || []), ...typed]);
+      else renderStarMapCard();
+    };
+    input.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === "Enter") {
+        event.preventDefault();
+        finish(input.value);
+      }
+      if (event.key === "Escape") finish("");
+    });
+    input.addEventListener("blur", () => setTimeout(() => finish(wrap.isConnected ? input.value : ""), 0));
+    add.replaceWith(wrap);
+    input.focus();
+  });
+  list.appendChild(add);
+  return box;
+}
+
+//: After an edit: the capture's row in the list, the card and the map all read the new name and tags.
+function afterCaptureEdit(node) {
+  const known = horizonState.nodes.find((one) => one.id === node.id);
+  const merged = { ...(known || {}), ...node };
+  if (known) {
+    horizonState.nodes = horizonState.nodes.map((one) => (one.id === node.id ? merged : one));
+    const row = horizonEl("stream").querySelector(`[data-node-id="${CSS.escape(node.id)}"]`);
+    if (row) {
+      const fresh = renderNode(merged);
+      if (row.classList.contains("is-selected")) {
+        fresh.classList.add("is-selected");
+        fresh.querySelector(".node-open")?.setAttribute("aria-pressed", "true");
+      }
+      row.replaceWith(fresh);
+    }
+  }
+  if (starMap.focus && starMap.focus.kind === "node" && starMap.focus.node.id === node.id) {
+    starMap.focus = { ...starMap.focus, node: { ...starMap.focus.node, ...node } };
+  }
+  if (starMap.focus && starMap.focus.kind === "capture" && starMap.focus.id === node.id) {
+    starMap.focus = { ...starMap.focus, title: nodeHeadline(node) || starMap.focus.title };
+  }
+  if (renderCaptureCard.cache && renderCaptureCard.cache.id === node.id) {
+    renderCaptureCard.cache = { id: node.id, got: { ...renderCaptureCard.cache.got, node } };
+  }
+  renderStarMapCard();
+  if (viewIsHorizon() && viewMode("horizon") === "map") void renderStarMap();
 }
 
 async function toggleNode(node, row) {
@@ -15256,7 +15451,9 @@ function askAcrossBridge(focus, name, titleA, titleB) {
 function renderCaptureCard(card, focus) {
   mapCardClose(card);
   card.appendChild(elt("p", "card-kicker", moonStateLabel({ kind: "capture", state: focus.state })));
-  card.appendChild(elt("h2", "card-title", focus.title || ""));
+  const heading = elt("div", "card-title-row");
+  heading.appendChild(elt("h2", "card-title", focus.title || ""));
+  card.appendChild(heading);
   const detail = elt("div", "card-detail");
   detail.appendChild(elt("p", "card-note", t("map.loading", "Loading…")));
   card.appendChild(detail);
@@ -15278,13 +15475,15 @@ function renderCaptureCard(card, focus) {
     if (token !== renderCaptureCard.token || !detail.isConnected) return;
     const node = got.node || {};
     detail.textContent = "";
+    // The heading gains its rename once the capture itself has arrived.
+    heading.replaceWith(captureTitleRow({ ...node, id: focus.id }, focus.title || nodeHeadline(node)));
     if (node.summary) detail.appendChild(elt("p", "card-summary", node.summary));
-    const names = [...(node.entities || []), ...(node.tags || []).map((tag) => `#${tag}`)];
-    if (names.length) {
+    if ((node.entities || []).length) {
       const chips = elt("div", "card-chips");
-      names.slice(0, 10).forEach((name) => chips.appendChild(elt("span", "card-chip", name)));
+      node.entities.slice(0, 10).forEach((name) => chips.appendChild(elt("span", "card-chip", name)));
       detail.appendChild(chips);
     }
+    detail.appendChild(captureTagEditor({ ...node, id: focus.id }));
     // Memberships name an orbit by its key, which is only ever looked up: into its label for the
     // "In …" line, and out of the orbits the picker offers (invariant 37).
     const memberships = got.orbits || [];

@@ -2030,3 +2030,40 @@ def test_the_listing_says_which_orbits_each_capture_is_in(client):
     (listed,) = [n for n in client.get("/horizon").json()["nodes"] if n["id"] == node["id"]]
     assert [m["orbit_id"] for m in listed["orbits"]] == ["shown"]
     assert listed["orbits"][0]["promoted_at"] > 0
+
+
+def test_a_capture_can_be_renamed_like_a_bookmark(client):
+    """The title is a label for finding the capture; the reader may set it. Empty refuses rather than
+    deriving a name (invariant 53), a typo'd key refuses rather than renaming to nothing, and a
+    malformed id is a 400 while a missing one is a 404 (invariant 27's rule at Tier 0)."""
+    node = client.post("/horizon", json={"texts": ["a pasted note"]}).json()["nodes"][0]
+    renamed = client.put(f"/horizon/{node['id']}/title", json={"title": "  My   note  "})
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["node"]["title"] == "My note"
+    assert client.get(f"/horizon/{node['id']}").json()["node"]["title"] == "My note"
+    assert client.put(f"/horizon/{node['id']}/title", json={"title": "   "}).status_code == 422
+    assert client.put(f"/horizon/{node['id']}/title", json={"titel": "x"}).status_code == 422
+    assert client.put("/horizon/not-an-id/title", json={"title": "x"}).status_code == 400
+    assert client.put("/horizon/nd-0000000000000000/title", json={"title": "x"}).status_code == 404
+
+
+def test_a_captures_tags_can_be_edited_and_are_cleaned_like_the_models(client):
+    """One removed, one added or all gone. A typed tag is cleaned exactly as a summary's are, so
+    `Rust` joins `rust`; more than the summary pass's cap is refused, never silently cut."""
+    node = client.post("/horizon", json={"texts": ["a pasted note"]}).json()["nodes"][0]
+    tagged = client.put(f"/horizon/{node['id']}/tags", json={"tags": [" Rust ", "rust", "Memory Safety"]})
+    assert tagged.status_code == 200, tagged.text
+    assert tagged.json()["node"]["tags"] == ["rust", "memory safety"]
+    assert client.put(f"/horizon/{node['id']}/tags", json={"tags": []}).json()["node"]["tags"] == []
+    too_many = client.put(f"/horizon/{node['id']}/tags", json={"tags": [f"t{i}" for i in range(9)]})
+    assert too_many.status_code == 422
+    assert client.get(f"/horizon/{node['id']}").json()["node"]["tags"] == []
+    assert client.put(f"/horizon/{node['id']}/tags", json={"tag": ["x"]}).status_code == 422
+    # Removing is never refused, even from a list already over the cap (a summary pass with a
+    # larger cap, or a hand-edited row): only growing past it is.
+    from penumbra import horizon
+    horizon.edit_node(node["id"], tags=[f"t{i}" for i in range(10)])
+    fewer = client.put(f"/horizon/{node['id']}/tags", json={"tags": [f"t{i}" for i in range(9)]})
+    assert fewer.status_code == 200 and len(fewer.json()["node"]["tags"]) == 9
+    more = client.put(f"/horizon/{node['id']}/tags", json={"tags": [f"t{i}" for i in range(10)]})
+    assert more.status_code == 422
