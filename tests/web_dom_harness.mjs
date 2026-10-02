@@ -1729,6 +1729,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       syncStarMapContext: () => {}, mapMotion: { held: false }, focusCameraOn: () => {},
       uiLang: () => fakes.lang,
       MAP_SETTINGS_DEFAULT: { inner_ring: 260, ring_gap: 160 },
+      mapServer: {}, dropIdleSavers: () => {},
     };
     const names = Object.keys(deps);
     const renderStarMap = new Function(...names, `${extract("renderStarMap")}\nreturn renderStarMap;`)(
@@ -2035,8 +2036,10 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     const failed = [];
     const saver = latestSaver(send, { confirmed: "v0", done: (reply, value) => done.push(value),
       failed: (err, confirmed) => failed.push(confirmed) });
+    const idleAtStart = saver.idle();
     saver.save("v1");
     await flush();
+    const idleInFlight = saver.idle();
     saver.save("v2");
     saver.save("v3");
     saver.save("v4");
@@ -2055,7 +2058,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     calls[2].reject(new Error("offline"));
     await flush();
     await flush();
-    return { inFlightWhileFirst, afterFirst, doneAfter, failed };
+    return { inFlightWhileFirst, afterFirst, doneAfter, failed, idleAtStart, idleInFlight, idleAtEnd: saver.idle() };
   },
 
   //: A PDF's printed line breaks, joined back inside sentences, kept at list items, blank lines and

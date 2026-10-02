@@ -12884,6 +12884,9 @@ async function renderStarMap({ quiet = false } = {}) {
   orbitTitles.clear();
   starMap.places = placed.planets || {};
   starMap.settings = placed.settings || MAP_SETTINGS_DEFAULT;
+  mapServer.places = starMap.places;
+  mapServer.settings = starMap.settings;
+  dropIdleSavers();
   // In the order the planets were placed, which is the order the keyboard and the lists walk them.
   const placedAt = (o) => (starMap.places[o.slug] ? starMap.places[o.slug].placed_at : Infinity);
   starMap.orbits = (listed.orbits || []).map((o) => {
@@ -14592,27 +14595,29 @@ function startPlanetDrag(event, p, group) {
     setTimeout(() => { planetDrag.dropped = false; }, 0);
     const slug = p.orbit.slug;
     if (e.type === "pointerup" && landing) {
-      const was = { ring: planetPlace(p.orbit).ring, angle: planetPlace(p.orbit).angle };
       const shiftWas = starMap.dropShift.get(slug);
       setPlace(p.orbit, landing);
       starMap.dropShift.set(slug, mapMotion.clock * planetOmega(landing.ring, planetStyle(p.orbit)));
-      // Through a `latestSaver`, like every other write the map makes; a failed move puts it back.
+      // Through a `latestSaver`, like every other write the map makes; a failed move puts back the
+      // last place the server confirmed, with the drop shift that went with it.
       if (!planetDrag.savers.has(slug)) {
+        const server = mapServer.places[slug] || landing;
         planetDrag.savers.set(slug, latestSaver((value) => api(
           `/horizon/map/planets/${encodeURIComponent(p.orbit.id)}`,
-          { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) },
+          { method: "PUT", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ring: value.ring, angle: value.angle }) },
         ), {
-          confirmed: was,
+          confirmed: { ring: server.ring, angle: server.angle, shift: shiftWas },
           failed: (err, confirmed) => {
-            setPlace(p.orbit, confirmed);
-            if (shiftWas === undefined) starMap.dropShift.delete(slug);
-            else starMap.dropShift.set(slug, shiftWas);
+            setPlace(p.orbit, { ring: confirmed.ring, angle: confirmed.angle });
+            restoreShift(slug, confirmed.shift);
             drawStarMap();
-            notify(t("err.placePlanet", `Could not move the planet: ${err.message}`, { message: err.message }));
+            notify(t("err.placePlanet", `Could not move the planet: ${err.message}`,
+              { message: err.message }));
           },
         }));
       }
-      planetDrag.savers.get(slug).save(landing);
+      planetDrag.savers.get(slug).save({ ...landing, shift: starMap.dropShift.get(slug) });
     }
     mapDrag.id = null;
     mapDrag.redraw = false;
@@ -15046,7 +15051,23 @@ function latestSaver(send, { confirmed, done, failed }) {
       waiting = true;
       void pump();
     },
+    //: Nothing in flight and nothing waiting: the saver can be dropped and made afresh from what the
+    //: server last sent, so its `confirmed` is never older than the server.
+    idle: () => !inflight && !waiting,
   };
+}
+
+//: What the server last sent for the map (`GET /horizon/map`), the starting point of every saver's
+//: `confirmed`: the screen's own state may already hold a value not yet saved, or one the server
+//: has since changed (a rearrangement, a reset, another window). Each read of the map drops the
+//: savers that are idle, so the next change makes a new one from the newer copy.
+const mapServer = { places: {}, settings: null };
+
+function dropIdleSavers() {
+  for (const savers of [planetCard.savers, planetDrag.savers]) {
+    for (const [slug, saver] of savers) if (saver.idle()) savers.delete(slug);
+  }
+  if (mapSettingsUi.saver && mapSettingsUi.saver.idle()) mapSettingsUi.saver = null;
 }
 
 const mapSettingsUi = { saveTimer: 0, saver: null, rearranged: false };
@@ -15066,9 +15087,11 @@ function saveMapSettings(next) {
       mapSettingsUi.rearranged = mapSettingsUi.rearranged || got.rearranged;
       return got;
     }, {
-      confirmed: starMap.settings || MAP_SETTINGS_DEFAULT,
+      confirmed: mapServer.settings || MAP_SETTINGS_DEFAULT,
+      // The screen already shows the newest value; overwriting it with the reply could undo a size
+      // still waiting out its pause. The reply becomes the server's copy.
       done: (got) => {
-        starMap.settings = got.settings;
+        mapServer.settings = got.settings;
         if (mapSettingsUi.rearranged) {
           mapSettingsUi.rearranged = false;
           starMap.dropShift.clear();
@@ -16363,19 +16386,24 @@ function savePlanetStyle(orbit, next) {
   // A new orbital pace keeps the planet where it is now: its position is base + clock × pace, so the
   // shift grows by how far the new pace would otherwise have carried it.
   const before = planetStyle(orbit);
+  const shiftBefore = starMap.dropShift.get(orbit.slug);
   if (before.orbit !== next.orbit) {
     const { ring } = planetPlace(orbit);
     const gained = mapMotion.clock * (planetOmega(ring, next) - planetOmega(ring, before));
     starMap.dropShift.set(orbit.slug, (starMap.dropShift.get(orbit.slug) || 0) + gained);
   }
+  // The value saved carries the planet's drop shift too, so a failure that puts back the old pace
+  // puts back the shift that went with it, and the planet does not jump along its ring.
   if (!planetCard.savers.has(orbit.slug)) {
+    const server = mapServer.places[orbit.slug] || {};
     planetCard.savers.set(orbit.slug, latestSaver((value) => api(
       `/horizon/map/planets/${encodeURIComponent(orbit.id)}/style`,
-      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) },
+      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value.style) },
     ), {
-      confirmed: before,
+      confirmed: { style: { ...PLANET_STYLE_DEFAULT, ...(server.style || {}) }, shift: shiftBefore },
       failed: (err, confirmed) => {
-        setPlace(orbit, { style: confirmed });
+        setPlace(orbit, { style: confirmed.style });
+        restoreShift(orbit.slug, confirmed.shift);
         drawStarMap();
         notify(t("err.planetStyle", `Could not save how the planet looks: ${err.message}`,
           { message: err.message }));
@@ -16384,7 +16412,12 @@ function savePlanetStyle(orbit, next) {
   }
   setPlace(orbit, { style: next });
   drawStarMap();
-  planetCard.savers.get(orbit.slug).save(next);
+  planetCard.savers.get(orbit.slug).save({ style: next, shift: starMap.dropShift.get(orbit.slug) });
+}
+
+function restoreShift(slug, shift) {
+  if (shift === undefined) starMap.dropShift.delete(slug);
+  else starMap.dropShift.set(slug, shift);
 }
 
 function planetStudio(orbit) {

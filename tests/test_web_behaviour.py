@@ -1107,6 +1107,9 @@ def test_a_saver_keeps_one_request_in_flight_and_the_newest_value_wins():
     assert r["afterFirst"] == ["v1", "v4"], "the saves made meanwhile were not reduced to the newest"
     assert r["doneAfter"] == ["v4"], "a reply was reported although a newer value was waiting"
     assert r["failed"] == ["v4"], "a failure did not put back the last value the server confirmed"
+    # Idle only with nothing in flight or waiting: then it may be dropped and made afresh from the
+    # server's newer copy.
+    assert (r["idleAtStart"], r["idleInFlight"], r["idleAtEnd"]) == (True, False, True)
 
 
 def test_dragging_a_graph_node_pulls_its_neighbours_by_distance_in_links():
