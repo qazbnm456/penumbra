@@ -102,3 +102,18 @@ def test_the_desktop_hint_appears_only_inside_the_shell():
     assert got["before"] == "No model is configured."
     assert "Open Configuration File" in got["after"] and "Restart Server" in got["after"]
     assert got["restart"].endswith("File > Restart Server starts it again.")
+
+
+def test_the_start_screen_hold_waits_for_nothing_but_the_first_scene():
+    """The start screen stays up for Penny's scene (`SPLASH_MIN`), but the island, which is the whole
+    app at rest, is shown before that hold, and File > Restart Server does not hold at all. The shell
+    has no unit harness, so the order in `boot` is pinned here."""
+    from pathlib import Path
+
+    shell = Path(__file__).resolve().parents[1] / "desktop" / "src-tauri" / "src"
+    lib = (shell / "lib.rs").read_text(encoding="utf-8")
+    start = lib.index("fn boot(app: AppHandle, first: bool)")
+    body = lib[start:lib.index("\n}\n", start)]
+    assert body.index("island::show(") < body.index("SPLASH_MIN"), "the island waits for the start screen"
+    assert "if first && window.is_visible()" in body, "the hold is not limited to a visible first start"
+    assert "boot(app.clone(), false)" in lib and "boot(handle, true)" in lib

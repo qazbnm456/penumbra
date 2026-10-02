@@ -657,7 +657,8 @@ static BOOTING: Mutex<()> = Mutex::new(());
 /// a full stop-and-start each, which on a server slow to answer made Restart look dead for minutes.
 static RESTART_QUEUED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-fn boot(app: AppHandle) {
+/// `first` is the launch's own start, which holds the start screen for its scene; a restart does not.
+fn boot(app: AppHandle, first: bool) {
     thread::spawn(move || {
         let _one_at_a_time = BOOTING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         RESTART_QUEUED.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -712,8 +713,17 @@ fn boot(app: AppHandle) {
             thread::sleep(Duration::from_millis(150));
         }
 
-        // A start screen on view stays up long enough for Penny's scene to be seen (`SPLASH_MIN`).
-        if window.is_visible().unwrap_or(false) {
+        // The island first: at rest it is the whole app, and the server already answers, so drops
+        // and the way back to the workspace do not wait for the start screen's scene.
+        let island_target = format!("http://127.0.0.1:{port}/island.html#token={token}");
+        if let Ok(url) = url::Url::parse(&island_target) {
+            let nav = app.clone();
+            island::show(&app, url, move |u| island_navigation(&nav, u));
+        }
+        // A start screen on view stays up long enough for Penny's scene to be seen (`SPLASH_MIN`),
+        // on the first start only: after File > Restart Server the reader wants the server back.
+        // Still inside BOOTING, so an older boot can never navigate onto a newer server's token.
+        if first && window.is_visible().unwrap_or(false) {
             if let Some(left) = SPLASH_MIN.checked_sub(splash_shown.elapsed()) {
                 thread::sleep(left);
             }
@@ -725,11 +735,6 @@ fn boot(app: AppHandle) {
         let target = workspace_url(port, &token);
         if let Ok(url) = url::Url::parse(&target) {
             let _ = window.navigate(url);
-        }
-        let island_target = format!("http://127.0.0.1:{port}/island.html#token={token}");
-        if let Ok(url) = url::Url::parse(&island_target) {
-            let nav = app.clone();
-            island::show(&app, url, move |u| island_navigation(&nav, u));
         }
     });
 }
@@ -961,7 +966,7 @@ fn on_menu(app: &AppHandle, id: &str) {
         "logs" => reveal(&log_path(app)),
         "restart" => {
             if !RESTART_QUEUED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                boot(app.clone());
+                boot(app.clone(), false);
             }
         }
         "print" => {
@@ -1053,7 +1058,7 @@ pub fn run() {
             if introduced {
                 let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
-            boot(handle);
+            boot(handle, true);
             Ok(())
         })
         // Closing the workspace puts it away; the island stays, and so does the server. Quit is
