@@ -7526,15 +7526,15 @@ body.dock-open .pending-note {
   border-top: 1px solid var(--accent);
 }
 
-/* What the rings mean, written on them: the innermost is the most recent, the outermost the
-   oldest. A sentence in the legend asked the reader to carry it back to the rings. */
-.map-ring-label {
-  font-family: var(--sans);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  fill: var(--text-faint);
-  text-anchor: end;
-  dominant-baseline: middle;
+/* A planet being dragged to another place: it follows the pointer along the nearest ring, and the
+   ring it would land on is lit. */
+.map-planet.is-moving {
+  cursor: grabbing;
+}
+
+.map-ring.is-landing {
+  stroke: var(--accent);
+  opacity: 0.9;
 }
 
 .starmap-card {

@@ -1020,6 +1020,18 @@ def test_the_tag_row_and_its_picker_are_never_rebuilt_under_the_pointer():
     assert result["closed"], "the All tags button no longer closes the open picker"
 
 
+def test_each_planet_sits_at_its_own_place_whatever_the_order_or_the_neighbours():
+    """Planets were placed by their index in a list sorted by recency, so a move that wrote two orbit
+    files swapped their planets. A place now comes from the server and nothing else."""
+    result = _run("starMapPlaces")
+    assert result["same"], "the order of the orbit list moved planets"
+    assert result["unmoved"], "a new orbit moved the planets already there"
+    assert result["ringsDrawn"] == 3 and result["minRings"] == 3
+    assert result["shiftedBase"] == 0.75, "a planet dropped in this page must stay where it was let go"
+    assert result["snapped"]["ring"] == 1 and abs(result["snapped"]["angle"]) < 1e-9
+    assert result["snappedTop"]["ring"] == 0 and abs(result["snappedTop"]["angle"] + 1.5707963) < 1e-6
+
+
 def test_dragging_a_graph_node_pulls_its_neighbours_by_distance_in_links():
     result = _run("graphDrag")
     assert result["B"] == 0.6 and result["E"] == 0.6, "one link away follows most"

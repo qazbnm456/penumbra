@@ -2067,3 +2067,31 @@ def test_a_captures_tags_can_be_edited_and_are_cleaned_like_the_models(client):
     assert fewer.status_code == 200 and len(fewer.json()["node"]["tags"]) == 9
     more = client.put(f"/horizon/{node['id']}/tags", json={"tags": [f"t{i}" for i in range(10)]})
     assert more.status_code == 422
+
+
+def test_moving_a_capture_between_orbits_never_moves_their_planets(client):
+    """The reported swap: a move writes both orbit files, and planets placed by recency traded places.
+    A place is given once, outward in creation order, and kept."""
+    for orbit_id in ("alpha", "beta"):
+        added = client.post(f"/orbits/{orbit_id}/sources", json={"texts": [f"a note about {orbit_id}"]})
+        assert added.status_code == 200
+    before = client.get("/horizon/map").json()["planets"]
+    assert set(before) >= {"alpha", "beta"}
+    node = client.post("/horizon", json={"texts": ["a capture to move"]}).json()["nodes"][0]
+    filed = client.post(f"/horizon/{node['id']}/promote", json={"orbit_id": "alpha", "create": False})
+    assert filed.status_code == 200
+    moved = client.post(f"/horizon/{node['id']}/move", json={"from_orbit": "alpha", "to_orbit": "beta"})
+    assert moved.status_code == 200, moved.text
+    after = client.get("/horizon/map").json()["planets"]
+    assert after["alpha"] == before["alpha"] and after["beta"] == before["beta"]
+
+
+def test_a_planet_can_be_placed_on_a_ring_by_hand(client):
+    assert client.post("/orbits/alpha/sources", json={"texts": ["a note"]}).status_code == 200
+    client.get("/horizon/map")
+    placed = client.put("/horizon/map/planets/alpha", json={"ring": 3, "angle": 1.25})
+    assert placed.status_code == 200, placed.text
+    assert client.get("/horizon/map").json()["planets"]["alpha"]["ring"] == 3
+    assert client.put("/horizon/map/planets/nowhere", json={"ring": 1, "angle": 0}).status_code == 404
+    assert client.put("/horizon/map/planets/alpha", json={"ring": -1, "angle": 0}).status_code == 422
+    assert client.put("/horizon/map/planets/alpha", json={"ring": 1, "angle": 0, "x": 1}).status_code == 422

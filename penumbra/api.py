@@ -130,6 +130,7 @@ from . import (
     filing,
     horizon,
     intake,
+    mapstore,
     organize,
     runner,
     search,
@@ -5210,6 +5211,56 @@ async def horizon_topology() -> dict:
     last gained one and its most-named entities; the captures filed nowhere; and the bridges between
     orbits that share an entity. Local, derived from summaries only, never a model call."""
     return await asyncio.to_thread(topology.star_map)
+
+
+def _orbit_created(orbit_id: str) -> float:
+    """When an orbit's file came into being, as far as the file system says: its birth time where the
+    platform keeps one (macOS, Windows), its change time otherwise. Only the ORDER matters, for
+    placing new planets outward (`mapstore.placements`)."""
+    try:
+        info = orbit_path(orbit_id).stat()
+    except (OSError, ValueError):
+        return time.time()
+    return getattr(info, "st_birthtime", None) or info.st_ctime
+
+
+@app.get("/horizon/map")
+async def horizon_map() -> dict:
+    """Where each planet sits on the star map, `{"planets": {slug: {ring, angle, placed_at}}}`. An
+    orbit the map has not seen yet is placed here, outward in creation order, and keeps that place
+    until the reader moves it (`mapstore.py`)."""
+    def read() -> dict:
+        orbits, _unreadable = list_orbit_summaries()
+        return mapstore.placements([(slug(orb.id), _orbit_created(orb.id)) for orb in orbits])
+
+    return {"planets": await asyncio.to_thread(read)}
+
+
+class PlanetPlaceRequest(BaseModel):
+    """A planet the reader dragged: the ring it was dropped on and its angle there, in radians."""
+
+    model_config = {"extra": "forbid"}
+
+    ring: int = Field(ge=0, le=mapstore.MAX_RING)
+    angle: float
+
+
+@app.put("/horizon/map/planets/{orbit_id}")
+async def place_planet(orbit_id: str, body: PlanetPlaceRequest) -> dict:
+    """Move a planet: from now on it sits at this angle on this ring. A presentation write (it changes
+    nothing in the orbit, whose file and mtime are untouched), refused for an orbit that does not
+    exist so a stray request cannot plant a place for a name nobody uses."""
+    try:
+        key = slug(orbit_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not await asyncio.to_thread(lambda: orbit_path(orbit_id).exists()):
+        raise HTTPException(404, f"no orbit {orbit_id!r}")
+    try:
+        placed = await asyncio.to_thread(mapstore.place, key, body.ring, body.angle)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"planet": placed}
 
 
 @app.get("/horizon/bridge")

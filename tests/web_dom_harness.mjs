@@ -1821,6 +1821,37 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     };
   },
 
+  //: Each planet sits at its own place from the server, whatever the order of the orbit list and
+  //: whatever else is on the map: the swap the reader saw came from placing planets by their index
+  //: in a list sorted by recency. And a point of the map is snapped to the ring it is nearest.
+  starMapPlaces() {
+    const make = (orbits, places, dropShift = new Map()) => new Function(
+      "starMap", "mapMotion", "MAP_CENTRE", "MAP_MAX_RING",
+      `${extract("ringGeometry")}\n${extract("outermostRing")}\n${extract("mapRings")}\n` +
+      `${extract("planetPlace")}\n${extract("planetLayout")}\n${extract("ringNear")}\n` +
+      "return { planetLayout, mapRings, ringNear, ringGeometry };",
+    )({ orbits, places, dropShift }, { clock: 0 }, { x: 500, y: 330 }, 40);
+    const orbit = (slug) => ({ slug, sources: 1, captures: 1 });
+    const places = { a: { ring: 0, angle: 1 }, b: { ring: 2, angle: -2 } };
+    const at = (layout) => Object.fromEntries(
+      layout.map((p) => [p.orbit.slug, [p.ring, p.base, p.rx]]).sort(([x], [y]) => x.localeCompare(y)));
+    const one = make([orbit("a"), orbit("b")], places);
+    const flipped = make([orbit("b"), orbit("a")], places);
+    const grown = make([orbit("new"), orbit("b"), orbit("a")], { ...places, new: { ring: 0, angle: 3 } });
+    const shifted = make([orbit("a")], { a: { ring: 0, angle: 1 } }, new Map([["a", 0.25]]));
+    const g1 = one.ringGeometry(1);
+    return {
+      same: JSON.stringify(at(one.planetLayout())) === JSON.stringify(at(flipped.planetLayout())),
+      unmoved: at(grown.planetLayout()).a.join() === at(one.planetLayout()).a.join()
+        && at(grown.planetLayout()).b.join() === at(one.planetLayout()).b.join(),
+      ringsDrawn: one.mapRings().length,
+      minRings: make([orbit("a")], { a: { ring: 0, angle: 0 } }).mapRings().length,
+      shiftedBase: shifted.planetLayout()[0].base,
+      snapped: one.ringNear({ x: 500 + g1.rx, y: 330 }, 3),
+      snappedTop: one.ringNear({ x: 500, y: 330 - one.ringGeometry(0).ry }, 3),
+    };
+  },
+
   //: A PDF's printed line breaks, joined back inside sentences, kept at list items, blank lines and
   //: sentence ends, and never changing the length (so a quote's offsets still hold).
   pdfReflow() {

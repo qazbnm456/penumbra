@@ -156,6 +156,11 @@ _MIGRATIONS = (
     # 2. When the summary landed. `updated_at` moves with every write, an edit included, so a trail
     #    that dated the summary by it said "summarised just now" after a rename.
     "ALTER TABLE nodes ADD COLUMN distilled_at REAL",
+    # 3. Where each orbit sits on the star map (`mapstore.py`): placed once, then the reader's.
+    (
+        "CREATE TABLE map_planets (orbit_id TEXT PRIMARY KEY, ring INTEGER NOT NULL, angle REAL NOT NULL, "
+        "placed_at REAL NOT NULL)"
+    ),
 )
 
 
@@ -954,7 +959,7 @@ def remove_node(
 #: extension's pairing and the downloaded embedding model are files beside it and are kept, and so is
 #: the vector index's virtual table, which only `vectors` can open (`vectors.clear_index`).
 _CLEARED_TABLES = (
-    "memberships", "nodes", "horizon_events", "asks", "filing_dismissed", "entity_aliases",
+    "map_planets", "memberships", "nodes", "horizon_events", "asks", "filing_dismissed", "entity_aliases",
     "entity_seen", "organize_left", "search_rows", "search_fts",
 )
 

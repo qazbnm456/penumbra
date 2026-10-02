@@ -3447,7 +3447,7 @@ function marksGroups() {
         [canvas(40, 40, (svg) => {
           drawWorld(svg, 12, planetSurface(12, stableHash("planet:marks")), "marks-clip");
           svg.appendChild(svgEl("circle", { r: 12 }, "map-planet-rim"));
-        }), t("marks.map.planet", "An orbit. Its look comes from its name, so it is the same planet every visit; the more recently it gained something, the nearer the centre it sits.")],
+        }), t("marks.map.planet", "An orbit. Its look comes from its name, so it is the same planet every visit. A new orbit takes the next free place outward; drag a planet to put it on another ring or elsewhere on its own.")],
         [dot("map-dot is-done"), t("marks.map.moon", "A capture in that orbit, one moon each. Point at it for its name, click it to open it, drag it onto another planet to move it there.")],
         [canvas(40, 40, (svg) => {
           svg.appendChild(svgEl("circle", { r: 14 }, "map-hole-rim"));
@@ -12755,40 +12755,46 @@ function lensChipId(lenses) {
 // --- the star map ---------------------------------------------------------------------------------
 
 //: `focus` is what the card shows when it is not a planet: the Horizon's unfiled list, or one capture.
-const starMap = { data: null, orbits: [], selected: null, lenses: new Set(), generation: 0, focus: null, world: null, signature: "" };
+const starMap = {
+  data: null, orbits: [], selected: null, lenses: new Set(), generation: 0, focus: null, world: null, signature: "",
+  // Where each planet sits (`GET /horizon/map`): `{slug: {ring, angle}}`, placed once by the server
+  // and then the reader's. `dropShift` holds, for a planet dragged in this page's life, how far the
+  // map had turned when it was dropped, so it stays where it was let go (the stored angle is its
+  // place at the start of the turn, which is where a fresh page shows it).
+  places: {}, dropShift: new Map(),
+};
 
 const MAP_CENTRE = { x: 500, y: 330 };
-//: Rings grow outward as orbits need them. Orbits are placed by how recently each gained something,
-//: newest innermost, and ring `i` holds 3 + 3i of them, so an outer ring (which is longer) holds
-//: more. Three fixed rings with the last one unbounded crowded every orbit past the eighth onto one
-//: line. At least three rings are drawn, so a young map still reads as a system.
+//: One ring's shape and pace. Far enough apart that a planet with its moons and label on one ring
+//: clears one on the next where the ellipses are closest (top and bottom); at 60 apart they collided
+//: every time two passed. The inner ring clears the Horizon's name and count under the centre (to +110).
+function ringGeometry(i) {
+  return { rx: 260 + 160 * i, ry: 175 + 100 * i, period: 240 + 140 * i };
+}
+
+//: The outermost ring a planet sits on, or -1 with none.
+function outermostRing() {
+  return starMap.orbits.reduce((most, orbit) => Math.max(most, planetPlace(orbit).ring), -1);
+}
+
+//: Rings out to the outermost planet, and at least three, so a young map still reads as a system.
+//: Each planet keeps the ring it was given (`mapstore.py`), so the map grows outward only when a
+//: planet is placed or dragged further out.
 function mapRings() {
-  const rings = [];
-  let left = starMap.orbits.length;
-  for (let i = 0; left > 0 || rings.length < 3; i += 1) {
-    const cap = 3 + 3 * i;
-    // Far enough apart that a planet with its moons and label on one ring clears one on the next
-    // where the ellipses are closest (top and bottom). At 60 apart they collided every time two
-    // passed; the map grows outwards instead, and `mapHome` zooms out to hold it.
-    // The inner ring clears the Horizon's name and count under the centre (to +110).
-    rings.push({ rx: 260 + 160 * i, ry: 175 + 100 * i, cap, period: 240 + 140 * i });
-    left -= cap;
-  }
-  return rings;
+  return Array.from({ length: Math.max(3, outermostRing() + 1) }, (_, i) => ringGeometry(i));
+}
+
+//: Where a planet sits: its place from the server, or the inner ring's top while a new orbit waits
+//: for the next map fetch to give it one.
+function planetPlace(orbit) {
+  return starMap.places[orbit.slug] || { ring: 0, angle: -Math.PI / 2 };
 }
 
 //: The whole map in view: zoomed out just enough for the outermost ring.
 function mapHome() {
   // Fitted to the outermost ring that holds a planet: at least three rings are drawn, and fitting
   // the empty third one left nine orbits small in the middle of the stage.
-  const rings = mapRings();
-  let left = starMap.orbits.length;
-  let used = 1;
-  for (let i = 0; i < rings.length && left > 0; i += 1) {
-    used = i + 1;
-    left -= rings[i].cap;
-  }
-  const outer = rings[used - 1];
+  const outer = ringGeometry(Math.max(0, outermostRing()));
   // Room for the label under a planet at the bottom of that ring, and its moons at the sides.
   return { x: 500, y: 340, k: Math.min(1.25, 480 / (outer.rx + 70), 300 / (outer.ry + 90)) };
 }
@@ -12805,8 +12811,9 @@ async function renderStarMap({ quiet = false } = {}) {
   watchDistil();
   let topo;
   let listed;
+  let placed;
   try {
-    [topo, listed] = await Promise.all([api("/horizon/topology"), api("/orbits")]);
+    [topo, listed, placed] = await Promise.all([api("/horizon/topology"), api("/orbits"), api("/horizon/map")]);
   } catch (err) {
     horizonEl("starmap-empty").textContent = readableError(err.message);
     horizonEl("starmap-empty").hidden = false;
@@ -12821,23 +12828,26 @@ async function renderStarMap({ quiet = false } = {}) {
   }
   if (generation !== starMap.generation) return;
   const language = typeof uiLang === "function" ? uiLang() : "";
-  const signature = JSON.stringify([topo, listed, concepts.tags || [], language]);
+  const signature = JSON.stringify([topo, listed, placed, concepts.tags || [], language]);
   if (quiet && starMap.scene && signature === starMap.signature) return;
   starMap.signature = signature;
   const bySlug = new Map((topo.orbits || []).map((o) => [o.slug, o]));
   orbitTitles.clear();
+  starMap.places = placed.planets || {};
+  // In the order the planets were placed, which is the order the keyboard and the lists walk them.
+  const placedAt = (o) => (starMap.places[o.slug] ? starMap.places[o.slug].placed_at : Infinity);
   starMap.orbits = (listed.orbits || []).map((o) => {
     const planet = starMapOrbit(o, bySlug.get(o.slug));
     orbitTitles.set(o.slug, planet.title);
     return planet;
-  }).sort((a, b) => b.recency - a.recency);
+  }).sort((a, b) => placedAt(a) - placedAt(b) || a.slug.localeCompare(b.slug));
   starMap.data = topo;
   starMap.tags = concepts.tags || [];
   paintStarMapLenses();
   drawStarMap();
   syncStarMapContext({ follow: false });
-  // New data can reorder the planets (they are placed by recency), so a camera held on one follows
-  // it to wherever it now is instead of staying on empty space.
+  // A planet can have been moved (dragged in another window), so a camera held on one follows it
+  // to wherever it now is instead of staying on empty space.
   if (mapMotion.held && starMap.selected) focusCameraOn(starMap.selected);
 }
 
@@ -12870,25 +12880,20 @@ function motionAllowed() {
   return !window.matchMedia || !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
+//: Every planet at its own place (`planetPlace`): nothing about one planet depends on another, so
+//: filing a capture, a chat turn or a new orbit never moves the planets already there.
 function planetLayout() {
-  const placed = [];
-  let index = 0;
-  mapRings().forEach(({ rx, ry, cap, period }, ring) => {
-    const count = Math.min(cap, starMap.orbits.length - index);
-    for (let i = 0; i < count; i += 1) {
-      const orbit = starMap.orbits[index];
-      index += 1;
-      // Spread evenly on the ring, each ring turned a little so planets do not line up radially.
-      const base = (-Math.PI / 2) + (i / count) * Math.PI * 2 + ring * 0.7;
-      const size = Math.max(orbit.sources, orbit.captures);
-      placed.push({
-        orbit, rx, ry, base,
-        omega: (Math.PI * 2) / period,
-        r: Math.min(30, 11 + Math.sqrt(size) * 2.6),
-      });
-    }
+  return starMap.orbits.map((orbit) => {
+    const { ring, angle } = planetPlace(orbit);
+    const { rx, ry, period } = ringGeometry(ring);
+    const size = Math.max(orbit.sources, orbit.captures);
+    return {
+      orbit, rx, ry, ring,
+      base: angle - (starMap.dropShift.get(orbit.slug) || 0),
+      omega: (Math.PI * 2) / period,
+      r: Math.min(30, 11 + Math.sqrt(size) * 2.6),
+    };
   });
-  return placed;
 }
 
 function planetAt(p) {
@@ -13987,16 +13992,6 @@ function drawStarMap() {
   rings.forEach(({ rx, ry }, ring) => {
     world.appendChild(svgEl("ellipse", { cx: MAP_CENTRE.x, cy: MAP_CENTRE.y, rx, ry }, `map-ring ring-${ring}`));
   });
-  // The rings say what they mean where the reader is looking: newest on the inner ring, oldest on
-  // the outer, each just outside its ring's left edge, where no planet label sits.
-  [[0, t("map.ringNewest", "Newest")], [rings.length - 1, t("map.ringOldest", "Oldest")]].forEach(([ring, word]) => {
-    const label = svgEl("text", { x: MAP_CENTRE.x - rings[ring].rx - 8, y: MAP_CENTRE.y }, "map-ring-label");
-    label.textContent = word;
-    const hint = svgEl("title");
-    hint.textContent = t("map.legendDistance", "Closer to the centre means more recent.");
-    label.appendChild(hint);
-    world.appendChild(label);
-  });
 
   const planets = planetLayout();
   const kinds = planetKinds(planets.map((pl) => pl.orbit.slug));
@@ -14219,6 +14214,8 @@ function drawStarMap() {
     // second time in a system box beside it.
     group.dataset.key = `orbit:${orbit.slug}`;
     const pick = () => {
+      // The click that ends a drag is the drop, not a pick.
+      if (planetDrag.dropped) return;
       if (starMap.selected === orbit.slug && !starMap.focus) {
         void enterOrbit(orbit);
         return;
@@ -14230,6 +14227,7 @@ function drawStarMap() {
       focusCameraOn(orbit.slug);
     };
     group.addEventListener("click", pick);
+    group.addEventListener("pointerdown", (event) => startPlanetDrag(event, p, group));
     group.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
@@ -14276,7 +14274,6 @@ function starMapOrbit(o, topo) {
     tags: filed.tags,
     allTags: filed.all_tags || filed.tags || [],
     moons: filed.moons || [],
-    recency: Math.max(o.updated_at || 0, filed.last_filed_at || 0),
   };
 }
 
@@ -14409,6 +14406,99 @@ function worldAt(clientX, clientY) {
     x: mapCamera.x + (v.x - MAP_VIEW_CENTRE.x) / mapCamera.k,
     y: mapCamera.y + (v.y - MAP_VIEW_CENTRE.y) / mapCamera.k,
   };
+}
+
+//: Where on which ring a point of the map falls: the ring whose ellipse it is nearest, out to one
+//: ring beyond the outermost drawn (so a planet can be taken further out), and its angle there in
+//: the terms `planetAt` uses (x = rx cos a, y = ry sin a).
+function ringNear(point, rings) {
+  const dx = point.x - MAP_CENTRE.x;
+  const dy = point.y - MAP_CENTRE.y;
+  let best = 0;
+  let bestGap = Infinity;
+  for (let ring = 0; ring <= Math.min(rings, MAP_MAX_RING); ring += 1) {
+    const { rx, ry } = ringGeometry(ring);
+    const gap = Math.abs(Math.hypot(dx / rx, dy / ry) - 1) * Math.min(rx, ry);
+    if (gap < bestGap) {
+      best = ring;
+      bestGap = gap;
+    }
+  }
+  const { rx, ry } = ringGeometry(best);
+  return { ring: best, angle: Math.atan2(dy / ry, dx / rx) };
+}
+
+//: The server's bound on a ring (`mapstore.MAX_RING`).
+const MAP_MAX_RING = 40;
+const planetDrag = { dropped: false };
+
+//: Dragging a planet puts it somewhere else: it follows the pointer along the nearest ring and
+//: stays where it is let go (`PUT /horizon/map/planets/{orbit}`), turning on from there. A press
+//: that moves less than 5px is a click, which picks the planet as before. Moons have their own
+//: drag (`startMoonDrag`), which stops the press before it reaches the planet.
+function startPlanetDrag(event, p, group) {
+  if (event.button !== 0 || mapDrag.id !== null) return;
+  const start = { x: event.clientX, y: event.clientY };
+  const id = event.pointerId;
+  let moving = false;
+  let landing = null;
+  const rings = mapRings().length;
+  const ringEls = () => [...starMap.world.querySelectorAll(".map-ring")];
+  const move = (e) => {
+    if (e.pointerId !== id) return;
+    if (!moving) {
+      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 5) return;
+      moving = true;
+      mapDrag.id = id; // a repaint waits for the drop (`drawStarMap`)
+      mapMotion.paused = true;
+      hideMapTip();
+      group.classList.add("is-moving");
+    }
+    landing = ringNear(worldAt(e.clientX, e.clientY), rings);
+    const { rx, ry } = ringGeometry(landing.ring);
+    p.rx = rx;
+    p.ry = ry;
+    p.base = landing.angle - mapMotion.clock * p.omega;
+    ringEls().forEach((el, i) => el.classList.toggle("is-landing", i === landing.ring));
+    placeStarMap();
+  };
+  const end = async (e) => {
+    if (e.pointerId !== id) return;
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", end);
+    window.removeEventListener("pointercancel", end);
+    if (!moving) return;
+    group.classList.remove("is-moving");
+    ringEls().forEach((el) => el.classList.remove("is-landing"));
+    mapMotion.paused = false;
+    planetDrag.dropped = true;
+    setTimeout(() => { planetDrag.dropped = false; }, 0);
+    const slug = p.orbit.slug;
+    if (e.type === "pointerup" && landing) {
+      const { period } = ringGeometry(landing.ring);
+      starMap.places = { ...starMap.places, [slug]: { ...planetPlace(p.orbit), ...landing } };
+      starMap.dropShift.set(slug, mapMotion.clock * ((Math.PI * 2) / period));
+      try {
+        await api(`/horizon/map/planets/${encodeURIComponent(p.orbit.id)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(landing),
+        });
+      } catch (err) {
+        notify(t("err.placePlanet", `Could not move the planet: ${err.message}`, { message: err.message }));
+      }
+    }
+    mapDrag.id = null;
+    mapDrag.redraw = false;
+    drawStarMap();
+    // The camera held on this planet goes with it, rather than staying on where it was.
+    if (mapMotion.held && starMap.selected === slug) focusCameraOn(slug);
+  };
+  // On the window, not the planet: a small planet is left behind by the first few pixels of a drag,
+  // before the 5px threshold, and a listener on it would hear nothing more.
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", end);
+  window.addEventListener("pointercancel", end);
 }
 
 function planetUnder(point, exclude = []) {
@@ -15610,7 +15700,8 @@ function paintStarMapCard(mapCard) {
   // Choosing something opens a panel the reader had put away: that is what the click asked to see.
   if (mapPanelGrip && mapPanelGrip.isCollapsed()) mapPanelGrip.setCollapsed(false, { persist: false });
   mapCardClose(mapCard);
-  mapCard.appendChild(elt("p", "card-kicker", relativeTime(orbit.recency)));
+  mapCard.appendChild(elt("p", "card-kicker", t("map.ringKicker", `Ring ${planetPlace(orbit).ring + 1}`,
+    { n: planetPlace(orbit).ring + 1 })));
   const heading = elt("div", "card-title-row");
   heading.appendChild(elt("h2", "card-title", orbit.title));
   const rename = elt("button", "card-rename", "\u270e\ufe0e");
