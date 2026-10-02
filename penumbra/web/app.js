@@ -12528,9 +12528,12 @@ function mapHome() {
 
 //: `quiet` is the busy poll's call: when nothing the map draws has changed it leaves the scene
 //: alone, because a redraw also drops what the pointer was lighting and rebuilds the tag row (and an
-//: open tag picker) under the reader's click. Every other caller redraws.
+//: open tag picker) under the reader's click. Every other caller redraws. What it draws includes the
+//: interface language, since a language switch reaches the map only through this poll's refresh. A
+//: quiet call never takes a newer generation: it would cancel a full redraw still waiting on its
+//: fetch and then, finding the data unchanged, draw nothing in its place.
 async function renderStarMap({ quiet = false } = {}) {
-  const generation = ++starMap.generation;
+  const generation = quiet ? starMap.generation : ++starMap.generation;
   starMap.lastRender = Date.now();
   watchDistil();
   let topo;
@@ -12550,7 +12553,8 @@ async function renderStarMap({ quiet = false } = {}) {
     /* lenses are optional */
   }
   if (generation !== starMap.generation) return;
-  const signature = JSON.stringify([topo, listed, concepts.tags || []]);
+  const language = typeof uiLang === "function" ? uiLang() : "";
+  const signature = JSON.stringify([topo, listed, concepts.tags || [], language]);
   if (quiet && starMap.scene && signature === starMap.signature) return;
   starMap.signature = signature;
   const bySlug = new Map((topo.orbits || []).map((o) => [o.slug, o]));
@@ -13894,7 +13898,9 @@ function drawStarMap() {
       ...Array.from({ length: local }, () => ({ kind: "local", orbit: orbit.slug, title: orbit.title }))];
     const moonRing = svgEl("g", {}, "map-moons");
     moonRing.dataset.phase = `moons:${orbit.slug}`;
-    moonRing.style.animationDuration = `${16 + (index % 5) * 3}s`;
+    // From the orbit, not its place in the draw order: a redraw carries the moons' clock over by
+    // slug (`mapPhases`), and a period that changed with the order made them jump when it did.
+    moonRing.style.animationDuration = `${16 + Math.floor(stableHash(`moons:${orbit.slug}`) * 5) * 3}s`;
     moonItems.forEach((item, i) => {
       const angle = (i / moonItems.length) * Math.PI * 2;
       const d = p.r + 8 + (i % 2) * 5;
@@ -13917,7 +13923,7 @@ function drawStarMap() {
       group.classList.add("is-binary");
       const pair = svgEl("g", {}, "map-binary");
       pair.dataset.phase = `binary:${orbit.slug}`;
-      pair.style.animationDuration = `${(30 + (index % 4) * 8)}s`;
+      pair.style.animationDuration = `${30 + Math.floor(stableHash(`binary:${orbit.slug}`) * 4) * 8}s`;
       const kindsA = Object.keys(PLANET_KINDS).filter((k) => !["binary", "ringed"].includes(k));
       const rnd = seededRandom(seed + 0.25);
       [[-0.45, 0.5], [0.6, 0.35]].forEach(([at, size], n) => {

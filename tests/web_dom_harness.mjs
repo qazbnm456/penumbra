@@ -1675,7 +1675,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     const before = new El("svg", "svg");
     before.append(
       turning("moons:cfp", [5200]),
-      turning("world:cfp:ground", [800, 1600]), // a surface and its clouds' second animation
+      turning("world:cfp:ground", [800, 1600]), // several animations on one element, each its own clock
       turning("disk", [null]), // an animation with no clock yet carries nothing
       turning(null, [999]), // no key: not carried
     );
@@ -1702,6 +1702,56 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       keys: [...phases.keys()].sort(),
       emptyOk,
     };
+  },
+
+  //: The busy poll's quiet render leaves the scene alone only when nothing it draws has changed:
+  //: the data, the tags and the interface language. And it never cancels a full render in flight.
+  async mapQuietRender() {
+    const fakes = {
+      starMap: { generation: 0, scene: null, signature: "", orbits: [], selected: null },
+      draws: 0,
+      lang: "en",
+      topo: { orbits: [], total: { count: 0 } },
+      gate: null, // a promise the next /orbits fetch waits on, to hold a full render in flight
+    };
+    const api = async (path) => {
+      if (path === "/orbits") {
+        if (fakes.gate) { const g = fakes.gate; fakes.gate = null; await g; }
+        return { orbits: [] };
+      }
+      if (path === "/horizon/concepts") return { tags: [] };
+      return JSON.parse(JSON.stringify(fakes.topo));
+    };
+    const deps = {
+      starMap: fakes.starMap, api, watchDistil: () => {}, horizonEl: () => ({}), readableError: (m) => m,
+      orbitTitles: new Map(), starMapOrbit: (o) => ({ ...o, title: o.slug, recency: 0 }),
+      paintStarMapLenses: () => {}, drawStarMap: () => { fakes.draws += 1; fakes.starMap.scene = {}; },
+      syncStarMapContext: () => {}, mapMotion: { held: false }, focusCameraOn: () => {},
+      uiLang: () => fakes.lang,
+    };
+    const names = Object.keys(deps);
+    const renderStarMap = new Function(...names, `${extract("renderStarMap")}\nreturn renderStarMap;`)(
+      ...names.map((n) => deps[n]));
+    await renderStarMap();
+    const first = fakes.draws;
+    await renderStarMap({ quiet: true });
+    const unchanged = fakes.draws - first;
+    fakes.lang = "zh-TW";
+    await renderStarMap({ quiet: true });
+    const afterLanguage = fakes.draws - first;
+    fakes.topo = { orbits: [{ slug: "cfp" }], total: { count: 1 } };
+    await renderStarMap({ quiet: true });
+    const afterData = fakes.draws - first;
+    // A full render held on its fetch, a quiet one overtaking it with the same data: the full one
+    // must still draw.
+    let release;
+    fakes.gate = new Promise((resolve) => { release = resolve; });
+    const before = fakes.draws;
+    const full = renderStarMap();
+    await renderStarMap({ quiet: true });
+    release();
+    await full;
+    return { first, unchanged, afterLanguage, afterData, fullStillDrew: fakes.draws - before };
   },
 
   //: A PDF's printed line breaks, joined back inside sentences, kept at list items, blank lines and

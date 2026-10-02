@@ -991,6 +991,19 @@ def test_a_star_map_redraw_carries_each_turning_element_where_it_was():
     assert result["emptyOk"]
 
 
+def test_the_busy_polls_quiet_map_render_redraws_exactly_when_something_drawn_changed():
+    """The poll skips a redraw that would draw the same thing, because a redraw also drops what the
+    pointer lit and rebuilds the tag row under a click. A language switch reaches the map only through
+    that poll, so the language counts as drawn; and a quiet call must not cancel a full render still
+    waiting on its fetch (a view switch relies on that render to repaint the card)."""
+    result = _run("mapQuietRender")
+    assert result["first"] == 1
+    assert result["unchanged"] == 0, "the poll redrew a map whose data had not changed"
+    assert result["afterLanguage"] == 1, "a language switch left the map's labels in the old language"
+    assert result["afterData"] == 2, "the poll skipped a redraw although the data changed"
+    assert result["fullStillDrew"] >= 1, "a quiet poll cancelled a full render that was still fetching"
+
+
 def test_dragging_a_graph_node_pulls_its_neighbours_by_distance_in_links():
     result = _run("graphDrag")
     assert result["B"] == 0.6 and result["E"] == 0.6, "one link away follows most"

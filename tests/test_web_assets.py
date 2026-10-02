@@ -3501,6 +3501,10 @@ def test_every_turning_thing_on_the_star_map_keeps_its_place_across_a_redraw():
     # then is the point of it.
     looping.discard("map-moon-ping")
     assert {"map-moons", "map-planet-spin", "map-disk"} <= looping, "the stylesheet's loops were not found"
+    # A key built from the draw order would hand one planet's clock to another when the order changes.
+    keyed = [line.strip() for line in scene.splitlines() if "dataset.phase =" in line]
+    by_order = [line for line in keyed if "index" in line]
+    assert keyed and not by_order, f"a phase key follows the draw order: {by_order}"
     for cls in sorted(looping):
         lines = scene.splitlines()
         sites = [i for i, line in enumerate(lines) if f'"{cls}"' in line]
