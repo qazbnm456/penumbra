@@ -5224,8 +5224,13 @@ async def horizon_map() -> dict:
         # planet's place, and nothing is parsed. Its mtime stands in for when it began only when no
         # capture was ever filed into it (`mapstore._created`).
         folder = Path(DEFAULT_ORBITS_DIR)
-        files = sorted(folder.glob("*.json")) if folder.is_dir() else []
-        return mapstore.placements([(path.stem, path.stat().st_mtime) for path in files])
+        present = []
+        for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+            try:
+                present.append((path.stem, path.stat().st_mtime))
+            except OSError:  # deleted between the listing and the stat: it is gone
+                continue
+        return mapstore.placements(present)
 
     return {"planets": await asyncio.to_thread(read)}
 
