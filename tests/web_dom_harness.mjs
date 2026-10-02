@@ -1960,6 +1960,53 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     return { names: window.PennyScenes.names, out, randomIsKnown: window.PennyScenes.names.includes(window.PennyScenes.mount(random)) };
   },
 
+  //: The busy poll never replaces a list row whose orbit picker is open, and never repaints the
+  //: whole stream while one is: the row keeps its old data, so the change lands once it closes.
+  async listRowsHeldByPicker() {
+    const wrap = { isConnected: true };
+    const rows = {};
+    const replaced = [];
+    let rendered = 0;
+    const row = (id, holds) => ({
+      id, contains: (el) => holds && el === wrap,
+      replaceWith: () => replaced.push(id),
+    });
+    rows.a = row("a", true);
+    rows.b = row("b", false);
+    const stream = {
+      contains: (el) => el === wrap,
+      querySelector: (sel) => rows[(sel.match(/"(.+)"/) || [])[1]] || null,
+    };
+    const deps = {
+      horizonState: { nodes: [{ id: "a", state: "ready", v: 1 }, { id: "b", state: "ready", v: 1 }] },
+      orbitPickOpen: { wrap },
+      api: async () => fakes.reply,
+      horizonEl: () => stream,
+      horizonQuery: () => "",
+      renderNode: (n) => n,
+      renderStream: () => { rendered += 1; },
+      updateStreamFoot: () => {},
+      HORIZON_PAGE: 50,
+      CSS: { escape: (x) => x },
+    };
+    const fakes = { reply: { nodes: [{ id: "a", state: "ready", v: 2 }, { id: "b", state: "ready", v: 2 }], total: 2 } };
+    const names = Object.keys(deps);
+    const run = new Function(...names, "let DISTIL_BATCH_CAP = 0;\n" +
+      `${extract("streamPickerOpen")}\n${extract("patchChangedNodes")}\nreturn patchChangedNodes;`)(
+      ...names.map((n) => deps[n]));
+    await run();
+    const first = { replaced: [...replaced], heldA: deps.horizonState.nodes.find((n) => n.id === "a").v };
+    // A capture arriving while the picker is open waits; nothing is repainted.
+    fakes.reply = { nodes: [...fakes.reply.nodes, { id: "c", state: "queued", v: 1 }], total: 3 };
+    await run();
+    const whileOpen = { rendered, count: deps.horizonState.nodes.length };
+    // The picker closes: the held change and the new capture both land.
+    deps.orbitPickOpen.wrap = null;
+    replaced.length = 0;
+    await run();
+    return { first, whileOpen, after: { replaced: [...replaced], rendered, count: deps.horizonState.nodes.length } };
+  },
+
   //: A PDF's printed line breaks, joined back inside sentences, kept at list items, blank lines and
   //: sentence ends, and never changing the length (so a quote's offsets still hold).
   pdfReflow() {

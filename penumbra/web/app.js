@@ -9947,6 +9947,12 @@ async function pollIntake() {
 //: node's identity is its id and its visible state is `state` plus the distilled fields, so a row
 //: whose serialisation is unchanged is left alone - which is what keeps an open row open, a
 //: selection alive, and the scroll position where it was.
+//: Whether an orbit picker is open in a row of the list, which a repaint of that row would close.
+function streamPickerOpen() {
+  const wrap = orbitPickOpen.wrap;
+  return Boolean(wrap && wrap.isConnected && horizonEl("stream").contains(wrap));
+}
+
 async function patchChangedNodes() {
   let data;
   try {
@@ -9958,6 +9964,11 @@ async function patchChangedNodes() {
   }
   const stream = horizonEl("stream");
   const byId = new Map(horizonState.nodes.map((node) => [node.id, node]));
+  // A row whose orbit picker is open is not replaced under the reader: it keeps its old data, so the
+  // next poll still sees the change and applies it once the picker has closed. A change in which
+  // rows there are waits the same way, since it repaints the whole stream.
+  const held = new Set();
+  const pickerOpen = streamPickerOpen();
   let structural = data.nodes.length !== horizonState.nodes.length;
   for (const fresh of data.nodes) {
     const known = byId.get(fresh.id);
@@ -9971,9 +9982,14 @@ async function patchChangedNodes() {
       structural = true;
       continue;
     }
+    if (pickerOpen && row.contains(orbitPickOpen.wrap)) {
+      held.add(fresh.id);
+      continue;
+    }
     row.replaceWith(renderNode(fresh));
   }
-  horizonState.nodes = data.nodes;
+  if (structural && pickerOpen) return;
+  horizonState.nodes = data.nodes.map((node) => (held.has(node.id) ? byId.get(node.id) : node));
   horizonState.total = data.total;
   horizonState.undistilled = data.undistilled;
   if (data.corpus_char_cap) horizonState.corpusCharCap = data.corpus_char_cap;
@@ -10231,6 +10247,9 @@ function afterCaptureEdit(node) {
   }
   renderStarMapCard();
   if (viewIsHorizon() && viewMode("horizon") === "map") void renderStarMap();
+  // A list filtered by a tag or a query is asked again, so a capture that no longer matches (its
+  // tag just removed, say) leaves at once rather than at the next refresh.
+  if (findActive().length || horizonState.query) void patchChangedNodes();
 }
 
 async function toggleNode(node, row) {
@@ -10923,6 +10942,15 @@ function findSection(panel, title, items, isOn, toggle) {
 async function paintFindPanel() {
   const panel = horizonEl("find-panel");
   const f = horizonState.filters;
+  // Whether the reader was last in the tag search field, so a rebuild after a pick puts them back in
+  // it: a pressed chip takes no focus in WebKit, which left focus on <body> after every pick. Focus
+  // that moved anywhere else in the panel (a chip reached by Tab, say) is the reader's choice.
+  if (!panel.dataset.focusWatched) {
+    panel.dataset.focusWatched = "1";
+    panel.addEventListener("focusin", (event) => {
+      horizonState.tagSearchFocused = event.target.classList.contains("lens-picker-search");
+    });
+  }
   if (horizonState.allTags === null) {
     horizonState.allTags = [];
     try {
@@ -11049,7 +11077,10 @@ async function paintFindPanel() {
   foot.appendChild(done);
   panel.appendChild(foot);
   panel.scrollTop = scroll;
-  restoreFocus(panel, keep);
+  if (!restoreFocus(panel, keep) && horizonState.tagSearchFocused) {
+    tagSearch.focus();
+    tagSearch.setSelectionRange(tagSearch.value.length, tagSearch.value.length);
+  }
 }
 
 function closeFindPanel() {

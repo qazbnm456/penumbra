@@ -1082,6 +1082,16 @@ def test_every_one_of_pennys_scenes_builds_with_a_caption_in_both_languages():
     assert r["randomIsKnown"]
 
 
+def test_the_busy_poll_leaves_a_row_with_an_open_orbit_picker_alone():
+    """Intake and summaries change rows every second, and replacing a row closed the orbit picker the
+    reader had open in it. The held row keeps its old data until the picker closes, then catches up."""
+    r = _run("listRowsHeldByPicker")
+    assert r["first"] == {"replaced": ["b"], "heldA": 1}, "the row with the open picker was replaced"
+    assert r["whileOpen"] == {"rendered": 0, "count": 2}, "a new capture repainted the list under the picker"
+    assert r["after"]["replaced"] == ["a"] or r["after"]["rendered"] == 1, r["after"]
+    assert r["after"]["count"] == 3
+
+
 def test_dragging_a_graph_node_pulls_its_neighbours_by_distance_in_links():
     result = _run("graphDrag")
     assert result["B"] == 0.6 and result["E"] == 0.6, "one link away follows most"
