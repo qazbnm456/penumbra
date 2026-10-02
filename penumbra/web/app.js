@@ -9833,7 +9833,7 @@ async function refreshHorizon({ reset = false, newIds = new Set() } = {}) {
   // summarising something all change what the map draws. At most every few seconds, because this
   // runs on the Horizon's busy poll.
   if (viewIsHorizon() && viewMode("horizon") === "map" && Date.now() - (starMap.lastRender || 0) > 3000) {
-    void renderStarMap();
+    void renderStarMap({ quiet: true });
   }
   if (viewIsHorizon()) void refreshSuggestions();
   let data;
@@ -12488,7 +12488,7 @@ function lensChipId(lenses) {
 // --- the star map ---------------------------------------------------------------------------------
 
 //: `focus` is what the card shows when it is not a planet: the Horizon's unfiled list, or one capture.
-const starMap = { data: null, orbits: [], selected: null, lenses: new Set(), generation: 0, focus: null, world: null };
+const starMap = { data: null, orbits: [], selected: null, lenses: new Set(), generation: 0, focus: null, world: null, signature: "" };
 
 const MAP_CENTRE = { x: 500, y: 330 };
 //: Rings grow outward as orbits need them. Orbits are placed by how recently each gained something,
@@ -12526,7 +12526,10 @@ function mapHome() {
   return { x: 500, y: 340, k: Math.min(1.25, 480 / (outer.rx + 70), 300 / (outer.ry + 90)) };
 }
 
-async function renderStarMap() {
+//: `quiet` is the busy poll's call: when nothing the map draws has changed it leaves the scene
+//: alone, because a redraw also drops what the pointer was lighting and rebuilds the tag row (and an
+//: open tag picker) under the reader's click. Every other caller redraws.
+async function renderStarMap({ quiet = false } = {}) {
   const generation = ++starMap.generation;
   starMap.lastRender = Date.now();
   watchDistil();
@@ -12547,6 +12550,9 @@ async function renderStarMap() {
     /* lenses are optional */
   }
   if (generation !== starMap.generation) return;
+  const signature = JSON.stringify([topo, listed, concepts.tags || []]);
+  if (quiet && starMap.scene && signature === starMap.signature) return;
+  starMap.signature = signature;
   const bySlug = new Map((topo.orbits || []).map((o) => [o.slug, o]));
   orbitTitles.clear();
   starMap.orbits = (listed.orbits || []).map((o) => {
@@ -12862,6 +12868,32 @@ function restoreFocus(svg, key) {
   const again = [...svg.querySelectorAll("[data-key]")].find((el) => el.dataset.key === key);
   if (again) again.focus();
   return Boolean(again);
+}
+
+//: Where each turning thing on the map is in its loop, so a redraw can carry it over. `clearSvg`
+//: throws the elements away and a looping CSS animation on a new element starts again from 0%: every
+//: click snapped the moons back to their first angles and made the surfaces jump. Each element that
+//: turns carries `data-phase`, a key that names the same thing across redraws (by orbit slug, never
+//: by draw order), and its animations' clocks are read here before the redraw. Reading the clock,
+//: rather than deriving a phase from the time, also keeps moons that were paused under the pointer.
+function mapPhases(svg) {
+  const phases = new Map();
+  svg.querySelectorAll("[data-phase]").forEach((el) => {
+    if (typeof el.getAnimations !== "function") return;
+    phases.set(el.dataset.phase, el.getAnimations().map((anim) => anim.currentTime));
+  });
+  return phases;
+}
+
+function restorePhases(svg, phases) {
+  if (!phases.size) return;
+  svg.querySelectorAll("[data-phase]").forEach((el) => {
+    const times = phases.get(el.dataset.phase);
+    if (!times || typeof el.getAnimations !== "function") return;
+    el.getAnimations().forEach((anim, i) => {
+      if (typeof times[i] === "number") anim.currentTime = times[i];
+    });
+  });
 }
 
 // --- a sky worth looking at: planets, moons and weather, made from a seed ---------------------------
@@ -13580,6 +13612,7 @@ function deepSky() {
     const y = h("y") * 640;
     const a = h("a") * Math.PI * 2;
     const pair = svgEl("g", {}, "map-double");
+    pair.dataset.phase = `double:${i}`;
     pair.style.animationDelay = `${(h("d") * 5).toFixed(2)}s`;
     pair.appendChild(svgEl("circle", { cx: x.toFixed(1), cy: y.toFixed(1), r: 1.3 }, "map-double-star"));
     pair.appendChild(svgEl("circle", { cx: (x + Math.cos(a) * 3.4).toFixed(1), cy: (y + Math.sin(a) * 3.4).toFixed(1), r: 0.9 },
@@ -13591,7 +13624,8 @@ function deepSky() {
 
 //: One world into `parent`, centred on its origin: its atmosphere, body, turning surface and cloud,
 //: caps, light and shade, and, if it has them, rings split round it.
-function drawWorld(parent, r, terrain, clipId) {
+//: `phaseKey` names this world across redraws, so its turning surface keeps its place (`mapPhases`).
+function drawWorld(parent, r, terrain, clipId, phaseKey = "") {
   const rings = terrain.ringed ? planetRings(r, terrain.tilt, terrain.ringSeed) : null;
   if (rings) parent.appendChild(rings.far);
   const clip = svgEl("clipPath", { id: clipId });
@@ -13608,12 +13642,14 @@ function drawWorld(parent, r, terrain, clipId) {
     terrain.surface.setAttribute("class", "map-planet-spin");
     terrain.surface.style.setProperty("--spin", `${(-2 * r).toFixed(2)}px`);
     terrain.surface.style.animationDuration = `${terrain.spin.toFixed(1)}s`;
+    if (phaseKey) terrain.surface.dataset.phase = `${phaseKey}:ground`;
     surface.appendChild(terrain.surface);
   }
   if (terrain.clouds) {
     terrain.clouds.setAttribute("class", "map-planet-spin");
     terrain.clouds.style.setProperty("--spin", `${(-2 * r).toFixed(2)}px`);
     terrain.clouds.style.animationDuration = `${(terrain.spin * 0.6).toFixed(1)}s`;
+    if (phaseKey) terrain.clouds.dataset.phase = `${phaseKey}:clouds`;
     surface.appendChild(terrain.clouds);
   }
   // Polar caps on a temperate, icy or dusty world: still while the surface turns under them.
@@ -13636,6 +13672,7 @@ function drawStarMap() {
   }
   const svg = horizonEl("starmap-svg");
   const keepFocus = focusedKey(svg);
+  const phases = mapPhases(svg);
   clearSvg(svg);
   starMap.scene = null;
   // The links a pointed planet lit belong to the scene being thrown away.
@@ -13668,6 +13705,7 @@ function drawStarMap() {
       r: (0.5 + stableHash(`sr${i}`) * 0.9).toFixed(2),
     }, "map-star");
     star.style.animationDelay = `${(stableHash(`sd${i}`) * 6).toFixed(2)}s`;
+    star.dataset.phase = `star:${i}`;
     field.appendChild(star);
   }
   world.appendChild(field);
@@ -13790,6 +13828,7 @@ function drawStarMap() {
   // Paints are attributes, not stylesheet `url()`s: the stylesheet names no reference of any kind.
   hole.appendChild(svgEl("circle", { r: 78, fill: "url(#pn-hole-glow)" }, "map-hole-glow"));
   const disk = svgEl("g", { filter: "url(#pn-soft)" }, "map-disk");
+  disk.dataset.phase = "disk";
   disk.appendChild(svgEl("circle", { r: 42 }, "map-disk-a"));
   disk.appendChild(svgEl("circle", { r: 42 }, "map-disk-b"));
   hole.appendChild(disk);
@@ -13812,6 +13851,7 @@ function drawStarMap() {
   });
   hole.appendChild(holeHit);
   const looseRing = svgEl("g", {}, "map-loose");
+  looseRing.dataset.phase = "loose";
   const items = loose.items || [];
   const shown = Math.min(loose.count, items.length || loose.count, 28);
   for (let i = 0; i < shown; i += 1) {
@@ -13853,6 +13893,7 @@ function drawStarMap() {
     const moonItems = [...captured.map((item) => ({ kind: "capture", ...item })),
       ...Array.from({ length: local }, () => ({ kind: "local", orbit: orbit.slug, title: orbit.title }))];
     const moonRing = svgEl("g", {}, "map-moons");
+    moonRing.dataset.phase = `moons:${orbit.slug}`;
     moonRing.style.animationDuration = `${16 + (index % 5) * 3}s`;
     moonItems.forEach((item, i) => {
       const angle = (i / moonItems.length) * Math.PI * 2;
@@ -13875,21 +13916,23 @@ function drawStarMap() {
       // planet with a second one stuck to its side. The single-planet rim is left off (CSS).
       group.classList.add("is-binary");
       const pair = svgEl("g", {}, "map-binary");
+      pair.dataset.phase = `binary:${orbit.slug}`;
       pair.style.animationDuration = `${(30 + (index % 4) * 8)}s`;
       const kindsA = Object.keys(PLANET_KINDS).filter((k) => !["binary", "ringed"].includes(k));
       const rnd = seededRandom(seed + 0.25);
       [[-0.45, 0.5], [0.6, 0.35]].forEach(([at, size], n) => {
         const place = svgEl("g", { transform: `translate(${(at * p.r).toFixed(2)} 0)` });
         const counter = svgEl("g", {}, "map-binary-body");
+        counter.dataset.phase = `binary:${orbit.slug}:${n}`;
         counter.style.animationDuration = pair.style.animationDuration;
         drawWorld(counter, p.r * size, planetSurface(p.r * size, seed + n * 0.37, kindsA[Math.floor(rnd() * kindsA.length)]),
-          `pn-clip-${index}-${n}`);
+          `pn-clip-${index}-${n}`, `world:${orbit.slug}:${n}`);
         place.appendChild(counter);
         pair.appendChild(place);
       });
       group.appendChild(pair);
     } else {
-      drawWorld(group, p.r, planetSurface(p.r, seed, kindHere), `pn-clip-${index}`);
+      drawWorld(group, p.r, planetSurface(p.r, seed, kindHere), `pn-clip-${index}`, `world:${orbit.slug}`);
     }
     group.appendChild(svgEl("circle", { r: p.r }, "map-planet-rim"));
     // With many planets no link is drawn at rest; a small mark says this one has some to show.
@@ -13937,6 +13980,7 @@ function drawStarMap() {
   if (mapCamera.home && !mapCamera.anim) Object.assign(mapCamera, mapHome());
   applyCamera();
   startMapMotion();
+  restorePhases(svg, phases);
   restoreFocus(svg, keepFocus);
   renderStarMapCard();
 }

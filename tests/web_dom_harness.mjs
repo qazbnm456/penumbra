@@ -1660,6 +1660,50 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     };
   },
 
+  //: A redraw carries every turning element's animation clocks over by its `data-phase` key, so the
+  //: map does not restart from 0% on each click. The fake animations stand in for CSSAnimation.
+  mapPhaseCarry() {
+    const run = new Function(`${extract("mapPhases")}\n${extract("restorePhases")}\nreturn { mapPhases, restorePhases };`)();
+    const turning = (phase, times) => {
+      const el = new El("", "g");
+      if (phase !== null) el.dataset.phase = phase;
+      const anims = times.map((currentTime) => ({ currentTime }));
+      el.getAnimations = () => anims;
+      el.anims = anims;
+      return el;
+    };
+    const before = new El("svg", "svg");
+    before.append(
+      turning("moons:cfp", [5200]),
+      turning("world:cfp:ground", [800, 1600]), // a surface and its clouds' second animation
+      turning("disk", [null]), // an animation with no clock yet carries nothing
+      turning(null, [999]), // no key: not carried
+    );
+    const plain = new El("", "g");
+    plain.dataset.phase = "star:0"; // an engine without getAnimations is skipped, not a crash
+    before.append(plain);
+    const phases = run.mapPhases(before);
+    const after = new El("svg", "svg");
+    const moons = turning("moons:cfp", [0]);
+    const world = turning("world:cfp:ground", [0, 0]);
+    const disk = turning("disk", [0]);
+    const fresh = turning("moons:new", [0]); // a planet that did not exist before starts at 0
+    const unkeyed = turning(null, [0]);
+    after.append(moons, world, disk, fresh, unkeyed);
+    run.restorePhases(after, phases);
+    let emptyOk = true;
+    try { run.restorePhases(after, new Map()); } catch { emptyOk = false; }
+    return {
+      moons: moons.anims[0].currentTime,
+      world: world.anims.map((a) => a.currentTime),
+      disk: disk.anims[0].currentTime,
+      fresh: fresh.anims[0].currentTime,
+      unkeyed: unkeyed.anims[0].currentTime,
+      keys: [...phases.keys()].sort(),
+      emptyOk,
+    };
+  },
+
   //: A PDF's printed line breaks, joined back inside sentences, kept at list items, blank lines and
   //: sentence ends, and never changing the length (so a quote's offsets still hold).
   pdfReflow() {

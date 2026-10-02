@@ -3472,6 +3472,46 @@ def test_the_star_maps_frame_loop_never_moves_a_node():
         assert not moves, f"{name} moves nodes every frame: {moves}"
 
 
+def test_every_turning_thing_on_the_star_map_keeps_its_place_across_a_redraw():
+    """`drawStarMap` throws the scene away on every click, and a looping CSS animation on a new element
+    starts from 0%, so each click snapped the moons back and made the surfaces jump. `mapPhases` and
+    `restorePhases` carry the clocks over by `data-phase` (executed in `test_web_behaviour.py`). This
+    pins the wiring that test cannot see: the redraw reads the clocks before `clearSvg` and writes
+    them back after the scene is built, and every map class the stylesheet loops forever is drawn
+    with a `data-phase`, so a new turning element cannot quietly restart on each click."""
+    js = (WEB / "app.js").read_text(encoding="utf-8")
+    start = js.index("function drawStarMap(")
+    body = js[start:js.index("\n}\n", start)]
+    assert body.index("mapPhases(svg)") < body.index("clearSvg(svg)"), (
+        "the clocks must be read before the scene goes"
+    )
+    assert body.index("world.appendChild(planetLayer)") < body.index("restorePhases(svg, phases)"), (
+        "the clocks must be written back after the turning elements exist"
+    )
+    scene = "".join(
+        js[js.index(f"function {name}("):js.index("\n}\n", js.index(f"function {name}("))]
+        for name in ("drawStarMap", "deepSky", "drawWorld")
+    )
+    css = _strip_css_comments((WEB / "style.css").read_text(encoding="utf-8"))
+    looping = {
+        c for sel, rule in _rules(css) if "infinite" in rule
+        for c in _class_tokens(sel) if c.startswith("map-")
+    }
+    # The ring round the focused moon is drawn new whenever the focus moves; its ping starting over
+    # then is the point of it.
+    looping.discard("map-moon-ping")
+    assert {"map-moons", "map-planet-spin", "map-disk"} <= looping, "the stylesheet's loops were not found"
+    for cls in sorted(looping):
+        lines = scene.splitlines()
+        sites = [i for i, line in enumerate(lines) if f'"{cls}"' in line]
+        assert sites, f"{cls} loops in the stylesheet but the map never draws it"
+        for i in sites:
+            assert any("dataset.phase" in line for line in lines[i:i + 4]), (
+                f"{cls} is drawn without a data-phase, so it restarts from 0% on every redraw: "
+                f"{lines[i].strip()}"
+            )
+
+
 def test_the_capture_field_and_progress_strip_are_never_hidden_on_the_map():
     """A rule hiding the failure line on the map was written as the last selector of the list that
     sizes the capture field and the progress strip, so it hid those too: the capture drawer opened

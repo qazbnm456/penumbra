@@ -978,6 +978,19 @@ def test_a_tag_lens_lights_an_orbit_whose_tag_is_outside_its_top_few():
     assert result["localFaded"] == " is-faded" and result["moonPlain"] == ""
 
 
+def test_a_star_map_redraw_carries_each_turning_element_where_it_was():
+    """Every click rebuilt the map and every looping animation restarted from 0%, so the moons snapped
+    back to their first angles. The clocks are read by `data-phase` before the redraw and written back
+    after, per animation, by a key that names the same thing across redraws."""
+    result = _run("mapPhaseCarry")
+    assert result["moons"] == 5200, "a planet's moons restarted their loop on a redraw"
+    assert result["world"] == [800, 1600], "a surface and its clouds each keep their own clock"
+    assert result["disk"] == 0, "an animation with no clock yet must not be given one"
+    assert result["fresh"] == 0 and result["unkeyed"] == 0, "only a matching key is carried over"
+    assert result["keys"] == ["disk", "moons:cfp", "world:cfp:ground"]
+    assert result["emptyOk"]
+
+
 def test_dragging_a_graph_node_pulls_its_neighbours_by_distance_in_links():
     result = _run("graphDrag")
     assert result["B"] == 0.6 and result["E"] == 0.6, "one link away follows most"
