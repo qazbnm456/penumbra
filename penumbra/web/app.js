@@ -15263,8 +15263,12 @@ function initMapKeys() {
   // key other than the arrows (a keyboard reader who walked once would otherwise never hear it).
   const voice = () => horizonEl("starmap-card").setAttribute("aria-live", "polite");
   document.addEventListener("pointerdown", voice, true);
+  // A bare modifier is not the reader doing something else (a screen reader's own keys pass through
+  // here), and an autofill keydown can come without a key at all.
+  const MODIFIERS = new Set(["Shift", "Control", "Alt", "Meta", "CapsLock"]);
   document.addEventListener("keydown", (event) => {
-    if (!event.key.startsWith("Arrow")) voice();
+    const key = event.key || "";
+    if (!key.startsWith("Arrow") && !MODIFIERS.has(key)) voice();
   }, true);
   document.addEventListener("keydown", (event) => {
     // Zoom from anywhere on the map's screen, not only with focus inside the map: + and - (with or
