@@ -1032,6 +1032,27 @@ def test_each_planet_sits_at_its_own_place_whatever_the_order_or_the_neighbours(
     assert result["snappedTop"]["ring"] == 0 and abs(result["snappedTop"]["angle"] + 1.5707963) < 1e-6
 
 
+def test_the_arrow_keys_walk_planets_then_moons_and_back():
+    """Left and Right step through the planets in placed order and wrap; Down goes into the chosen
+    planet's moons, Left and Right step through them, and Up comes back to the planet."""
+    r = _run("mapKeyWalk")
+    def planet(slug):
+        return {"kind": "planet", "orbit": slug}
+
+    def capture(mid):
+        return {"kind": "capture", "id": mid, "title": mid, "state": "ready", "orbit": "a"}
+
+    assert r["firstRight"] == planet("a") and r["firstLeft"] == planet("c")
+    assert r["next"] == planet("b") and r["wrapRight"] == planet("a") and r["wrapLeft"] == planet("c")
+    assert r["down"] == capture("m1")
+    assert r["downNoMoons"] is None and r["downNothingChosen"] is None and r["upOnPlanet"] is None
+    assert r["moonNext"] == capture("m2") and r["moonWrap"] == capture("m1")
+    assert r["moonBack"] == capture("m2")
+    assert r["moonUp"] == planet("a") and r["moonDown"] is None
+    assert r["fromLens"] == planet("a"), "with a lens card open, Right still starts at the first planet"
+    assert r["empty"] is None
+
+
 def test_dragging_a_graph_node_pulls_its_neighbours_by_distance_in_links():
     result = _run("graphDrag")
     assert result["B"] == 0.6 and result["E"] == 0.6, "one link away follows most"

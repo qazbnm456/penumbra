@@ -14892,6 +14892,71 @@ function initDesktopContextMenu() {
   });
 }
 
+// --- walking the map with the arrow keys ---------------------------------------------------------
+//
+// Left and Right step from planet to planet, in the order they were placed (`starMap.orbits`). Down
+// goes into the chosen planet's moons, where Left and Right step from moon to moon, and Up comes back
+// to the planet. Pointing at a small moving planet is hard; these keys make every one reachable.
+
+//: Where an arrow key goes from here, as an `openMapFocus` argument, or null when it goes nowhere.
+//: Pure, so the walk itself is tested without a map (`tests/test_web_behaviour.py`).
+function mapKeyMove(key, orbits, selected, focus) {
+  if (!orbits.length) return null;
+  const at = orbits.findIndex((orbit) => orbit.slug === selected);
+  const step = key === "ArrowRight" ? 1 : key === "ArrowLeft" ? -1 : 0;
+  const moonFocus = (moon, slug) => ({
+    kind: "capture", id: moon.id, title: moon.title, state: moon.state, orbit: slug,
+  });
+  if (at >= 0 && focus && focus.kind === "capture") {
+    if (key === "ArrowUp") return { kind: "planet", orbit: selected };
+    const moons = orbits[at].moons || [];
+    if (!step || !moons.length) return null;
+    const here = moons.findIndex((moon) => moon.id === focus.id);
+    const next = here < 0 ? (step > 0 ? 0 : moons.length - 1) : (here + step + moons.length) % moons.length;
+    return moonFocus(moons[next], selected);
+  }
+  if (step) {
+    const next = at < 0 ? (step > 0 ? 0 : orbits.length - 1) : (at + step + orbits.length) % orbits.length;
+    return { kind: "planet", orbit: orbits[next].slug };
+  }
+  if (key === "ArrowDown" && at >= 0 && !focus) {
+    const moons = orbits[at].moons || [];
+    return moons.length ? moonFocus(moons[0], selected) : null;
+  }
+  return null;
+}
+
+//: Whether an arrow key belongs to something else on the page: a field, a control that moves with
+//: arrows of its own (tabs, menus, the panel grips), a picker or an open dialog.
+function arrowsTakenElsewhere(event) {
+  const target = event.target;
+  const owners = [
+    "input", "textarea", "select", "[contenteditable='']", "[contenteditable='true']", "[role='tab']",
+    "[role='separator']", "[role='menu']", "[role='menuitem']", "[role='listbox']", "[role='option']",
+    "[role='slider']", "[role='dialog']", "[role='alertdialog']", ".lens-picker",
+  ].join(", ");
+  if (target && target.closest && target.closest(owners)) return true;
+  return [...document.querySelectorAll("[aria-modal='true']")].some((dialog) => !dialog.closest("[hidden]"));
+}
+
+function initMapKeys() {
+  document.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+    if (event.isComposing || !viewIsHorizon() || viewMode("horizon") !== "map") return;
+    if (arrowsTakenElsewhere(event)) return;
+    const move = mapKeyMove(event.key, starMap.orbits, starMap.selected, starMap.focus);
+    if (!move) return;
+    event.preventDefault();
+    openMapFocus(move);
+    // Focus follows to the planet, so a screen reader names where the keys went and the planet holds
+    // still while it is read.
+    const key = `orbit:${move.orbit}`;
+    [...horizonEl("starmap-svg").querySelectorAll("[data-key]")].find((el) => el.dataset.key === key)
+      ?.focus({ preventScroll: true });
+  });
+}
+
 function initStarMapCamera() {
   const svg = horizonEl("starmap-svg");
   if (!svg || svg.dataset.camera) return;
@@ -17395,6 +17460,7 @@ initSkyWeather();
 initAmbient();
 initPanels();
 initStarMapCamera();
+initMapKeys();
 initDesktopContextMenu();
 initWindowChrome();
 initViewModes();

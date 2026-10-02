@@ -1852,6 +1852,33 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     };
   },
 
+  //: The arrow keys' walk over the map: planets in placed order, into a planet's moons and back.
+  mapKeyWalk() {
+    const { mapKeyMove } = new Function(`${extract("mapKeyMove")}\nreturn { mapKeyMove };`)();
+    const moon = (id) => ({ id, title: id, state: "ready" });
+    const orbits = [{ slug: "a", moons: [moon("m1"), moon("m2")] }, { slug: "b", moons: [] }, { slug: "c" }];
+    const capture = (id, orbit) => ({ kind: "capture", id, title: id, state: "ready", orbit });
+    const go = (key, selected = null, focus = null) => mapKeyMove(key, orbits, selected, focus);
+    return {
+      firstRight: go("ArrowRight"),
+      firstLeft: go("ArrowLeft"),
+      next: go("ArrowRight", "a"),
+      wrapRight: go("ArrowRight", "c"),
+      wrapLeft: go("ArrowLeft", "a"),
+      down: go("ArrowDown", "a"),
+      downNoMoons: go("ArrowDown", "b"),
+      downNothingChosen: go("ArrowDown"),
+      upOnPlanet: go("ArrowUp", "a"),
+      moonNext: go("ArrowRight", "a", capture("m1", "a")),
+      moonWrap: go("ArrowRight", "a", capture("m2", "a")),
+      moonBack: go("ArrowLeft", "a", capture("m1", "a")),
+      moonUp: go("ArrowUp", "a", capture("m2", "a")),
+      moonDown: go("ArrowDown", "a", capture("m2", "a")),
+      fromLens: go("ArrowRight", null, { kind: "lens" }),
+      empty: mapKeyMove("ArrowRight", [], null, null),
+    };
+  },
+
   //: A PDF's printed line breaks, joined back inside sentences, kept at list items, blank lines and
   //: sentence ends, and never changing the length (so a quote's offsets still hold).
   pdfReflow() {
