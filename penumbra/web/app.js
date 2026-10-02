@@ -12355,21 +12355,50 @@ function shortLabel(text, max = 18) {
 const lensPicker = { row: null, query: "" };
 const LENS_ROW_MAX = 10;
 
+//: **Nothing here is rebuilt under the reader's pointer.** The row and an open picker were thrown
+//: away and rebuilt on every call, and calls come from more than the reader's own clicks: each
+//: refresh of the map (the busy poll, the window coming back) repainted them. A press whose
+//: `pointerdown` landed on a button that a repaint then replaced fired no `click`, so the press
+//: did nothing but blur the search field, and the second press acted. So the row is left alone
+//: when what it shows is unchanged, an open picker is updated in place (`lensSync`), and every
+//: button asks the row for the current `onToggle` rather than keeping the one it was built with.
 function renderLenses(lensRow, tags, active, onToggle) {
-  lensRow.textContent = "";
+  lensRow.lensToggle = onToggle;
   lensRow.hidden = !tags.length;
   if (!tags.length) {
+    lensRow.textContent = "";
+    lensRow.lensLayout = "";
     closeLensPicker();
     return;
   }
+  const language = typeof uiLang === "function" ? uiLang() : "";
+  lensRow.lensTags = tags;
+  lensRow.lensActive = active;
   const chosen = tags.filter((tag) => active.has(tag.name));
   const rest = tags.filter((tag) => !active.has(tag.name)).slice(0, LENS_ROW_MAX);
+  // Which buttons the row holds, in order, at this width and in this language. When that is unchanged
+  // (nothing new, or only counts, as when a summary lands) the counts are written into the buttons
+  // already there. Even putting the same node back fails, because WebKit sends no `click` for a
+  // press whose button left the document between `pointerdown` and `pointerup`.
+  const layout = JSON.stringify([[...chosen, ...rest].map((tag) => tag.name), [...active].sort(), lensRow.clientWidth,
+    language, tags.length]);
+  if (layout === lensRow.lensLayout && lensRow.children.length) {
+    const counts = new Map(tags.map((tag) => [tag.name, tag.count]));
+    lensRow.querySelectorAll(".lens").forEach((button) => {
+      button.querySelector(".lens-count").textContent = String(counts.get(button.dataset.tag));
+    });
+    syncOpenLensPicker(lensRow, tags, active);
+    return;
+  }
+  lensRow.lensLayout = layout;
+  lensRow.textContent = "";
   const lensChip = (tag) => {
     const button = elt("button", "lens", `#${tag.name}`);
     button.type = "button";
+    button.dataset.tag = tag.name;
     button.appendChild(elt("span", "lens-count", String(tag.count)));
     button.setAttribute("aria-pressed", active.has(tag.name) ? "true" : "false");
-    button.addEventListener("click", () => onToggle(tag.name));
+    button.addEventListener("click", () => lensRow.lensToggle(tag.name));
     return button;
   };
   chosen.forEach((tag) => lensRow.appendChild(lensChip(tag)));
@@ -12379,13 +12408,13 @@ function renderLenses(lensRow, tags, active, onToggle) {
   more.setAttribute("aria-expanded", lensPicker.row === lensRow ? "true" : "false");
   more.addEventListener("click", () => {
     if (lensPicker.row === lensRow) closeLensPicker();
-    else openLensPicker(lensRow, tags, active, onToggle, { focus: true });
+    else openLensPicker(lensRow, lensRow.lensTags, lensRow.lensActive, { focus: true });
   });
   lensRow.appendChild(more);
   if (active.size) {
     const clear = elt("button", "lens-clear", t("lens.clear", "Clear"));
     clear.type = "button";
-    clear.addEventListener("click", () => onToggle(null));
+    clear.addEventListener("click", () => lensRow.lensToggle(null));
     lensRow.appendChild(clear);
   }
   // One line: the least used of the optional chips give way until the row fits. A hidden row has
@@ -12393,7 +12422,15 @@ function renderLenses(lensRow, tags, active, onToggle) {
   if (lensRow.clientWidth > 0) {
     while (optional.length && lensRow.scrollWidth > lensRow.clientWidth + 1) optional.pop().remove();
   }
-  if (lensPicker.row === lensRow) openLensPicker(lensRow, tags, active, onToggle, { focus: false });
+  syncOpenLensPicker(lensRow, tags, active);
+}
+
+//: An open picker follows the row's new tags in place (`lensSync`), never by being rebuilt.
+function syncOpenLensPicker(lensRow, tags, active) {
+  if (lensPicker.row !== lensRow) return;
+  const panel = lensRow.parentElement?.querySelector(".lens-picker");
+  if (panel && panel.lensSync) panel.lensSync(tags, active);
+  else openLensPicker(lensRow, tags, active, { focus: false });
 }
 
 function closeLensPicker() {
@@ -12407,7 +12444,7 @@ function closeLensPicker() {
 
 //: Every tag, searchable, under the row. Choosing one keeps it open, so several can be picked in a
 //: row; Escape or a click elsewhere closes it.
-function openLensPicker(lensRow, tags, active, onToggle, { focus }) {
+function openLensPicker(lensRow, tags, active, { focus }) {
   const host = lensRow.parentElement;
   if (!host) return;
   host.querySelector(".lens-picker")?.remove();
@@ -12427,20 +12464,41 @@ function openLensPicker(lensRow, tags, active, onToggle, { focus }) {
   search.value = lensPicker.query;
   const list = elt("div", "lens-picker-list");
   const empty = elt("p", "lens-picker-empty", t("lens.none", "No tag matches."));
+  const shown = { tags, active };
+  const chip = (tag) => {
+    const item = elt("button", "lens", `#${tag.name}`);
+    item.type = "button";
+    item.dataset.tag = tag.name;
+    item.appendChild(elt("span", "lens-count", ""));
+    item.addEventListener("click", () => lensRow.lensToggle(tag.name));
+    return item;
+  };
+  // The chips are rebuilt only when the tags matching the search change; a pick or a refresh that
+  // changes counts or what is pressed updates the chips already there, so the one under the
+  // pointer is still the one that receives the click.
   const paint = () => {
     const q = search.value.trim().toLowerCase();
     lensPicker.query = search.value;
-    list.textContent = "";
-    const found = tags.filter((tag) => !q || tag.name.toLowerCase().includes(q));
-    found.forEach((tag) => {
-      const item = elt("button", "lens", `#${tag.name}`);
-      item.type = "button";
-      item.appendChild(elt("span", "lens-count", String(tag.count)));
-      item.setAttribute("aria-pressed", active.has(tag.name) ? "true" : "false");
-      item.addEventListener("click", () => onToggle(tag.name));
-      list.appendChild(item);
+    const found = shown.tags.filter((tag) => !q || tag.name.toLowerCase().includes(q));
+    const present = [...list.children];
+    if (present.length !== found.length || found.some((tag, i) => present[i].dataset.tag !== tag.name)) {
+      list.textContent = "";
+      found.forEach((tag) => list.appendChild(chip(tag)));
+    }
+    [...list.children].forEach((item, i) => {
+      item.setAttribute("aria-pressed", shown.active.has(found[i].name) ? "true" : "false");
+      item.querySelector(".lens-count").textContent = String(found[i].count);
     });
     empty.hidden = found.length > 0;
+  };
+  panel.lensSync = (nextTags, nextActive) => {
+    shown.tags = nextTags;
+    shown.active = nextActive;
+    panel.setAttribute("aria-label", t("lens.all", `All tags · ${nextTags.length}`, { n: nextTags.length }));
+    paint();
+    // A click on a chip drops focus to <body> in WebKit, which does not focus a pressed button; it
+    // goes back to the search field so typing carries on. Focus the reader put elsewhere stays.
+    if (document.activeElement === document.body) search.focus();
   };
   search.addEventListener("input", paint);
   panel.addEventListener("keydown", (event) => {
@@ -12455,8 +12513,6 @@ function openLensPicker(lensRow, tags, active, onToggle, { focus }) {
   paint();
   host.appendChild(panel);
   if (focus || document.activeElement === document.body) search.focus();
-  else if (!panel.contains(document.activeElement) && lensPicker.refocus) search.focus();
-  lensPicker.refocus = true;
 }
 
 document.addEventListener("pointerdown", (event) => {

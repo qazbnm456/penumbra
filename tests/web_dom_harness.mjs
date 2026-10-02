@@ -1754,6 +1754,73 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     return { first, unchanged, afterLanguage, afterData, fullStillDrew: fakes.draws - before };
   },
 
+  //: The tag row and its picker are never rebuilt under the pointer: a refresh with nothing new
+  //: keeps every node, a refresh that changes only counts writes them into the same nodes, a pick
+  //: keeps the open picker's panel and chips, and every button calls the row's current `onToggle`.
+  //: `textContent = ""` empties an element here, as it does in a browser.
+  lensPickerInPlace() {
+    class Node2 extends El {
+      constructor(tag) { super("", tag); this.style = {}; this._text = ""; }
+      get textContent() { return this._text; }
+      set textContent(value) {
+        this._text = String(value);
+        if (this._text === "" && this.children) { this.children.forEach((c) => { c.parentElement = null; }); this.children = []; }
+      }
+    }
+    const document = { body: new Node2("body"), activeElement: null, createElement: (tag) => new Node2(tag) };
+    document.activeElement = document.body;
+    const run = new Function("document", "t", "uiLang",
+      `const lensPicker = { row: null, query: "" }; const LENS_ROW_MAX = 10;\n${extract("elt")}\n` +
+      `${extract("renderLenses")}\n${extract("syncOpenLensPicker")}\n${extract("closeLensPicker")}\n` +
+      `${extract("openLensPicker")}\nreturn { renderLenses, lensPicker };`,
+    )(document, (_k, fallback) => fallback, () => "en");
+    // A focus() that moves document.activeElement in this scenario's own document.
+    const focusable = (el) => { el.focus = () => { document.activeElement = el; }; return el; };
+    const host = new Node2("div");
+    const row = new Node2("div");
+    host.append(row);
+    const tags = (bump = 0) => ["a", "b", "c"].map((name, i) => ({ name, count: 9 - i + (i === 0 ? bump : 0) }));
+    const calls = [];
+    const first = (name) => calls.push(["first", name]);
+    run.renderLenses(row, tags(), new Set(), first);
+    const chipsBefore = row.querySelectorAll(".lens");
+    const moreBefore = row.querySelector(".lens-more");
+    // Same data again, as a refresh with nothing new would call it.
+    focusable(chipsBefore[1]).focus();
+    run.renderLenses(row, tags(), new Set(), first);
+    const sameNodes = row.querySelectorAll(".lens").every((c, i) => c === chipsBefore[i])
+      && row.querySelector(".lens-more") === moreBefore;
+    const focusKept = document.activeElement === chipsBefore[1];
+    // Open the picker through the button, as a click would.
+    document.activeElement = document.body;
+    moreBefore.listeners.click[0]();
+    const panel = host.querySelector(".lens-picker");
+    const search = host.querySelector(".lens-picker-search");
+    focusable(search);
+    const pickerChips = panel.querySelectorAll(".lens");
+    // Only a count changes: the same nodes, the new number in both places.
+    run.renderLenses(row, tags(5), new Set(), first);
+    const countsInPlace = row.querySelectorAll(".lens").every((c, i) => c === chipsBefore[i])
+      && row.querySelector(".lens-more") === moreBefore
+      && row.querySelector(".lens").querySelector(".lens-count").textContent === "14"
+      && host.querySelector(".lens-picker") === panel
+      && panel.querySelector(".lens").querySelector(".lens-count").textContent === "14";
+    // A pick inside the picker: the caller re-renders with the new set and a new handler.
+    pickerChips[2].listeners.click[0]();
+    const second = (name) => calls.push(["second", name]);
+    run.renderLenses(row, tags(5), new Set(["c"]), second);
+    const pickKeptPicker = host.querySelector(".lens-picker") === panel
+      && panel.querySelectorAll(".lens").every((c, i) => c === pickerChips[i])
+      && pickerChips[2].getAttribute("aria-pressed") === "true";
+    // A button built before the new handler still calls the new one.
+    pickerChips[0].listeners.click[0]();
+    row.querySelector(".lens-more").listeners.click[0]();
+    return {
+      sameNodes, focusKept, countsInPlace, pickKeptPicker,
+      calls, closed: host.querySelector(".lens-picker") === null,
+    };
+  },
+
   //: A PDF's printed line breaks, joined back inside sentences, kept at list items, blank lines and
   //: sentence ends, and never changing the length (so a quote's offsets still hold).
   pdfReflow() {

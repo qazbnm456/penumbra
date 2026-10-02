@@ -1004,6 +1004,22 @@ def test_the_busy_polls_quiet_map_render_redraws_exactly_when_something_drawn_ch
     assert result["fullStillDrew"] >= 1, "a quiet poll cancelled a full render that was still fetching"
 
 
+def test_the_tag_row_and_its_picker_are_never_rebuilt_under_the_pointer():
+    """Every refresh of the map rebuilt the tag row and an open picker, and WebKit sends no `click`
+    for a press whose button left the document before `pointerup`: a press did nothing but blur the
+    search field, and the second press acted. Measured in WebKit before the fix: a picker chip and a
+    row chip pressed while a refresh changed a count both did nothing."""
+    result = _run("lensPickerInPlace")
+    assert result["sameNodes"], "a refresh with nothing new replaced the row's buttons"
+    assert result["focusKept"], "a refresh moved focus away from where the reader had put it"
+    assert result["countsInPlace"], "a count change rebuilt the buttons instead of updating them"
+    assert result["pickKeptPicker"], "a pick rebuilt the open picker under the pointer"
+    assert result["calls"] == [["first", "c"], ["second", "a"]], (
+        f"a button kept the handler it was built with: {result['calls']}"
+    )
+    assert result["closed"], "the All tags button no longer closes the open picker"
+
+
 def test_dragging_a_graph_node_pulls_its_neighbours_by_distance_in_links():
     result = _run("graphDrag")
     assert result["B"] == 0.6 and result["E"] == 0.6, "one link away follows most"
