@@ -9967,28 +9967,31 @@ async function patchChangedNodes() {
   // A row whose orbit picker is open is not replaced under the reader: it keeps its old data, so the
   // next poll still sees the change and applies it once the picker has closed. A change in which
   // rows there are waits the same way, since it repaints the whole stream.
+  // Which rows changed, and whether which rows there are changed, before anything is touched: a
+  // change of that kind repaints the whole list, so while a picker is open nothing is applied at all
+  // (replacing the other rows first and then stopping replaced them again on every poll).
   const held = new Set();
   const pickerOpen = streamPickerOpen();
   let structural = data.nodes.length !== horizonState.nodes.length;
+  const changed = [];
   for (const fresh of data.nodes) {
     const known = byId.get(fresh.id);
-    if (!known) {
-      structural = true;
-      continue;
-    }
-    if (JSON.stringify(known) === JSON.stringify(fresh)) continue;
-    const row = stream.querySelector(`[data-node-id="${CSS.escape(fresh.id)}"]`);
-    if (!row) {
-      structural = true;
-      continue;
-    }
+    const row = known && stream.querySelector(`[data-node-id="${CSS.escape(fresh.id)}"]`);
+    if (!known || !row) structural = true;
+    else if (JSON.stringify(known) !== JSON.stringify(fresh)) changed.push([fresh, row]);
+  }
+  // What waits for the picker to close is applied then (`orbitPicker`'s close), since the poll may
+  // have stopped by then.
+  const holdsRow = changed.some(([, row]) => row.contains(orbitPickOpen.wrap));
+  horizonState.patchHeld = pickerOpen && (structural || holdsRow);
+  if (structural && pickerOpen) return;
+  for (const [fresh, row] of changed) {
     if (pickerOpen && row.contains(orbitPickOpen.wrap)) {
       held.add(fresh.id);
       continue;
     }
     row.replaceWith(renderNode(fresh));
   }
-  if (structural && pickerOpen) return;
   horizonState.nodes = data.nodes.map((node) => (held.has(node.id) ? byId.get(node.id) : node));
   horizonState.total = data.total;
   horizonState.undistilled = data.undistilled;
@@ -11077,13 +11080,16 @@ async function paintFindPanel() {
   foot.appendChild(done);
   panel.appendChild(foot);
   panel.scrollTop = scroll;
-  if (!restoreFocus(panel, keep) && horizonState.tagSearchFocused) {
+  // Only when focus is nowhere (a pressed chip) or still in the panel: never taken from elsewhere.
+  const nowhere = document.activeElement === document.body || panel.contains(document.activeElement);
+  if (!restoreFocus(panel, keep) && horizonState.tagSearchFocused && nowhere) {
     tagSearch.focus();
     tagSearch.setSelectionRange(tagSearch.value.length, tagSearch.value.length);
   }
 }
 
 function closeFindPanel() {
+  horizonState.tagSearchFocused = false;
   horizonEl("find-panel").hidden = true;
   horizonEl("find-filter").setAttribute("aria-expanded", "false");
 }
@@ -15448,6 +15454,11 @@ function orbitPicker(nodeId, memberships = []) {
     menu.hidden = true;
     trigger.setAttribute("aria-expanded", "false");
     if (orbitPickOpen.wrap === wrap) Object.assign(orbitPickOpen, { nodeId: null, wrap: null, close: null });
+    // The list held changes back while this was open (`patchChangedNodes`): they land now.
+    if (horizonState.patchHeld) {
+      horizonState.patchHeld = false;
+      void patchChangedNodes();
+    }
   };
   trigger.addEventListener("click", () => (menu.hidden ? open() : close()));
   wrap.addEventListener("keydown", (event) => {

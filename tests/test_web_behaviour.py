@@ -1087,7 +1087,9 @@ def test_the_busy_poll_leaves_a_row_with_an_open_orbit_picker_alone():
     reader had open in it. The held row keeps its old data until the picker closes, then catches up."""
     r = _run("listRowsHeldByPicker")
     assert r["first"] == {"replaced": ["b"], "heldA": 1}, "the row with the open picker was replaced"
-    assert r["whileOpen"] == {"rendered": 0, "count": 2}, "a new capture repainted the list under the picker"
+    assert r["whileOpen"] == {"rendered": 0, "count": 2, "replaced": [], "held": True}, (
+        "a new capture repainted the list under the picker, or another row was replaced meanwhile"
+    )
     assert r["after"]["replaced"] == ["a"] or r["after"]["rendered"] == 1, r["after"]
     assert r["after"]["count"] == 3
 

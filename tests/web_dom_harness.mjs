@@ -1996,10 +1996,14 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       ...names.map((n) => deps[n]));
     await run();
     const first = { replaced: [...replaced], heldA: deps.horizonState.nodes.find((n) => n.id === "a").v };
-    // A capture arriving while the picker is open waits; nothing is repainted.
-    fakes.reply = { nodes: [...fakes.reply.nodes, { id: "c", state: "queued", v: 1 }], total: 3 };
+    // A capture arriving while the picker is open waits, and so does a change to another row in the
+    // same poll: nothing is repainted or replaced, and the hold is recorded for the picker's close.
+    replaced.length = 0;
+    fakes.reply = { nodes: [fakes.reply.nodes[0], { id: "b", state: "ready", v: 3 }, { id: "c", state: "queued", v: 1 }],
+      total: 3 };
     await run();
-    const whileOpen = { rendered, count: deps.horizonState.nodes.length };
+    const whileOpen = { rendered, count: deps.horizonState.nodes.length, replaced: [...replaced],
+      held: deps.horizonState.patchHeld };
     // The picker closes: the held change and the new capture both land.
     deps.orbitPickOpen.wrap = null;
     replaced.length = 0;
