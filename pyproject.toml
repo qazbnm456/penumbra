@@ -170,6 +170,7 @@ chatterbox = [
 
 [dependency-groups]
 dev = [
+    "playwright>=1.63.0",
     "pytest>=8.0",
     # Test-only PDF fixture construction (tests/test_parsers_pdf.py, test_ingest.py, test_api.py) —
     # BSD-licensed, never a runtime dependency of the shipped package. Replaces the fitz (pymupdf)

@@ -42,6 +42,10 @@ jobs:
         # actually collected and run, not silently skipped. The `api` extra is opt-in for END
         # USERS (pyproject.toml) but CI must still exercise it.
         run: uv sync --python ${{ matrix.python-version }} --extra api
+      # `tests/test_browser.py` drives the web UI in WebKit, the engine of the desktop app's
+      # WKWebView, and FAILS rather than skips without it, for the same reason node is pinned above.
+      - name: Install WebKit for Playwright
+        run: uv run --python ${{ matrix.python-version }} playwright install --with-deps webkit
       - name: Tests
         run: uv run --python ${{ matrix.python-version }} python -m pytest
 
