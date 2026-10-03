@@ -46,7 +46,8 @@ def _call(base: str, method: str, path: str, body: dict | None = None) -> dict:
 
 @pytest.fixture(scope="module")
 def server(tmp_path_factory):
-    """A real `penumbra serve` with three orbits, each holding one tagged capture."""
+    """A real `penumbra serve` with three orbits, each holding one tagged capture, and two more
+    untagged captures in the first, so its planet has moons to walk between."""
     pytest.importorskip("fastapi")  # the `api` extra, which CI installs
     home = tmp_path_factory.mktemp("browser-server")
     port = _free_port()
@@ -74,6 +75,9 @@ def server(tmp_path_factory):
         nodes = _call(base, "GET", "/horizon?limit=50")["nodes"]
         for node, chosen in zip(sorted(nodes, key=lambda n: n["origin"]), tags):
             _call(base, "PUT", f"/horizon/{node['id']}/tags", {"tags": chosen})
+        for i in range(2):
+            more = {"texts": [f"Another note {i} in Alpha, longer than the others."]}
+            _call(base, "POST", "/orbits/o1/sources", more)
         _call(base, "GET", "/horizon/map")
         yield base
     finally:
@@ -221,3 +225,31 @@ def test_the_map_settings_escape_leaves_a_fields_escape_alone(page):
     page.evaluate("document.activeElement.blur()")
     page.keyboard.press("Escape")
     assert page.evaluate("document.getElementById('map-settings').hidden")
+
+
+def test_walking_between_moons_keeps_the_card_and_the_camera_still(page):
+    """Left and Right among a planet's moons: the card never collapses to "Loading" between two
+    captures (a capture not yet in memory holds the card's height), and the camera keeps a zoom the
+    reader made around the planet instead of gliding back on every step."""
+    page.evaluate("openMapFocus({kind: 'planet', orbit: 'o1'})")
+    page.wait_for_timeout(1200)
+    page.evaluate("document.activeElement.blur()")
+    page.keyboard.press("ArrowDown")
+    page.wait_for_function("document.querySelector('#starmap-card .card-actions')", timeout=10000)
+    page.evaluate("zoomBy(1.4)")
+    page.wait_for_timeout(400)
+    zoom = page.evaluate("mapCamera.k")
+    for _ in range(4):
+        before = page.evaluate("document.getElementById('starmap-card').offsetHeight")
+        page.evaluate("""() => { window.__frames = []; const card = document.getElementById('starmap-card');
+          const tick = () => {
+            window.__frames.push([card.offsetHeight, !!card.querySelector('.card-detail .card-note')]);
+            if (window.__frames.length < 45) requestAnimationFrame(tick); };
+          requestAnimationFrame(tick); }""")
+        page.keyboard.press("ArrowRight")
+        page.wait_for_function("window.__frames.length >= 45", timeout=10000)
+        frames = page.evaluate("window.__frames")
+        after = frames[-1][0]
+        assert not any(loading for _, loading in frames), "the card said Loading between two moons"
+        assert min(height for height, _ in frames) >= min(before, after), (before, after, frames)
+    assert page.evaluate("mapCamera.k") == pytest.approx(zoom), "the camera glided back to the planet"

@@ -10245,9 +10245,8 @@ function afterCaptureEdit(node) {
   if (starMap.focus && starMap.focus.kind === "capture" && starMap.focus.id === node.id) {
     starMap.focus = { ...starMap.focus, title: nodeHeadline(node) || starMap.focus.title };
   }
-  if (renderCaptureCard.cache && renderCaptureCard.cache.id === node.id) {
-    renderCaptureCard.cache = { id: node.id, got: { ...renderCaptureCard.cache.got, node } };
-  }
+  const held = capturesHeld.byId.get(node.id);
+  if (held) capturesHeld.byId.set(node.id, { ...held, node });
   renderStarMapCard();
   if (viewIsHorizon() && viewMode("horizon") === "map") void renderStarMap();
   // A list filtered by a tag or a query is asked again, so a capture that no longer matches (its
@@ -10397,7 +10396,7 @@ async function removeCapture(nodeId, orbitNames) {
     notify(t("horizon.forgetFailed", `Could not forget it: ${err.message}`, { message: err.message }));
     return;
   }
-  renderCaptureCard.cache = null;
+  dropCapturesHeld();
   closeMapFocus();
   renderFacets();
   await refreshHorizon({ reset: true });
@@ -14810,7 +14809,7 @@ async function moveCapture(item, to, { confirm = false } = {}) {
     notify(readableError(err.message));
     return;
   }
-  renderCaptureCard.cache = null;
+  dropCapturesHeld();
   notify(t("map.moved", `Moved to ${to.title}.`, { name: to.title }), {
     tone: "good",
     timeout: 8000,
@@ -14850,6 +14849,11 @@ function hideMapTip() {
 //: What the map is showing in its card, and where the camera goes for it. A planet or a capture
 //: filed in one brings the camera to that planet; the Horizon brings it home.
 function openMapFocus(focus) {
+  // Stepping between a planet's own moons, or from one back up to it, keeps the camera where it is:
+  // it is already there, and gliding back would undo a zoom or pan the reader made around that
+  // planet. Choosing the planet itself again still brings the camera back to it.
+  const fromMoon = focus.kind === "capture" || starMap.focus?.kind === "capture";
+  const sameHost = Boolean(starMap.selected) && fromMoon && focus.orbit === starMap.selected;
   if (focus.kind === "planet") {
     starMap.selected = focus.orbit;
     starMap.focus = null;
@@ -14860,6 +14864,7 @@ function openMapFocus(focus) {
   if (mapPanelGrip && mapPanelGrip.isCollapsed()) mapPanelGrip.setCollapsed(false, { persist: false });
   drawStarMap();
   syncStarMapContext();
+  if (sameHost) return;
   if (starMap.selected) focusCameraOn(starMap.selected);
   else cameraHome();
 }
@@ -15665,7 +15670,7 @@ async function unfileCapture(nodeId, orbitKey, { confirm = false, label = "", or
     notify(readableError(err.message));
     return false;
   }
-  renderCaptureCard.cache = null;
+  dropCapturesHeld();
   const orbit = starMap.orbits.find((o) => o.slug === orbitKey);
   const backTo = orbitId || (orbit && orbit.id);
   notify(t("map.unfiled", `Taken out of ${name}.`, { name }), {
@@ -15701,7 +15706,7 @@ async function fileCapture(nodeId, orbitId, control, { create = false, label = "
   // capture was filed in that orbit or the orbit holds the same text, and deleting that one would
   // remove a source that may be cited.
   const sourceId = filed && filed.appended && filed.membership && filed.membership.source_id;
-  renderCaptureCard.cache = null;
+  dropCapturesHeld();
   notify(t("map.filed", `Filed into ${name}.`, { name }), {
     tone: "good",
     timeout: 8000,
@@ -15715,7 +15720,7 @@ async function fileCapture(nodeId, orbitId, control, { create = false, label = "
         } catch (err) {
           notify(readableError(err.message));
         }
-        renderCaptureCard.cache = null;
+        dropCapturesHeld();
         void refreshHorizon();
         void renderStarMap();
       },
@@ -16053,32 +16058,81 @@ function askAcrossBridge(focus, name, titleA, titleB) {
   openDock();
 }
 
+//: The captures whose cards were fetched lately, by id, so a redraw repaints from memory instead of
+//: flashing "Loading" over an open picker, and walking back and forth between moons is instant.
+//: Anything that changes a capture's orbits drops them all (`dropCapturesHeld`); `generation`
+//: stops a fetch that was already in flight from putting back what was dropped.
+const capturesHeld = { byId: new Map(), generation: 0, limit: 24 };
+
+function holdCapture(id, got) {
+  capturesHeld.byId.delete(id);
+  capturesHeld.byId.set(id, got);
+  while (capturesHeld.byId.size > capturesHeld.limit) {
+    capturesHeld.byId.delete(capturesHeld.byId.keys().next().value);
+  }
+}
+
+function dropCapturesHeld() {
+  capturesHeld.byId.clear();
+  capturesHeld.generation += 1;
+}
+
+//: The moons either side of a capture on its planet, in the order the arrow keys walk them, fetched
+//: quietly so the next step finds its card in memory. Two small local reads, never a model call.
+function prefetchMoonsBeside(focus) {
+  const orbit = focus.orbit && starMap.orbits.find((o) => o.slug === focus.orbit);
+  const moons = (orbit && orbit.moons) || [];
+  const at = moons.findIndex((moon) => moon.id === focus.id);
+  if (at < 0 || moons.length < 2) return;
+  const generation = capturesHeld.generation;
+  [moons[(at + 1) % moons.length], moons[(at - 1 + moons.length) % moons.length]].forEach((moon) => {
+    if (capturesHeld.byId.has(moon.id)) return;
+    api(`/horizon/${encodeURIComponent(moon.id)}`).then((got) => {
+      if (generation === capturesHeld.generation && !capturesHeld.byId.has(moon.id)) holdCapture(moon.id, got);
+    }, () => {}); // the step itself fetches again, and says what went wrong
+  });
+}
+
 //: A capture's card fills in after one fetch; the part known from the map is drawn at once.
-function renderCaptureCard(card, focus) {
+function renderCaptureCard(card, focus, before = 0) {
   mapCardClose(card);
   card.appendChild(elt("p", "card-kicker", moonStateLabel({ kind: "capture", state: focus.state })));
   const heading = elt("div", "card-title-row");
   heading.appendChild(elt("h2", "card-title", focus.title || ""));
   card.appendChild(heading);
   const detail = elt("div", "card-detail");
-  detail.appendChild(elt("p", "card-note", t("map.loading", "Loading…")));
   card.appendChild(detail);
   const token = (renderCaptureCard.token = (renderCaptureCard.token || 0) + 1);
-  // The map redraws for many reasons; the capture it shows only changes when the focus does. Kept
-  // by id, so a redraw repaints from memory instead of flashing "Loading" over an open picker.
-  const cached = renderCaptureCard.cache && renderCaptureCard.cache.id === focus.id ? renderCaptureCard.cache.got : null;
+  // The map redraws for many reasons; the capture it shows only changes when the focus does.
+  const cached = capturesHeld.byId.get(focus.id) || null;
+  // Not in memory: the card keeps its height, and says "Loading" only if the read is slow enough
+  // to notice, so a quick read swaps the details in without the column jumping in between.
+  const release = () => { card.style.minHeight = ""; };
+  if (!cached) {
+    if (before) card.style.minHeight = `${before}px`;
+    setTimeout(() => {
+      if (token === renderCaptureCard.token && detail.isConnected && !detail.firstChild) {
+        detail.appendChild(elt("p", "card-note", t("map.loading", "Loading…")));
+      }
+    }, 250);
+  }
   void (async () => {
     let got = cached;
     if (!got) {
       try {
         got = await api(`/horizon/${encodeURIComponent(focus.id)}`);
       } catch (err) {
-        if (token === renderCaptureCard.token) detail.replaceChildren(elt("p", "card-note", readableError(err.message)));
+        if (token === renderCaptureCard.token) {
+          release();
+          detail.replaceChildren(elt("p", "card-note", readableError(err.message)));
+        }
         return;
       }
-      renderCaptureCard.cache = { id: focus.id, got };
+      if (token === renderCaptureCard.token) holdCapture(focus.id, got);
     }
     if (token !== renderCaptureCard.token || !detail.isConnected) return;
+    release();
+    prefetchMoonsBeside(focus);
     const node = got.node || {};
     detail.textContent = "";
     // The heading gains its rename once the capture itself has arrived.
@@ -16162,6 +16216,9 @@ function settleListPanel() {
 }
 
 function paintStarMapCard(mapCard) {
+  // A capture whose details are not in hand yet holds the card at the height it had, so stepping
+  // from moon to moon does not collapse the column to "Loading" and grow it back on every step.
+  const before = mapCard.hidden ? 0 : mapCard.offsetHeight;
   mapCard.textContent = "";
   if (starMap.focus && starMap.focus.kind === "horizon") {
     renderHorizonCard(mapCard);
@@ -16169,7 +16226,7 @@ function paintStarMapCard(mapCard) {
     return;
   }
   if (starMap.focus && starMap.focus.kind === "capture") {
-    renderCaptureCard(mapCard, starMap.focus);
+    renderCaptureCard(mapCard, starMap.focus, before);
     mapCard.hidden = false;
     return;
   }
