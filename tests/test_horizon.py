@@ -1009,11 +1009,15 @@ def test_an_older_database_is_migrated_and_a_new_one_starts_at_the_latest_versio
             assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS)
 
 
-def test_processes_opening_an_old_database_at_once_apply_each_step_exactly_once(tmp_path):
-    """Invariant 84's concurrency claim, executed: six processes open one database written before
-    any step, at once. Each step runs inside `BEGIN IMMEDIATE` with the version read inside it, so
-    none fails on a column another just added, every row survives, and the version ends at the last
-    step. An independent review probed this by hand; this keeps it."""
+def test_processes_migrating_an_old_database_at_once_never_apply_a_step_twice(tmp_path):
+    """Invariant 84's concurrency claim, executed: six processes run `_migrate` on one database
+    written before any step, at once. Each step runs inside `BEGIN IMMEDIATE` with the version read
+    inside it, so none applies a step another already applied, every row survives, and the version
+    ends at the last step.
+
+    The processes call `_migrate` on a raw connection, NOT through `_initialize`: its retries would
+    absorb a second `ALTER TABLE ... ADD COLUMN` failing with "duplicate column", and a version read
+    outside the transaction would then pass. Here that failure exits the process non-zero."""
     import subprocess
     import sys
     import time
@@ -1027,13 +1031,17 @@ def test_processes_opening_an_old_database_at_once_apply_each_step_exactly_once(
             "VALUES ('nd-0000000000000001', 'text', 'pasted:x', 'ready', 1, 1)"
         )
     probe = (
-        "import sys, time; from penumbra import horizon; time.sleep(float(sys.argv[2])); "
-        "print(horizon.get_node('nd-0000000000000001', base_dir=sys.argv[1]).edited)"
+        "import sqlite3, sys, time; from penumbra import horizon\n"
+        "conn = sqlite3.connect(horizon.index_path(sys.argv[1]), timeout=30)\n"
+        "time.sleep(max(0.0, float(sys.argv[2]) - time.time()))\n"
+        "horizon._migrate(conn)\n"
+        "conn.close()\n"
+        "print(horizon.get_node('nd-0000000000000001', base_dir=sys.argv[1]).edited)\n"
     )
     # All start together and wait for a common moment, so their first connections overlap.
     start = time.time() + 1.5
     runs = [
-        subprocess.Popen([sys.executable, "-c", probe, str(old), str(start - time.time())],
+        subprocess.Popen([sys.executable, "-c", probe, str(old), str(start)],
                          cwd=str(_REPO_ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         for _ in range(6)
     ]

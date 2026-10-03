@@ -3351,6 +3351,10 @@ def _record_failure(node_id: str, exc: Exception) -> None:
 #: still get a server that starts, a Horizon that captures and a UI that works. The cost of being
 #: wrong is now a sentence in the strip instead of a server that refuses to boot.
 _MODEL_GUARD = threading.Lock()
+#: Configured once per process, and from whichever thread asked first. dspy then lets ONLY that
+#: thread call `dspy.configure` again, and `rlm_harness.configure` swallows the refusal, so a later
+#: configure from another thread is silently ignored. The suite resets both this flag and dspy's
+#: owner after every test (`tests/conftest.py::_dspy_owned_by_no_thread`).
 _MODEL_CONFIGURED = False
 
 

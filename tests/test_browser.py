@@ -53,7 +53,7 @@ def server(tmp_path_factory):
     proc = subprocess.Popen(
         [sys.executable, "-m", "penumbra.cli", "serve", "--port", str(port)],
         cwd=home, env={**os.environ, "PN_API_TOKEN": TOKEN, "PYTHONPATH": str(REPO)},
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdout=(home / "serve.log").open("w"), stderr=subprocess.STDOUT,
     )
     base = f"http://127.0.0.1:{port}"
     try:
@@ -64,7 +64,8 @@ def server(tmp_path_factory):
             except OSError:
                 time.sleep(0.2)
         else:
-            raise RuntimeError("the server did not start")
+            tail = (home / "serve.log").read_text(errors="replace")[-2000:]
+            raise RuntimeError(f"the server did not start; the end of its log:\n{tail}")
         tags = [["security", "testing", "benchmarks"], ["security", "agents"], ["models", "testing"]]
         for i, name in enumerate(["Alpha", "Beta", "Gamma"], start=1):
             note = {"texts": [f"Note {i} about {name}, a few words long."]}
@@ -114,6 +115,18 @@ def _stored(page, path: str):
     )
 
 
+def _until(check, timeout: float = 15.0):
+    """Poll `check` until it returns something truthy, or fail with its last value: saves are
+    debounced and run in the background, and a fixed sleep is a guess a slow runner loses."""
+    deadline = time.time() + timeout
+    while True:
+        got = check()
+        if got or time.time() > deadline:
+            assert got, f"still not true after {timeout}s: {got!r}"
+            return got
+        time.sleep(0.1)
+
+
 def test_a_dragged_planet_snaps_to_a_ring_and_keeps_its_place(page):
     """A planet follows the pointer along the nearest ring (lit while it would land there), stays
     where it is let go, and the place survives a reload (invariant 85)."""
@@ -131,13 +144,12 @@ def test_a_dragged_planet_snaps_to_a_ring_and_keeps_its_place(page):
         page.wait_for_timeout(16)
     lit = page.evaluate("document.querySelectorAll('.map-ring.is-landing').length")
     page.mouse.up()
-    page.wait_for_timeout(1000)
-    placed = _stored(page, "/horizon/map")["planets"]["o2"]
-    assert lit == 1 and placed["ring"] >= 1, placed
+    assert lit == 1
+    placed = _until(lambda: (p := _stored(page, "/horizon/map")["planets"]["o2"])["ring"] >= 1 and p)
     page.reload()
-    page.wait_for_selector("#starmap-svg .map-planet", timeout=30000)
-    page.wait_for_timeout(600)
-    assert page.evaluate("starMap.places.o2.ring") == placed["ring"]
+    ring = placed["ring"]
+    reloaded = f"typeof starMap === 'object' && starMap.places?.o2?.ring === {ring}"
+    page.wait_for_function(reloaded, timeout=30000)
 
 
 def test_the_studio_keeps_its_slider_under_the_pointer_and_saves(page):
@@ -151,9 +163,12 @@ def test_the_studio_keeps_its_slider_under_the_pointer_and_saves(page):
     page.wait_for_timeout(200)
     assert page.evaluate("(el) => el.isConnected", handle), "the slider was rebuilt under the pointer"
     page.locator(".planet-studio select").nth(0).select_option("lava")
-    page.wait_for_timeout(1000)
-    style = _stored(page, "/horizon/map")["planets"]["o1"]["style"]
-    assert (style["kind"], style["size"]) == ("lava", 1.6)
+
+    def saved():
+        style = _stored(page, "/horizon/map")["planets"]["o1"]["style"]
+        return (style["kind"], style["size"]) == ("lava", 1.6)
+
+    _until(saved)
 
 
 def test_a_tag_press_lands_even_when_the_counts_change_mid_press(page):
@@ -168,9 +183,8 @@ def test_a_tag_press_lands_even_when_the_counts_change_mid_press(page):
                   " paintStarMapLenses();")
     page.wait_for_timeout(80)
     page.mouse.up()
-    page.wait_for_timeout(300)
-    after = page.evaluate("document.querySelectorAll('#starmap-lenses .lens[aria-pressed=true]').length")
-    assert after == before + 1, "the press was lost to a repaint"
+    pressed = "document.querySelectorAll('#starmap-lenses .lens[aria-pressed=true]').length"
+    assert _until(lambda: page.evaluate(pressed) == before + 1, timeout=5), "the press was lost to a repaint"
 
 
 def test_a_capture_is_renamed_and_retagged_in_its_card(page):
@@ -183,17 +197,17 @@ def test_a_capture_is_renamed_and_retagged_in_its_card(page):
     card.locator(".card-rename").click()
     card.locator(".orbit-rename-input").fill("My bookmark")
     card.locator(".orbit-rename-input").press("Enter")
-    page.wait_for_timeout(800)
-    assert card.locator(".card-title").first.text_content() == "My bookmark"
+    title = "document.querySelector('#starmap-card .card-title')?.textContent"
+    page.wait_for_function(f"{title} === 'My bookmark'", timeout=10000)
     count = card.locator(".tag-chip").count()
     card.locator(".tag-add").click()
     card.locator(".tag-add-input").fill("Mine")
     card.locator(".tag-add-input").press("Enter")
-    page.wait_for_timeout(800)
-    assert "#mine" in card.locator(".tag-chip .node-tag").all_text_contents()
+    page.wait_for_function("[...document.querySelectorAll('#starmap-card .tag-chip .node-tag')]"
+                           ".some((el) => el.textContent === '#mine')", timeout=10000)
     card.locator(".tag-chip .tag-remove").first.click()
-    page.wait_for_timeout(800)
-    assert card.locator(".tag-chip").count() == count
+    page.wait_for_function(f"document.querySelectorAll('#starmap-card .tag-chip').length === {count}",
+                           timeout=10000)
 
 
 def test_the_map_settings_escape_leaves_a_fields_escape_alone(page):
