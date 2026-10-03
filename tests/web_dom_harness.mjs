@@ -1729,7 +1729,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       syncStarMapContext: () => {}, mapMotion: { held: false }, focusCameraOn: () => {},
       uiLang: () => fakes.lang,
       MAP_SETTINGS_DEFAULT: { inner_ring: 260, ring_gap: 160 },
-      mapServer: {}, dropIdleSavers: () => {},
+      mapServer: {}, dropIdleSavers: () => {}, keepOnlyFocusedCapture: () => {},
     };
     const names = Object.keys(deps);
     const renderStarMap = new Function(...names, `${extract("renderStarMap")}\nreturn renderStarMap;`)(

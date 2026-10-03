@@ -253,3 +253,51 @@ def test_walking_between_moons_keeps_the_card_and_the_camera_still(page):
         assert not any(loading for _, loading in frames), "the card said Loading between two moons"
         assert min(height for height, _ in frames) >= min(before, after), (before, after, frames)
     assert page.evaluate("mapCamera.k") == pytest.approx(zoom), "the camera glided back to the planet"
+
+
+def test_a_moon_read_still_in_flight_holds_the_card_and_lets_go_when_the_reader_moves_on(page):
+    """A capture not in memory keeps the card at its height while it is read, says "Loading" only
+    once the read is slow, and a planet card painted before the read lands does not inherit the
+    height the moon's card was holding."""
+    page.evaluate("openMapFocus({kind: 'planet', orbit: 'o1'})")
+    page.wait_for_timeout(1200)
+    page.evaluate("document.activeElement.blur()")
+    # Every capture read takes 600ms from here, and nothing is held.
+    page.evaluate("""() => { const real = window.api;
+      window.api = (path, ...rest) => path.startsWith('/horizon/nd-')
+        ? new Promise((done) => setTimeout(done, 600)).then(() => real(path, ...rest)) : real(path, ...rest);
+      dropCapturesHeld(); }""")
+    before = page.evaluate("document.getElementById('starmap-card').offsetHeight")
+    page.keyboard.press("ArrowDown")
+    page.wait_for_timeout(100)
+    card = "document.getElementById('starmap-card')"
+    assert page.evaluate(f"{card}.offsetHeight") >= before, "the card collapsed while the moon was read"
+    assert not page.evaluate(f"!!{card}.querySelector('.card-note')"), "Loading appeared at once"
+    page.wait_for_function(f"!!{card}.querySelector('.card-note')", timeout=2000)
+    page.keyboard.press("ArrowUp")
+    page.wait_for_timeout(900)
+    assert page.evaluate(f"{card}.style.minHeight") == "", "the planet card kept the moon's held height"
+
+
+def test_a_moon_read_ahead_is_read_again_once_the_map_has_news(page, server):
+    """The moons read ahead stay only until the map's data next refreshes, and one whose state the
+    map now reports differently (a summary landed) is read again rather than shown from memory."""
+    page.evaluate("openMapFocus({kind: 'planet', orbit: 'o1'})")
+    page.wait_for_timeout(1200)
+    page.evaluate("document.activeElement.blur()")
+    page.keyboard.press("ArrowDown")
+    page.wait_for_function("document.querySelector('#starmap-card .card-actions')", timeout=10000)
+    nxt = page.evaluate("(() => { const moons = starMap.orbits.find((o) => o.slug === 'o1').moons;"
+                        " const at = moons.findIndex((m) => m.id === starMap.focus.id);"
+                        " return moons[(at + 1) % moons.length].id; })()")
+    page.wait_for_function(f"capturesHeld.byId.has({json.dumps(nxt)})", timeout=10000)
+    _call(server, "PUT", f"/horizon/{nxt}/tags", {"tags": ["fresh-news"]})
+    page.evaluate("renderStarMap()")
+    page.wait_for_function(f"!capturesHeld.byId.has({json.dumps(nxt)})", timeout=10000)
+    page.keyboard.press("ArrowRight")
+    page.wait_for_function("[...document.querySelectorAll('#starmap-card .tag-chip .node-tag')]"
+                           ".some((el) => el.textContent === '#fresh-news')", timeout=10000)
+    stale = page.evaluate("""() => { holdCapture('nd-x', {node: {state: 'ready_undistilled'}});
+      return heldCapture({id: 'nd-x', state: 'ready'}) === null
+        && !!heldCapture({id: 'nd-x', state: ''}); }""")
+    assert stale, "a capture the map reports as summarised was shown from memory"
