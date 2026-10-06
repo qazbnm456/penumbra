@@ -3453,8 +3453,8 @@ function marksGroups() {
           svg.appendChild(svgEl("circle", { r: 14 }, "map-hole-rim"));
           svg.appendChild(svgEl("circle", { r: 13 }, "map-hole-core"));
         }), t("marks.map.hole", "The Horizon, where every capture lands first. The dots circling it are in no orbit yet; click it to list them.")],
-        [line("map-bridge is-rest"), t("marks.map.rest", "Two orbits name the same entity. At rest each planet shows only its strongest link.")],
-        [line("map-bridge is-lit", "--w: 2px"), t("marks.map.lit", "Pointing at a planet lights all its links, thicker for more shared entities. Click a link to see what each side says.")],
+        [line("map-bridge is-rest"), t("marks.map.rest", "Two orbits mention the same name. At rest each planet shows only its strongest link.")],
+        [line("map-bridge is-lit", "--w: 2px"), t("marks.map.lit", "Pointing at a planet lights all its links, thicker for more names they share. Click a link to see what each side says.")],
         [canvas(18, 18, (svg) => svg.appendChild(svgEl("circle", { r: 2.4 }, "map-planet-linkmark"))),
           t("marks.map.linkmark", "From 15 planets up no link is drawn at rest, and this mark says a planet has some.")],
         [chip("span", "lens", "#nasa", (el) => el.appendChild(elt("span", "lens-count", "5"))),
@@ -3466,7 +3466,7 @@ function marksGroups() {
       title: t("marks.g.state", "Where a capture stands"),
       note: t("marks.g.stateNote", "The moons on the map and the dots in the list use the same colours."),
       rows: [
-        [dot("map-dot is-done"), t("marks.state.done", "Summarised: it has a summary, tags and entities.")],
+        [dot("map-dot is-done"), t("marks.state.done", "Summarised: it has a summary, tags and mentions.")],
         [dot("map-dot"), t("marks.state.pending", "Not summarised yet. Its text is kept and readable; a summary pass adds the rest.")],
         [dot("map-dot is-busy"), t("marks.state.busy", "Being read or summarised now.")],
         [dot("map-dot is-failed"), t("marks.state.failed", "It could not be read or summarised. Open it to see why and try again.")],
@@ -3494,8 +3494,8 @@ function marksGroups() {
           g.appendChild(svgText(-34, 0, t("marks.graph.entityName", "Kuiper belt"), "graph-entity-label"));
           g.appendChild(svgText(36, 0, "3", "graph-entity-count"));
           svg.appendChild(g);
-        }), t("marks.graph.entity", "An entity: a person, place or idea that two or more captures name, with how many. Click it to light them.")],
-        [line("graph-link"), t("marks.graph.link", "This capture names that entity.")],
+        }), t("marks.graph.entity", "A mention: a person, place or idea that two or more captures name, with how many. Click it to light them.")],
+        [line("graph-link"), t("marks.graph.link", "This capture mentions that name.")],
         [line("graph-similar"), t("marks.graph.similar", "Close in content, from local relations, which are downloaded in Settings.")],
       ],
     },
@@ -9524,7 +9524,7 @@ function updateStreamFoot() {
         : "";
       const zh = uiLang().startsWith("zh");
       horizonEl("pending-count").textContent = `${base}${zh ? "\u3002" : ". "}${[extra,
-        t("horizon.alignNote", "A pass may end by matching new entities, one more run.")]
+        t("horizon.alignNote", "A pass may end by matching newly mentioned names to known ones, one more run.")]
         .filter(Boolean).join(zh ? "" : " ")}`;
     });
   }
@@ -9694,7 +9694,7 @@ function fillDistilError(errline) {
     // Only alignment failed: the summaries are saved, and the line says what did not happen. It
     // takes the same dismiss below, which clears both on the server.
     errline.appendChild(elt("span", "distil-error-count",
-      t("horizon.alignFailed", "New entities were not matched")));
+      t("horizon.alignFailed", "New mentions were not matched")));
     errline.appendChild(elt("span", "distil-error-why", readableError(alignError)));
   }
   if (!failed && !distil.error && !alignError && organizeError) {
@@ -9911,7 +9911,7 @@ async function pollIntake() {
       horizonEl("intake-what").textContent = horizonState.organize && horizonState.organize.running
         ? t("map.organizing", "Putting new captures into orbits")
         : horizonState.align && horizonState.align.running
-          ? t("map.aligning", "Matching new entities to known ones")
+          ? t("map.aligning", "Matching new mentions to known names")
           : t("horizon.summarising", "Summarising");
       // Failures are counted IN THE STRIP too, not only after the pass. A pass where every call is
       // failing should look different at node three from one that is working, rather than reading
@@ -10311,7 +10311,7 @@ async function fillNodeBody(node, row, inner) {
   } else {
     const entities = (detail.node && detail.node.entities) || node.entities || [];
     if (entities.length) {
-      inner.appendChild(elt("h4", "node-section", t("map.sectionNames", "What it talks about")));
+      inner.appendChild(elt("h4", "node-section", t("map.sectionNames", "Mentions")));
       const names = elt("div", "node-entities");
       entities.forEach((name) => names.appendChild(elt("span", "node-entity", name)));
       inner.appendChild(names);
@@ -11493,7 +11493,7 @@ function askHChipLabel(chip) {
     return t("askH.chipEverywhere", `${askHScopeLabel(scope)} (everywhere)`, { name: askHScopeLabel(scope) });
   }
   // The orbit a chip is narrowed to is the one on screen, so the chip does not repeat it.
-  if (scope.kind === "entity") return t("askH.chipEntity", `Entity: ${scope.value}`, { name: scope.value });
+  if (scope.kind === "entity") return t("askH.chipEntity", `Mention: ${scope.value}`, { name: scope.value });
   return askHScopeLabel({ ...scope, orbit: null });
 }
 
@@ -11620,7 +11620,7 @@ function askPickKinds() {
   const orbits = (starMap.orbits || []).map((o) => ({ name: o.title, count: o.sources || 0, orbit: o }));
   return {
     tag: { label: t("askH.tags", "Tags"), rows: askPick.data.tags || [] },
-    entity: { label: t("askH.entities", "Entities"), rows: askPick.data.entities || [] },
+    entity: { label: t("askH.entities", "Mentions"), rows: askPick.data.entities || [] },
     orbit: { label: t("askH.orbits", "Orbits"), rows: orbits },
   };
 }
@@ -11704,7 +11704,7 @@ function renderAskPicker() {
   if (!askPick.items.length) {
     box.appendChild(elt("p", "ask-opt-empty", askPick.drill || askSlashQuery()
       ? t("askH.pickNone", "Nothing by that name.")
-      : t("askH.pickNothing", "No tags, entities or orbits yet. Summaries find tags and entities.")));
+      : t("askH.pickNothing", "No tags, mentions or orbits yet. Summaries find tags and mentions.")));
   }
 }
 
@@ -16169,6 +16169,8 @@ function renderCaptureCard(card, focus, before = 0) {
     heading.replaceWith(captureTitleRow({ ...node, id: focus.id }, focus.title || nodeHeadline(node)));
     if (node.summary) detail.appendChild(elt("p", "card-summary", node.summary));
     if ((node.entities || []).length) {
+      // Headed like the tags below it, so the two rows of names are never taken for one another.
+      detail.appendChild(elt("h4", "node-section", t("map.sectionNames", "Mentions")));
       const chips = elt("div", "card-chips");
       node.entities.slice(0, 10).forEach((name) => chips.appendChild(elt("span", "card-chip", name)));
       detail.appendChild(chips);
@@ -16328,7 +16330,7 @@ function paintStarMapCard(mapCard) {
   // (a list) read as one undifferentiated column of things to click, and a reader could not tell
   // what either was.
   if (orbit.entities.length) {
-    mapCard.appendChild(elt("h3", "card-section", t("map.sectionNames", "What it talks about")));
+    mapCard.appendChild(elt("h3", "card-section", t("map.sectionNames", "Mentions")));
     const chips = elt("div", "card-chips");
     orbit.entities.forEach((name) => chips.appendChild(elt("span", "card-chip", name)));
     mapCard.appendChild(chips);
@@ -16338,12 +16340,12 @@ function paintStarMapCard(mapCard) {
     //: no summary pass would ever deliver.
     let why;
     if (!orbit.captures) {
-      why = t("map.noCaptures", "No entities: its sources were added in the orbit, and entities come from summaries of captures filed from the Horizon.");
+      why = t("map.noCaptures", "No mentions: its sources were added in the orbit, and mentions come from summaries of captures filed from the Horizon.");
     } else if (orbit.undistilled) {
-      why = t("map.noEntitiesWaiting", `No entities yet: ${orbit.undistilled} filed here still wait for a summary.`,
+      why = t("map.noEntitiesWaiting", `No mentions yet: ${orbit.undistilled} filed here still wait for a summary.`,
         { n: orbit.undistilled });
     } else {
-      why = t("map.noEntitiesNamed", "No entities: the summaries here did not name any.");
+      why = t("map.noEntitiesNamed", "No mentions: the summaries here did not name anything.");
     }
     mapCard.appendChild(elt("p", "card-note", why));
   }
@@ -16683,7 +16685,7 @@ function distilOrbitControl(slug, count) {
         : distilWatch.aligning
           // The stage that is actually running (invariant 60): the summaries are done and saved,
           // and the pass is now deciding which new names are the same entity.
-          ? t("map.aligning", "Matching new entities to known ones")
+          ? t("map.aligning", "Matching new mentions to known names")
           : ours
             ? t("map.distilling", `Summarising ${status.done || 0} of ${status.total || 0}`,
               { done: status.done || 0, total: status.total || 0 })
@@ -16717,10 +16719,10 @@ function distilOrbitControl(slug, count) {
       if (!est || !cost.isConnected) return;
       cost.textContent = n === est.count
         ? t("map.distilCostRange",
-          `Runs the model ${est.calls_min} to at most ${est.calls_max} times, matching new entities included.`,
+          `Runs the model ${est.calls_min} to at most ${est.calls_max} times, matching new mentions included.`,
           { min: est.calls_min, max: est.calls_max })
         : t("map.distilCostLong",
-          `At least ${n} model calls; long documents and matching new entities take more.`, { n });
+          `At least ${n} model calls; long documents and matching new mentions take more.`, { n });
     });
     go.addEventListener("click", async () => {
       go.disabled = true;
@@ -17360,6 +17362,10 @@ function drawGraph() {
   const data = graphState.data;
   const layout = graphState.layout;
   if (!data || !layout) return;
+  // The legend names only the marks this drawing has: no tag region when no tag groups two
+  // captures here, no dashed line when nothing is alike.
+  horizonEl("graph-legend-similar").hidden = !(data.similar || []).length;
+  horizonEl("graph-legend-tag").hidden = !layout.groups.some((group) => group.ids.length > 1);
   svg.setAttribute("viewBox", `${layout.box.x} ${layout.box.y} ${layout.box.w} ${layout.box.h}`);
   // Everything drawn sits in one group the camera moves; `refs` keep each shape so a drag can move
   // them without rebuilding the drawing.
@@ -17505,7 +17511,7 @@ function drawGraph() {
     const tip = () => showGraphTip(body, c.title, waiting
       ? t("graph.notSummarised", "Not summarised yet")
       : c.entities.length
-        ? t("graph.names", `Names ${c.entities.slice(0, 6).join(", ")}`,
+        ? t("graph.names", `Mentions ${c.entities.slice(0, 6).join(", ")}`,
           { names: c.entities.slice(0, 6).join(t("list.sep", ", ")) })
         : "");
     group.addEventListener("pointerenter", tip);
@@ -17592,7 +17598,7 @@ function drawGraph() {
 
   if (!data.entities.length && !layout.captures.length) {
     showGraphEmpty(data.undistilled.length
-      ? t("graph.noEntities", "Nothing here names an entity yet. Summarising is what finds them.")
+      ? t("graph.noEntities", "Nothing here mentions a name yet. Summarising is what finds them.")
       : t("graph.nothingFiled", "Nothing in this orbit came through the Horizon, so there is nothing to draw yet. The columns have its sources."));
   } else {
     showGraphEmpty("");
@@ -17908,7 +17914,7 @@ function renderGraphPanel(litCaptures) {
     items = layout.captures.filter((c) => litCaptures.has(c.node_id));
     near = [...new Set(items.flatMap((c) => c.entities))];
   } else if (graphState.selected) {
-    kicker = t("graph.entity", "Entity");
+    kicker = t("graph.entity", "Mention");
     heading = graphState.selected;
     items = layout.captures.filter((c) => c.entities.includes(graphState.selected));
     near = data.edges.filter((e) => e.a === heading || e.b === heading)
@@ -17954,9 +17960,6 @@ function renderGraphPanel(litCaptures) {
   }
   panel.appendChild(elt("p", "card-meta", t("graph.inCaptures", `${items.length} captures`, { n: items.length })));
   if (!graphState.lenses.size && !graphState.selected) {
-    // How to read it, once, where the orbit is described: the drawing has no legend of its own.
-    panel.appendChild(elt("p", "card-note", t("graph.legend",
-      "A dot is a capture; press it to open it here. A pill is something two or more captures name, joined to each of them, with how many.")));
     panel.appendChild(elt("p", "card-note", t("graph.regionsNote",
       "A tinted region is a tag two or more captures here share, each capture in the region of its most shared tag; a capture whose tags are its own is in none. Press a region's name to see just those captures and ask about them.")));
     if ((data.similar || []).length) {
@@ -17966,12 +17969,12 @@ function renderGraphPanel(litCaptures) {
     const left = data.entities.length - layout.hubs.size + ((data.omitted && data.omitted.entities) || 0);
     if (left > 0) {
       panel.appendChild(elt("p", "card-note", t("graph.omitted",
-        `${left} entities named by only one capture are not drawn; pointing at a capture lists them.`, { n: left })));
+        `${left} names mentioned by only one capture are not drawn; pointing at a capture lists them.`, { n: left })));
     }
   }
   if (near.length) {
     panel.appendChild(elt("p", "card-kicker", graphState.lenses.size || !graphState.selected
-      ? t("graph.entitiesHere", "Entities here")
+      ? t("graph.entitiesHere", "Mentions here")
       : t("graph.together", "Often named together")));
     const chips = elt("div", "card-chips");
     near.slice(0, 10).forEach((name) => {
@@ -18056,7 +18059,7 @@ function renderGraphCapturePanel(panel, chosen) {
   });
 
   if (chosen.entities.length) {
-    panel.appendChild(elt("p", "card-kicker", t("graph.itNames", "What it names")));
+    panel.appendChild(elt("p", "card-kicker", t("graph.itNames", "What it mentions")));
     const chips = elt("div", "card-chips");
     chosen.entities.forEach((name) => {
       const chip = elt("button", "card-chip", name);

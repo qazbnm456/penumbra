@@ -7540,6 +7540,28 @@ body.dock-open .pending-note {
   border-top: 1px solid var(--accent);
 }
 
+/* The knowledge graph's marks in small: a mention's filled pill, a tag's tinted region, and the
+   dashed line between similar captures (`#graph-legend`). */
+.legend-pill {
+  width: 18px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.legend-region {
+  width: 14px;
+  height: 11px;
+  border-radius: 4px;
+  background: oklch(72% 0.1 55 / 0.3);
+}
+
+.legend-similar {
+  width: 18px;
+  border-top: 1px dashed var(--text-faint);
+}
+
 /* A planet being dragged to another place: it follows the pointer along the nearest ring, and the
    ring it would land on is lit. */
 .map-planet.is-moving {
@@ -7599,14 +7621,18 @@ body.dock-open .pending-note {
   gap: var(--space-2);
 }
 
+/* A mention, the same everywhere: a filled pill with no "#", the size of a tag, against a tag's
+   outlined "#" pill. The graph draws mentions as the same filled pill. They were larger than the
+   tags beside them and unlabelled, and read as a row of buttons nobody could place. */
 .card-chip {
   font: inherit;
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
+  line-height: 1.5;
   color: var(--text);
   background: var(--surface-2);
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 999px;
-  padding: var(--space-1) var(--space-4);
+  padding: 0 var(--space-3);
 }
 
 button.card-chip {
@@ -9828,9 +9854,10 @@ body:not([data-view="horizon"]) .capture-dock {
 }
 
 .node-entity {
-  font-size: var(--text-sm);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  padding: 0 var(--space-3);
+  border-radius: 999px;
   background: var(--surface-2);
   color: var(--text);
 }

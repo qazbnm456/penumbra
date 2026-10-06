@@ -929,7 +929,7 @@ def test_a_scope_chip_names_what_it_reads():
     result = _run("scopeLabels")
     assert result["all"] == "Everything"
     assert result["tagHistory"] == "#sleep \u00b7 Sleep"
-    assert result["entityChip"] == "Entity: REM"
+    assert result["entityChip"] == "Mention: REM"
     assert result["tagChip"] == "#sleep"
     assert result["orbitChip"] == "Orbit: Sleep"
 
