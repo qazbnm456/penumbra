@@ -7542,6 +7542,10 @@ body.dock-open .pending-note {
 
 /* The knowledge graph's marks in small: a mention's filled pill, a tag's tinted region, and the
    dashed line between similar captures (`#graph-legend`). */
+.graph-legend[hidden] {
+  display: none;
+}
+
 .legend-pill {
   width: 18px;
   height: 9px;
@@ -7630,13 +7634,15 @@ body.dock-open .pending-note {
   line-height: 1.5;
   color: var(--text);
   background: var(--surface-2);
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   border-radius: 999px;
   padding: 0 var(--space-3);
 }
 
+/* One that can be pressed keeps a target the pointer can find. */
 button.card-chip {
   cursor: pointer;
+  padding-block: 3px;
 }
 
 button.card-chip:hover {
@@ -9859,6 +9865,7 @@ body:not([data-view="horizon"]) .capture-dock {
   padding: 0 var(--space-3);
   border-radius: 999px;
   background: var(--surface-2);
+  border: 1px solid var(--border);
   color: var(--text);
 }
 

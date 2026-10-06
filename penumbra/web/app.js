@@ -17006,6 +17006,8 @@ function showGraphEmpty(text) {
   const emptyNote = horizonEl("graph-empty");
   emptyNote.textContent = text;
   emptyNote.hidden = !text;
+  // A graph with nothing drawn has no marks to explain.
+  if (text) horizonEl("graph-legend").hidden = true;
 }
 
 //: A small force layout, run to rest before anything is drawn, so the graph appears still rather
@@ -17361,9 +17363,12 @@ function drawGraph() {
   hideGraphTip();
   const data = graphState.data;
   const layout = graphState.layout;
+  horizonEl("graph-legend").hidden = !data || !layout;
   if (!data || !layout) return;
-  // The legend names only the marks this drawing has: no tag region when no tag groups two
-  // captures here, no dashed line when nothing is alike.
+  // The legend names only the marks this drawing has: no pill when no name is mentioned by two
+  // captures, no tag region when no tag groups two captures here, no dashed line when nothing is
+  // alike.
+  horizonEl("graph-legend-mention").hidden = !layout.hubs.size;
   horizonEl("graph-legend-similar").hidden = !(data.similar || []).length;
   horizonEl("graph-legend-tag").hidden = !layout.groups.some((group) => group.ids.length > 1);
   svg.setAttribute("viewBox", `${layout.box.x} ${layout.box.y} ${layout.box.w} ${layout.box.h}`);
