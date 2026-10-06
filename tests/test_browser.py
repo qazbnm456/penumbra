@@ -301,3 +301,22 @@ def test_a_moon_read_ahead_is_read_again_once_the_map_has_news(page, server):
       return heldCapture({id: 'nd-x', state: 'ready'}) === null
         && !!heldCapture({id: 'nd-x', state: ''}); }""")
     assert stale, "a capture the map reports as summarised was shown from memory"
+
+
+def test_an_open_orbit_menu_in_the_waiting_card_survives_the_maps_refreshes(page, server):
+    """A summary pass refreshes the map every poll, and each refresh repainted the details card,
+    taking an open orbit menu with it. The card waits while one is open and catches up once it
+    closes."""
+    _call(server, "POST", "/horizon", {"texts": ["A loose note that is in no orbit yet."]})
+    page.reload()
+    page.wait_for_selector("#starmap-card .todo-list .orbit-pick-trigger", timeout=30000)
+    trigger = page.locator("#starmap-card .todo-list .orbit-pick-trigger").first
+    trigger.click()
+    handle = trigger.element_handle()
+    for _ in range(3):
+        page.evaluate("renderStarMap()")
+        page.wait_for_timeout(400)
+    assert page.evaluate("(el) => el.isConnected && el.getAttribute('aria-expanded') === 'true'", handle), \
+        "a map refresh closed the open orbit menu"
+    page.locator("#starmap-card .card-title").first.click()  # a press anywhere else closes it
+    page.wait_for_function("(el) => !el.isConnected", arg=handle, timeout=5000)

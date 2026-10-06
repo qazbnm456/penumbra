@@ -15641,6 +15641,8 @@ function orbitPicker(nodeId, memberships = []) {
       horizonState.patchHeld = false;
       void patchChangedNodes();
     }
+    // So did the map's details card (`renderStarMapCard`).
+    if (starMap.cardHeld) renderStarMapCard();
   };
   trigger.addEventListener("click", () => (menu.hidden ? open() : close()));
   wrap.addEventListener("keydown", (event) => {
@@ -16198,6 +16200,14 @@ function renderCaptureCard(card, focus, before = 0) {
 function renderStarMapCard() {
   const mapCard = horizonEl("starmap-card");
   if (editingTitleIn(mapCard) || studioHolds(mapCard)) return;
+  // An orbit menu open in the card (the waiting card's rows, a capture's card) would go with the
+  // card: during a summary pass the map refreshes every poll, which closed it again and again
+  // under the reader. The card waits, and repaints once the menu closes (`orbitPicker`'s close).
+  if (orbitPickOpen.wrap && mapCard.contains(orbitPickOpen.wrap)) {
+    starMap.cardHeld = true;
+    return;
+  }
+  starMap.cardHeld = false;
   // A button in the card that rebuilt the card took keyboard focus with it to <body>, where the
   // map's keys no longer reach. Focus goes back into the new card instead.
   const hadFocus = mapCard.contains(document.activeElement);
