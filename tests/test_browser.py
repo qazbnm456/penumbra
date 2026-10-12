@@ -696,3 +696,41 @@ def test_an_orbit_is_deleted_whole_from_its_planets_card(page, server):
     ids = [n["id"] for n in _call(server, "GET", "/horizon?limit=50")["nodes"]]
     assert node["id"] not in ids
     assert len(ids) >= 3, "captures filed into other orbits went too"
+
+
+def test_a_cards_head_and_the_rails_filter_stay_at_the_top_while_the_rest_scrolls(browser, server):
+    """The details column scrolls under its card's head (close, kicker, title, tabs), and the orbit
+    rail under its filter, so neither scrolls away what names it or what finds in it. The card's
+    list of captures has no scroller of its own inside the column's."""
+    view = browser.new_page(viewport={"width": 1280, "height": 420}, locale="en-US")
+    view.goto(f"{server}/#token={TOKEN}")
+    view.wait_for_selector("#starmap-svg .map-planet", timeout=30000)
+    view.wait_for_timeout(800)
+    view.evaluate("openMapFocus({ kind: 'planet', orbit: 'o1' })")
+    view.wait_for_selector("#starmap-card > .card-head .planet-card-tabs", timeout=5000)
+    pinned = """([sel, scroller]) => { const s = document.querySelector(scroller);
+      s.scrollTop = s.scrollHeight;
+      return [s.scrollTop > 0, Math.round(document.querySelector(sel).getBoundingClientRect().top
+        - s.getBoundingClientRect().top)]; }"""
+    scrolled, offset = view.evaluate(pinned, ["#starmap-card > .card-head", "#map-panel"])
+    assert scrolled, "the card did not overflow its column, so nothing was tested"
+    assert abs(offset) <= 1, offset
+    assert view.evaluate("[...document.querySelectorAll('#starmap-card .card-list')]"
+                         ".every((list) => getComputedStyle(list).overflowY === 'visible')")
+    # The rail: its filter shows from six orbits; enough rows are stood in here to make it scroll.
+    view.evaluate("""() => { document.getElementById('facet-tools').hidden = false;
+      const list = document.getElementById('facet-list');
+      for (let i = 0; i < 20; i += 1) list.appendChild(Object.assign(document.createElement('div'),
+        { className: 'facet', textContent: 'Row ' + i })); }""")
+    scrolled, offset = view.evaluate(pinned, ["#facet-tools", "#facets"])
+    assert scrolled
+    assert abs(offset) <= 1, offset
+    # The knowledge graph's panel, whose column has a top padding of its own.
+    view.evaluate("openOrbit('o1')")
+    view.wait_for_timeout(1200)
+    view.evaluate("setViewMode('orbit', 'graph')")
+    view.wait_for_selector("#graph-panel > .card-head", timeout=10000)
+    scrolled, offset = view.evaluate(pinned, ["#graph-panel > .card-head", "#graph-panel"])
+    assert scrolled, "the graph's panel did not overflow, so nothing was tested"
+    assert abs(offset) <= 1, offset
+    view.close()

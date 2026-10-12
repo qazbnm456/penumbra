@@ -5444,11 +5444,23 @@ body.is-resizing .studio-grip {
 /* The rail's filter and order, once there are enough orbits to look for one: one row, a field with
    a magnifier and the order behind an icon, as a mail client's list header has them. */
 .facet-tools {
-  position: relative;
+  /* Pinned at the top of the rail, so the filter is in reach however far the orbits scroll. It
+     reaches out over the rail's padding, so the orbits pass under it rather than beside it. Its
+     `top` is the rail's padding taken back: WebKit sticks at the padding edge, which left a band
+     above it where the orbits showed. */
+  position: sticky;
+  top: calc(-1 * var(--ib-gap-lg));
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 0 var(--space-2) var(--space-6);
+  margin: calc(-1 * var(--ib-gap-lg)) calc(-1 * var(--space-4)) 0;
+  padding: var(--ib-gap-lg) calc(var(--space-4) + var(--space-2)) var(--space-6);
+  background: var(--surface-2);
+}
+
+.facets.is-scrolled .facet-tools {
+  box-shadow: 0 1px 0 var(--border);
 }
 
 .facet-tools[hidden] {
@@ -9514,12 +9526,12 @@ body.is-resizing .orbit-graph {
   background: var(--surface-2);
 }
 
+/* No scroller of its own: the card's column scrolls under its pinned head (`.card-head`), and a
+   list that also scrolled inside it hid rows under its own heading. */
 .card-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 260px;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -11925,6 +11937,35 @@ button.node-more:hover {
 .facet-rename:focus-visible,
 .card-rename:focus-visible {
   color: var(--accent);
+}
+
+/* A card's head (`pinCardHead`): its close, kicker, title and tabs stay at the top of the column
+   while the rest scrolls under them. It reaches out over the card's padding, so nothing shows
+   above or beside it, and a line appears under it once something has scrolled beneath. */
+.card-head {
+  --head-pad-top: var(--space-8);
+  --head-pad-x: var(--space-8);
+  position: sticky;
+  /* The column's own top padding taken back, where it has one (the graph's): WebKit sticks at the
+     padding edge. The bottom padding is room the content scrolls under, given back at rest. */
+  top: calc(-1 * var(--head-stick, 0px));
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: calc(-1 * var(--head-pad-top)) calc(-1 * var(--head-pad-x)) calc(-1 * var(--space-4));
+  padding: var(--head-pad-top) var(--head-pad-x) var(--space-4);
+  background: var(--surface-1);
+}
+
+.graph-panel > .card-head {
+  --head-pad-top: var(--space-9);
+  --head-stick: var(--space-9);
+}
+
+/* The planet's tabs already draw a line under the head. */
+.is-scrolled .card-head:not(:has(.planet-card-tabs)) {
+  box-shadow: 0 1px 0 var(--border);
 }
 
 .card-title-row {

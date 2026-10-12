@@ -7117,6 +7117,7 @@ function initPanels() {
     initial: 340, key: "penumbra-graph-panel",
   });
   document.getElementById("graph-panel-open").addEventListener("click", () => graphGrip.setCollapsed(false));
+  [mapPanel, document.getElementById("graph-panel"), facets].forEach(watchPanelScroll);
   makePanelGrip({
     panel: sources, handle: document.getElementById("sources-grip"), side: "right",
     cssVar: "--sources-w", railVar: "--sources-rail", min: 220, max: 480, collapseAt: 150, railPx: 0, initial: 280,
@@ -17078,10 +17079,36 @@ function renderStarMapCard() {
   // map's keys no longer reach. Focus goes back into the new card instead.
   const hadFocus = mapCard.contains(document.activeElement);
   paintStarMapCard(mapCard);
+  pinCardHead(mapCard);
   if (hadFocus && !mapCard.hidden) {
     const into = mapCard.querySelector(".card-close");
     if (into) into.focus();
   }
+}
+
+//: What heads a card: its close, its kicker, its title and the planet's tabs, in the order every
+//: card begins with them.
+const CARD_HEAD = ["card-close", "card-kicker", "card-title-row", "card-title", "lens-heading", "planet-card-tabs"];
+
+//: A card's head stays at the top of its column while the rest scrolls under it (`.card-head`), so
+//: a long card never scrolls away the name of what it shows, its close or its tabs. The leading run
+//: of head pieces each card begins with moves into one wrapper, which is what can stick; every card
+//: builder stays as it is.
+function pinCardHead(card) {
+  const first = card.firstElementChild;
+  if (!first || first.classList.contains("card-head")) return;
+  const head = elt("div", "card-head");
+  while (card.firstElementChild && CARD_HEAD.some((name) => card.firstElementChild.classList.contains(name))) {
+    head.appendChild(card.firstElementChild);
+  }
+  if (head.childElementCount) card.prepend(head);
+}
+
+//: The line under a stuck head shows only once something has scrolled under it.
+function watchPanelScroll(scroller) {
+  const mark = () => scroller.classList.toggle("is-scrolled", scroller.scrollTop > 0);
+  scroller.addEventListener("scroll", mark, { passive: true });
+  mark();
 }
 
 //: With nothing chosen and nothing left to file, the details column has nothing to say ("0 not in
@@ -18775,6 +18802,11 @@ function renderGraphPending() {
 }
 
 function renderGraphPanel(litCaptures) {
+  paintGraphPanel(litCaptures);
+  pinCardHead(horizonEl("graph-panel"));
+}
+
+function paintGraphPanel(litCaptures) {
   const panel = horizonEl("graph-panel");
   const keepFocus = focusedKey(panel);
   panel.textContent = "";
