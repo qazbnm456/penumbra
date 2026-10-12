@@ -300,7 +300,13 @@ def test_a_moon_read_ahead_is_read_again_once_the_map_has_news(page, server):
     page.wait_for_function(f"capturesHeld.byId.has({json.dumps(nxt)})", timeout=10000)
     _call(server, "PUT", f"/horizon/{nxt}/tags", {"tags": ["fresh-news"]})
     page.evaluate("renderStarMap()")
-    page.wait_for_function(f"!capturesHeld.byId.has({json.dumps(nxt)})", timeout=10000)
+    # The stale copy is gone: either nothing is held for it, or what is held was read after the
+    # change. (The open card reads its neighbours ahead again as soon as it repaints, so waiting
+    # for the entry to be absent raced that read on a slow runner and timed out.)
+    held = json.dumps(nxt)
+    page.wait_for_function(f"!capturesHeld.byId.has({held})"
+                           f" || (capturesHeld.byId.get({held}).node.tags || []).includes('fresh-news')",
+                           timeout=10000)
     page.keyboard.press("ArrowRight")
     page.wait_for_function("[...document.querySelectorAll('#starmap-card .tag-chip .node-tag')]"
                            ".some((el) => el.textContent === '#fresh-news')", timeout=10000)
