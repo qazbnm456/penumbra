@@ -15,9 +15,9 @@
 // it, untouched, so nothing a reader can press or a screen reader can read depends on this file.
 // No library and nothing fetched: one triangle that covers the canvas and four small shaders.
 //
-// The disk lies in the plane the map's rings lie in. The rings are ellipses whose height is about
-// two thirds of their width (`ringGeometry` in app.js), which is a circle seen from about 48 degrees
-// off its axis, so the eye sits at that angle here too and the disk lines up with the rings.
+// A perspective camera sees the disk nearly edge on, about 9 degrees above it, as the reference
+// renders do. From the rings' own angle (a circle about 48 degrees off its axis) the disk's far side,
+// bent round the hole, closed into a thin ring hugging the shadow that read as a line drawn on it.
 (function () {
   "use strict";
 
@@ -93,8 +93,8 @@ uniform vec2 uView;        // (sin, cos) of the eye's height above the disk's pl
 out vec4 outColor;
 
 const float DISK_IN = 3.0;   // the innermost stable orbit
-const float DISK_OUT = 9.0;
-const float FAR = 60.0;      // where every ray starts, and past which it has escaped
+const float DISK_OUT = 10.0;
+const float CAM = 26.0;      // the eye's distance from the hole, in Schwarzschild radii
 
 // Hashes and value noise, small and portable (no sin(), which drifts between GPUs).
 float hash1(vec3 p) {
@@ -154,8 +154,8 @@ vec3 sky(vec3 dir) {
   float h = dot(dir, plane);
   float band = exp(-h * h * 14.0);
   float cloud = fbm(dir * 3.2 + 7.0);
-  float dust = smoothstep(0.5, 0.75, fbm(dir * 6.5 + 31.0));
-  col += mix(vec3(0.42, 0.45, 0.62), vec3(0.75, 0.6, 0.45), cloud) * band * (0.15 + cloud) * (1.0 - 0.7 * dust) * 0.05;
+  // Soft cloud only: dust lanes with crisp edges, bent by the hole, drew arcs across the open sky.
+  col += mix(vec3(0.42, 0.45, 0.62), vec3(0.75, 0.6, 0.45), cloud) * band * (0.15 + cloud) * 0.02;
   col += starLayer(dir, 70.0) + 0.6 * starLayer(dir, 150.0);
   return col;
 }
@@ -195,16 +195,19 @@ void main() {
   vec3 eye = vec3(0.0, uView.x, uView.y);
   vec3 right = vec3(1.0, 0.0, 0.0);
   vec3 up = vec3(0.0, uView.y, -uView.x);
-  vec3 pos = eye * FAR + right * b.x + up * b.y;
-  vec3 vel = -eye;
+  // A camera CAM radii out, looking at the hole: b is a point on the plane through the hole, in
+  // Schwarzschild radii, so the hole is drawn at the size the map asks for whatever the distance.
+  vec3 pos = eye * CAM;
+  vec3 vel = normalize(-eye * CAM + right * b.x + up * b.y);
   vec3 col = vec3(0.0);
   float alpha = 0.0;
-  // Far from the hole light barely bends and no disk lies in the way: the sky, straight.
-  // Rays run parallel, so the map's rings stay true ellipses; the sky behind is looked up through a
-  // little perspective instead, or every straight ray would see the same patch of it.
-  vec3 spread = (right * b.x + up * b.y) * 0.012;
-  if (dot(b, b) > 196.0) {
-    outColor = vec4(sky(normalize(vel + spread)), 1.0);
+  // Far enough out no disk lies in the way and the light bends only a little: by about 2/b radians
+  // towards the hole (weak lensing), applied here rather than traced. Taken straight instead, the
+  // sky out here did not meet the traced sky inside, and the seam drew a faint circle on the map.
+  float reach = length(b);
+  if (reach > 24.0) {
+    vec3 inward = normalize(right * b.x + up * b.y);
+    outColor = vec4(sky(normalize(vel - inward * (2.0 / reach))), 1.0);
     return;
   }
   vec3 hv = cross(pos, vel);
@@ -228,14 +231,14 @@ void main() {
       vec4 d = disk(hit, vel) * order;
       col += (1.0 - alpha) * d.rgb;
       alpha += (1.0 - alpha) * d.a;
-      order *= order > 0.99 ? 0.35 : 0.25;
+      order *= order > 0.99 ? 0.55 : 0.35;
     }
     pos = next;
     if (rn < 1.0) { fell = true; break; }
     if (alpha > 0.995) break;
-    if (rn > FAR * 1.3 && dot(pos, vel) > 0.0) break;
+    if (rn > CAM * 1.4 && dot(pos, vel) > 0.0) break;
   }
-  if (!fell) col += (1.0 - alpha) * sky(normalize(normalize(vel) + spread));
+  if (!fell) col += (1.0 - alpha) * sky(normalize(vel));
   outColor = vec4(col, 1.0);
 }`;
 
@@ -415,7 +418,9 @@ void main() {
       gl.uniform2f(scene.uniforms.uCenter, v.cx * dpr, (cssH - v.cy) * dpr);
       gl.uniform1f(scene.uniforms.uPxPerRs, Math.max(v.pxPerRs * dpr, 0.5));
       gl.uniform1f(scene.uniforms.uTime, seconds);
-      const lift = (42.3 * Math.PI) / 180; // a circle seen 47.7 degrees off its axis: height 0.673 of width
+      // The disk is seen nearly edge on, as the reference renders do: from higher up its far side,
+      // bent round the hole, closed into a ring hugging the shadow that read as a drawn line.
+      const lift = (9 * Math.PI) / 180;
       gl.uniform2f(scene.uniforms.uView, Math.sin(lift), Math.cos(lift));
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       // The bleed.

@@ -7349,10 +7349,15 @@ body[data-view="horizon"] .orbit-picker {
   pointer-events: none;
   border-radius: var(--radius-lg);
   background: var(--bg);
-  /* Deep space fades into the page at its edges instead of ending in a black box on the dark
-     theme's warm ground, which read as a second window inside the first. */
-  -webkit-mask-image: radial-gradient(ellipse 72% 70% at 50% 50%, #000 55%, transparent 100%);
-  mask-image: radial-gradient(ellipse 72% 70% at 50% 50%, #000 55%, transparent 100%);
+  /* Deep space fades into the page along its edges only, instead of ending in a black box on the
+     dark theme's warm ground. An elliptical fade starting halfway out let the page's brown show
+     through as a faint circle across the open sky. */
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent),
+    linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent),
+    linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent);
+  mask-composite: intersect;
 }
 
 .starmap-sky[hidden] {
