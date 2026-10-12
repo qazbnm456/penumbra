@@ -11164,28 +11164,162 @@ button.node-more:hover {
   background: var(--surface-2);
 }
 
-.find-range {
+/* The range calendar (`findCalendar`): the two ends on top, the one the next press sets lit in
+   copper; a month of days under them, the days between the ends washed in copper as one band and
+   the ends filled, rounded on their outer side. Today has a thin ring; days to come are faint. */
+.find-cal {
+  display: grid;
+  gap: var(--space-4);
+  max-width: 19rem;
+  margin-top: var(--space-4);
+}
+
+.find-cal-ends {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-3);
 }
 
-.find-range-field {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+.find-cal-word {
   font-size: var(--text-sm);
   color: var(--text-dim);
 }
 
-.find-range-field input {
+.find-cal-end {
   font: inherit;
+  font-size: var(--text-sm);
+  min-width: 6.5rem;
+  height: 30px;
+  padding: 0 var(--space-4);
+  text-align: left;
   color: var(--text);
   background: var(--surface-1);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  padding: var(--space-1) var(--space-3);
-  color-scheme: light dark;
+  cursor: pointer;
+}
+
+.find-cal-end.is-empty {
+  color: var(--text-faint);
+}
+
+.find-cal-end[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.find-cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.find-cal-title {
+  font-family: var(--serif);
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.find-cal-nav {
+  width: 28px;
+  height: 28px;
+  font: inherit;
+  font-size: var(--text-xl);
+  line-height: 1;
+  color: var(--text-dim);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.find-cal-nav:hover,
+.find-cal-nav:focus-visible {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.find-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  row-gap: 2px;
+}
+
+/* The empty cells before the first of the month. */
+.find-cal-pad {
+  min-height: 32px;
+}
+
+.find-cal-wd {
+  padding-bottom: var(--space-1);
+  font-size: var(--text-2xs);
+  text-align: center;
+  color: var(--text-faint);
+}
+
+.find-cal-day {
+  height: 32px;
+  font: inherit;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.find-cal-day:hover:not(:disabled, .is-from, .is-to, .in-range) {
+  background: var(--surface-2);
+}
+
+.find-cal-day.is-today {
+  box-shadow: inset 0 0 0 1px var(--accent-dim);
+}
+
+.find-cal-day.in-range {
+  border-radius: 0;
+  background: color-mix(in oklch, var(--accent) 16%, transparent);
+}
+
+.find-cal-day.is-from,
+.find-cal-day.is-to {
+  font-weight: 600;
+  color: oklch(98% 0.01 75);
+  background: var(--accent);
+  box-shadow: none;
+}
+
+/* The ends join the band between them: rounded only on their outer side once both are chosen. */
+.find-cal-day.is-from:not(.is-to):has(~ .is-to, ~ .in-range) {
+  border-radius: 999px 0 0 999px;
+}
+
+.find-cal-day.is-to:not(.is-from):is(.in-range ~ .is-to, .is-from ~ .is-to) {
+  border-radius: 0 999px 999px 0;
+}
+
+.find-cal-day:disabled {
+  color: var(--text-faint);
+  opacity: 0.45;
+  cursor: default;
+}
+
+.find-cal-day:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The date range under the field is told from the other conditions by a calendar mark. */
+.find-chip-date::before {
+  content: "";
+  width: 13px;
+  height: 13px;
+  flex: none;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='2.5' y='3.5' width='11' height='10' rx='2' fill='none' stroke='%23000' stroke-width='1.4'/%3E%3Cpath d='M2.5 6.8h11M5.5 2v3M10.5 2v3' stroke='%23000' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='2.5' y='3.5' width='11' height='10' rx='2' fill='none' stroke='%23000' stroke-width='1.4'/%3E%3Cpath d='M2.5 6.8h11M5.5 2v3M10.5 2v3' stroke='%23000' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
 .find-foot {

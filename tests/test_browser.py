@@ -492,3 +492,33 @@ def test_a_list_row_and_pennys_lines_are_pressed_never_selected(page):
         .webkitUserSelect];
     }""")
     assert styles == ["none", "none"], styles
+
+
+def test_a_date_range_is_picked_on_our_calendar_and_shown_as_its_own_condition(page):
+    """"Between dates" opens a month of days drawn by the product: no condition until a day is
+    picked, two presses set the range (days to come cannot be picked), the arrow keys walk the
+    days, and the condition under the field names the range with a calendar mark. The system's date
+    field this replaces looked chosen while empty and filtered nothing."""
+    page.locator(".view-mode-btn[aria-pressed=false]").click()
+    page.locator("#find-filter").click()
+    page.locator("#find-panel .lens", has_text="Between dates").click()
+    page.wait_for_selector("#find-panel .find-cal-day", timeout=5000)
+    assert page.locator("#find-chips .find-chip-date").count() == 0, "an empty range made a condition"
+    today = page.evaluate("isoDay(new Date())")
+    assert page.evaluate(f"!!document.querySelector('[data-day=\"{today}\"]').disabled") is False
+    later = page.evaluate("[...document.querySelectorAll('#find-panel .find-cal-day')]"
+                          ".filter((d) => d.dataset.day > isoDay(new Date())).every((d) => d.disabled)")
+    assert later
+    first = page.evaluate("document.querySelector('#find-panel .find-cal-day:not([disabled])').dataset.day")
+    page.locator(f'#find-panel [data-day="{first}"]').click()
+    page.locator(f'#find-panel [data-day="{today}"]').click()
+    page.wait_for_selector("#find-chips .find-chip-date", timeout=5000)
+    f = page.evaluate("({ from: horizonState.filters.from, to: horizonState.filters.to })")
+    assert (f["from"], f["to"]) == (min(first, today), max(first, today)), f
+    chip = page.locator("#find-chips .find-chip-date").text_content()
+    assert "…" not in chip and len(chip) > 4, chip
+    assert "since=" in page.evaluate("horizonQuery()") and "until=" in page.evaluate("horizonQuery()")
+    # The arrow keys walk the days.
+    page.locator(f'#find-panel [data-day="{first}"]').focus()
+    page.keyboard.press("ArrowRight")
+    assert page.evaluate("document.activeElement.dataset.day") > first

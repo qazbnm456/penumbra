@@ -10879,7 +10879,10 @@ function findDateRange(f) {
 function findActive() {
   const f = horizonState.filters;
   const chips = [];
-  if (f.date !== "all") chips.push({ key: "date", label: findDateLabel(f) });
+  // A range with neither end chosen yet filters nothing, so it is not a condition yet either.
+  if (f.date !== "all" && (f.date !== "custom" || f.from || f.to)) {
+    chips.push({ key: "date", label: findDateLabel(f), kind: "date" });
+  }
   f.tags.forEach((tag) => chips.push({ key: `tag:${tag}`, label: `#${tag}` }));
   if (f.tags.length > 1 && f.tagMode === "all") chips.push({ key: "tagMode", label: t("find.tagAll", "All of these tags") });
   f.orbits.forEach((orbit) => chips.push({ key: `orbit:${orbit}`, label: orbit === "__none__"
@@ -10894,7 +10897,137 @@ function findDateLabel(f) {
   if (f.date === "today") return t("find.today", "Today");
   if (f.date === "week") return t("find.week", "Last 7 days");
   if (f.date === "month") return t("find.month", "Last 30 days");
-  return `${f.from || "\u2026"} \u2192 ${f.to || "\u2026"}`;
+  const from = f.from ? findDayWords(f.from) : "";
+  const to = f.to ? findDayWords(f.to) : "";
+  if (from && to) return f.from === f.to ? from : t("find.between", `${from} to ${to}`, { from, to });
+  if (from) return t("find.since", `From ${from}`, { from });
+  return t("find.until", `Until ${to}`, { to });
+}
+
+//: A day kept as "YYYY-MM-DD" (local time), in words in the interface's language: its month and
+//: day, and its year only when it is not this year's.
+function findDayWords(value) {
+  const [y, m, d] = value.split("-").map(Number);
+  const options = y === new Date().getFullYear()
+    ? { month: "long", day: "numeric" } : { year: "numeric", month: "long", day: "numeric" };
+  return new Date(y, m - 1, d).toLocaleDateString(uiLang(), options);
+}
+
+function isoDay(date) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+//: The range calendar's own state across the panel's repaints: the month it shows ("YYYY-MM") and
+//: which end the next pressed day sets.
+const findCal = { month: null, end: "from" };
+
+//: Picking a range, drawn as the rest of the product is rather than by the system's date field,
+//: whose empty value looked chosen (it showed today's date in grey) and filtered nothing. The two
+//: ends sit on top, the one the next press sets lit; under them a month of days: the first press
+//: sets the start, the second the end (swapped if it comes first), the days between are washed in
+//: copper and the ends filled. Days after today cannot be chosen, since nothing was kept then.
+function findCalendar(f) {
+  const box = elt("div", "find-cal");
+  const today = isoDay(new Date());
+  const ends = elt("div", "find-cal-ends");
+  [["from", t("find.from", "From")], ["to", t("find.to", "To")]].forEach(([key, word]) => {
+    ends.appendChild(elt("span", "find-cal-word", word));
+    const end = elt("button", `find-cal-end${f[key] ? "" : " is-empty"}`,
+      f[key] ? findDayWords(f[key]) : t("find.pickDay", "Pick a day"));
+    end.type = "button";
+    end.dataset.key = `find:cal:end:${key}`;
+    end.setAttribute("aria-pressed", findCal.end === key ? "true" : "false");
+    end.addEventListener("click", () => {
+      findCal.end = key;
+      if (f[key]) findCal.month = f[key].slice(0, 7);
+      void paintFindPanel();
+    });
+    ends.appendChild(end);
+  });
+  box.appendChild(ends);
+
+  findCal.month = findCal.month || (f.from || f.to || today).slice(0, 7);
+  const [year, month] = findCal.month.split("-").map(Number);
+  const first = new Date(year, month - 1, 1);
+  const head = elt("div", "find-cal-head");
+  const step = (by, label, glyph) => {
+    const nav = elt("button", "find-cal-nav", glyph);
+    nav.type = "button";
+    nav.dataset.key = `find:cal:nav:${by}`;
+    nav.setAttribute("aria-label", label);
+    nav.addEventListener("click", () => {
+      findCal.month = isoDay(new Date(year, month - 1 + by, 1)).slice(0, 7);
+      void paintFindPanel();
+    });
+    return nav;
+  };
+  head.appendChild(step(-1, t("find.prevMonth", "Previous month"), "\u2039"));
+  head.appendChild(elt("span", "find-cal-title", first.toLocaleDateString(uiLang(), { year: "numeric", month: "long" })));
+  head.appendChild(step(1, t("find.nextMonth", "Next month"), "\u203a"));
+  box.appendChild(head);
+
+  const grid = elt("div", "find-cal-grid");
+  // Weeks start on Sunday. 4 January 2026 was a Sunday, so the seven days from it name the columns.
+  for (let i = 0; i < 7; i += 1) {
+    grid.appendChild(elt("span", "find-cal-wd", new Date(2026, 0, 4 + i).toLocaleDateString(uiLang(), { weekday: "narrow" })));
+  }
+  for (let i = 0; i < first.getDay(); i += 1) grid.appendChild(elt("span", "find-cal-pad"));
+  const days = new Date(year, month, 0).getDate();
+  const lo = f.from;
+  const hi = f.to;
+  for (let d = 1; d <= days; d += 1) {
+    const iso = isoDay(new Date(year, month - 1, d));
+    const classes = ["find-cal-day"];
+    if (iso === today) classes.push("is-today");
+    if (iso === lo) classes.push("is-from");
+    if (iso === hi) classes.push("is-to");
+    if (lo && hi && iso > lo && iso < hi) classes.push("in-range");
+    const day = elt("button", classes.join(" "), String(d));
+    day.type = "button";
+    day.dataset.key = `find:cal:${iso}`;
+    day.dataset.day = iso;
+    day.setAttribute("aria-label", findDayWords(iso));
+    day.setAttribute("aria-pressed", iso === lo || iso === hi ? "true" : "false");
+    day.disabled = iso > today;
+    day.addEventListener("click", () => {
+      if (findCal.end === "from") {
+        f.from = iso;
+        if (f.to && f.to < iso) f.to = "";
+        findCal.end = "to";
+      } else {
+        if (f.from && iso < f.from) {
+          f.to = f.from;
+          f.from = iso;
+        } else {
+          f.to = iso;
+        }
+        findCal.end = "from";
+      }
+      findChanged();
+    });
+    grid.appendChild(day);
+  }
+  // The arrow keys walk the days, a week at a time up and down, into the next month and back.
+  grid.addEventListener("keydown", (event) => {
+    const by = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[event.key];
+    const at = event.target.dataset && event.target.dataset.day;
+    if (!by || !at) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const [y, m, d] = at.split("-").map(Number);
+    const next = isoDay(new Date(y, m - 1, d + by));
+    if (next > today) return;
+    const move = () => horizonEl("find-panel").querySelector(`[data-day="${next}"]`)?.focus();
+    if (next.slice(0, 7) !== findCal.month) {
+      findCal.month = next.slice(0, 7);
+      void paintFindPanel().then(move);
+    } else {
+      move();
+    }
+  });
+  box.appendChild(grid);
+  return box;
 }
 
 const FIND_STATES = [["ready", "find.stateReady", "Summarised"], ["ready_undistilled", "find.stateWaiting", "Not summarised yet"],
@@ -10923,8 +11056,9 @@ function paintFindChips() {
   chipRow.textContent = "";
   chipRow.hidden = !chips.length;
   if (!chips.length) return;
-  chips.forEach(({ key, label }) => {
-    const chip = elt("button", "find-chip", label);
+  chips.forEach(({ key, label, kind }) => {
+    // The date range has a display of its own: a calendar mark before the days it covers.
+    const chip = elt("button", kind === "date" ? "find-chip find-chip-date" : "find-chip", label);
     chip.type = "button";
     chip.setAttribute("aria-label", t("find.removeChip", `Remove ${label}`, { label }));
     chip.appendChild(elt("span", "find-chip-x", "\u00d7"));
@@ -11013,26 +11147,15 @@ async function paintFindPanel() {
   const date = findSection(panel, t("find.date", "When it was kept"),
     [["all", t("find.anyTime", "Any time")], ["today", t("find.today", "Today")], ["week", t("find.week", "Last 7 days")],
       ["month", t("find.month", "Last 30 days")], ["custom", t("find.custom", "Between dates")]],
-    (value) => f.date === value, (value) => { f.date = value; });
-  if (f.date === "custom") {
-    const range = elt("div", "find-range");
-    [["from", t("find.from", "From")], ["to", t("find.to", "To")]].forEach(([key, label]) => {
-      const field = document.createElement("label");
-      field.className = "find-range-field";
-      field.appendChild(elt("span", "", label));
-      const input = document.createElement("input");
-      input.type = "date";
-      input.value = f[key];
-      input.dataset.key = `find:date:${key}`;
-      input.addEventListener("change", () => {
-        f[key] = input.value;
-        findChanged();
-      });
-      field.appendChild(input);
-      range.appendChild(field);
+    (value) => f.date === value, (value) => {
+      // Choosing "Between dates" afresh starts at its start, in the month of what is already chosen.
+      if (value === "custom" && f.date !== "custom") {
+        findCal.end = f.from ? "to" : "from";
+        findCal.month = null;
+      }
+      f.date = value;
     });
-    date.appendChild(range);
-  }
+  if (f.date === "custom") date.appendChild(findCalendar(f));
 
   const tagSection = elt("section", "find-section");
   const tagHead = elt("div", "find-heading-row");
@@ -11209,6 +11332,15 @@ function initFindTools() {
   document.addEventListener("pointerdown", (event) => {
     if (!menu.hidden && !event.target.closest("#find-sort, #find-sort-menu")) closeMenu();
     if (!panel.hidden && !event.target.closest("#find-filter, #find-panel, .find-chips")) closeFindPanel();
+  });
+  // A pressed button takes no focus in WebKit, so after picking a day or a tag focus is on <body>,
+  // where the panel's own Escape never hears it. With nothing else holding focus, Escape still
+  // closes the open panel.
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || panel.hidden || event.defaultPrevented) return;
+    if (document.activeElement && document.activeElement !== document.body) return;
+    closeFindPanel();
+    filter.focus();
   });
   paintFindChips();
 }
