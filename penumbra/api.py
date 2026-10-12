@@ -1390,7 +1390,9 @@ async def delete_orbit_endpoint(orbit_id: str, captures: bool = False) -> dict:
     the captures filed only into this orbit are removed from the Horizon too (each recorded as a
     removal, as Forget records it). A capture also filed into another orbit stays, because removing
     it would take it out from under an orbit the reader did not ask to touch. Which captures go is
-    read BEFORE the memberships are dropped, since afterwards nothing says they were here.
+    read BEFORE the memberships are dropped, since afterwards nothing says they were here, and each
+    is removed only if it is still filed nowhere once they have gone (`only_if_unfiled`), so one filed
+    into another orbit meanwhile stays; `captures_kept` counts those and any that failed.
     """
     #: **Compared by SLUG, because the file is keyed by slug and `_ACTIVE_RUNS` by the raw id.**
     #: `"Reading List"` and `"Reading-List"` are two keys in that map and ONE file on disk, so a
@@ -1421,7 +1423,9 @@ async def delete_orbit_endpoint(orbit_id: str, captures: bool = False) -> dict:
     for node_id in only_here:
         try:
             gone = await asyncio.to_thread(
-                lambda n=node_id: horizon.remove_node(n, detail={"orbits": [target], "everywhere": True})
+                lambda n=node_id: horizon.remove_node(
+                    n, detail={"orbits": [target], "everywhere": True}, only_if_unfiled=True
+                )
             )
         except Exception:  # noqa: BLE001 - the orbit is already gone; a capture left behind is not
             _log.warning("could not remove capture %s with its orbit", node_id)
@@ -1429,7 +1433,8 @@ async def delete_orbit_endpoint(orbit_id: str, captures: bool = False) -> dict:
         removed += bool(gone)
     if only_here:
         _forget_suggestions()
-    return {"deleted": True, "memberships_dropped": forgotten, "captures_removed": removed}
+    return {"deleted": True, "memberships_dropped": forgotten, "captures_removed": removed,
+            "captures_kept": len(only_here) - removed}
 
 
 def _captures_only_in(orbit_key: str) -> list[str]:

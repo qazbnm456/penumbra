@@ -202,7 +202,7 @@ def test_a_capture_is_renamed_and_retagged_in_its_card(page):
     """A capture's title and tags are the reader's (invariant 83): rename, add a tag, remove one."""
     page.locator(".view-mode-btn[aria-pressed=false]").click()
     page.wait_for_timeout(600)
-    page.locator("#stream .node .node-open").first.click()
+    page.locator("#stream .node[data-node-id] .node-open").first.click()
     page.wait_for_timeout(1000)
     card = page.locator("#starmap-card")
     card.locator(".card-rename").click()
@@ -518,7 +518,7 @@ def test_a_list_row_and_pennys_lines_are_pressed_never_selected(page):
     """Pressing quickly through a list row or Penny's lines selected their words; neither is text to
     copy (a capture's full text is in the reading window)."""
     styles = page.evaluate("""() => {
-      const row = document.querySelector('#stream .node');
+      const row = document.querySelector('#stream .node[data-node-id]');
       return [row && getComputedStyle(row).webkitUserSelect, getComputedStyle(document.getElementById('npc'))
         .webkitUserSelect];
     }""")
@@ -681,7 +681,8 @@ def test_a_planets_study_tip_stays_inside_its_card(page):
 def test_an_orbit_is_deleted_whole_from_its_planets_card(page, server):
     """Delete orbit… on a planet's card asks about the captures filed there; "with its captures"
     takes the planet and those captures, and only those, out of the Horizon."""
-    _call(server, "POST", "/orbits/doomed/sources", {"texts": ["A capture filed only into the doomed orbit."]})
+    only_here = {"texts": ["A capture filed only into the doomed orbit."]}
+    _call(server, "POST", "/orbits/doomed/sources", only_here)
     _call(server, "PUT", "/orbits/doomed/title", {"title": "Doomed"})
     node = next(n for n in _call(server, "GET", "/horizon?limit=50")["nodes"]
                 if any(m["orbit_id"] == "doomed" for m in n.get("orbits") or []))

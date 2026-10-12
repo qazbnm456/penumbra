@@ -14767,13 +14767,19 @@ async function deleteOrbitFromMap(orbit) {
     { name })))) {
     return;
   }
+  let got;
   try {
-    await api(`/orbits/${encodeURIComponent(orbit.id)}${whole ? "?captures=true" : ""}`, { method: "DELETE" });
+    got = await api(`/orbits/${encodeURIComponent(orbit.id)}${whole ? "?captures=true" : ""}`, { method: "DELETE" });
   } catch (err) {
     // 409 while a run is in flight is the one a reader meets, and the server's sentence says so.
     notify(readableError(err.message), { tone: "error" });
     return;
   }
+  if (got && got.captures_kept) {
+    notify(t("map.deleteOrbitKept", `${got.captures_kept} captures stayed in the Horizon: filed into another orbit meanwhile, or they could not be removed.`,
+      { n: got.captures_kept }));
+  }
+  if (orbit.id === state.orbitId) closeOrbitMenu();
   dropCapturesHeld();
   closeMapFocus();
   void refreshOrbitList();

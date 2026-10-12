@@ -952,6 +952,7 @@ const STRINGS = {
     "map.deleteOrbitWhole": "要刪除「{name}」嗎？裡面的來源和對話會一起刪除。從視界歸入這裡的收錄也要一起從視界刪除嗎？同時歸在其他軌道的收錄會留著。",
     "map.deleteOrbitWithCaptures": "連收錄一起刪除",
     "map.deleteOrbitOnly": "只刪軌道",
+    "map.deleteOrbitKept": "有 {n} 份收錄留在視界：它們剛被歸入其他軌道，或沒能刪除。",
     "map.studyTip": "打開這個軌道和 AI 一起讀：它會讀完這裡的所有來源，回答時附上引用。",
     "lens.study": "進去研讀「{name}」",
     "chat.keepAsMoon": "收成衛星",

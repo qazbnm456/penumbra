@@ -1771,6 +1771,31 @@ def test_deleting_an_orbit_whole_removes_the_captures_filed_only_there(client):
     assert client.get(f"/horizon/{shared['id']}").status_code == 200
 
 
+def test_a_capture_filed_elsewhere_while_its_orbit_is_deleted_whole_stays(client, monkeypatch):
+    """Which captures go is read before the orbit is deleted; one filed into another orbit in
+    between must stay, so each is removed only if it is still filed nowhere."""
+    from penumbra import api as api_module
+    from penumbra import horizon
+
+    node = client.post("/horizon", json={"texts": ["filed elsewhere mid-delete"]}).json()["nodes"][0]
+    _settle(client, node["id"])
+    assert client.post(f"/horizon/{node['id']}/promote",
+                       json={"orbit_id": "doomed", "create": True}).status_code == 200
+    real_forget = horizon.forget_orbit
+
+    def forget_then_file(orbit_id, **kw):
+        dropped = real_forget(orbit_id, **kw)
+        assert client.post(f"/horizon/{node['id']}/promote",
+                           json={"orbit_id": "rescued", "create": True}).status_code == 200
+        return dropped
+
+    monkeypatch.setattr(api_module.horizon, "forget_orbit", forget_then_file)
+    got = client.delete("/orbits/doomed?captures=true").json()
+    assert (got["captures_removed"], got["captures_kept"]) == (0, 1)
+    assert client.get(f"/horizon/{node['id']}").status_code == 200
+    assert [m.orbit_id for m in horizon.memberships_for(node["id"])] == ["rescued"]
+
+
 def test_deleting_a_orbit_takes_its_audio_with_it(client):
     """One file per orbit is what made retention a non-question (invariant 42). Leaving it behind
     would make it one, and `find_audio` would then serve an episode for an orbit that is gone."""

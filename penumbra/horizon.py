@@ -907,7 +907,11 @@ MAX_REMOVAL_EVENTS = 5000
 
 
 def remove_node(
-    node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR, detail: dict | None = None
+    node_id: str,
+    *,
+    base_dir: str | Path = DEFAULT_HORIZON_DIR,
+    detail: dict | None = None,
+    only_if_unfiled: bool = False,
 ) -> bool:
     """Forget a node. Its memberships go with it (`ON DELETE CASCADE`), but **sources already
     promoted into orbits STAY** — they were copied, and an orbit that silently lost a cited
@@ -918,7 +922,11 @@ def remove_node(
     tags, so the list can show that it went and when, not merely lose the row. The record and the
     delete share one `BEGIN IMMEDIATE` transaction (the connection is otherwise autocommit), and the
     record is written only when the delete removed a row, so a failed delete leaves no record and
-    two presses of Forget leave one."""
+    two presses of Forget leave one.
+
+    `only_if_unfiled` removes it only while it is filed into no orbit, checked inside the same
+    transaction: deleting an orbit whole removes its captures this way, after its memberships went,
+    so one filed into another orbit in the meantime stays."""
     with _connect(base_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -928,6 +936,9 @@ def remove_node(
             orbits = [r[0] for r in conn.execute(
                 "SELECT orbit_id FROM memberships WHERE node_id = ?", (node_id,)
             ).fetchall()]
+            if only_if_unfiled and orbits:
+                conn.execute("ROLLBACK")
+                return False
             changed = conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,)).rowcount
             if changed and row is not None:
                 try:
