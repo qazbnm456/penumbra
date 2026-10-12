@@ -133,22 +133,29 @@ def _until(check, timeout: float = 15.0):
 
 def test_a_dragged_planet_snaps_to_a_ring_and_keeps_its_place(page):
     """A planet follows the pointer along the nearest ring (lit while it would land there), stays
-    where it is let go, and the place survives a reload (invariant 85)."""
+    where it is let go, and the place survives a reload (invariant 85).
+
+    The map is held still (reduced motion), because a planet travels its ring: on a slow runner
+    the planet measured a moment before the press had moved on, the press landed on empty space and
+    panned the map instead, and no ring lit. Dragging works the same on a still map."""
+    page.emulate_media(reduced_motion="reduce")
+    page.reload()
+    page.wait_for_selector("#starmap-svg .map-planet", timeout=30000)
+    page.wait_for_timeout(800)
     planet = page.locator('#starmap-svg .map-planet[data-key="orbit:o2"]')
     box = planet.bounding_box()
-    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-    page.wait_for_timeout(300)
-    box = planet.bounding_box()
     x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    under = f"document.elementFromPoint({x}, {y})?.closest('.map-planet')?.dataset.key"
+    assert page.evaluate(under) == "orbit:o2", "the press would not land on the planet"
     centre = page.locator("#starmap-svg .map-hole-hit").bounding_box()
     tx, ty = centre["x"] + centre["width"] / 2 + 20, centre["y"] + centre["height"] / 2 + 340
+    page.mouse.move(x, y)
     page.mouse.down()
     for i in range(1, 25):
         page.mouse.move(x + (tx - x) * i / 24, y + (ty - y) * i / 24)
         page.wait_for_timeout(16)
-    lit = page.evaluate("document.querySelectorAll('.map-ring.is-landing').length")
+    page.wait_for_function("document.querySelectorAll('.map-ring.is-landing').length === 1", timeout=5000)
     page.mouse.up()
-    assert lit == 1
     placed = _until(lambda: (p := _stored(page, "/horizon/map")["planets"]["o2"])["ring"] >= 1 and p)
     page.reload()
     ring = placed["ring"]
