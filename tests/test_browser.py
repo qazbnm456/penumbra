@@ -562,3 +562,24 @@ def test_with_many_tags_on_all_tags_and_clear_stay_in_reach_and_errors_read_as_w
     }""")
     assert words.startswith("422") and "[object Object]" not in words, words
     view.close()
+
+
+def test_up_and_down_in_the_list_move_from_capture_to_capture(page):
+    """In the list the arrow keys choose the next or the previous capture and open its card, rather
+    than scrolling; in the find field they stay the field's."""
+    page.locator(".view-mode-btn[aria-pressed=false]").click()
+    page.wait_for_selector("#stream .node[data-node-id]", timeout=10000)
+    page.evaluate("document.activeElement.blur()")
+    ids = page.evaluate("[...document.querySelectorAll('#stream .node[data-node-id]')]"
+                        ".map((r) => r.dataset.nodeId)")
+    chosen = "document.querySelector('#stream .node.is-selected')?.dataset.nodeId"
+    page.keyboard.press("ArrowDown")
+    assert page.evaluate(chosen) == ids[0]
+    page.keyboard.press("ArrowDown")
+    assert page.evaluate(chosen) == ids[1]
+    assert page.evaluate("starMap.focus && starMap.focus.kind === 'node' && starMap.focus.node.id") == ids[1]
+    page.keyboard.press("ArrowUp")
+    assert page.evaluate(chosen) == ids[0]
+    page.locator("#stream-search").focus()
+    page.keyboard.press("ArrowDown")
+    assert page.evaluate(chosen) == ids[0], "the find field's arrows moved the choice"

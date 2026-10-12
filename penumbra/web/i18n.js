@@ -96,6 +96,7 @@ const STRINGS = {
     "marks.keys.slash": "在問題開頭輸入，選擇要問哪個範圍。",
     "marks.keys.zoom": "在星圖上：放大、縮小、回到全景。",
     "marks.keys.arrows": "在星圖上：在星球之間切換，進入一顆星球的衛星並在衛星之間切換，再回到星球。",
+    "marks.keys.listArrows": "在清單裡：上一則或下一則收錄，旁邊同時打開它的卡片。",
     "marks.keys.esc": "關閉目前打開的東西。",
     "traj.head": "執行軌跡",
     // The five playback controls. They were the only `data-tip`s in `index.html` with no

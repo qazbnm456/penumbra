@@ -3547,6 +3547,7 @@ function marksGroups() {
         [keys("+", "−", "0"), t("marks.keys.zoom", "On the map: zoom in, zoom out, back to the whole view.")],
         [keys("←", "→", "↓", "↑"), t("marks.keys.arrows",
           "On the map: step from planet to planet, go into a planet's moons and step between them, back to the planet.")],
+        [keys("↑", "↓"), t("marks.keys.listArrows", "In the list: the previous or the next capture, its card opened beside it.")],
         [keys("Esc"), t("marks.keys.esc", "Close what is open.")],
       ],
     },
@@ -10085,6 +10086,39 @@ function selectNode(node, row) {
     if (mapPanelGrip && mapPanelGrip.isCollapsed()) mapPanelGrip.setCollapsed(false, { persist: false });
   }
   renderStarMapCard();
+}
+
+//: Up and Down in the list move from capture to capture, as the reader reads down it, rather than
+//: scrolling the page: the next one is chosen, its card opens in the details column, and it is
+//: scrolled into view and focused, so a screen reader names it. Home and End go to the ends. Left
+//: alone while a field, a menu, a picker or a dialog has the keys (`arrowsTakenElsewhere`).
+function listKeyStep(key, rows, at) {
+  if (!rows.length) return -1;
+  if (key === "Home") return 0;
+  if (key === "End") return rows.length - 1;
+  if (at < 0) return key === "ArrowUp" ? rows.length - 1 : 0;
+  return Math.max(0, Math.min(rows.length - 1, at + (key === "ArrowDown" ? 1 : -1)));
+}
+
+function initListKeys() {
+  document.addEventListener("keydown", (event) => {
+    if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+    if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (!viewIsHorizon() || viewMode("horizon") !== "list" || arrowsTakenElsewhere(event)) return;
+    // Removals hold no capture, so they are stepped over.
+    const rows = [...horizonEl("stream").querySelectorAll(".node[data-node-id]")];
+    const at = rows.findIndex((row) => row.classList.contains("is-selected"));
+    const next = listKeyStep(event.key, rows, at);
+    if (next < 0) return;
+    event.preventDefault();
+    if (next === at) return;
+    const row = rows[next];
+    const node = horizonState.nodes.find((one) => one.id === row.dataset.nodeId);
+    if (!node) return;
+    selectNode(node, row);
+    row.querySelector(".node-open")?.focus({ preventScroll: true });
+    row.scrollIntoView({ block: "nearest", behavior: motionAllowed() ? "smooth" : "auto" });
+  });
 }
 
 function renderNodeCard(card, node) {
@@ -18813,6 +18847,7 @@ initAmbient();
 initPanels();
 initStarMapCamera();
 initMapKeys();
+initListKeys();
 initMapSettings();
 initFineSky();
 initDesktopContextMenu();
