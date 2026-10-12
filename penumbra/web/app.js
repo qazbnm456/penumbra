@@ -13246,8 +13246,8 @@ function starMapDefs() {
   linear("pn-meteor", [["0", "stop-trail-clear"], ["1", "stop-trail"]]);
   // A planet lit by the hole's disk, along +x from the side facing it: warm light, clear, then the
   // night side; and the warm rim on the lit edge.
-  linear("pn-hole-lit", [["0", "stop-hole-lit"], ["0.38", "stop-hole-lit-clear"], ["0.58", "stop-night-clear"],
-    ["1", "stop-night"]]);
+  linear("pn-hole-lit", [["0", "stop-hole-lit"], ["0.34", "stop-hole-lit-clear"], ["0.5", "stop-night-clear"],
+    ["0.85", "stop-night"]]);
   linear("pn-hole-rim", [["0", "stop-hole-rim"], ["0.32", "stop-hole-rim-clear"]]);
   linear("pn-comet-tail", [["0", "stop-trail-clear"], ["0.8", "stop-tail"], ["1", "stop-trail"]]);
   const blur = svgEl("filter", { id: "pn-soft", x: "-50%", y: "-50%", width: "200%", height: "200%" });

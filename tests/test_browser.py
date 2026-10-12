@@ -369,6 +369,14 @@ def test_the_fine_sky_runs_only_in_the_dark_theme_and_says_why_when_it_cannot(br
             # light faces the hole (+x away from it); and the orbit card ends in its last row.
             rim = "getComputedStyle(document.querySelector('.map-hole-rim')).display"
             assert view.evaluate(rim) == "none"
+            # Nor the keyboard's focus ring on the same circle: the Horizon's name lights instead.
+            view.evaluate("document.querySelector('.map-hole-hit').focus()")
+            view.keyboard.press("Shift")
+            focused = view.evaluate("""() => ({
+              ring: getComputedStyle(document.querySelector('.map-hole-hit')).stroke,
+              name: getComputedStyle(document.querySelector('.map-hole-label')).textDecorationLine })""")
+            assert focused == {"ring": "none", "name": "underline"}, focused
+            view.evaluate("document.activeElement.blur()")
             facing = view.evaluate("""() => starMap.scene.planets.map(({ p, suns }) => {
               const pos = planetAt(p);
               const want = Math.atan2(pos.y - MAP_CENTRE.y, pos.x - MAP_CENTRE.x) * 180 / Math.PI;

@@ -7372,8 +7372,20 @@ body[data-view="horizon"] .orbit-picker {
 }
 
 .starmap.is-fine .map-hole.is-selected ~ .map-hole-label,
-.starmap.is-fine .map-hole:hover ~ .map-hole-label {
+.starmap.is-fine .map-hole:hover ~ .map-hole-label,
+.starmap.is-fine .map-hole:has(.map-hole-hit:focus-visible) ~ .map-hole-label {
   fill: var(--accent);
+}
+
+/* The keyboard's focus ring is the same circle about the map's centre: under the fine sky the
+   name lights for focus too (above), with an underline so focus never rests on colour alone. */
+.starmap.is-fine .map-hole-hit:focus-visible {
+  stroke: none;
+}
+
+.starmap.is-fine .map-hole:has(.map-hole-hit:focus-visible) ~ .map-hole-label {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 /* --- worlds under the fine sky -----------------------------------------------------------------------
@@ -7405,10 +7417,10 @@ body[data-view="horizon"] .orbit-picker {
   stroke-width: 1.2;
 }
 
-.stop-hole-lit { stop-color: oklch(88% 0.07 70); stop-opacity: 0.32; }
+.stop-hole-lit { stop-color: oklch(88% 0.07 70); stop-opacity: 0.45; }
 .stop-hole-lit-clear { stop-color: oklch(88% 0.07 70); stop-opacity: 0; }
 .stop-night-clear { stop-color: oklch(6% 0.01 260); stop-opacity: 0; }
-.stop-night { stop-color: oklch(6% 0.01 260); stop-opacity: 0.82; }
+.stop-night { stop-color: oklch(6% 0.01 260); stop-opacity: 0.9; }
 .stop-hole-rim { stop-color: oklch(90% 0.09 72); stop-opacity: 0.9; }
 .stop-hole-rim-clear { stop-color: oklch(90% 0.09 72); stop-opacity: 0; }
 
@@ -7416,12 +7428,12 @@ body[data-view="horizon"] .orbit-picker {
    faded by a tag) keep their own fill and opacity. */
 .starmap.is-fine .map-dot {
   stroke: oklch(8% 0.01 55 / 0.9);
-  stroke-width: 1.1;
+  stroke-width: 1.4;
   paint-order: stroke;
 }
 
 .starmap.is-fine .map-dot:not(.is-done, .is-busy, .is-failed, .is-local, .is-lensed) {
-  fill: oklch(80% 0.01 260);
+  fill: oklch(74% 0.06 245);
 }
 
 .starmap.is-fine .map-dot.is-done:not(.is-lensed) {
