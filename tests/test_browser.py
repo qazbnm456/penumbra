@@ -320,3 +320,19 @@ def test_an_open_orbit_menu_in_the_waiting_card_survives_the_maps_refreshes(page
         "a map refresh closed the open orbit menu"
     page.locator("#starmap-card .card-title").first.click()  # a press anywhere else closes it
     page.wait_for_function("(el) => !el.isConnected", arg=handle, timeout=5000)
+
+
+def test_a_capture_cards_orbits_are_marks_with_a_remove_and_an_add(page, server):
+    """A capture's orbits are marks like its tags: each with a remove that takes it out of that orbit,
+    then "+ Orbit", which opens the list of every orbit."""
+    moon = page.evaluate("starMap.orbits.find((o) => o.slug === 'o3').moons[0]")
+    page.evaluate(f"openMapFocus({{kind: 'capture', id: {json.dumps(moon['id'])}, title: 'x', state: 'ready',"
+                  " orbit: 'o3'})")
+    marks = "#starmap-card .orbit-pick .mark-orbit"
+    page.wait_for_selector(marks, timeout=10000)
+    assert page.locator(marks).all_text_contents()[0].startswith("Gamma")
+    page.locator("#starmap-card .orbit-pick-trigger").click()
+    assert page.evaluate("document.querySelector('#starmap-card .orbit-pick-menu').hidden === false")
+    page.locator("#starmap-card .card-title").first.click()  # closes the list
+    page.locator(f"{marks} .mark-x").first.click()
+    _until(lambda: not _call(server, "GET", f"/horizon/{moon['id']}").get("orbits"))

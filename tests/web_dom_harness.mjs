@@ -1769,10 +1769,14 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
         if (this._text === "" && this.children) { this.children.forEach((c) => { c.parentElement = null; }); this.children = []; }
       }
     }
-    const document = { body: new Node2("body"), activeElement: null, createElement: (tag) => new Node2(tag) };
+    const document = {
+      body: new Node2("body"), activeElement: null, createElement: (tag) => new Node2(tag),
+      createTextNode: (data) => { const node = new Node2("#text"); node.textContent = data; return node; },
+    };
     document.activeElement = document.body;
     const run = new Function("document", "t", "uiLang",
       `const lensPicker = { row: null, query: "" }; const LENS_ROW_MAX = 10;\n${extract("elt")}\n` +
+      `${extract("lensTag")}\n` +
       `${extract("renderLenses")}\n${extract("syncOpenLensPicker")}\n${extract("closeLensPicker")}\n` +
       `${extract("openLensPicker")}\nreturn { renderLenses, lensPicker };`,
     )(document, (_k, fallback) => fallback, () => "en");

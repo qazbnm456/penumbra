@@ -3427,7 +3427,8 @@ function marksGroups() {
   // taken out of the tab order, since a sample is not a control.
   const nodeChip = (cls, text) => () => {
     const row = elt("span", "node-chips");
-    const el = elt("button", cls, text);
+    const el = cls === "node-tag" ? tagMark(text.replace(/^#/, ""), elt("button", cls))
+      : elt("button", cls === "node-orbit" ? "mark mark-orbit" : cls, text);
     el.type = "button";
     el.tabIndex = -1;
     row.appendChild(el);
@@ -3490,7 +3491,7 @@ function marksGroups() {
         }), t("marks.graph.capture", "A capture, in its tag's colour. Press it for its summary, what it names and what relates to it.")],
         [canvas(92, 24, (svg) => {
           const g = svgEl("g", {}, "graph-entity");
-          g.appendChild(svgEl("rect", { x: -44, y: -11, width: 88, height: 22, rx: 11 }, "graph-entity-body"));
+          g.appendChild(svgEl("rect", { x: -44, y: -11, width: 88, height: 22, rx: 5 }, "graph-entity-body"));
           g.appendChild(svgText(-34, 0, t("marks.graph.entityName", "Kuiper belt"), "graph-entity-label"));
           g.appendChild(svgText(36, 0, "3", "graph-entity-count"));
           svg.appendChild(g);
@@ -9372,6 +9373,42 @@ function stampTime(epochSeconds) {
   return `${when.toLocaleDateString(uiLang(), { month: "numeric", day: "numeric" })} ${clockTime(epochSeconds)}`;
 }
 
+//: A capture card's state line above its title: a dot in its moon's colour and the words for it,
+//: then anything else (a date) after a middle dot. Never a pill, so it reads as a fact, not a button.
+function cardStateLine(state, extra = "") {
+  const line = elt("p", "card-kicker");
+  const label = moonStateLabel({ kind: "capture", state });
+  const cls = state === "ready" ? " is-done" : state === "failed" ? " is-failed" : "";
+  line.appendChild(elt("span", `card-state${cls}`, extra ? `${label} \u00b7 ${extra}` : label));
+  return line;
+}
+
+//: A card's section heading, the one style every card uses (`.card-section`).
+function cardSection(text) {
+  return elt("h3", "card-section", text);
+}
+
+//: A tag's mark (`.mark-tag`): a faint "#" and the name. Its text stays "#name" for search and tests.
+function tagMark(tagName, el = elt("span")) {
+  el.classList.add("mark", "mark-tag");
+  el.appendChild(elt("span", "mark-hash", "#"));
+  el.appendChild(document.createTextNode(tagName));
+  return el;
+}
+
+//: A tag in a row of tags to press (the lenses): a tag's faint "#" and its name, at a toolbar's size.
+function lensTag(tagName) {
+  const button = elt("button", "lens");
+  button.appendChild(elt("span", "mark-hash", "#"));
+  button.appendChild(document.createTextNode(tagName));
+  return button;
+}
+
+//: A mention's mark (`.mark-mention`): a name a summary found in the capture.
+function mentionMark(name, tag = "span") {
+  return elt(tag, "card-chip mark mark-mention", name);
+}
+
 //: Where it is and what it is about, under the summary: each orbit it is in, then up to three tags.
 //: A tag narrows the list to it; an orbit opens the orbit.
 function nodeChips(node, { all = false } = {}) {
@@ -9383,7 +9420,7 @@ function nodeChips(node, { all = false } = {}) {
   orbits.forEach((m) => {
     const name = orbitTitles.get(m.orbit_id) || t("suggest.anOrbit", "an orbit");
     const orbit = orbitBySlug.get(m.orbit_id);
-    const chip = elt("button", "node-orbit", name);
+    const chip = elt("button", "mark mark-orbit", name);
     chip.type = "button";
     chip.title = t("horizon.filedAt", `Filed ${stampTime(m.promoted_at)}`, { when: stampTime(m.promoted_at) });
     chip.addEventListener("click", (event) => {
@@ -9394,7 +9431,7 @@ function nodeChips(node, { all = false } = {}) {
   });
   const shown = all ? tags : tags.slice(0, 3);
   shown.forEach((tag) => {
-    const chip = elt("button", "node-tag", `#${tag}`);
+    const chip = tagMark(tag, elt("button", "node-tag"));
     chip.type = "button";
     chip.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -10042,12 +10079,15 @@ function selectNode(node, row) {
 
 function renderNodeCard(card, node) {
   mapCardClose(card);
-  card.appendChild(elt("p", "card-kicker", stampTime(node.created_at)));
-  card.appendChild(captureTitleRow(node, nodeHeadline(node) || originLabel(node.origin)));
+  card.appendChild(cardStateLine(node.state, stampTime(node.created_at)));
+  // A pasted note has no headline of its own (the list shows its words instead), and a card with a
+  // bare rename pencil where its title should be looked broken; its opening words stand in.
+  const pasted = (node.origin || "").startsWith("pasted:");
+  card.appendChild(captureTitleRow(node, nodeHeadline(node)
+    || (pasted ? shortLabel(pastedExcerpt(node.origin), 40) : originLabel(node.origin))));
   if (node.summary) card.appendChild(elt("p", "card-summary", node.summary));
-  // The orbits it is in, as chips; its tags have their own editable section below.
-  const chips = nodeChips({ ...node, tags: [] }, { all: true });
-  if (chips) card.appendChild(chips);
+  // The same order as the map's card (`renderCaptureCard`): tags, mentions, orbits, then the trail
+  // the list alone keeps, and the actions.
   card.appendChild(captureTagEditor(node));
   const inner = elt("div", "node-panel-body");
   card.appendChild(inner);
@@ -10174,13 +10214,16 @@ function captureTagEditor(node) {
     });
   };
   (node.tags || []).forEach((tag) => {
-    const chip = elt("span", "tag-chip");
-    const name = elt("button", "node-tag", `#${tag}`);
+    // The pill is the mark; inside it the name (which finds the others carrying it) and a remove.
+    const chip = elt("span", "tag-chip mark mark-tag");
+    const name = elt("button", "node-tag");
+    name.appendChild(elt("span", "mark-hash", "#"));
+    name.appendChild(document.createTextNode(tag));
     name.type = "button";
     name.title = t("tags.find", `Find captures tagged ${tag}`, { tag });
     name.addEventListener("click", () => setHorizonQuery(tag));
     chip.appendChild(name);
-    const remove = elt("button", "tag-remove", "\u00d7");
+    const remove = elt("button", "tag-remove mark-x", "\u00d7");
     remove.type = "button";
     remove.setAttribute("aria-label", t("tags.remove", `Remove the tag ${tag}`, { tag }));
     remove.title = remove.getAttribute("aria-label");
@@ -10188,7 +10231,7 @@ function captureTagEditor(node) {
     chip.appendChild(remove);
     list.appendChild(chip);
   });
-  const add = elt("button", "tag-add", t("tags.add", "+ Tag"));
+  const add = elt("button", "tag-add mark mark-add", t("tags.add", "+ Tag"));
   add.type = "button";
   add.addEventListener("click", () => {
     const wrap = elt("span", "title-editor tag-add-editor");
@@ -10301,7 +10344,7 @@ async function fillNodeBody(node, row, inner) {
   // non-ready state fell through to it.
   if (node.state === "queued" || node.state === "parsing") {
     inner.appendChild(elt("p", "hint", t("horizon.stillReading", "Still reading this one\u2026")));
-    inner.appendChild(await nodeActions(node, { orbits: [] }));
+    inner.appendChild(await nodeActions(node));
     return;
   }
   if (node.state === "failed") {
@@ -10311,63 +10354,52 @@ async function fillNodeBody(node, row, inner) {
   } else {
     const entities = (detail.node && detail.node.entities) || node.entities || [];
     if (entities.length) {
-      inner.appendChild(elt("h4", "node-section", t("map.sectionNames", "Mentions")));
+      inner.appendChild(cardSection(t("map.sectionNames", "Mentions")));
       const names = elt("div", "node-entities");
-      entities.forEach((name) => names.appendChild(elt("span", "node-entity", name)));
+      entities.forEach((name) => names.appendChild(elt("span", "mark mark-mention", name)));
       inner.appendChild(names);
     }
   }
+  // Where it is filed, as marks with "+ Orbit" (`orbitPicker`). **A node with no blocks cannot be
+  // filed, so it is not offered.** `promote_node` requires the blocks file; a `failed`, `queued` or
+  // `parsing` node has none, and choosing an orbit returned `400 no such node, or its blocks are
+  // missing` for a node visibly on screen. The state is knowable here without asking, so the section
+  // says why instead of offering a control whose only outcome contradicts the screen.
+  inner.appendChild(cardSection(t("map.sectionFiled", "In orbits")));
+  if (node.state === "ready" || node.state === "ready_undistilled") {
+    inner.appendChild(orbitPicker(node.id, detail.orbits || []));
+  } else {
+    inner.appendChild(elt("p", "node-filed", t("horizon.notFilable", "Nothing to file yet: it has no text.")));
+  }
   // Its journey, and the full text one press away in the reading window rather than poured into
   // the row: a long document inside the list pushed every later capture off the screen.
-  inner.appendChild(elt("h4", "node-section", t("horizon.trail", "Trail")));
+  inner.appendChild(cardSection(t("horizon.trail", "Trail")));
   inner.appendChild(nodeTrail(node, detail));
-  inner.appendChild(await nodeActions(node, detail));
+  inner.appendChild(await nodeActions(node));
 }
 
-async function nodeActions(node, detail) {
-  const actions = elt("div", "node-actions");
-  // A left GROUP, so the destructive action stays right even when the row wraps.
-  const main = elt("div", "node-actions-main");
+//: A capture's last row in the list: Try again for one that could not be read, Read it for one that
+//: has text, and Forget alone at the far end. Filing is not here: it is the "In orbits" section.
+async function nodeActions(node) {
+  const actions = elt("div", "node-actions card-foot");
   if (node.state === "failed") {
     // Re-submitting the same origin is already the retry path (`intake.submit` resets a `failed`
     // node to `queued`), so this needs no new endpoint - only a way to ask for it.
-    //: FIRST in the row and the SAME SIZE as Forget: it was a full `.btn` after the "nothing to
-    //: file" note, so the row read as a sentence, then a big button, then a small one, and the
-    //: action that recovers the capture sat in the middle of it.
-    const retry = elt("button", "node-retry", t("horizon.retry", "Try again"));
+    const retry = elt("button", "btn node-retry", t("horizon.retry", "Try again"));
     retry.type = "button";
     retry.addEventListener("click", async () => {
       retry.disabled = true;
       await captureValue(node.origin);
     });
-    main.appendChild(retry);
+    actions.appendChild(retry);
   }
-
-  // **A node with no blocks cannot be filed, so it is not offered.** `promote_node` requires the
-  // blocks file; a `failed`, `queued` or `parsing` node has none, and choosing an orbit returned
-  // `400 no such node, or its blocks are missing` for a node visibly on screen. A control whose
-  // only possible outcome contradicts what the reader can see is the "no UI control that lies about
-  // what the API does" rule, and the state is knowable here without asking.
   if (node.state === "ready" || node.state === "ready_undistilled") {
-    // One control for every orbit it is in (`orbitPicker`): ticked where it is, pressed to file it
-    // into another or take it out. Memberships name an orbit by its key (invariant 37).
-    const picker = orbitPicker(node.id, detail.orbits || []);
-    main.appendChild(picker);
     const read = elt("button", "btn", t("map.readInList", "Read it"));
     read.type = "button";
     read.addEventListener("click", () => void showNodeReader(node));
-    main.appendChild(read);
-  } else {
-    // Say WHY, rather than leaving a gap where a control was. A failed node still offers Try again
-    // and Forget; this is the one action that is genuinely unavailable.
-    main.appendChild(
-      elt("span", "node-filed", t("horizon.notFilable", "Nothing to file yet: it has no text."))
-    );
+    actions.appendChild(read);
   }
-
-  actions.appendChild(main);
-
-  const remove = elt("button", "node-danger", t("horizon.forget", "Forget"));
+  const remove = elt("button", "btn btn-quiet-danger node-danger", t("horizon.forget", "Forget"));
   remove.type = "button";
   remove.addEventListener("click", () => forgetNode(node));
   actions.appendChild(remove);
@@ -11020,7 +11052,7 @@ async function paintFindPanel() {
     const chosen = horizonState.allTags.filter((tag) => f.tags.includes(tag.name));
     const rest = horizonState.allTags.filter((tag) => !f.tags.includes(tag.name) && (!q || tag.name.toLowerCase().includes(q)));
     [...chosen, ...rest].slice(0, 80).forEach((tag) => {
-      const chip = elt("button", "lens", `#${tag.name}`);
+      const chip = lensTag(tag.name);
       chip.type = "button";
       chip.appendChild(elt("span", "lens-count", String(tag.count)));
       chip.setAttribute("aria-pressed", f.tags.includes(tag.name) ? "true" : "false");
@@ -12638,7 +12670,7 @@ function renderLenses(lensRow, tags, active, onToggle) {
   lensRow.lensLayout = layout;
   lensRow.textContent = "";
   const lensChip = (tag) => {
-    const button = elt("button", "lens", `#${tag.name}`);
+    const button = lensTag(tag.name);
     button.type = "button";
     button.dataset.tag = tag.name;
     button.appendChild(elt("span", "lens-count", String(tag.count)));
@@ -12711,7 +12743,7 @@ function openLensPicker(lensRow, tags, active, { focus }) {
   const empty = elt("p", "lens-picker-empty", t("lens.none", "No tag matches."));
   const shown = { tags, active };
   const chip = (tag) => {
-    const item = elt("button", "lens", `#${tag.name}`);
+    const item = lensTag(tag.name);
     item.type = "button";
     item.dataset.tag = tag.name;
     item.appendChild(elt("span", "lens-count", ""));
@@ -15500,21 +15532,47 @@ function orbitPicker(nodeId, memberships = []) {
     || (gone.has(o.slug) ? t("horizon.filedInGone", "a deleted orbit") : t("app.untitled", "Untitled orbit"));
   const orbits = [...known, ...unknown.map((key) => ({ id: key, slug: key }))]
     .sort((a, b) => nameOf(a).localeCompare(nameOf(b), uiLang()));
-  const wrap = elt("div", "orbit-pick");
-  const trigger = elt("button", "orbit-pick-trigger");
+  // Drawn as marks, as a capture's tags are: each orbit it is in as a copper mark with a remove,
+  // then "+ Orbit", which opens the list. The list still files into several at once and ticks
+  // where it already is; the marks say the same thing without opening it.
+  const wrap = elt("div", "orbit-pick marks");
+  const marks = elt("span", "marks");
+  const trigger = elt("button", "orbit-pick-trigger mark mark-add");
   trigger.type = "button";
   trigger.setAttribute("aria-haspopup", "true");
   trigger.setAttribute("aria-expanded", "false");
-  const label = elt("span", "orbit-pick-label");
+  const label = elt("span", "orbit-pick-label", t("pick.add", "+ Orbit"));
   trigger.appendChild(label);
-  trigger.appendChild(elt("span", "orbit-pick-caret", "\u25be"));
+  let paintMenu = () => {};
   const paintLabel = () => {
     const chosen = orbits.filter((o) => selected.has(o.slug || o.id));
-    label.textContent = !chosen.length
+    // What the old box said in words, kept for a screen reader on the button that opens the list.
+    trigger.setAttribute("aria-label", `${!chosen.length
       ? t("pick.none", "In no orbit yet")
       : chosen.length === 1
         ? t("pick.one", `In \u201c${nameOf(chosen[0])}\u201d`, { name: nameOf(chosen[0]) })
-        : t("pick.many", `In ${chosen.length} orbits`, { n: chosen.length });
+        : t("pick.many", `In ${chosen.length} orbits`, { n: chosen.length })}. ${t("pick.addLabel", "File into an orbit")}`);
+    marks.textContent = "";
+    chosen.forEach((o) => {
+      const key = o.slug || o.id;
+      const mark = elt("span", "mark mark-orbit", nameOf(o));
+      const out = elt("button", "mark-x", "\u00d7");
+      out.type = "button";
+      out.setAttribute("aria-label", t("pick.takeOut", `Take it out of ${nameOf(o)}`, { name: nameOf(o) }));
+      out.title = out.getAttribute("aria-label");
+      out.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        out.disabled = true;
+        const ok = await unfileCapture(nodeId, key, { label: nameOf(o), orbitId: o.id });
+        out.disabled = false;
+        if (ok === false) return;
+        selected.delete(key);
+        paintLabel();
+        if (!menu.hidden) paintMenu();
+      });
+      mark.appendChild(out);
+      marks.appendChild(mark);
+    });
     wrap.classList.toggle("is-empty", !chosen.length);
   };
   paintLabel();
@@ -15533,13 +15591,14 @@ function orbitPicker(nodeId, memberships = []) {
       if (!menu.hidden) paintMenu();
     }).catch(() => {});
   }
+  wrap.appendChild(marks);
   wrap.appendChild(trigger);
   const menu = elt("div", "orbit-pick-menu");
   menu.setAttribute("role", "group");
   menu.hidden = true;
   wrap.appendChild(menu);
   let query = "";
-  const paintMenu = () => {
+  paintMenu = () => {
     menu.textContent = "";
     if (orbits.length > 6) {
       const search = document.createElement("input");
@@ -15907,7 +15966,7 @@ function renderBridgeCard(card, focus) {
     detail.appendChild(elt("h3", "card-section", t("map.bridgeShared", "Both name")));
     const chips = elt("div", "card-chips");
     shared.forEach((s) => {
-      const chip = elt("button", "card-chip", s.name);
+      const chip = mentionMark(s.name, "button");
       chip.type = "button";
       chip.setAttribute("aria-pressed", String(s === chosen));
       chip.addEventListener("click", () => {
@@ -16121,7 +16180,7 @@ function prefetchMoonsBeside(focus) {
 //: A capture's card fills in after one fetch; the part known from the map is drawn at once.
 function renderCaptureCard(card, focus, before = 0) {
   mapCardClose(card);
-  card.appendChild(elt("p", "card-kicker", moonStateLabel({ kind: "capture", state: focus.state })));
+  card.appendChild(cardStateLine(focus.state));
   const heading = elt("div", "card-title-row");
   heading.appendChild(elt("h2", "card-title", focus.title || ""));
   card.appendChild(heading);
@@ -16167,25 +16226,23 @@ function renderCaptureCard(card, focus, before = 0) {
     detail.textContent = "";
     // The heading gains its rename once the capture itself has arrived.
     heading.replaceWith(captureTitleRow({ ...node, id: focus.id }, focus.title || nodeHeadline(node)));
+    // The capture card's one order, the same in the list and on the graph: summary, tags (what it
+    // is about, editable), mentions (the names it mentions), the orbits it is in, then the actions.
     if (node.summary) detail.appendChild(elt("p", "card-summary", node.summary));
+    detail.appendChild(captureTagEditor({ ...node, id: focus.id }));
     if ((node.entities || []).length) {
-      // Headed like the tags below it, so the two rows of names are never taken for one another.
-      detail.appendChild(elt("h4", "node-section", t("map.sectionNames", "Mentions")));
+      detail.appendChild(cardSection(t("map.sectionNames", "Mentions")));
       const chips = elt("div", "card-chips");
-      node.entities.slice(0, 10).forEach((name) => chips.appendChild(elt("span", "card-chip", name)));
+      node.entities.slice(0, 10).forEach((name) => chips.appendChild(mentionMark(name)));
       detail.appendChild(chips);
     }
-    detail.appendChild(captureTagEditor({ ...node, id: focus.id }));
     // Memberships name an orbit by its key, which is only ever looked up: into its label for the
-    // "In …" line, and out of the orbits the picker offers (invariant 37).
+    // remove confirm, and into the marks the picker draws (invariant 37).
     const memberships = got.orbits || [];
     const where = memberships.map((m) => orbitTitles.get(m.orbit_id) || t("suggest.anOrbit", "an orbit"));
-    if (where.length) {
-      const joined = where.join(t("list.sep", ", "));
-      detail.appendChild(elt("p", "card-meta", t("map.filedIn", `In ${joined}`, { where: joined })));
-    }
-    const actions = elt("div", "card-actions");
-    actions.appendChild(orbitPicker(focus.id, memberships));
+    detail.appendChild(cardSection(t("map.sectionFiled", "In orbits")));
+    detail.appendChild(orbitPicker(focus.id, memberships));
+    const actions = elt("div", "card-actions card-foot");
     const read = elt("button", "btn", t("map.readInList", "Read it in full"));
     read.type = "button";
     read.addEventListener("click", () => void showNodeReader({ ...node, id: focus.id }));
@@ -16332,7 +16389,7 @@ function paintStarMapCard(mapCard) {
   if (orbit.entities.length) {
     mapCard.appendChild(elt("h3", "card-section", t("map.sectionNames", "Mentions")));
     const chips = elt("div", "card-chips");
-    orbit.entities.forEach((name) => chips.appendChild(elt("span", "card-chip", name)));
+    orbit.entities.forEach((name) => chips.appendChild(mentionMark(name)));
     mapCard.appendChild(chips);
   } else {
     //: Entities come only from summaries of captures filed from the Horizon. A source added inside
@@ -16354,20 +16411,27 @@ function paintStarMapCard(mapCard) {
   const shares = ((starMap.data && starMap.data.bridges) || [])
     .filter((bridge) => bridge.a === orbit.slug || bridge.b === orbit.slug)
     .sort((x, y) => y.weight - x.weight);
+  // Each one is a group: the other orbit heads it, and the names both mention hang under it on a
+  // guide line. Laid out in one row, orbit and names read as three things side by side, and a
+  // reader took the names to be the other orbit's own.
   if (shares.length) {
-    mapCard.appendChild(elt("h3", "card-section", t("map.sectionShares", "Shares with")));
-    const list = elt("ul", "card-list map-shares");
+    mapCard.appendChild(cardSection(t("map.sectionShares", "Orbits that mention the same names")));
+    const list = elt("div", "map-shares");
     shares.forEach((bridge) => {
       const other = bridge.a === orbit.slug ? bridge.b : bridge.a;
-      const row = elt("li", "card-row map-share");
-      const name = elt("button", "card-row-title", orbitTitles.get(other) || t("suggest.anOrbit", "an orbit"));
+      const group = elt("div", "share-group");
+      const head = elt("div", "share-head");
+      const name = elt("button", "mark mark-orbit", orbitTitles.get(other) || t("suggest.anOrbit", "an orbit"));
       name.type = "button";
       name.addEventListener("click", () => openMapFocus({ kind: "bridge", a: bridge.a, b: bridge.b }));
-      row.appendChild(name);
-      const chips = elt("div", "card-chips");
-      bridge.shared.forEach((entity) => chips.appendChild(elt("span", "card-chip", entity)));
-      row.appendChild(chips);
-      list.appendChild(row);
+      head.appendChild(name);
+      const n = bridge.shared.length;
+      head.appendChild(elt("span", "share-count", t("map.shareCount", `Both mention ${n} names`, { n })));
+      group.appendChild(head);
+      const names = elt("div", "share-names marks");
+      bridge.shared.forEach((entity) => names.appendChild(mentionMark(entity)));
+      group.appendChild(names);
+      list.appendChild(group);
     });
     mapCard.appendChild(list);
   }
@@ -17550,7 +17614,7 @@ function drawGraph() {
       transform: `translate(${p.x} ${p.y})`,
       "aria-label": t("graph.entityLabel", `${entity.name}, in ${entity.count} captures`, { name: entity.name, n: entity.count }) },
     `graph-entity${entity.name === selected ? " is-selected" : ""}${lit ? "" : " is-dim"}`);
-    const body = svgEl("rect", { x: -size.w / 2, y: -size.h / 2, width: size.w, height: size.h, rx: size.h / 2 },
+    const body = svgEl("rect", { x: -size.w / 2, y: -size.h / 2, width: size.w, height: size.h, rx: 5 },
       "graph-entity-body");
     const name = svgText(-size.w / 2 + 12, 0, shortLabel(entity.name, 20), "graph-entity-label");
     const tally = svgText(size.w / 2 - 10, 0, String(n), "graph-entity-count");
@@ -17939,7 +18003,7 @@ function renderGraphPanel(litCaptures) {
     panel.appendChild(elt("p", "card-kicker", t("graph.aliases", "Also written as")));
     const merged = elt("div", "card-chips");
     entry.aliases.forEach((alias) => {
-      const chip = elt("span", "card-chip", alias);
+      const chip = mentionMark(alias);
       const undo = elt("button", "alias-undo", t("graph.unmerge", "Separate"));
       undo.type = "button";
       undo.setAttribute("aria-label", t("graph.unmergeLabel", `Separate ${alias}`, { name: alias }));
@@ -17983,7 +18047,7 @@ function renderGraphPanel(litCaptures) {
       : t("graph.together", "Often named together")));
     const chips = elt("div", "card-chips");
     near.slice(0, 10).forEach((name) => {
-      const chip = elt("button", "card-chip", name);
+      const chip = mentionMark(name, "button");
       chip.type = "button";
       chip.dataset.key = `chip:${name}`;
       chip.addEventListener("click", () => {
@@ -18045,7 +18109,7 @@ function graphItemList(captures) {
 function renderGraphCapturePanel(panel, chosen) {
   const data = graphState.data;
   const layout = graphState.layout;
-  panel.appendChild(elt("p", "card-kicker", t("graph.capture", "Capture")));
+  panel.appendChild(cardStateLine(chosen.state));
   panel.appendChild(elt("h2", "card-title", chosen.title));
   if (chosen.origin) panel.appendChild(elt("p", "card-meta", chosen.origin));
   const summary = elt("p", "card-summary", chosen.state === "ready_undistilled"
@@ -18064,10 +18128,10 @@ function renderGraphCapturePanel(panel, chosen) {
   });
 
   if (chosen.entities.length) {
-    panel.appendChild(elt("p", "card-kicker", t("graph.itNames", "What it mentions")));
+    panel.appendChild(cardSection(t("map.sectionNames", "Mentions")));
     const chips = elt("div", "card-chips");
     chosen.entities.forEach((name) => {
-      const chip = elt("button", "card-chip", name);
+      const chip = mentionMark(name, "button");
       chip.type = "button";
       chip.dataset.key = `chip:${name}`;
       chip.addEventListener("click", () => {
@@ -18094,12 +18158,12 @@ function renderGraphCapturePanel(panel, chosen) {
     .sort((x, y) => y.shared - x.shared || Number(y.alike) - Number(x.alike))
     .slice(0, 12)
     .map((r) => r.c);
-  panel.appendChild(elt("p", "card-kicker", t("graph.related", "Related here")));
+  panel.appendChild(cardSection(t("graph.related", "Related here")));
   if (related.length) panel.appendChild(graphItemList(related));
   else panel.appendChild(elt("p", "card-note", t("graph.noRelated", "Nothing else in this orbit names what it names.")));
 
-  const actions = elt("div", "card-actions");
-  const read = elt("button", "btn btn-primary", t("map.readInList", "Read it"));
+  const actions = elt("div", "card-actions card-foot");
+  const read = elt("button", "btn", t("map.readInList", "Read it"));
   read.type = "button";
   read.addEventListener("click", () => void showNodeReader(node));
   actions.appendChild(read);
