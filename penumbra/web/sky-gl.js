@@ -864,9 +864,11 @@ void main() {
       },
       //: Draws once now and reads back the colour at a point in CSS pixels (0 to 255 each), for a
       //: test to see what was drawn; the drawing buffer is still intact within this task.
-      readAt(cssX, cssY) {
-        const v = view();
-        if (!v) return null;
+      readAt(cssX, cssY, { worlds = true } = {}) {
+        const view0 = view();
+        if (!view0) return null;
+        // Without the worlds, the same point shows what lies behind them: the difference is the body.
+        const v = worlds ? view0 : { ...view0, bodies: null, bodyCount: 0, streaks: null, streakCount: 0 };
         draw(v, 0);
         const dprNow = Math.min(window.devicePixelRatio || 1, 2) * QUALITY[current].scale;
         const out = new Uint8Array(4);

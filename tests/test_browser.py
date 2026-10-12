@@ -400,18 +400,23 @@ def test_the_fine_sky_runs_only_in_the_dark_theme_and_says_why_when_it_cannot(br
               return { drawn: v.bodyCount, expected, artShown: getComputedStyle(art).display !== 'none' };
             }""")
             assert worlds["drawn"] == worlds["expected"] > 0 and not worlds["artShown"], worlds
-            # And they are really drawn: a planet's side facing the hole is lit, well above the empty
-            # sky beside it. (A planet a lens dimmed, or one behind another, is skipped.)
+            # And they are really drawn: the same point on a planet's lit side reads differently with
+            # the worlds and without them. (The brightest-coloured planet a lens has not dimmed is
+            # used: a dark world, lava say, is close to the night sky behind it.)
             pixels = view.evaluate("""() => {
               const v = skyView();
-              let i = 0;
-              while (i < v.bodyCount && (v.bodies[i * 24 + 3] > 4.5 || v.bodies[i * 24 + 6] < 0.9)) i += 1;
-              const b = v.bodies.slice(i * 24, i * 24 + 24);
-              const [x, y, r, lx, ly] = [b[0], b[1], b[2], b[8], b[9]];
-              return { planet: fineSky.sky.readAt(x + lx * r * 0.6, y - ly * r * 0.6),
-                       sky: fineSky.sky.readAt(x - lx * r * 3, y + ly * r * 3) };
+              let best = -1, bright = -1;
+              for (let i = 0; i < v.bodyCount; i += 1) {
+                const b = v.bodies.slice(i * 24, i * 24 + 24);
+                const glow = b[12] + b[13] + b[14];
+                if (b[3] < 4.5 && b[6] > 0.9 && glow > bright) { best = i; bright = glow; }
+              }
+              const b = v.bodies.slice(best * 24, best * 24 + 24);
+              const [x, y] = [b[0] + b[8] * b[2] * 0.5, b[1] - b[9] * b[2] * 0.5];
+              return { drawn: fineSky.sky.readAt(x, y), behind: fineSky.sky.readAt(x, y, { worlds: false }) };
             }""")
-            assert sum(pixels["planet"]) > sum(pixels["sky"]) + 30, pixels
+            change = sum(abs(a - b) for a, b in zip(pixels["drawn"], pixels["behind"]))
+            assert change > 40, pixels
             # A capture that could not be read keeps its own colour (a red edge) under the fine sky.
             assert view.evaluate("skyMoonState({ kind: 'capture', state: 'failed' })") == 5
             view.evaluate("openMapFocus({kind: 'planet', orbit: 'o1'})")
