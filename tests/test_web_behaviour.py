@@ -1112,6 +1112,28 @@ def test_a_saver_keeps_one_request_in_flight_and_the_newest_value_wins():
     assert (r["idleAtStart"], r["idleInFlight"], r["idleAtEnd"]) == (True, False, True)
 
 
+def test_list_patches_run_one_at_a_time():
+    """Two patches of the list in flight could land out of order and apply the older reply last.
+    A call made meanwhile waits for the running patch and folds into one more after it."""
+    r = _run("listPatchOneAtATime")
+    assert r["most"] == 1, "two patches of the list ran at once"
+    assert r["runsWhileFirst"] == 1
+    assert r["runsAfterFirst"] == 2, "the calls made meanwhile were not folded into one more patch"
+    assert r["thirdDoneEarly"] is False, "a call was answered before the patch that covers it ran"
+    assert r["sameAnswer"] is True
+
+
+def test_a_map_read_that_overlapped_a_save_is_read_again():
+    """A read that started before a save and landed after it holds the map from before the save.
+    Adopting it would draw the planet back where it was and make that the copy the next saver
+    starts from; it is dropped and the map read again once the save is done."""
+    r = _run("mapReadDuringSave")
+    assert r["reads"] == [10, 10, 200], r["reads"]
+    assert r["adopted"] == {"ring": 1, "angle": 200}, "the older read became the server's copy"
+    assert r["draws"] == r["drawsBefore"] + 1, "the older read was drawn, or the fresh one was not"
+    assert r["owed"] is None
+
+
 def test_an_empty_map_keeps_one_penny_scene_through_redraws():
     """The map redraws often (the poll, a pick, a language switch); Penny must not change scene on
     each, only when the map has filled and emptied again."""

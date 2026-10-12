@@ -1729,7 +1729,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
       syncStarMapContext: () => {}, mapMotion: { held: false }, focusCameraOn: () => {},
       uiLang: () => fakes.lang,
       MAP_SETTINGS_DEFAULT: { inner_ring: 260, ring_gap: 160 },
-      mapServer: {}, dropIdleSavers: () => {}, keepOnlyFocusedCapture: () => {},
+      mapServer: {}, dropIdleSavers: () => {}, keepOnlyFocusedCapture: () => {}, rereadMap: () => {},
     };
     const names = Object.keys(deps);
     const renderStarMap = new Function(...names, `${extract("renderStarMap")}\nreturn renderStarMap;`)(
@@ -1997,7 +1997,7 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     const fakes = { reply: { nodes: [{ id: "a", state: "ready", v: 2 }, { id: "b", state: "ready", v: 2 }], total: 2 } };
     const names = Object.keys(deps);
     const run = new Function(...names, "let DISTIL_BATCH_CAP = 0;\n" +
-      `${extract("streamPickerOpen")}\n${extract("patchChangedNodes")}\nreturn patchChangedNodes;`)(
+      `${extract("streamPickerOpen")}\n${extract("patchNodesOnce")}\nreturn patchNodesOnce;`)(
       ...names.map((n) => deps[n]));
     await run();
     const first = { replaced: [...replaced], heldA: deps.horizonState.nodes.find((n) => n.id === "a").v };
@@ -2014,6 +2014,92 @@ constant("REFERENCE_KEY_SEP") + "\n" + ["referenceKey", "collectReferences"].map
     replaced.length = 0;
     await run();
     return { first, whileOpen, after: { replaced: [...replaced], rendered, count: deps.horizonState.nodes.length } };
+  },
+
+  //: Patches of the list run one at a time, and calls made meanwhile fold into one more patch.
+  async listPatchOneAtATime() {
+    let running = 0;
+    let most = 0;
+    let runs = 0;
+    const gates = [];
+    const patchNodesOnce = async () => {
+      running += 1;
+      runs += 1;
+      most = Math.max(most, running);
+      await new Promise((resolve) => gates.push(resolve));
+      running -= 1;
+    };
+    const run = new Function("listPatch", "patchNodesOnce",
+      `${extract("patchChangedNodes")}\nreturn patchChangedNodes;`)({ running: null, again: false }, patchNodesOnce);
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const first = run();
+    const second = run();
+    const third = run();
+    await flush();
+    const runsWhileFirst = runs;
+    gates.shift()();
+    await flush();
+    const runsAfterFirst = runs;
+    let thirdDone = false;
+    third.then(() => { thirdDone = true; });
+    await flush();
+    const thirdDoneEarly = thirdDone;
+    gates.shift()();
+    await Promise.all([first, second, third]);
+    return { most, runsWhileFirst, runsAfterFirst, thirdDoneEarly, sameAnswer: second === third };
+  },
+
+  //: A map read that overlapped a save is not adopted; the map is read again once the save is done.
+  async mapReadDuringSave() {
+    const served = { planets: { cfp: { ring: 0, angle: 10 } }, settings: {} };
+    let gate = null;
+    const reads = [];
+    const api = async (path, init) => {
+      if (init && init.method === "PUT") {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        served.planets.cfp = JSON.parse(init.body);
+        return {};
+      }
+      if (path === "/horizon/map") {
+        const copy = JSON.parse(JSON.stringify(served));
+        reads.push(copy.planets.cfp.angle);
+        if (gate) { const g = gate; gate = null; await g; }
+        return copy;
+      }
+      if (path === "/horizon/concepts") return { tags: [] };
+      if (path === "/orbits") return { orbits: [] };
+      return { orbits: [], total: { count: 0 } };
+    };
+    const starMap = { generation: 0, scene: null, signature: "", orbits: [], selected: null };
+    let draws = 0;
+    const deps = {
+      starMap, api, watchDistil: () => {}, horizonEl: () => ({}), readableError: (m) => m,
+      orbitTitles: new Map(), starMapOrbit: (o) => o, paintStarMapLenses: () => {},
+      drawStarMap: () => { draws += 1; starMap.scene = {}; }, syncStarMapContext: () => {},
+      mapMotion: { held: false }, focusCameraOn: () => {}, uiLang: () => "en", MAP_SETTINGS_DEFAULT: {},
+      dropIdleSavers: () => {}, keepOnlyFocusedCapture: () => {},
+      mapServer: { places: {}, settings: null, writes: 0, sending: 0, reread: null },
+    };
+    const names = Object.keys(deps);
+    const { renderStarMap, mapSaver } = new Function(...names,
+      `${extract("renderStarMap")}\n${extract("latestSaver")}\n${extract("mapSaver")}\n${extract("rereadMap")}\n` +
+      "return { renderStarMap, mapSaver };")(...names.map((n) => deps[n]));
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    await renderStarMap();
+    const drawsBefore = draws;
+    // A read starts, holding the map from before the save; the save then goes out and lands.
+    let release;
+    gate = new Promise((resolve) => { release = resolve; });
+    const read = renderStarMap({ quiet: true });
+    await flush();
+    const saver = mapSaver((value) => api("/horizon/map/planets/cfp", { method: "PUT", body: JSON.stringify(value) }),
+      { confirmed: { ring: 0, angle: 10 } });
+    saver.save({ ring: 1, angle: 200 });
+    for (let i = 0; i < 4; i += 1) await flush();
+    release();
+    await read;
+    for (let i = 0; i < 6; i += 1) await flush();
+    return { reads, drawsBefore, draws, adopted: deps.mapServer.places.cfp, owed: deps.mapServer.reread };
   },
 
   //: The arrow keys walk the planets in the order they stand on screen: clockwise from the top.

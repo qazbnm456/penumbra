@@ -10001,7 +10001,30 @@ function streamPickerOpen() {
   return Boolean(wrap && wrap.isConnected && horizonEl("stream").contains(wrap));
 }
 
-async function patchChangedNodes() {
+//: One patch at a time. Two in flight could land out of order and the older reply be applied
+//: last, or both replace the same row; a call made meanwhile is folded into one more patch after
+//: the running one, and is answered when that one is done.
+const listPatch = { running: null, again: false };
+
+function patchChangedNodes() {
+  if (listPatch.running) {
+    listPatch.again = true;
+    return listPatch.running;
+  }
+  listPatch.running = (async () => {
+    try {
+      do {
+        listPatch.again = false;
+        await patchNodesOnce();
+      } while (listPatch.again);
+    } finally {
+      listPatch.running = null;
+    }
+  })();
+  return listPatch.running;
+}
+
+async function patchNodesOnce() {
   let data;
   try {
     data = await api(
@@ -13142,6 +13165,7 @@ function mapHome() {
 //: fetch and then, finding the data unchanged, draw nothing in its place.
 async function renderStarMap({ quiet = false } = {}) {
   const generation = quiet ? starMap.generation : ++starMap.generation;
+  const writes = mapServer.writes;
   starMap.lastRender = Date.now();
   watchDistil();
   let topo;
@@ -13162,6 +13186,14 @@ async function renderStarMap({ quiet = false } = {}) {
     /* lenses are optional */
   }
   if (generation !== starMap.generation) return;
+  // A read that overlapped a save of the map may hold the map from before it: adopting it would
+  // draw an older place and make it the server's copy (`mapServer`) that the next saver starts
+  // from. It is read again once no save is in flight (`mapSaver`), as strongly as it was asked for.
+  if (mapServer.writes !== writes || mapServer.sending) {
+    mapServer.reread = quiet && mapServer.reread !== "full" ? "quiet" : "full";
+    if (!mapServer.sending) rereadMap();
+    return;
+  }
   const language = typeof uiLang === "function" ? uiLang() : "";
   const signature = JSON.stringify([topo, listed, placed, concepts.tags || [], language]);
   if (quiet && starMap.scene && signature === starMap.signature) return;
@@ -14910,11 +14942,11 @@ function startPlanetDrag(event, p, group) {
       const shiftWas = starMap.dropShift.get(slug);
       setPlace(p.orbit, landing);
       starMap.dropShift.set(slug, mapMotion.clock * planetOmega(landing.ring, planetStyle(p.orbit)));
-      // Through a `latestSaver`, like every other write the map makes; a failed move puts back the
+      // Through a `mapSaver`, like every other write the map makes; a failed move puts back the
       // last place the server confirmed, with the drop shift that went with it.
       if (!planetDrag.savers.has(slug)) {
         const server = mapServer.places[slug] || landing;
-        planetDrag.savers.set(slug, latestSaver((value) => api(
+        planetDrag.savers.set(slug, mapSaver((value) => api(
           `/horizon/map/planets/${encodeURIComponent(p.orbit.id)}`,
           { method: "PUT", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ ring: value.ring, angle: value.angle }) },
@@ -15379,7 +15411,30 @@ function latestSaver(send, { confirmed, done, failed }) {
 //: `confirmed`: the screen's own state may already hold a value not yet saved, or one the server
 //: has since changed (a rearrangement, a reset, another window). Each read of the map drops the
 //: savers that are idle, so the next change makes a new one from the newer copy.
-const mapServer = { places: {}, settings: null };
+//: `writes` counts each save's start and end and `sending` how many are in flight, so a read can
+//: tell that it overlapped one; `reread` is the read owed once they have settled.
+const mapServer = { places: {}, settings: null, writes: 0, sending: 0, reread: null };
+
+//: A `latestSaver` for the map, counted in `mapServer` so a read overlapping it is read again.
+function mapSaver(send, hooks) {
+  return latestSaver(async (value) => {
+    mapServer.writes += 1;
+    mapServer.sending += 1;
+    try {
+      return await send(value);
+    } finally {
+      mapServer.sending -= 1;
+      mapServer.writes += 1;
+      if (!mapServer.sending) rereadMap();
+    }
+  }, hooks);
+}
+
+function rereadMap() {
+  const owed = mapServer.reread;
+  mapServer.reread = null;
+  if (owed) void renderStarMap({ quiet: owed === "quiet" });
+}
 
 function dropIdleSavers() {
   for (const savers of [planetCard.savers, planetDrag.savers]) {
@@ -15390,12 +15445,12 @@ function dropIdleSavers() {
 
 const mapSettingsUi = { saveTimer: 0, saver: null, rearranged: false };
 
-//: The map's settings, saved through one `latestSaver`. A change becomes the map's settings at once
+//: The map's settings, saved through one `mapSaver`. A change becomes the map's settings at once
 //: (so a later change builds on it) and cancels a size save still waiting out its pause.
 function saveMapSettings(next) {
   clearTimeout(mapSettingsUi.saveTimer);
   if (!mapSettingsUi.saver) {
-    mapSettingsUi.saver = latestSaver(async (value) => {
+    mapSettingsUi.saver = mapSaver(async (value) => {
       const got = await api("/horizon/map/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -17278,7 +17333,7 @@ function savePlanetStyle(orbit, next) {
   // puts back the shift that went with it, and the planet does not jump along its ring.
   if (!planetCard.savers.has(orbit.slug)) {
     const server = mapServer.places[orbit.slug] || {};
-    planetCard.savers.set(orbit.slug, latestSaver((value) => api(
+    planetCard.savers.set(orbit.slug, mapSaver((value) => api(
       `/horizon/map/planets/${encodeURIComponent(orbit.id)}/style`,
       { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value.style) },
     ), {
