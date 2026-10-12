@@ -14542,6 +14542,9 @@ function drawStarMap() {
       t("map.planetLabel", `${orbit.title}, ${orbit.sources} sources`, { name: orbit.title, n: orbit.sources }) },
     `map-planet${planetMark(orbit.slug)}${dimmed ? " is-dim" : ""}`);
     group.appendChild(svgEl("circle", { r: p.r + 14, fill: "url(#pn-halo)" }, "map-planet-halo"));
+    // The planet's own target, unseen, as wide as its halo: under the fine sky the drawn world and
+    // its halo are hidden, and a press on the sphere itself then landed on nothing.
+    group.appendChild(svgEl("circle", { r: p.r + 14 }, "map-planet-hit"));
     // Moons: one per source, so they agree with the "N sources" under the planet. Each capture
     // filed from the Horizon is its own moon, copper once summarised and grey before, and can be
     // pointed at and opened; a source added inside the orbit is hollow, because no summary pass

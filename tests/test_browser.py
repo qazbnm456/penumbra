@@ -359,6 +359,9 @@ def test_the_fine_sky_runs_only_in_the_dark_theme_and_says_why_when_it_cannot(br
     machine."""
     for scheme in ("light", "dark"):
         view = browser.new_page(viewport={"width": 1280, "height": 860}, locale="en-US", color_scheme=scheme)
+        # "Fine", so a loaded machine's slowness watch cannot turn the sky off halfway through the
+        # checks below (Auto gives way when frames run slow, which a busy runner can cause).
+        view.add_init_script("try { localStorage.setItem('penumbra-map-quality', 'fine'); } catch {}")
         errors: list[str] = []
         view.on("pageerror", lambda err, seen=errors: seen.append(str(err)))
         view.goto(f"{server}/#token={TOKEN}")
@@ -423,7 +426,7 @@ def test_the_fine_sky_runs_only_in_the_dark_theme_and_says_why_when_it_cannot(br
             view.wait_for_selector("#starmap-card .card-foot .card-enter", timeout=5000)
             view.evaluate("closeMapFocus()")
             # The note follows the state, through Off and back.
-            for choice, start in (("off", "Off"), ("auto", "On, at")):
+            for choice, start in (("off", "Off"), ("fine", "On, at")):
                 view.evaluate(f"localStorage.setItem('penumbra-map-quality', '{choice}'); syncFineSky()")
                 assert view.evaluate("fineSky.status").startswith(start), choice
             # The list and back: the sky stops behind the hidden map and starts again with it.
@@ -622,4 +625,22 @@ def test_under_reduced_motion_the_fine_sky_holds_still(browser, server):
     first = view.evaluate("skyView().worldsKey")
     view.wait_for_timeout(600)
     assert view.evaluate("skyView().worldsKey") == first
+    view.close()
+
+
+def test_a_press_on_a_planets_sphere_chooses_it_even_with_its_drawing_hidden(browser, server):
+    """Under the fine sky a planet's drawing and halo are hidden (the canvas draws the world), which
+    left little of it to press; its own unseen target, as wide as the halo, takes the press."""
+    view = browser.new_page(viewport={"width": 1280, "height": 860}, locale="en-US", color_scheme="dark")
+    view.goto(f"{server}/#token={TOKEN}")
+    view.wait_for_selector("#starmap-svg .map-planet", timeout=30000)
+    view.wait_for_timeout(1200)
+    view.evaluate("mapMotion.paused = true")
+    centre = view.evaluate("""() => {
+      const hit = document.querySelector('.map-planet[data-key="orbit:o2"] .map-planet-hit');
+      const r = hit.getBoundingClientRect();
+      return [r.x + r.width / 2, r.y + r.height / 2];
+    }""")
+    view.mouse.click(centre[0], centre[1])
+    view.wait_for_function("starMap.selected === 'o2'", timeout=5000)
     view.close()

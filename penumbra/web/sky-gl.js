@@ -135,20 +135,24 @@ vec3 blackbody(float kelvin) {
   return pow(vec3(r, g, b), vec3(2.2));
 }
 
-vec3 starLayer(vec3 dir, float density) {
+// A star is a soft spot no smaller than the pixel it falls in (foot, the change in direction across
+// one pixel), its light spread over that size: a spot smaller than a pixel flickered between pixels
+// and, scaled up from a lower-resolution sky, read as grain.
+vec3 starLayer(vec3 dir, float density, float foot, float rarity) {
   vec3 p = dir * density;
   vec3 cell = floor(p);
   float pick = hash1(cell);
-  if (pick < 0.9) return vec3(0.0);
+  if (pick < rarity) return vec3(0.0);
   vec3 at = vec3(hash1(cell + 3.7), hash1(cell + 9.1), hash1(cell + 17.3)) * 0.7 + 0.15;
   float d = length(p - cell - at);
-  float glow = exp(-d * d * 60.0);
-  float bright = pow((pick - 0.9) * 10.0, 5.0) * 3.0 + 0.08;
+  float size = max(0.13, foot * density * 0.9);
+  float glow = exp(-d * d / (size * size)) * (0.0169 / (size * size));
+  float bright = pow((pick - rarity) / (1.0 - rarity), 5.0) * 3.0 + 0.08;
   return blackbody(mix(3200.0, 12000.0, hash1(cell + 5.3))) * glow * bright;
 }
 
 // The sky behind the hole: a faint band of the galaxy and two layers of stars.
-vec3 sky(vec3 dir) {
+vec3 sky(vec3 dir, float foot) {
   vec3 col = vec3(0.0025, 0.0025, 0.0045);
   vec3 plane = normalize(vec3(0.25, 0.85, 0.46));
   float h = dot(dir, plane);
@@ -156,7 +160,8 @@ vec3 sky(vec3 dir) {
   float cloud = fbm(dir * 3.2 + 7.0);
   // Soft cloud only: dust lanes with crisp edges, bent by the hole, drew arcs across the open sky.
   col += mix(vec3(0.42, 0.45, 0.62), vec3(0.75, 0.6, 0.45), cloud) * band * (0.15 + cloud) * 0.02;
-  col += starLayer(dir, 70.0) + 0.6 * starLayer(dir, 150.0);
+  // Fewer, clearer stars: a field of faint ones read as noise over the open sky.
+  col += starLayer(dir, 70.0, foot, 0.93) + 0.5 * starLayer(dir, 150.0, foot, 0.965);
   return col;
 }
 
@@ -201,13 +206,15 @@ void main() {
   vec3 vel = normalize(-eye * CAM + right * b.x + up * b.y);
   vec3 col = vec3(0.0);
   float alpha = 0.0;
+  // How far the view direction turns across one pixel, taken here where every pixel runs it.
+  float foot = length(fwidth(vel));
   // Far enough out no disk lies in the way and the light bends only a little: by about 2/b radians
   // towards the hole (weak lensing), applied here rather than traced. Taken straight instead, the
   // sky out here did not meet the traced sky inside, and the seam drew a faint circle on the map.
   float reach = length(b);
   if (reach > 24.0) {
     vec3 inward = normalize(right * b.x + up * b.y);
-    outColor = vec4(sky(normalize(vel - inward * (2.0 / reach))), 1.0);
+    outColor = vec4(sky(normalize(vel - inward * (2.0 / reach)), foot), 1.0);
     return;
   }
   vec3 hv = cross(pos, vel);
@@ -238,7 +245,7 @@ void main() {
     if (alpha > 0.995) break;
     if (rn > CAM * 1.4 && dot(pos, vel) > 0.0) break;
   }
-  if (!fell) col += (1.0 - alpha) * sky(normalize(vel));
+  if (!fell) col += (1.0 - alpha) * sky(normalize(vel), foot);
   outColor = vec4(col, 1.0);
 }`;
 
@@ -320,6 +327,12 @@ float craters(vec3 p) {
   return best;
 }
 vec3 diskLight() { return vec3(1.0, 0.86, 0.68) * 1.55; }
+// Drawn straight to the screen at full resolution, over the sky, so tone mapped here as the sky is.
+vec3 filmicW(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+vec4 toScreen(vec4 premult) {
+  vec3 c = premult.rgb / max(premult.a, 1e-4);
+  return vec4(pow(filmicW(c * 0.95), vec3(1.0 / 2.2)) * premult.a, premult.a);
+}
 
 void main() {
   float fam = v0.w;
@@ -336,7 +349,7 @@ void main() {
   // A glow: a comet's head, soft and bright.
   if (fam > 5.5) {
     float g = exp(-r * r * 3.0);
-    outColor = vec4(v3.rgb * g * 3.0, g) * alpha;
+    outColor = toScreen(vec4(v3.rgb * g * 3.0, g) * alpha);
     return;
   }
 
@@ -447,7 +460,7 @@ void main() {
   vec4 body = vec4(col * a, a);
   vec4 outc = ringBack * (1.0 - body.a) + body;
   outc = ringFront + outc * (1.0 - ringFront.a);
-  outColor = outc * alpha;
+  outColor = toScreen(outc * alpha);
 }`;
 
   // A streak: a meteor's trail, or a comet's tails. Per instance (8 floats in two vec4s):
@@ -484,8 +497,11 @@ void main() {
   float along = pow(1.0 - t, w1.w > 0.5 ? 1.4 : 2.2);
   vec3 tint = w1.w < 0.5 ? vec3(1.0, 0.95, 0.85) * 3.2
             : (w1.w < 1.5 ? vec3(0.55, 0.75, 1.0) * 1.6 : vec3(1.0, 0.85, 0.65) * 0.9);
-  float a = core * along * w1.z * (w1.w > 1.5 ? 0.45 : 1.0);
-  outColor = vec4(tint * a, a * 0.6);
+  // A wider faint halo stands in for the bloom the trail no longer passes through.
+  float halo = exp(-across * across * 0.35) * 0.25;
+  float a = (core + halo) * along * w1.z * (w1.w > 1.5 ? 0.45 : 1.0);
+  vec3 c = pow(clamp((tint * (2.51 * tint + 0.03)) / (tint * (2.43 * tint + 0.59) + 0.14), 0.0, 1.0), vec3(1.0 / 2.2));
+  outColor = vec4(c * min(a, 1.0), min(a, 1.0));
 }`;
 
   // What is bright enough to bleed, at half resolution.
@@ -672,15 +688,20 @@ void main() {
     const pace = { at: 0, since: 0, slow: 0, frames: 0 };
 
     const draw = (v, seconds) => {
+      // The sky is traced at the quality's resolution and scaled up smoothly; the screen, and the
+      // worlds drawn on it, are at full resolution, so planets and trails stay sharp at any quality.
       const q = QUALITY[current];
-      const dpr = Math.min(window.devicePixelRatio || 1, 2) * q.scale;
+      const full = Math.min(window.devicePixelRatio || 1, 2);
+      const dpr = full * q.scale;
       const cssW = canvas.clientWidth;
       const cssH = canvas.clientHeight;
       const w = Math.max(1, Math.round(cssW * dpr));
       const h = Math.max(1, Math.round(cssH * dpr));
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
+      const W = Math.max(1, Math.round(cssW * full));
+      const H = Math.max(1, Math.round(cssH * full));
+      if (canvas.width !== W || canvas.height !== H) {
+        canvas.width = W;
+        canvas.height = H;
       }
       targets.scene.size(w, h);
       gl.bindVertexArray(vao);
@@ -696,27 +717,6 @@ void main() {
       const lift = (9 * Math.PI) / 180;
       gl.uniform2f(scene.uniforms.uView, Math.sin(lift), Math.cos(lift));
       gl.drawArrays(gl.TRIANGLES, 0, 3);
-      // The worlds over the sky, into the same high-range target, so they bloom with it: streaks
-      // first (they are far off), then the bodies. Premultiplied, blended over what is there.
-      const worlds = (prog, vao, buf, data, count) => {
-        if (!data || !count) return;
-        gl.useProgram(prog.prog);
-        gl.uniform2f(prog.uniforms.uRes, w, h);
-        gl.uniform1f(prog.uniforms.uScale, dpr);
-        gl.uniform1f(prog.uniforms.uCssH, cssH);
-        gl.bindVertexArray(vao);
-        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-        gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
-        gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, count);
-      };
-      if (v.bodies || v.streaks) {
-        gl.enable(gl.BLEND);
-        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-        worlds(passes.streaks, streakVao, streakBuf, v.streaks, v.streakCount);
-        worlds(passes.bodies, bodyVao, bodyBuf, v.bodies, v.bodyCount);
-        gl.disable(gl.BLEND);
-        gl.bindVertexArray(vao);
-      }
       // The bleed.
       const bw = Math.max(1, w >> 1);
       const bh = Math.max(1, h >> 1);
@@ -747,7 +747,7 @@ void main() {
       }
       // To the screen.
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.viewport(0, 0, w, h);
+      gl.viewport(0, 0, W, H);
       gl.useProgram(passes.final.prog);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, targets.scene.tex);
@@ -759,6 +759,27 @@ void main() {
       gl.uniform1f(passes.final.uniforms.uExposure, 0.95);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       gl.activeTexture(gl.TEXTURE0);
+      // The worlds on top, at full resolution: trails first (they are far off), then the bodies,
+      // each premultiplied and blended over the sky.
+      const worlds = (prog, vao2, buf, data, count) => {
+        if (!data || !count) return;
+        gl.useProgram(prog.prog);
+        gl.uniform2f(prog.uniforms.uRes, W, H);
+        gl.uniform1f(prog.uniforms.uScale, full);
+        gl.uniform1f(prog.uniforms.uCssH, cssH);
+        gl.bindVertexArray(vao2);
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+        gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, count);
+      };
+      if (v.bodies || v.streaks) {
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        worlds(passes.streaks, streakVao, streakBuf, v.streaks, v.streakCount);
+        worlds(passes.bodies, bodyVao, bodyBuf, v.bodies, v.bodyCount);
+        gl.disable(gl.BLEND);
+        gl.bindVertexArray(vao);
+      }
     };
 
     //: Slower than about 50 frames a second for most of two seconds of wall time: one step down. A
@@ -870,7 +891,7 @@ void main() {
         // Without the worlds, the same point shows what lies behind them: the difference is the body.
         const v = worlds ? view0 : { ...view0, bodies: null, bodyCount: 0, streaks: null, streakCount: 0 };
         draw(v, 0);
-        const dprNow = Math.min(window.devicePixelRatio || 1, 2) * QUALITY[current].scale;
+        const dprNow = Math.min(window.devicePixelRatio || 1, 2);
         const out = new Uint8Array(4);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.readPixels(Math.round(cssX * dprNow), Math.round((canvas.clientHeight - cssY) * dprNow), 1, 1,

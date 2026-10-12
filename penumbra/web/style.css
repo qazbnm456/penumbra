@@ -7527,6 +7527,11 @@ body[data-view="horizon"] .orbit-picker {
 /* Two planets passing each other: the one behind gives way (`settleOverlaps`). Opacity only: a blur
    filter inside an SVG is re-rasterised on every frame the planet moves, and WebKit, which the
    desktop app renders with, does that on the main thread. */
+/* A planet's unseen target (`drawStarMap`): it takes the press wherever the world is drawn. */
+.map-planet-hit {
+  fill: transparent;
+}
+
 .map-planet.is-behind {
   opacity: 0.18;
 }
