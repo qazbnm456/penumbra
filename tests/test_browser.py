@@ -390,13 +390,16 @@ def test_the_fine_sky_runs_only_in_the_dark_theme_and_says_why_when_it_cannot(br
               name: getComputedStyle(document.querySelector('.map-hole-label')).textDecorationLine })""")
             assert focused == {"ring": "none", "name": "underline"}, focused
             view.evaluate("document.activeElement.blur()")
-            facing = view.evaluate("""() => starMap.scene.planets.map(({ p, suns }) => {
-              const pos = planetAt(p);
-              const want = Math.atan2(pos.y - MAP_CENTRE.y, pos.x - MAP_CENTRE.x) * 180 / Math.PI;
-              const got = Number((suns[0].getAttribute('transform') || '').replace(/[^-0-9.]/g, ''));
-              return Math.abs(((got - want + 540) % 360) - 180);
-            })""")
-            assert facing and max(facing) < 5, facing
+            # The worlds are drawn on the sky's canvas: one sphere for each planet's world and each
+            # moon, handed over every frame, while the SVG keeps only labels, selection and targets.
+            worlds = view.evaluate("""() => {
+              const v = skyView();
+              const expected = starMap.scene.planets.reduce((n, e) => n + e.looks.length + e.moons.length, 0)
+                + starMap.scene.loose.items.length;
+              const art = document.querySelector('.map-world-art');
+              return { drawn: v.bodyCount, expected, artShown: getComputedStyle(art).display !== 'none' };
+            }""")
+            assert worlds["drawn"] == worlds["expected"] > 0 and not worlds["artShown"], worlds
             view.evaluate("openMapFocus({kind: 'planet', orbit: 'o1'})")
             view.wait_for_selector("#starmap-card .card-foot .card-enter", timeout=5000)
             view.evaluate("closeMapFocus()")

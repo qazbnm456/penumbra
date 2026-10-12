@@ -13290,16 +13290,10 @@ function placeStarMap() {
   // Reused: this runs every frame (see `settleOverlaps`).
   const at = placeScratch;
   at.clear();
-  // Under the fine sky each planet's light is turned to face the black hole as it travels.
-  const lit = starMap.fine;
-  scene.planets.forEach(({ p, group, suns }) => {
+  scene.planets.forEach(({ p, group }) => {
     const pos = planetAt(p);
     at.set(p.orbit.slug, pos);
     group.setAttribute("transform", `translate(${pos.x.toFixed(2)} ${pos.y.toFixed(2)})`);
-    if (lit && suns) {
-      const turn = `rotate(${((Math.atan2(pos.y - MAP_CENTRE.y, pos.x - MAP_CENTRE.x) * 180) / Math.PI).toFixed(1)})`;
-      suns.forEach((sun) => sun.setAttribute("transform", turn));
-    }
   });
   settleOverlaps(scene, at);
   scene.bridges.forEach(({ bridge, path, hit, label }) => {
@@ -13495,11 +13489,6 @@ function starMapDefs() {
     defs.appendChild(g);
   };
   linear("pn-meteor", [["0", "stop-trail-clear"], ["1", "stop-trail"]]);
-  // A planet lit by the hole's disk, along +x from the side facing it: warm light, clear, then the
-  // night side; and the warm rim on the lit edge.
-  linear("pn-hole-lit", [["0", "stop-hole-lit"], ["0.34", "stop-hole-lit-clear"], ["0.5", "stop-night-clear"],
-    ["0.85", "stop-night"]]);
-  linear("pn-hole-rim", [["0", "stop-hole-rim"], ["0.32", "stop-hole-rim-clear"]]);
   linear("pn-comet-tail", [["0", "stop-trail-clear"], ["0.8", "stop-tail"], ["1", "stop-trail"]]);
   const blur = svgEl("filter", { id: "pn-soft", x: "-50%", y: "-50%", width: "200%", height: "200%" });
   blur.appendChild(svgEl("feGaussianBlur", { stdDeviation: "3.2" }));
@@ -13853,7 +13842,9 @@ function skyTraveller(cls, x, y, angle, dx, dy, seconds, build) {
   layer.appendChild(outer);
   skyActive.push({
     outer, x, y, angle, dx, dy, t0: performance.now(), ms: seconds * 1000,
-    streak: cls === "map-meteor", spin: outer.querySelector(".map-rock-spin"),
+    streak: cls === "map-meteor", spin: outer.querySelector(".map-rock-spin"), kind: cls,
+    // What the fine sky needs to draw it: a meteor's length, a rock's size and seed.
+    len: Number(outer.querySelector("rect")?.getAttribute("width")) || 0, seed: Math.random(),
   });
 }
 
@@ -13871,8 +13862,11 @@ function stepSky(now) {
     const fade = item.streak
       ? (u < 0.15 ? u / 0.15 : 1 - (u - 0.15) / 0.85)
       : (u < 0.08 ? u / 0.08 : u > 0.92 ? (1 - u) / 0.08 : 1);
+    item.cx = item.x + item.dx * e;
+    item.cy = item.y + item.dy * e;
+    item.fade = fade;
     item.outer.setAttribute("transform",
-      `translate(${(item.x + item.dx * e).toFixed(1)} ${(item.y + item.dy * e).toFixed(1)}) rotate(${item.angle.toFixed(1)})`);
+      `translate(${item.cx.toFixed(1)} ${item.cy.toFixed(1)}) rotate(${item.angle.toFixed(1)})`);
     item.outer.setAttribute("opacity", fade.toFixed(2));
     if (item.spin) item.spin.setAttribute("transform", `rotate(${((now - item.t0) / 25) % 360})`);
   }
@@ -14288,7 +14282,11 @@ function deepSky() {
 //: One world into `parent`, centred on its origin: its atmosphere, body, turning surface and cloud,
 //: caps, light and shade, and, if it has them, rings split round it.
 //: `phaseKey` names this world across redraws, so its turning surface keeps its place (`mapPhases`).
-function drawWorld(parent, r, terrain, clipId, phaseKey = "") {
+function drawWorld(host, r, terrain, clipId, phaseKey = "") {
+  // Everything drawn for the world sits in one group, which the fine sky hides: there the world is
+  // drawn as a lit sphere instead (`skyWorlds`), and only its label, selection and targets stay.
+  const parent = svgEl("g", {}, "map-world-art");
+  host.appendChild(parent);
   const rings = terrain.ringed ? planetRings(r, terrain.tilt, terrain.ringSeed) : null;
   if (rings) parent.appendChild(rings.far);
   const clip = svgEl("clipPath", { id: clipId });
@@ -14323,13 +14321,6 @@ function drawWorld(parent, r, terrain, clipId, phaseKey = "") {
   parent.appendChild(surface);
   parent.appendChild(svgEl("circle", { r, fill: "url(#pn-light)" }, "map-planet-light"));
   parent.appendChild(svgEl("circle", { r, fill: "url(#pn-shade)" }, "map-planet-shade"));
-  // Under the fine sky the light comes from the black hole's disk, not from the top left: a lit
-  // side, a terminator and a warm rim, drawn along +x and turned each frame so +x points away from
-  // the hole (`placeStarMap`). Only shown with the fine sky (`.starmap.is-fine`).
-  const sun = svgEl("g", {}, "map-planet-sun");
-  sun.appendChild(svgEl("circle", { r, fill: "url(#pn-hole-lit)" }, "map-planet-lit"));
-  sun.appendChild(svgEl("circle", { r: r - 0.4, fill: "none", stroke: "url(#pn-hole-rim)" }, "map-planet-glint"));
-  parent.appendChild(sun);
   if (rings) parent.appendChild(rings.near);
 }
 
@@ -14513,6 +14504,8 @@ function drawStarMap() {
   hole.appendChild(holeHit);
   const looseRing = svgEl("g", {}, "map-loose");
   looseRing.dataset.phase = "loose";
+  const looseLooks = [];
+  scene.loose = { ring: looseRing, items: looseLooks };
   const items = loose.items || [];
   const shown = Math.min(loose.count, items.length || loose.count, 28);
   for (let i = 0; i < shown; i += 1) {
@@ -14524,6 +14517,8 @@ function drawStarMap() {
     looseRing.appendChild(moonBody(x, y, stableHash(`moon:${item ? item.id : i}`),
       moonClass(item) + moonLensClass(item, starMap.lenses)));
     if (item) looseRing.appendChild(moonHit(x, y, { kind: "capture", ...item }));
+    looseLooks.push({ x, y, state: skyMoonState(item ? { kind: "capture", ...item } : null),
+      seed: stableHash(`moon:${item ? item.id : i}`), faded: Boolean(item) && moonLensClass(item, starMap.lenses).includes("is-faded") });
     if (item && isFocusedMoon(item)) looseRing.appendChild(moonMark(x, y));
   }
   hole.appendChild(looseRing);
@@ -14555,6 +14550,7 @@ function drawStarMap() {
       ...Array.from({ length: local }, () => ({ kind: "local", orbit: orbit.slug, title: orbit.title }))];
     const moonRing = svgEl("g", {}, "map-moons");
     moonRing.dataset.phase = `moons:${orbit.slug}`;
+    const moonLooks = [];
     // From the orbit, not its place in the draw order: a redraw carries the moons' clock over by
     // slug (`mapPhases`), and a period that changed with the order made them jump when it did.
     moonRing.style.animationDuration = `${16 + Math.floor(stableHash(`moons:${orbit.slug}`) * 5) * 3}s`;
@@ -14565,6 +14561,8 @@ function drawStarMap() {
       const y = d * Math.sin(angle);
       moonRing.appendChild(moonBody(x, y, stableHash("moon:" + (item.id || orbit.slug + ":" + i)),
         moonClass(item) + moonLensClass(item, starMap.lenses)));
+      moonLooks.push({ x, y, state: skyMoonState(item), seed: stableHash("moon:" + (item.id || orbit.slug + ":" + i)),
+        faded: moonLensClass(item, starMap.lenses).includes("is-faded") });
       moonRing.appendChild(moonHit(x, y, { ...item, orbit: orbit.slug }));
       if (isFocusedMoon(item)) moonRing.appendChild(moonMark(x, y));
     });
@@ -14580,6 +14578,10 @@ function drawStarMap() {
       terrain.spin /= PLANET_PACES[style.spin] || 1;
       return terrain;
     };
+    // What the fine sky draws for this planet (`skyWorlds`): each world's kind, seed and terrain, and
+    // a double planet's turning pair.
+    const worldLooks = [];
+    let pairEl = null;
     if (kindHere === "binary") {
       // Both worlds sit inside the planet's circle with a gap between them, so the moons, which
       // circle just outside it, never cross a body, and the pair reads as two worlds, not one
@@ -14596,15 +14598,18 @@ function drawStarMap() {
         counter.dataset.phase = `binary:${orbit.slug}:${n}`;
         counter.style.animationDuration = pair.style.animationDuration;
         const kindN = kindsA[Math.floor(rnd() * kindsA.length)];
-        drawWorld(counter, p.r * size, styled(planetSurface(p.r * size, seed + n * 0.37, kindN)),
-          `pn-clip-${index}-${n}`, `world:${orbit.slug}:${n}`);
+        const terrainN = styled(planetSurface(p.r * size, seed + n * 0.37, kindN));
+        worldLooks.push({ at, size, kind: kindN, seed: seed + n * 0.37, terrain: terrainN });
+        drawWorld(counter, p.r * size, terrainN, `pn-clip-${index}-${n}`, `world:${orbit.slug}:${n}`);
         place.appendChild(counter);
         pair.appendChild(place);
       });
       group.appendChild(pair);
+      pairEl = pair;
     } else {
-      drawWorld(group, p.r, styled(planetSurface(p.r, seed, kindHere)), `pn-clip-${index}`,
-        `world:${orbit.slug}`);
+      const terrain = styled(planetSurface(p.r, seed, kindHere));
+      worldLooks.push({ at: 0, size: 1, kind: kindHere, seed, terrain });
+      drawWorld(group, p.r, terrain, `pn-clip-${index}`, `world:${orbit.slug}`);
     }
     // A surface told to stand still holds where it is.
     if (style.spin === "still") {
@@ -14651,7 +14656,8 @@ function drawStarMap() {
     group.addEventListener("blur", release);
     planetLayer.appendChild(group);
     p.labelW = graphLabelWidth(shortLabel(orbit.title), 13.5);
-    scene.planets.push({ p, group, suns: [...group.querySelectorAll(".map-planet-sun")] });
+    scene.planets.push({ p, group, looks: worldLooks, pair: pairEl, moonRing, moons: moonLooks,
+      still: style.spin === "still" });
   });
   world.appendChild(planetLayer);
   starMap.scene = scene;
@@ -15596,10 +15602,129 @@ function skyView() {
   canvas.style.height = `${box.height}px`;
   const m = world.getScreenCTM();
   if (!m) return null;
+  const hole = {
+    x: m.a * MAP_CENTRE.x + m.c * MAP_CENTRE.y + m.e - box.left,
+    y: m.b * MAP_CENTRE.x + m.d * MAP_CENTRE.y + m.f - box.top,
+  };
+  return { cx: hole.x, cy: hole.y, pxPerRs: Math.hypot(m.a, m.b) * SKY_RS_UNITS, ...(skyWorlds(m, box, hole) || {}) };
+}
+
+//: A moon's state as the fine sky draws it: 1 summarised (a gold edge), 2 not yet (blue-grey),
+//: 3 added inside its orbit (an edge only).
+function skyMoonState(item) {
+  if (!item) return 2;
+  if (item.kind === "local") return 3;
+  return item.state === "ready" ? 1 : 2;
+}
+
+//: Each kind of world as the fine sky draws it: a family (0 continents, 1 bands, 2 lava, 3 ice,
+//: 4 craters) and three colours from its palette (`PLANET_KINDS`), linear, for the shader.
+const SKY_FAMILY = {
+  terran: 0, archipelago: 0, desert: 0, jungle: 0, toxic: 0, ocean: 0, eyeball: 0, red: 0, sulfur: 0,
+  gas: 1, ringed: 1, iceGiant: 1, hotJupiter: 1, cloudy: 1, lava: 2, ice: 3, barren: 4, carbon: 4,
+};
+const skyPalettes = new Map();
+function skyPalette(kind) {
+  if (skyPalettes.has(kind)) return skyPalettes.get(kind);
+  const paint = PLANET_KINDS[kind] || PLANET_KINDS.barren;
+  const linear = (hex) => {
+    const n = parseInt((hex || "#000000").slice(1), 16);
+    return [n >> 16, (n >> 8) & 255, n & 255].map((c) => Math.pow(c / 255, 2.2));
+  };
+  const second = (paint.land && paint.land[0]) || (paint.bands && paint.bands[0]) || paint.crater || paint.glow || paint.base;
+  const air = paint.atmo || (kind === "lava" ? null : null);
+  const look = {
+    family: SKY_FAMILY[kind] ?? 4, base: linear(paint.base), second: linear(second),
+    atmo: air ? linear(air).map((c) => c * 0.9) : [0, 0, 0], emissive: kind === "lava" ? 1 : 0,
+  };
+  skyPalettes.set(kind, look);
+  return look;
+}
+
+//: How far an animated group has turned, from its CSS animation's clock, in radians clockwise (as
+//: SVG rotates), so a moon or a double planet in the fine sky stands where the SVG would draw it.
+function skySpin(el) {
+  const anim = el && typeof el.getAnimations === "function" ? el.getAnimations()[0] : null;
+  if (!anim || !anim.effect) return 0;
+  const timing = anim.effect.getTiming();
+  const dur = Number(timing.duration) || 1;
+  const turn = (((Number(anim.currentTime) || 0) % dur) / dur) * Math.PI * 2;
+  return timing.direction === "reverse" ? -turn : turn;
+}
+
+//: The planets, moons, dots round the Horizon and the sky's travellers, as the fine sky's instance
+//: data: positions and sizes in the canvas's CSS pixels, each lit from the hole's place on screen.
+function skyWorlds(m, box, hole) {
+  const scene = starMap.scene;
+  if (!scene) return null;
+  const k = Math.hypot(m.a, m.b);
+  const px = (x, y) => [m.a * x + m.c * y + m.e - box.left, m.b * x + m.d * y + m.f - box.top];
+  const now = performance.now() / 1000;
+  const bodies = [];
+  const streaks = [];
+  const light = (x, y) => {
+    const dx = hole.x - x;
+    const dy = hole.y - y;
+    const len = Math.hypot(dx, dy) || 1;
+    return [dx / len, -dy / len];
+  };
+  const body = (x, y, r, family, seed, spin, alpha, ringed, state, tilt, look, irregular = 0) => {
+    const [lx, ly] = light(x, y);
+    bodies.push(x, y, r, family, seed, spin, alpha, ringed ? 1 : 0, lx, ly, state, tilt,
+      ...look.base, look.emissive || 0, ...look.second, irregular, ...look.atmo, 0);
+  };
+  const rock = { base: [0.16, 0.15, 0.14], second: [0.07, 0.065, 0.06], atmo: [0, 0, 0], emissive: 0 };
+  const turnAt = (x, y, a) => [x * Math.cos(a) - y * Math.sin(a), x * Math.sin(a) + y * Math.cos(a)];
+  scene.planets.forEach((entry) => {
+    const pos = planetAt(entry.p);
+    const faded = entry.group.classList.contains("is-dim") ? 0.3 : Number(entry.group.style.opacity || 1);
+    const pairTurn = entry.pair ? skySpin(entry.pair) : 0;
+    (entry.looks || []).forEach((look) => {
+      const [ox, oy] = turnAt(look.at * entry.p.r, 0, pairTurn);
+      const [x, y] = px(pos.x + ox, pos.y + oy);
+      const palette = skyPalette(look.kind);
+      const spin = entry.still ? 0 : (now / Math.max(look.terrain.spin || 60, 1)) * Math.PI * 2;
+      body(x, y, entry.p.r * look.size * k, palette.family, (look.seed * 97.31) % 1, spin, faded,
+        look.terrain.ringed, 0, 0.32, palette);
+    });
+    const ringTurn = skySpin(entry.moonRing);
+    (entry.moons || []).forEach((moon) => {
+      const [ox, oy] = turnAt(moon.x, moon.y, ringTurn);
+      const [x, y] = px(pos.x + ox, pos.y + oy);
+      body(x, y, 2.5 * k, 5, moon.seed, now * 0.2, moon.faded ? 0.15 : faded, false, moon.state, 0, rock, 1);
+    });
+  });
+  if (scene.loose) {
+    const looseTurn = skySpin(scene.loose.ring);
+    scene.loose.items.forEach((moon) => {
+      const [ox, oy] = turnAt(moon.x, moon.y, looseTurn);
+      const [x, y] = px(MAP_CENTRE.x + ox, MAP_CENTRE.y + oy);
+      body(x, y, 2.5 * k, 5, moon.seed, now * 0.2, moon.faded ? 0.15 : 1, false, moon.state, 0, rock, 1);
+    });
+  }
+  skyActive.forEach((item) => {
+    if (item.cx === undefined || !item.fade) return;
+    const [x, y] = px(item.cx, item.cy);
+    const rad = (item.angle * Math.PI) / 180;
+    const dir = [Math.cos(rad), Math.sin(rad)];
+    if (item.kind === "map-meteor") {
+      streaks.push(x, y, dir[0], dir[1], Math.max(item.len, 30) * k, 0.9 * k + 0.4, item.fade, 0);
+    } else if (item.kind === "map-comet") {
+      // The tails stream away from the hole, whichever way the comet travels.
+      const away = [x - hole.x, y - hole.y];
+      const len = Math.hypot(away[0], away[1]) || 1;
+      const tail = [-away[0] / len, -away[1] / len];
+      streaks.push(x, y, tail[0], tail[1], 90 * k, 1.4 * k + 0.5, item.fade, 1);
+      streaks.push(x, y, tail[0] * 0.9 + dir[0] * 0.1, tail[1] * 0.9 + dir[1] * 0.1, 70 * k, 2.6 * k + 0.6, item.fade, 2);
+      body(x, y, 5 * k, 6, 0, 0, item.fade, false, 0, 0, { base: [0.85, 0.95, 1.0], second: [0, 0, 0], atmo: [0, 0, 0] });
+    } else if (item.kind === "map-rock") {
+      body(x, y, 5 * k, 5, item.seed, (now - item.t0 / 1000) * 0.9, item.fade, false, 4, 0, rock, 1);
+    }
+  });
   return {
-    cx: m.a * MAP_CENTRE.x + m.c * MAP_CENTRE.y + m.e - box.left,
-    cy: m.b * MAP_CENTRE.x + m.d * MAP_CENTRE.y + m.f - box.top,
-    pxPerRs: Math.hypot(m.a, m.b) * SKY_RS_UNITS,
+    bodies: new Float32Array(bodies), bodyCount: bodies.length / 24,
+    streaks: new Float32Array(streaks), streakCount: streaks.length / 8,
+    worldsKey: `${bodies.length}|${streaks.length}|${Math.round(now * 4)}`,
   };
 }
 
@@ -15610,8 +15735,6 @@ function setFineSkyShown(on) {
   map.classList.toggle("is-fine", on);
   canvas.hidden = !on;
   starMap.fine = on;
-  // The planets' light turns with them only while the map is moving; a still map is placed once.
-  if (on) placeStarMap();
 }
 
 //: What the settings note says, worked out from the state every time rather than set along the way,
