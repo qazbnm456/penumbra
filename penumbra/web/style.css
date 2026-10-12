@@ -5947,6 +5947,13 @@ textarea::placeholder {
 }
 
 /* --- the stream -------------------------------------------------------------------------------- */
+/* A row in the list is pressed to open it, and pressed quickly selected its words; its full text is
+   one press away in the reading window, where it can be selected and copied. */
+.stream .node {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .stream {
   margin-top: var(--ib-gap-lg);
 }
@@ -7424,20 +7431,24 @@ body[data-view="horizon"] .orbit-picker {
 .stop-hole-rim { stop-color: oklch(90% 0.09 72); stop-opacity: 0.9; }
 .stop-hole-rim-clear { stop-color: oklch(90% 0.09 72); stop-opacity: 0; }
 
-/* Only the edge and the two resting colours change; a dot's states (being read, failed, lit or
-   faded by a tag) keep their own fill and opacity. */
-.starmap.is-fine .map-dot {
-  stroke: oklch(8% 0.01 55 / 0.9);
-  stroke-width: 1.4;
-  paint-order: stroke;
-}
-
-.starmap.is-fine .map-dot:not(.is-done, .is-busy, .is-failed, .is-local, .is-lensed) {
-  fill: oklch(74% 0.06 245);
+/* A moon is a small dark rock, as a moon under this light would be, and its state is the colour of
+   its edge: gold once summarised, blue-grey before. The dark body holds against the bright disk and
+   the bright edge against black space. A flat bright fill read as an orange stone. States that are
+   not resting (being read, failed, lit or faded by a tag) keep their own paint. */
+.starmap.is-fine .map-dot:not(.is-busy, .is-failed, .is-local, .is-lensed) {
+  fill: oklch(40% 0.015 60);
+  stroke: oklch(74% 0.06 245);
+  stroke-width: 0.8;
 }
 
 .starmap.is-fine .map-dot.is-done:not(.is-lensed) {
-  fill: oklch(84% 0.15 68);
+  stroke: oklch(84% 0.15 72);
+}
+
+.starmap.is-fine .map-dot:is(.is-busy, .is-failed) {
+  stroke: oklch(8% 0.01 55 / 0.9);
+  stroke-width: 1.3;
+  paint-order: stroke;
 }
 
 .starmap.is-fine .map-dot.is-local {
@@ -7446,8 +7457,8 @@ body[data-view="horizon"] .orbit-picker {
 }
 
 .starmap.is-fine .map-rock-body {
-  fill: oklch(26% 0.015 60);
-  stroke: oklch(82% 0.07 70);
+  fill: oklch(26% 0.012 250);
+  stroke: oklch(80% 0.01 250);
   stroke-width: 0.7;
 }
 
@@ -7757,10 +7768,16 @@ body.dock-open .pending-note {
   border-radius: 999px;
 }
 
+/* A little room between the "#" and the name, so the mark reads "# name" set as one label rather
+   than one run of glyphs. Inside a mark that is itself a flex row the row's own gap gives it. */
 .mark-hash {
   color: var(--text-faint);
   font-weight: 400;
-  margin-right: -0.15em;
+  margin-right: 0.22em;
+}
+
+.mark.mark-tag > .mark-hash {
+  margin-right: 0;
 }
 
 .mark-mention {
@@ -7920,12 +7937,21 @@ button.mark-add:focus-visible {
   padding: 0 var(--space-6);
 }
 
-/* Quiet: words, no box, until the pointer is on it. */
+/* Quiet: words, never a box. Under the pointer they turn the failure colour and underline; the
+   general quiet-danger rule draws a red edge, which here boxed the word in red. Keyboard focus keeps
+   the page's own focus ring. */
 .card-foot .btn-quiet-danger {
   margin-left: auto;
   padding-inline: 0;
   border-color: transparent;
   background: none;
+}
+
+.card-foot .btn-quiet-danger:hover,
+.card-foot .btn-quiet-danger:focus-visible {
+  border-color: transparent;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 /* Another orbit that mentions the same names: the orbit heads the group, and the names it shares
@@ -10064,6 +10090,20 @@ body:not([data-view="horizon"]) .capture-dock {
 
 .tag-chip .node-tag {
   font-size: inherit;
+  color: inherit;
+  border-bottom: 0;
+}
+
+/* Pointing at the name lights the whole mark's edge, as every pressable mark does. */
+.tag-chip:has(.node-tag:hover),
+.tag-chip:has(.node-tag:focus-visible) {
+  border-color: var(--accent-dim);
+}
+
+.tag-chip .node-tag:hover,
+.tag-chip .node-tag:focus-visible {
+  color: var(--text);
+  outline: none;
 }
 
 .tag-remove {
@@ -10195,6 +10235,13 @@ body:not([data-view="horizon"]) .capture-dock {
   cursor: pointer;
   transform-origin: 20px 0;
   animation: npc-in 320ms var(--ib-ease);
+}
+
+/* Penny's lines are pressed through, often quickly to skip ahead; a quick double press selected the
+   words and the Next button instead. Nothing in her box is meant to be copied. */
+.npc {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .npc[hidden] {
@@ -10942,6 +10989,14 @@ button.node-more:hover {
 
 .find[hidden] {
   display: none;
+}
+
+/* The field and its ×: the × is placed against the field, at its right end. */
+.find-field {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
 }
 
 .find-input {

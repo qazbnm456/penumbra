@@ -420,3 +420,75 @@ def test_the_fine_sky_runs_only_in_the_dark_theme_and_says_why_when_it_cannot(br
         assert drew in ("drawn", "no webgl2"), drew
         view.close()
         assert not errors, f"the page threw: {errors}"
+
+
+def test_the_finds_clear_button_sits_in_its_field_clear_of_the_order_button(page):
+    """The list's × clears the find field from inside the field's right end; placed against the whole
+    row, it landed on the order button beside it."""
+    page.locator(".view-mode-btn[aria-pressed=false]").click()
+    page.locator("#stream-search").fill("note")
+    page.wait_for_selector("#find-clear:not([hidden])", timeout=5000)
+    boxes = page.evaluate("""() => Object.fromEntries(['stream-search', 'find-clear', 'find-sort']
+      .map((id) => {
+      const r = document.getElementById(id).getBoundingClientRect();
+      return [id, [r.left, r.right, r.top, r.bottom]];
+    }))""")
+    field, clear, sort = boxes["stream-search"], boxes["find-clear"], boxes["find-sort"]
+    assert field[0] <= clear[0] and clear[1] <= field[1] + 0.5, boxes
+    assert clear[1] <= sort[0], boxes
+
+
+def test_the_graphs_add_tag_field_goes_back_to_its_button_and_a_saved_tag_shows_in_place(page):
+    """On the knowledge graph's capture card, "+ Tag" left empty when focus moves away is a button
+    again, not an empty field; a tag typed and saved shows in that card at once."""
+    page.evaluate("openOrbit('o1')")
+    page.wait_for_timeout(1200)
+    page.evaluate("setViewMode('orbit', 'graph')")
+    page.wait_for_function("graphState.layout && graphState.layout.captures.length", timeout=10000)
+    page.evaluate("graphState.capture = graphState.layout.captures[0].node_id; graphState.selected = null;"
+                  " drawGraph(); renderGraphPanel();")
+    page.wait_for_selector("#graph-panel .tag-add", timeout=10000)
+    page.locator("#graph-panel .tag-add").click()
+    page.locator("#graph-panel .tag-add-input").wait_for(timeout=5000)
+    page.locator("#graph-panel .card-title").first.click()
+    page.wait_for_selector("#graph-panel .tag-add", timeout=5000)
+    assert page.locator("#graph-panel .tag-add-input").count() == 0
+    page.locator("#graph-panel .tag-add").click()
+    page.locator("#graph-panel .tag-add-input").fill("graphed")
+    page.locator("#graph-panel .tag-add-input").press("Enter")
+    page.wait_for_function("[...document.querySelectorAll('#graph-panel .tag-chip .node-tag')]"
+                           ".some((el) => el.textContent === '#graphed')", timeout=10000)
+
+
+def test_the_tag_row_fits_itself_again_when_the_details_panel_comes_back(browser, server):
+    """Putting the map's details panel away widens the tag row and fills it; bringing the panel back
+    narrows it, and the row fits itself again rather than running on, cut off, under the panel."""
+    view = browser.new_page(viewport={"width": 900, "height": 800}, locale="en-US")
+    view.goto(f"{server}/#token={TOKEN}")
+    view.wait_for_selector("#starmap-svg .map-planet", timeout=30000)
+    view.wait_for_timeout(800)
+    overflow = "(() => { const row = document.getElementById('starmap-lenses');" \
+               " return row.scrollWidth - row.clientWidth; })()"
+    view.evaluate("mapPanelGrip.setCollapsed(true, { persist: false })")
+    view.wait_for_timeout(500)
+    # The map repaints while the panel is away (a refresh, the window coming back), filling the
+    # wide row; then the panel comes back.
+    view.evaluate("paintStarMapLenses()")
+    wide = view.evaluate("document.querySelectorAll('#starmap-lenses .lens').length")
+    view.evaluate("mapPanelGrip.setCollapsed(false, { persist: false })")
+    view.wait_for_timeout(500)
+    narrow = view.evaluate("document.querySelectorAll('#starmap-lenses .lens').length")
+    assert wide > narrow, (wide, narrow)
+    assert view.evaluate(overflow) <= 1, (wide, narrow, view.evaluate(overflow))
+    view.close()
+
+
+def test_a_list_row_and_pennys_lines_are_pressed_never_selected(page):
+    """Pressing quickly through a list row or Penny's lines selected their words; neither is text to
+    copy (a capture's full text is in the reading window)."""
+    styles = page.evaluate("""() => {
+      const row = document.querySelector('#stream .node');
+      return [row && getComputedStyle(row).webkitUserSelect, getComputedStyle(document.getElementById('npc'))
+        .webkitUserSelect];
+    }""")
+    assert styles == ["none", "none"], styles

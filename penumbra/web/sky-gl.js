@@ -182,7 +182,9 @@ vec4 disk(vec3 p, vec3 v) {
   float arcs = fbm(vec3(around * 1.6, r * 5.5));
   float clumps = fbm(vec3(around * 4.0 + r * 0.7, r * 1.3));
   float streak = 0.65 * arcs + 0.35 * clumps;
-  float edge = smoothstep(DISK_IN, DISK_IN + 0.5, r) * smoothstep(DISK_OUT, DISK_OUT - 3.5, r);
+  // The inner edge fades over more than a radius: a sharp one, bent round the hole, drew a thin
+  // hard ring hugging the shadow that read as a line drawn on top rather than as light.
+  float edge = smoothstep(DISK_IN, DISK_IN + 1.6, r) * smoothstep(DISK_OUT, DISK_OUT - 3.5, r);
   float density = edge * (0.2 + 1.15 * streak * streak * 1.6);
   vec3 light = blackbody(kelvin * g) * pow(g, 4.0) * density * 0.85;
   return vec4(light, clamp(density * 0.95, 0.0, 1.0));
@@ -208,6 +210,11 @@ void main() {
   vec3 hv = cross(pos, vel);
   float h2 = dot(hv, hv);
   bool fell = false;
+  // Each crossing of the disk's plane is one more image of the disk: the first is the disk itself,
+  // the second its light bent once round the hole into a thin ring hugging the shadow, the rest
+  // thinner rings still. All are real, but at the map's size they read as a line drawn round the
+  // hole rather than as light, so every image after the first is dimmed hard.
+  float order = 1.0;
   for (int i = 0; i < STEPS; i++) {
     float r = length(pos);
     float dt = clamp(0.08 * r, 0.015, 1.6) * STEP_SCALE;
@@ -218,9 +225,10 @@ void main() {
     vel = half_v - 1.5 * h2 * next / pow(rn, 5.0) * dt * 0.5;
     if (pos.y * next.y < 0.0) {
       vec3 hit = mix(pos, next, pos.y / (pos.y - next.y));
-      vec4 d = disk(hit, vel);
+      vec4 d = disk(hit, vel) * order;
       col += (1.0 - alpha) * d.rgb;
       alpha += (1.0 - alpha) * d.a;
+      order *= order > 0.99 ? 0.35 : 0.25;
     }
     pos = next;
     if (rn < 1.0) { fell = true; break; }

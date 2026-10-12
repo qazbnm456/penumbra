@@ -10199,6 +10199,12 @@ function captureTagEditor(node) {
   // same old list, and the second dropped the tag just typed.
   let latest = [...(node.tags || [])];
   let queue = Promise.resolve();
+  // The editor puts itself back as it now stands, wherever it is: the map's card, the list's, or the
+  // knowledge graph's panel. Leaving that to a repaint of the map's card left the graph's panel
+  // holding an empty "+ Tag" field once focus moved away.
+  const repaint = () => {
+    if (box.isConnected) box.replaceWith(captureTagEditor({ ...node, tags: latest }));
+  };
   const save = (change) => {
     queue = queue.then(async () => {
       try {
@@ -10209,9 +10215,10 @@ function captureTagEditor(node) {
         });
         latest = got.node.tags || [];
         afterCaptureEdit(got.node);
+        repaint();
       } catch (err) {
         notify(t("err.retag", `Could not change the tags: ${err.message}`, { message: err.message }));
-        renderStarMapCard();
+        repaint();
       }
     });
   };
@@ -10249,7 +10256,7 @@ function captureTagEditor(node) {
       wrap.dataset.done = "1";
       const typed = (value || "").split(/[,\uff0c]/).map((part) => part.trim()).filter(Boolean);
       if (typed.length) save((tags) => [...tags, ...typed]);
-      else renderStarMapCard();
+      else repaint();
     };
     input.addEventListener("keydown", (event) => {
       event.stopPropagation();
@@ -10294,6 +10301,8 @@ function afterCaptureEdit(node) {
   if (held) capturesHeld.byId.set(node.id, { ...held, node });
   renderStarMapCard();
   if (viewIsHorizon() && viewMode("horizon") === "map") void renderStarMap();
+  // A tag is a region on the open orbit's knowledge graph.
+  if (document.body.dataset.view === "orbit" && !horizonEl("view-graph").hidden) void renderGraph();
   // A list filtered by a tag or a query is asked again, so a capture that no longer matches (its
   // tag just removed, say) leaves at once rather than at the next refresh.
   if (findActive().length || horizonState.query) void patchChangedNodes();
@@ -12641,6 +12650,18 @@ const LENS_ROW_MAX = 10;
 //: button asks the row for the current `onToggle` rather than keeping the one it was built with.
 function renderLenses(lensRow, tags, active, onToggle) {
   lensRow.lensToggle = onToggle;
+  // A row fitted at one width is fitted again at another. Putting the details panel away widened
+  // the row and filled it; opening the panel again narrowed it, and the chips fitted to the wide row
+  // ran on under the panel, cut off, until something else repainted it.
+  if (!lensRow.lensWatch && typeof ResizeObserver === "function") {
+    let width = lensRow.clientWidth;
+    lensRow.lensWatch = new ResizeObserver(() => {
+      if (lensRow.clientWidth === width) return;
+      width = lensRow.clientWidth;
+      if (lensRow.lensTags) renderLenses(lensRow, lensRow.lensTags, lensRow.lensActive, lensRow.lensToggle);
+    });
+    lensRow.lensWatch.observe(lensRow);
+  }
   lensRow.hidden = !tags.length;
   if (!tags.length) {
     lensRow.textContent = "";
