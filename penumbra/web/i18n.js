@@ -844,7 +844,7 @@ const STRINGS = {
     "map.sectionNames": "提及",
     "map.shareCount": "都提到 {n} 個名稱",
     "map.sectionFiled": "歸入",
-    "map.sectionCaptures": "從視界歸入的收錄",
+    "map.sectionCaptures": "收錄",
     "map.sectionLocal": "還沒登記到視界",
     "map.localHelp": "有 {n} 份還沒登記到視界，通常是用命令列加的。下次啟動伺服器時會補上，在那之前畫成空心的衛星。",
     "map.notInList": "這則收錄在清單比較後面，一次顯示不到。請在那裡用名稱搜尋。",

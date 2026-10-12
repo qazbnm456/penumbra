@@ -365,6 +365,20 @@ def test_the_fine_sky_runs_only_in_the_dark_theme_and_says_why_when_it_cannot(br
               return [r.left, r.top, r.width, r.height];
             })""")
             assert all(abs(a - b) < 1 for a, b in zip(*boxes)), boxes
+            # The Horizon's rim, a circle the bent shadow does not match, is not drawn; each planet's
+            # light faces the hole (+x away from it); and the orbit card ends in its last row.
+            rim = "getComputedStyle(document.querySelector('.map-hole-rim')).display"
+            assert view.evaluate(rim) == "none"
+            facing = view.evaluate("""() => starMap.scene.planets.map(({ p, suns }) => {
+              const pos = planetAt(p);
+              const want = Math.atan2(pos.y - MAP_CENTRE.y, pos.x - MAP_CENTRE.x) * 180 / Math.PI;
+              const got = Number((suns[0].getAttribute('transform') || '').replace(/[^-0-9.]/g, ''));
+              return Math.abs(((got - want + 540) % 360) - 180);
+            })""")
+            assert facing and max(facing) < 5, facing
+            view.evaluate("openMapFocus({kind: 'planet', orbit: 'o1'})")
+            view.wait_for_selector("#starmap-card .card-foot .card-enter", timeout=5000)
+            view.evaluate("closeMapFocus()")
             # The note follows the state, through Off and back.
             for choice, start in (("off", "Off"), ("auto", "On, at")):
                 view.evaluate(f"localStorage.setItem('penumbra-map-quality', '{choice}'); syncFineSky()")

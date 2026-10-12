@@ -13039,10 +13039,16 @@ function placeStarMap() {
   // Reused: this runs every frame (see `settleOverlaps`).
   const at = placeScratch;
   at.clear();
-  scene.planets.forEach(({ p, group }) => {
+  // Under the fine sky each planet's light is turned to face the black hole as it travels.
+  const lit = starMap.fine;
+  scene.planets.forEach(({ p, group, suns }) => {
     const pos = planetAt(p);
     at.set(p.orbit.slug, pos);
     group.setAttribute("transform", `translate(${pos.x.toFixed(2)} ${pos.y.toFixed(2)})`);
+    if (lit && suns) {
+      const turn = `rotate(${((Math.atan2(pos.y - MAP_CENTRE.y, pos.x - MAP_CENTRE.x) * 180) / Math.PI).toFixed(1)})`;
+      suns.forEach((sun) => sun.setAttribute("transform", turn));
+    }
   });
   settleOverlaps(scene, at);
   scene.bridges.forEach(({ bridge, path, hit, label }) => {
@@ -13238,6 +13244,11 @@ function starMapDefs() {
     defs.appendChild(g);
   };
   linear("pn-meteor", [["0", "stop-trail-clear"], ["1", "stop-trail"]]);
+  // A planet lit by the hole's disk, along +x from the side facing it: warm light, clear, then the
+  // night side; and the warm rim on the lit edge.
+  linear("pn-hole-lit", [["0", "stop-hole-lit"], ["0.38", "stop-hole-lit-clear"], ["0.58", "stop-night-clear"],
+    ["1", "stop-night"]]);
+  linear("pn-hole-rim", [["0", "stop-hole-rim"], ["0.32", "stop-hole-rim-clear"]]);
   linear("pn-comet-tail", [["0", "stop-trail-clear"], ["0.8", "stop-tail"], ["1", "stop-trail"]]);
   const blur = svgEl("filter", { id: "pn-soft", x: "-50%", y: "-50%", width: "200%", height: "200%" });
   blur.appendChild(svgEl("feGaussianBlur", { stdDeviation: "3.2" }));
@@ -14061,6 +14072,13 @@ function drawWorld(parent, r, terrain, clipId, phaseKey = "") {
   parent.appendChild(surface);
   parent.appendChild(svgEl("circle", { r, fill: "url(#pn-light)" }, "map-planet-light"));
   parent.appendChild(svgEl("circle", { r, fill: "url(#pn-shade)" }, "map-planet-shade"));
+  // Under the fine sky the light comes from the black hole's disk, not from the top left: a lit
+  // side, a terminator and a warm rim, drawn along +x and turned each frame so +x points away from
+  // the hole (`placeStarMap`). Only shown with the fine sky (`.starmap.is-fine`).
+  const sun = svgEl("g", {}, "map-planet-sun");
+  sun.appendChild(svgEl("circle", { r, fill: "url(#pn-hole-lit)" }, "map-planet-lit"));
+  sun.appendChild(svgEl("circle", { r: r - 0.4, fill: "none", stroke: "url(#pn-hole-rim)" }, "map-planet-glint"));
+  parent.appendChild(sun);
   if (rings) parent.appendChild(rings.near);
 }
 
@@ -14382,7 +14400,7 @@ function drawStarMap() {
     group.addEventListener("blur", release);
     planetLayer.appendChild(group);
     p.labelW = graphLabelWidth(shortLabel(orbit.title), 13.5);
-    scene.planets.push({ p, group });
+    scene.planets.push({ p, group, suns: [...group.querySelectorAll(".map-planet-sun")] });
   });
   world.appendChild(planetLayer);
   starMap.scene = scene;
@@ -15340,6 +15358,9 @@ function setFineSkyShown(on) {
   if (!map || !canvas) return;
   map.classList.toggle("is-fine", on);
   canvas.hidden = !on;
+  starMap.fine = on;
+  // The planets' light turns with them only while the map is moving; a still map is placed once.
+  if (on) placeStarMap();
 }
 
 //: What the settings note says, worked out from the state every time rather than set along the way,
@@ -16736,7 +16757,7 @@ function paintStarMapCard(mapCard) {
   }
   // Its captures by name, the keyboard's way to what pointing at a moon does.
   if ((orbit.moons || []).length) {
-    mapCard.appendChild(elt("h3", "card-section", t("map.sectionCaptures", "Filed from the Horizon")));
+    mapCard.appendChild(elt("h3", "card-section", t("map.sectionCaptures", "Captures")));
     const list = elt("ul", "card-list");
     orbit.moons.forEach((item) => {
       const row = elt("li", "card-row");
@@ -16758,14 +16779,17 @@ function paintStarMapCard(mapCard) {
       `${local} not recorded in the Horizon yet, usually because they were added from the command line. They are drawn hollow until the server next starts, which records them.`,
       { n: local })));
   }
+  if (orbit.undistilled) {
+    mapCard.appendChild(distilOrbitControl(orbit.slug, orbit.undistilled));
+  }
+  // The card's one primary action, in the last row every card ends with (`.card-foot`).
+  const foot = elt("div", "card-foot");
   const enter = elt("button", "btn btn-primary card-enter", t("map.study", "Study it"));
   enter.type = "button";
   enter.dataset.tip = t("map.studyTip", "Open it to read with the AI: it reads every source here and answers with citations.");
   enter.addEventListener("click", () => void studyOrbit(orbit));
-  mapCard.appendChild(enter);
-  if (orbit.undistilled) {
-    mapCard.appendChild(distilOrbitControl(orbit.slug, orbit.undistilled));
-  }
+  foot.appendChild(enter);
+  mapCard.appendChild(foot);
   planetCardTabs(mapCard, orbit, infoFrom);
   mapCard.hidden = false;
 }

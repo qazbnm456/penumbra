@@ -7336,8 +7336,7 @@ body[data-view="horizon"] .orbit-picker {
 /* The fine sky sits exactly under the SVG's box (`skyView` places it) and takes no pointer, so every
    press still lands on the map above it. With it on, the SVG's own sky steps aside: its background,
    its drawn black hole and disk, its star points, and its deep sky (nebulae, galaxies, double stars).
-   The hole's rim stays, unseen at rest, because it is what lights when the Horizon is pointed at or
-   chosen. */
+   The hole's rim is handled below with the worlds. */
 .starmap-sky {
   position: absolute;
   pointer-events: none;
@@ -7365,8 +7364,79 @@ body[data-view="horizon"] .orbit-picker {
   display: none;
 }
 
+/* The hole's rim is a circle about the map's centre, but the shadow under the fine sky is bent off
+   it, so a lit rim there drew a ring that did not match the hole. With the fine sky the Horizon shows
+   being pointed at or chosen by its name lighting instead. */
 .starmap.is-fine .map-hole-rim {
-  stroke: transparent;
+  display: none;
+}
+
+.starmap.is-fine .map-hole.is-selected ~ .map-hole-label,
+.starmap.is-fine .map-hole:hover ~ .map-hole-label {
+  fill: var(--accent);
+}
+
+/* --- worlds under the fine sky -----------------------------------------------------------------------
+   The disk is the light. A planet's fixed top-left light and shade give way to light from the hole
+   (`.map-planet-sun`, turned towards it every frame): a lit side, a terminator and a warm rim.
+
+   A copper dot on a copper disk disappears, so every moon, every dot round the Horizon and every
+   passing rock gets a thin dark edge and a brighter body: legible on the bright disk and on black
+   space alike, with summarised and not-yet-summarised still told apart. */
+.map-planet-sun {
+  display: none;
+}
+
+.starmap.is-fine .map-planet-sun {
+  display: inline;
+}
+
+.starmap.is-fine .map-planet-light,
+.starmap.is-fine .map-planet-shade {
+  display: none;
+}
+
+.map-planet-glint {
+  stroke-width: 0.9;
+}
+
+/* A chosen planet is ringed lightly: a heavy copper ring hid the light the hole throws on it. */
+.starmap.is-fine .map-planet.is-selected .map-planet-rim {
+  stroke-width: 1.2;
+}
+
+.stop-hole-lit { stop-color: oklch(88% 0.07 70); stop-opacity: 0.32; }
+.stop-hole-lit-clear { stop-color: oklch(88% 0.07 70); stop-opacity: 0; }
+.stop-night-clear { stop-color: oklch(6% 0.01 260); stop-opacity: 0; }
+.stop-night { stop-color: oklch(6% 0.01 260); stop-opacity: 0.82; }
+.stop-hole-rim { stop-color: oklch(90% 0.09 72); stop-opacity: 0.9; }
+.stop-hole-rim-clear { stop-color: oklch(90% 0.09 72); stop-opacity: 0; }
+
+/* Only the edge and the two resting colours change; a dot's states (being read, failed, lit or
+   faded by a tag) keep their own fill and opacity. */
+.starmap.is-fine .map-dot {
+  stroke: oklch(8% 0.01 55 / 0.9);
+  stroke-width: 1.1;
+  paint-order: stroke;
+}
+
+.starmap.is-fine .map-dot:not(.is-done, .is-busy, .is-failed, .is-local, .is-lensed) {
+  fill: oklch(80% 0.01 260);
+}
+
+.starmap.is-fine .map-dot.is-done:not(.is-lensed) {
+  fill: oklch(84% 0.15 68);
+}
+
+.starmap.is-fine .map-dot.is-local {
+  fill: none;
+  stroke: oklch(85% 0.01 260);
+}
+
+.starmap.is-fine .map-rock-body {
+  fill: oklch(26% 0.015 60);
+  stroke: oklch(82% 0.07 70);
+  stroke-width: 0.7;
 }
 
 
@@ -9520,6 +9590,12 @@ body.is-resizing .orbit-graph {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-faint);
+}
+
+/* A card's parts keep their height: in the scrolling column a long list was squeezed instead and
+   its last title ran under the card's last row. */
+.starmap-card > * {
+  flex-shrink: 0;
 }
 
 /* A planet with many captures made the card taller than the map; it scrolls inside instead. */
