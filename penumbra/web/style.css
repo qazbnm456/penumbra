@@ -10135,20 +10135,64 @@ body:not([data-view="horizon"]) .capture-dock {
 }
 
 /* The "+ Tag" field in place of the button: a title editor (so a repaint waits for it), inline. */
+/* "+ Tag" opened is a tag being written: a tag's own mark (`.mark-tag`, its "#" and height) with the
+   text field inside it borderless, so what is typed already reads as the tag it will become. The
+   field sizes to its words: the input and a hidden copy of its text share one grid cell, and the
+   copy sets the width. The edge is copper while it has focus. */
 .title-editor.tag-add-editor {
   display: inline-flex;
   width: auto;
+  min-width: 0;
 }
 
+/* The same room between "#" and the words as a saved tag has (`.mark-hash`). */
+.tag-add-editor.mark {
+  gap: 0.22em;
+}
+
+.tag-add-editor:focus-within {
+  border-color: var(--accent);
+}
+
+.tag-add-field {
+  display: inline-grid;
+  min-width: 3em;
+  max-width: 14em;
+}
+
+.tag-add-sizer,
 .tag-add-input {
+  grid-area: 1 / 1;
   font: inherit;
-  font-size: var(--text-xs);
-  width: 9rem;
-  padding: 0 var(--space-3);
-  border-radius: 999px;
-  border: 1px solid var(--accent);
-  background: var(--surface-1);
+  white-space: pre;
+}
+
+.tag-add-sizer {
+  visibility: hidden;
+  padding-right: 2px;
+  overflow: hidden;
+}
+
+/* Every trace of a text field taken off (the page's input styles give one a fill, an edge, a radius
+   and a focus ring), so only the mark around it shows. */
+.tag-add-editor .tag-add-input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  margin: 0;
+  padding: 0;
   color: var(--text);
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  outline: none;
+}
+
+.tag-add-input::placeholder {
+  color: var(--text-faint);
 }
 
 .node-more {

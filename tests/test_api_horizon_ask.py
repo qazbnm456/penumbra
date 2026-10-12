@@ -133,6 +133,22 @@ def test_the_lens_lists_why_each_capture_lit_with_its_summary_and_orbits(client)
     assert client.get("/horizon/lens").status_code == 422
 
 
+def test_a_lens_and_a_question_over_it_hold_many_tags_up_to_a_sane_bound(client):
+    """Thirteen tags on at once met a cap of eight with a 422 the page printed as "[object Object]".
+    A lens, and a question scoped to it, hold up to `search.LENS_TAGS_MAX`."""
+    from penumbra import search
+
+    a = _capture("https://x.example/a", "t", tags=["t12"], state="ready")
+    many = [("tag", f"t{i}") for i in range(13)]
+    body = client.get("/horizon/lens", params=many).json()
+    assert [item["id"] for item in body["captures"]] == [a]
+    scope = {"kind": "tag", "values": [f"t{i}" for i in range(13)]}
+    preview = client.post("/horizon/ask/preview", json={"question": "q", "scope": scope})
+    assert preview.status_code == 200, preview.text
+    too_many = [("tag", f"t{i}") for i in range(search.LENS_TAGS_MAX + 1)]
+    assert client.get("/horizon/lens", params=too_many).status_code == 422
+
+
 def test_ask_reads_the_selection_runs_one_answer_and_keeps_it(client, monkeypatch):
     seen: list = []
     _mock_runner(monkeypatch, _answer(), seen)

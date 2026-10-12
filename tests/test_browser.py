@@ -529,3 +529,30 @@ def test_a_date_range_is_picked_on_our_calendar_and_shown_as_its_own_condition(p
     page.keyboard.press("Escape")
     page.locator("#find-chips .find-chip-date").click()
     assert page.evaluate("[horizonState.filters.from, horizonState.filters.to]") == ["", ""]
+
+
+
+def test_with_many_tags_on_all_tags_and_clear_stay_in_reach_and_errors_read_as_words(browser, server):
+    """With more tags on than the row can show, the chosen ones past the width fold into "All tags",
+    which says how many it holds, and "Clear" stays on the row. A request the server refuses for its
+    shape says why in words, not "[object Object]"."""
+    view = browser.new_page(viewport={"width": 640, "height": 800}, locale="en-US")
+    view.goto(f"{server}/#token={TOKEN}")
+    view.wait_for_selector("#starmap-svg .map-planet", timeout=30000)
+    view.wait_for_timeout(600)
+    view.evaluate("starMap.lenses = new Set((starMap.tags || []).map((t) => t.name)); paintStarMapLenses();")
+    view.wait_for_timeout(300)
+    inside = view.evaluate("""() => {
+      const row = document.getElementById('starmap-lenses').getBoundingClientRect();
+      return ['.lens-more', '.lens-clear'].map((sel) => {
+        const r = document.querySelector('#starmap-lenses ' + sel).getBoundingClientRect();
+        return r.left >= row.left - 1 && r.right <= row.right + 1;
+      });
+    }""")
+    assert inside == [True, True], inside
+    words = view.evaluate("""async () => {
+      const tags = Array.from({ length: 60 }, (_, i) => 'tag=t' + i).join('&');
+      try { await api('/horizon/lens?' + tags); return 'no error'; } catch (err) { return err.message; }
+    }""")
+    assert words.startswith("422") and "[object Object]" not in words, words
+    view.close()

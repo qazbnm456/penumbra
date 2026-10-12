@@ -287,7 +287,15 @@ async function api(path, options) {
     let detail = resp.statusText;
     try {
       const body = await resp.json();
-      detail = body.detail || JSON.stringify(body);
+      // FastAPI's own validation answers with a list of objects, which as text read "[object
+      // Object]": each one's message is what to say.
+      if (Array.isArray(body.detail)) {
+        detail = body.detail.map((item) => (item && item.msg) || JSON.stringify(item)).join("; ");
+      } else if (body.detail && typeof body.detail === "object") {
+        detail = body.detail.msg || JSON.stringify(body.detail);
+      } else {
+        detail = body.detail || JSON.stringify(body);
+      }
     } catch {
       // response wasn't JSON — keep statusText
     }
@@ -10243,12 +10251,25 @@ function captureTagEditor(node) {
   const add = elt("button", "tag-add mark mark-add", t("tags.add", "+ Tag"));
   add.type = "button";
   add.addEventListener("click", () => {
-    const wrap = elt("span", "title-editor tag-add-editor");
+    // The field is a tag being written: the same pill, its faint "#", the words as they will read,
+    // growing with them (a hidden copy of the text sizes it), its edge lit while it has focus.
+    const wrap = elt("span", "title-editor tag-add-editor mark mark-tag");
+    wrap.appendChild(elt("span", "mark-hash", "#"));
+    const field = elt("span", "tag-add-field");
+    const sizer = elt("span", "tag-add-sizer");
+    sizer.setAttribute("aria-hidden", "true");
     const input = document.createElement("input");
     input.className = "tag-add-input";
     input.maxLength = 40;
+    // One character wide by itself, so its width is the sizer's and not a text field's default.
+    input.size = 1;
+    input.placeholder = t("tags.addPlaceholder", "tag");
     input.setAttribute("aria-label", t("tags.addLabel", "Add a tag"));
-    wrap.appendChild(input);
+    const fit = () => { sizer.textContent = input.value || input.placeholder; };
+    input.addEventListener("input", fit);
+    fit();
+    field.append(sizer, input);
+    wrap.appendChild(field);
     let settled = false;
     const finish = (value) => {
       if (settled) return;
@@ -12882,10 +12903,22 @@ function renderLenses(lensRow, tags, active, onToggle) {
     clear.addEventListener("click", () => lensRow.lensToggle(null));
     lensRow.appendChild(clear);
   }
-  // One line: the least used of the optional chips give way until the row fits. A hidden row has
-  // no width to measure, so it keeps them all and is fitted when it is drawn again.
+  // One line: the least used of the optional chips give way until the row fits, then, with many
+  // turned on, the chosen ones from the end, so "All tags" and "Clear" are always within reach;
+  // "All tags" then says how many chosen ones it holds. A hidden row has no width to measure, so it
+  // keeps them all and is fitted when it is drawn again.
   if (lensRow.clientWidth > 0) {
-    while (optional.length && lensRow.scrollWidth > lensRow.clientWidth + 1) optional.pop().remove();
+    const over = () => lensRow.scrollWidth > lensRow.clientWidth + 1;
+    while (optional.length && over()) optional.pop().remove();
+    // Folding one rewrites the "All tags" label longer, so the row is measured again after each.
+    const shown = [...lensRow.querySelectorAll(".lens[aria-pressed=true]")];
+    let folded = 0;
+    while (shown.length && over()) {
+      shown.pop().remove();
+      folded += 1;
+      more.textContent = t("lens.allFolded", `All tags \u00b7 ${tags.length}, ${folded} more on`,
+        { n: tags.length, k: folded });
+    }
   }
   syncOpenLensPicker(lensRow, tags, active);
 }

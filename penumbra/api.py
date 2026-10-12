@@ -4986,7 +4986,7 @@ class HorizonAskScope(BaseModel):
     orbits: list[str] | None = Field(default=None, max_length=8)
     #: Several tags at once, a lens of more than one: the captures carrying any of them. Joined into
     #: `value` with `search.TAG_SEPARATOR` on the way in, so everything downstream sees one scope.
-    values: list[str] | None = Field(default=None, max_length=8)
+    values: list[str] | None = Field(default=None, max_length=search.LENS_TAGS_MAX)
 
     @model_validator(mode="after")
     def _value_matches_kind(self):
@@ -5451,7 +5451,7 @@ async def horizon_concepts() -> dict:
 
 @app.get("/horizon/lens")
 async def horizon_lens(
-    tag: Annotated[list[str], Query(min_length=1, max_length=8)],
+    tag: Annotated[list[str], Query(min_length=1, max_length=search.LENS_TAGS_MAX)],
     limit: int = Query(40, ge=1, le=100),
 ) -> dict:
     """What a tag lens on the star map lights: the captures carrying any of the tags, with their

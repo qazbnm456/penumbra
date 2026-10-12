@@ -250,6 +250,11 @@ TAG_SEPARATOR = "\x1f"
 #: The longest tag or entity a scope may name. `concepts` offers nothing longer, so the picker never
 #: shows a choice the API would refuse.
 SCOPE_VALUE_MAX = 200
+#: How many tags one lens, or a question over it, may hold at once. The tag row lets a reader turn on
+#: as many as they like, and eight here met a reader with thirteen on with a 422 the page printed as
+#: "[object Object]". Each tag is one bound parameter of an indexed `IN`, read locally, so the bound
+#: is about a sane request, not cost.
+LENS_TAGS_MAX = 50
 
 
 @dataclass
