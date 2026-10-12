@@ -644,3 +644,54 @@ def test_a_press_on_a_planets_sphere_chooses_it_even_with_its_drawing_hidden(bro
     view.mouse.click(centre[0], centre[1])
     view.wait_for_function("starMap.selected === 'o2'", timeout=5000)
     view.close()
+
+
+def test_the_graphs_tag_row_keeps_its_height_with_the_panel_put_away(page):
+    """The tag row clips its chips (`overflow: hidden`) inside a flex column; allowed to shrink, it
+    lost its chips' top line once the graph's panel was put away and the stage squeezed it."""
+    page.evaluate("openOrbit('o1')")
+    page.wait_for_timeout(1200)
+    page.evaluate("setViewMode('orbit', 'graph')")
+    page.wait_for_function("document.querySelectorAll('#graph-lenses .lens').length", timeout=10000)
+    clipped = """(() => { const row = document.getElementById('graph-lenses');
+      return row.scrollHeight - row.clientHeight; })()"""
+    page.evaluate("document.getElementById('graph-panel-grip')"
+                  ".dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))")
+    page.wait_for_timeout(600)
+    assert page.evaluate(clipped) <= 1, page.evaluate(clipped)
+
+
+def test_a_planets_study_tip_stays_inside_its_card(page):
+    """Study it opens the card's foot at its left edge, and its tip used to run off the column."""
+    page.evaluate("openMapFocus({ kind: 'planet', orbit: 'o2' })")
+    page.wait_for_selector("#starmap-card .card-enter", timeout=5000)
+    page.hover("#starmap-card .card-enter")
+    page.wait_for_timeout(300)
+    inside = page.evaluate("""() => {
+      const button = document.querySelector('#starmap-card .card-enter');
+      const tip = getComputedStyle(button, '::after');
+      const card = document.getElementById('map-panel').getBoundingClientRect();
+      const b = button.getBoundingClientRect();
+      const left = tip.left === 'auto' ? b.right - parseFloat(tip.width) : b.left + parseFloat(tip.left);
+      return [left, card.left];
+    }""")
+    assert inside[0] >= inside[1], inside
+
+
+def test_an_orbit_is_deleted_whole_from_its_planets_card(page, server):
+    """Delete orbit… on a planet's card asks about the captures filed there; "with its captures"
+    takes the planet and those captures, and only those, out of the Horizon."""
+    _call(server, "POST", "/orbits/doomed/sources", {"texts": ["A capture filed only into the doomed orbit."]})
+    _call(server, "PUT", "/orbits/doomed/title", {"title": "Doomed"})
+    node = next(n for n in _call(server, "GET", "/horizon?limit=50")["nodes"]
+                if any(m["orbit_id"] == "doomed" for m in n.get("orbits") or []))
+    page.evaluate("renderStarMap()")
+    page.wait_for_selector('.map-planet[data-key="orbit:doomed"]', timeout=10000)
+    page.evaluate("openMapFocus({ kind: 'planet', orbit: 'doomed' })")
+    page.locator("#starmap-card .card-foot .btn-quiet-danger").click()
+    page.locator("#confirm-yes").click()
+    page.wait_for_selector('.map-planet[data-key="orbit:doomed"]', state="detached", timeout=10000)
+    assert "doomed" not in [o["id"] for o in _call(server, "GET", "/orbits")["orbits"]]
+    ids = [n["id"] for n in _call(server, "GET", "/horizon?limit=50")["nodes"]]
+    assert node["id"] not in ids
+    assert len(ids) >= 3, "captures filed into other orbits went too"

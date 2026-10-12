@@ -14749,6 +14749,39 @@ async function enterOrbit(orbit) {
 
 //: Going in to study an orbit: it opens in the study view (sources, conversation, Studio), where
 //: the AI reads all of it and answers with citations, whatever view the orbit was last shown in.
+//: Deleting an orbit from its planet's card. With captures filed from the Horizon it asks whether
+//: they go too: the ones filed only here leave the Horizon with it (`?captures=true`), and one also
+//: filed into another orbit stays, since that orbit still holds it. Without any, one plain confirm.
+async function deleteOrbitFromMap(orbit) {
+  const name = orbit.title;
+  let whole = false;
+  if (orbit.captures) {
+    const answer = await chooseAction(
+      t("map.deleteOrbitWhole", `Delete \u201c${name}\u201d? Its sources and conversation go with it. Delete the captures filed here from the Horizon too? Any also filed into another orbit stay.`, { name }),
+      { yes: t("map.deleteOrbitWithCaptures", "Delete with its captures"), alt: t("map.deleteOrbitOnly", "Only the orbit") },
+    );
+    if (!answer) return;
+    whole = answer === "yes";
+  } else if (!(await confirmAction(t("app.deleteOrbitAsk",
+    `Delete \u201c${name}\u201d? Its sources and conversation go with it. Anything you captured stays in the Horizon.`,
+    { name })))) {
+    return;
+  }
+  try {
+    await api(`/orbits/${encodeURIComponent(orbit.id)}${whole ? "?captures=true" : ""}`, { method: "DELETE" });
+  } catch (err) {
+    // 409 while a run is in flight is the one a reader meets, and the server's sentence says so.
+    notify(readableError(err.message), { tone: "error" });
+    return;
+  }
+  dropCapturesHeld();
+  closeMapFocus();
+  void refreshOrbitList();
+  void renderFacets();
+  if (whole) await refreshHorizon({ reset: true });
+  void renderStarMap();
+}
+
 async function studyOrbit(orbit) {
   // Opened unless it is the orbit ON SCREEN, not merely the last one opened: going home keeps
   // `state.orbitId`, and a guard on the id alone skipped `openOrbit` (the only way to the orbit's
@@ -17238,6 +17271,10 @@ function paintStarMapCard(mapCard) {
   enter.dataset.tip = t("map.studyTip", "Open it to read with the AI: it reads every source here and answers with citations.");
   enter.addEventListener("click", () => void studyOrbit(orbit));
   foot.appendChild(enter);
+  const remove = elt("button", "btn btn-quiet-danger", t("map.deleteOrbit", "Delete orbit\u2026"));
+  remove.type = "button";
+  remove.addEventListener("click", () => void deleteOrbitFromMap(orbit));
+  foot.appendChild(remove);
   mapCard.appendChild(foot);
   planetCardTabs(mapCard, orbit, infoFrom);
   mapCard.hidden = false;

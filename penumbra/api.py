@@ -1368,7 +1368,7 @@ async def clear_turns(orbit_id: str) -> OrbitResponse:
 
 
 @app.delete("/orbits/{orbit_id}")
-async def delete_orbit_endpoint(orbit_id: str) -> dict:
+async def delete_orbit_endpoint(orbit_id: str, captures: bool = False) -> dict:
     """Delete an orbit, its audio and its Horizon membership rows.
 
     **The product offered Forget for a node and ✕ for a source and had no way to remove a
@@ -1385,6 +1385,12 @@ async def delete_orbit_endpoint(orbit_id: str) -> dict:
     any orbit it was filed into. Only the membership rows go, and best-effort AFTER the file is
     gone, exactly as `delete_source_endpoint` does — an index write must never undo a completed
     orbit write.
+
+    **`captures=true` deletes the orbit whole**, as the reader asked for it from the planet's card:
+    the captures filed only into this orbit are removed from the Horizon too (each recorded as a
+    removal, as Forget records it). A capture also filed into another orbit stays, because removing
+    it would take it out from under an orbit the reader did not ask to touch. Which captures go is
+    read BEFORE the memberships are dropped, since afterwards nothing says they were here.
     """
     #: **Compared by SLUG, because the file is keyed by slug and `_ACTIVE_RUNS` by the raw id.**
     #: `"Reading List"` and `"Reading-List"` are two keys in that map and ONE file on disk, so a
@@ -1394,6 +1400,12 @@ async def delete_orbit_endpoint(orbit_id: str) -> dict:
     target = slug(orbit_id)
     if any(slug(active) == target for active in _ACTIVE_RUNS) or _BUSY[target]:
         raise HTTPException(409, "something is running in this orbit — stop it first")
+    only_here: list[str] = []
+    if captures:
+        try:
+            only_here = await asyncio.to_thread(_captures_only_in, target)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
     try:
         existed = await asyncio.to_thread(delete_orbit, orbit_id)
     except ValueError as exc:  # an id `slug` reduces to nothing (invariant 27's second arm)
@@ -1405,7 +1417,26 @@ async def delete_orbit_endpoint(orbit_id: str) -> dict:
     except Exception:  # noqa: BLE001 - an index write must never undo a completed orbit write
         _log.warning("could not drop the horizon memberships for %s", orbit_id)
         forgotten = 0
-    return {"deleted": True, "memberships_dropped": forgotten}
+    removed = 0
+    for node_id in only_here:
+        try:
+            gone = await asyncio.to_thread(
+                lambda n=node_id: horizon.remove_node(n, detail={"orbits": [target], "everywhere": True})
+            )
+        except Exception:  # noqa: BLE001 - the orbit is already gone; a capture left behind is not
+            _log.warning("could not remove capture %s with its orbit", node_id)
+            continue
+        removed += bool(gone)
+    if only_here:
+        _forget_suggestions()
+    return {"deleted": True, "memberships_dropped": forgotten, "captures_removed": removed}
+
+
+def _captures_only_in(orbit_key: str) -> list[str]:
+    """The captures filed into this orbit and into no other."""
+    here = sorted({m.node_id for m in horizon.nodes_in_orbit(orbit_key)})
+    elsewhere = horizon.memberships_for_nodes(here)
+    return [n for n in here if all(m.orbit_id == orbit_key for m in elsewhere[n])]
 
 
 @app.get("/data/export")

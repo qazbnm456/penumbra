@@ -1741,6 +1741,36 @@ def test_a_orbit_can_be_deleted_and_its_nodes_survive(client, tmp_path):
     assert client.delete("/orbits/doomed").status_code == 404
 
 
+def test_deleting_an_orbit_whole_removes_the_captures_filed_only_there(client):
+    """`captures=true` is the planet card's "delete it whole": the captures filed only into this
+    orbit leave the Horizon with it, recorded as removals. One also filed into another orbit stays,
+    and that orbit keeps its source."""
+    from penumbra import horizon
+
+    only = client.post("/horizon", json={"texts": ["filed only into the doomed orbit"]}).json()["nodes"][0]
+    shared = client.post("/horizon", json={"texts": ["filed into two orbits"]}).json()["nodes"][0]
+    for node in (only, shared):
+        _settle(client, node["id"])
+        assert client.post(f"/horizon/{node['id']}/promote",
+                           json={"orbit_id": "doomed", "create": True}).status_code == 200
+    assert client.post(f"/horizon/{shared['id']}/promote",
+                       json={"orbit_id": "kept", "create": True}).status_code == 200
+
+    resp = client.delete("/orbits/doomed?captures=true")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["captures_removed"] == 1
+    assert client.get(f"/horizon/{only['id']}").status_code == 404
+    assert client.get(f"/horizon/{shared['id']}").status_code == 200
+    assert [m.orbit_id for m in horizon.memberships_for(shared["id"])] == ["kept"]
+    assert len(client.get("/orbits/kept").json()["sources"]) == 1
+    # The removal says it went with the orbit, though the membership was already dropped.
+    removal = next(e for e in horizon.removal_events() if e["node_id"] == only["id"])
+    assert (removal["orbits"], removal["everywhere"]) == (["doomed"], True)
+    # Without the flag nothing leaves the Horizon, as before.
+    assert client.delete("/orbits/kept").json()["captures_removed"] == 0
+    assert client.get(f"/horizon/{shared['id']}").status_code == 200
+
+
 def test_deleting_a_orbit_takes_its_audio_with_it(client):
     """One file per orbit is what made retention a non-question (invariant 42). Leaving it behind
     would make it one, and `find_audio` would then serve an episode for an orbit that is gone."""
