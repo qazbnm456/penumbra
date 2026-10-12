@@ -11234,10 +11234,15 @@ button.node-more:hover {
   cursor: pointer;
 }
 
-.find-cal-nav:hover,
+.find-cal-nav:hover:not(:disabled),
 .find-cal-nav:focus-visible {
   color: var(--text);
   border-color: var(--border-strong);
+}
+
+.find-cal-nav:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .find-cal-grid {
@@ -11283,20 +11288,23 @@ button.node-more:hover {
   background: color-mix(in oklch, var(--accent) 16%, transparent);
 }
 
+/* The digits take the page's ground, as a primary button's label does: near-white on the dark
+   theme's lighter copper measured about 2:1. */
 .find-cal-day.is-from,
 .find-cal-day.is-to {
   font-weight: 600;
-  color: oklch(98% 0.01 75);
+  color: var(--bg);
   background: var(--accent);
   box-shadow: none;
 }
 
-/* The ends join the band between them: rounded only on their outer side once both are chosen. */
-.find-cal-day.is-from:not(.is-to):has(~ .is-to, ~ .in-range) {
+/* The ends join the band between them, rounded only on their outer side; told by `findCalendar`,
+   since the other end may be in another month. */
+.find-cal-day.joins-next {
   border-radius: 999px 0 0 999px;
 }
 
-.find-cal-day.is-to:not(.is-from):is(.in-range ~ .is-to, .is-from ~ .is-to) {
+.find-cal-day.joins-prev {
   border-radius: 0 999px 999px 0;
 }
 

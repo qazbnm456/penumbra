@@ -509,7 +509,9 @@ def test_a_date_range_is_picked_on_our_calendar_and_shown_as_its_own_condition(p
     later = page.evaluate("[...document.querySelectorAll('#find-panel .find-cal-day')]"
                           ".filter((d) => d.dataset.day > isoDay(new Date())).every((d) => d.disabled)")
     assert later
-    first = page.evaluate("document.querySelector('#find-panel .find-cal-day:not([disabled])').dataset.day")
+    first = page.evaluate("[...document.querySelectorAll('#find-panel .find-cal-day:not([disabled])')]"
+                          ".map((d) => d.dataset.day).find((day) => day !== isoDay(new Date()))"
+                          " || isoDay(new Date())")
     page.locator(f'#find-panel [data-day="{first}"]').click()
     page.locator(f'#find-panel [data-day="{today}"]').click()
     page.wait_for_selector("#find-chips .find-chip-date", timeout=5000)
@@ -518,7 +520,12 @@ def test_a_date_range_is_picked_on_our_calendar_and_shown_as_its_own_condition(p
     chip = page.locator("#find-chips .find-chip-date").text_content()
     assert "…" not in chip and len(chip) > 4, chip
     assert "since=" in page.evaluate("horizonQuery()") and "until=" in page.evaluate("horizonQuery()")
-    # The arrow keys walk the days.
-    page.locator(f'#find-panel [data-day="{first}"]').focus()
-    page.keyboard.press("ArrowRight")
-    assert page.evaluate("document.activeElement.dataset.day") > first
+    # The arrow keys walk the days: left from today, which every day of the month allows (right
+    # from the 1st is today itself on the 1st, and a day to come cannot be walked to).
+    page.locator(f'#find-panel [data-day="{today}"]').focus()
+    page.keyboard.press("ArrowLeft")
+    page.wait_for_function(f"(document.activeElement.dataset.day || '') < '{today}'", timeout=5000)
+    # Taking the range off forgets it.
+    page.keyboard.press("Escape")
+    page.locator("#find-chips .find-chip-date").click()
+    assert page.evaluate("[horizonState.filters.from, horizonState.filters.to]") == ["", ""]
