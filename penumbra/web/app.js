@@ -14517,8 +14517,10 @@ function drawStarMap() {
     looseRing.appendChild(moonBody(x, y, stableHash(`moon:${item ? item.id : i}`),
       moonClass(item) + moonLensClass(item, starMap.lenses)));
     if (item) looseRing.appendChild(moonHit(x, y, { kind: "capture", ...item }));
+    const lensMark = item ? moonLensClass(item, starMap.lenses) : "";
     looseLooks.push({ x, y, state: skyMoonState(item ? { kind: "capture", ...item } : null),
-      seed: stableHash(`moon:${item ? item.id : i}`), faded: Boolean(item) && moonLensClass(item, starMap.lenses).includes("is-faded") });
+      seed: stableHash(`moon:${item ? item.id : i}`), faded: lensMark.includes("is-faded"),
+      lensed: lensMark.includes("is-lensed") });
     if (item && isFocusedMoon(item)) looseRing.appendChild(moonMark(x, y));
   }
   hole.appendChild(looseRing);
@@ -14561,8 +14563,9 @@ function drawStarMap() {
       const y = d * Math.sin(angle);
       moonRing.appendChild(moonBody(x, y, stableHash("moon:" + (item.id || orbit.slug + ":" + i)),
         moonClass(item) + moonLensClass(item, starMap.lenses)));
+      const lensMark = moonLensClass(item, starMap.lenses);
       moonLooks.push({ x, y, state: skyMoonState(item), seed: stableHash("moon:" + (item.id || orbit.slug + ":" + i)),
-        faded: moonLensClass(item, starMap.lenses).includes("is-faded") });
+        faded: lensMark.includes("is-faded"), lensed: lensMark.includes("is-lensed") });
       moonRing.appendChild(moonHit(x, y, { ...item, orbit: orbit.slug }));
       if (isFocusedMoon(item)) moonRing.appendChild(moonMark(x, y));
     });
@@ -15609,12 +15612,16 @@ function skyView() {
   return { cx: hole.x, cy: hole.y, pxPerRs: Math.hypot(m.a, m.b) * SKY_RS_UNITS, ...(skyWorlds(m, box, hole) || {}) };
 }
 
-//: A moon's state as the fine sky draws it: 1 summarised (a gold edge), 2 not yet (blue-grey),
-//: 3 added inside its orbit (an edge only).
+//: A moon's state as the fine sky draws it, the colour of its edge: 1 summarised (gold), 2 not yet
+//: (blue-grey), 3 added inside its orbit (an edge only), 5 could not be read (red), 6 being read or
+//: summarised (dim copper). (4 is a passing rock's neutral edge.)
 function skyMoonState(item) {
   if (!item) return 2;
   if (item.kind === "local") return 3;
-  return item.state === "ready" ? 1 : 2;
+  if (item.state === "ready") return 1;
+  if (item.state === "failed") return 5;
+  if (["queued", "parsing", "distilling"].includes(item.state)) return 6;
+  return 2;
 }
 
 //: Each kind of world as the fine sky draws it: a family (0 continents, 1 bands, 2 lava, 3 ice,
@@ -15660,6 +15667,8 @@ function skyWorlds(m, box, hole) {
   const k = Math.hypot(m.a, m.b);
   const px = (x, y) => [m.a * x + m.c * y + m.e - box.left, m.b * x + m.d * y + m.f - box.top];
   const now = performance.now() / 1000;
+  // Under reduced motion nothing turns, and the frame is drawn only when the view moves.
+  const moving = motionAllowed();
   const bodies = [];
   const streaks = [];
   const light = (x, y) => {
@@ -15675,23 +15684,30 @@ function skyWorlds(m, box, hole) {
   };
   const rock = { base: [0.16, 0.15, 0.14], second: [0.07, 0.065, 0.06], atmo: [0, 0, 0], emissive: 0 };
   const turnAt = (x, y, a) => [x * Math.cos(a) - y * Math.sin(a), x * Math.sin(a) + y * Math.cos(a)];
-  scene.planets.forEach((entry) => {
+  // A moon lit by a tag lens is larger and edged in gold, as the drawn map marks it.
+  const drawMoon = (moon, x, y, alpha) => body(x, y, (moon.lensed ? 4 : 2.5) * k, 5, moon.seed,
+    moving ? now * 0.2 : 0, moon.faded ? 0.15 : alpha, false, moon.lensed ? 1 : moon.state, 0, rock, 1);
+  // Behind ones first, so a planet the map keeps in front (chosen, pointed at) is drawn over a
+  // planet it passes; each takes the opacity its SVG group has (dimmed by a lens, faded behind).
+  const order = [...scene.planets].sort((a, b) =>
+    Number(b.group.classList.contains("is-behind")) - Number(a.group.classList.contains("is-behind")));
+  order.forEach((entry) => {
     const pos = planetAt(entry.p);
-    const faded = entry.group.classList.contains("is-dim") ? 0.3 : Number(entry.group.style.opacity || 1);
+    const faded = Number(getComputedStyle(entry.group).opacity) || 0;
     const pairTurn = entry.pair ? skySpin(entry.pair) : 0;
     (entry.looks || []).forEach((look) => {
       const [ox, oy] = turnAt(look.at * entry.p.r, 0, pairTurn);
       const [x, y] = px(pos.x + ox, pos.y + oy);
       const palette = skyPalette(look.kind);
-      const spin = entry.still ? 0 : (now / Math.max(look.terrain.spin || 60, 1)) * Math.PI * 2;
+      const spin = entry.still || !moving ? 0 : (now / Math.max(look.terrain.spin || 60, 1)) * Math.PI * 2;
       body(x, y, entry.p.r * look.size * k, palette.family, (look.seed * 97.31) % 1, spin, faded,
-        look.terrain.ringed, 0, 0.32, palette);
+        look.terrain.ringed, 0, ((look.terrain.tilt || -20) * Math.PI) / 180, palette);
     });
     const ringTurn = skySpin(entry.moonRing);
     (entry.moons || []).forEach((moon) => {
       const [ox, oy] = turnAt(moon.x, moon.y, ringTurn);
       const [x, y] = px(pos.x + ox, pos.y + oy);
-      body(x, y, 2.5 * k, 5, moon.seed, now * 0.2, moon.faded ? 0.15 : faded, false, moon.state, 0, rock, 1);
+      drawMoon(moon, x, y, faded);
     });
   });
   if (scene.loose) {
@@ -15699,7 +15715,7 @@ function skyWorlds(m, box, hole) {
     scene.loose.items.forEach((moon) => {
       const [ox, oy] = turnAt(moon.x, moon.y, looseTurn);
       const [x, y] = px(MAP_CENTRE.x + ox, MAP_CENTRE.y + oy);
-      body(x, y, 2.5 * k, 5, moon.seed, now * 0.2, moon.faded ? 0.15 : 1, false, moon.state, 0, rock, 1);
+      drawMoon(moon, x, y, 1);
     });
   }
   skyActive.forEach((item) => {
@@ -15724,7 +15740,8 @@ function skyWorlds(m, box, hole) {
   return {
     bodies: new Float32Array(bodies), bodyCount: bodies.length / 24,
     streaks: new Float32Array(streaks), streakCount: streaks.length / 8,
-    worldsKey: `${bodies.length}|${streaks.length}|${Math.round(now * 4)}`,
+    // Moving, every frame differs anyway; still, only what is drawn decides whether to draw again.
+    worldsKey: moving ? `${Math.round(now * 60)}` : `${bodies.length}|${streaks.length}|${bodies.slice(0, 240).join(",")}`,
   };
 }
 

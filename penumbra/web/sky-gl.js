@@ -257,7 +257,8 @@ void main() {
   // Per instance, 24 floats in six vec4s:
   //   a0: x, y, radius, family      (0 continents, 1 bands, 2 lava, 3 ice, 4 craters, 5 rock, 6 glow)
   //   a1: seed, spin (radians), opacity, ringed
-  //   a2: light x, light y (unit, towards the hole, y up), state, ring tilt
+  //   a2: light x, light y (unit, towards the hole, y up), state (the colour of a small body's edge:
+  //       1 gold, 2 blue-grey, 3 an edge only, 4 neutral, 5 red, 6 dim copper), ring tilt (radians)
   //   a3: base colour, emissive
   //   a4: second colour, irregular (rocks)
   //   a5: atmosphere colour, unused
@@ -341,7 +342,7 @@ void main() {
 
   // A rock's outline is not round: its radius wanders with the angle round it.
   float edge = 1.0;
-  if (fam > 4.5 && v4.w > 0.5) {
+  if (fam > 4.5 && v4.w > 0.5 && r > 1e-4) {
     float ang = atan(uv.y, uv.x);
     edge = 0.82 + 0.18 * n3(vec3(cos(ang) * 1.6, sin(ang) * 1.6, seed * 13.0));
   }
@@ -349,8 +350,10 @@ void main() {
   // Rings behind the sphere first (the half above the centre), then the sphere, then the near half.
   vec4 ringBack = vec4(0.0), ringFront = vec4(0.0);
   if (v1.w > 0.5) {
-    float tilt = max(v2.w, 0.18);
-    float rr = length(vec2(uv.x, uv.y / tilt));
+    // The ring's plane is turned by the planet's own tilt and seen from above at a fixed slant.
+    float ct = cos(v2.w), st = sin(v2.w);
+    vec2 ru = vec2(ct * uv.x + st * uv.y, -st * uv.x + ct * uv.y);
+    float rr = length(vec2(ru.x, ru.y / 0.32));
     if (rr > 1.3 && rr < 2.25) {
       float band = 0.55 + 0.45 * n3(vec3(rr * 9.0, seed * 5.0, 0.0));
       float gap = smoothstep(1.62, 1.66, rr) * (1.0 - smoothstep(1.7, 1.74, rr));
@@ -358,7 +361,7 @@ void main() {
       float ra = fade * band * (1.0 - 0.8 * gap) * 0.85;
       vec3 rc = mix(v4.rgb, v3.rgb, 0.4) * diskLight() * (0.35 + 0.65 * max(dot(normalize(vec3(uv, 0.0)), L.xyz) * 0.5 + 0.5, 0.0));
       vec4 ring = vec4(rc * ra, ra);
-      if (uv.y > 0.0) ringBack = ring; else ringFront = ring;
+      if (ru.y > 0.0) ringBack = ring; else ringFront = ring;
     }
   }
 
@@ -419,7 +422,11 @@ void main() {
     // A moon's state is the colour of its edge; a hollow moon (a source added in its orbit) is only
     // its edge.
     if (v2.z > 0.5) {
-      vec3 state = v2.z < 1.5 ? vec3(1.0, 0.72, 0.32) : (v2.z < 2.5 ? vec3(0.58, 0.68, 0.86) : vec3(0.85));
+      vec3 state = v2.z < 1.5 ? vec3(1.0, 0.72, 0.32)
+                 : v2.z < 2.5 ? vec3(0.58, 0.68, 0.86)
+                 : v2.z < 4.5 ? vec3(0.85)
+                 : v2.z < 5.5 ? vec3(0.95, 0.32, 0.26)
+                 : vec3(0.75, 0.48, 0.25);
       float ringIn = smoothstep(0.72, 0.86, r / edge);
       col = mix(col, state * 1.4, ringIn * (v2.z < 3.5 ? 1.0 : 0.6));
       if (v2.z > 2.5 && v2.z < 3.5) { col *= ringIn; a = ringIn; }
@@ -854,6 +861,19 @@ void main() {
         }
         last = null;
         return ms;
+      },
+      //: Draws once now and reads back the colour at a point in CSS pixels (0 to 255 each), for a
+      //: test to see what was drawn; the drawing buffer is still intact within this task.
+      readAt(cssX, cssY) {
+        const v = view();
+        if (!v) return null;
+        draw(v, 0);
+        const dprNow = Math.min(window.devicePixelRatio || 1, 2) * QUALITY[current].scale;
+        const out = new Uint8Array(4);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.readPixels(Math.round(cssX * dprNow), Math.round((canvas.clientHeight - cssY) * dprNow), 1, 1,
+          gl.RGBA, gl.UNSIGNED_BYTE, out);
+        return [out[0], out[1], out[2]];
       },
       destroy() {
         this.stop();

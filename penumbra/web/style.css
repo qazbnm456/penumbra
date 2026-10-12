@@ -8450,10 +8450,12 @@ body.is-resizing .orbit-graph {
     transition: none;
   }
 
-  .map-disk,
-  .map-loose,
-  .map-moons,
-  .map-star {
+  /* Scoped to the map, so it outranks the rules further down that give these their animation: at
+     equal weight the later rule won, and the moons kept circling under reduced motion. */
+  .starmap .map-disk,
+  .starmap .map-loose,
+  .starmap .map-moons,
+  .starmap .map-star {
     animation: none;
   }
 }

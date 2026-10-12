@@ -400,6 +400,20 @@ def test_the_fine_sky_runs_only_in_the_dark_theme_and_says_why_when_it_cannot(br
               return { drawn: v.bodyCount, expected, artShown: getComputedStyle(art).display !== 'none' };
             }""")
             assert worlds["drawn"] == worlds["expected"] > 0 and not worlds["artShown"], worlds
+            # And they are really drawn: a planet's side facing the hole is lit, well above the empty
+            # sky beside it. (A planet a lens dimmed, or one behind another, is skipped.)
+            pixels = view.evaluate("""() => {
+              const v = skyView();
+              let i = 0;
+              while (i < v.bodyCount && (v.bodies[i * 24 + 3] > 4.5 || v.bodies[i * 24 + 6] < 0.9)) i += 1;
+              const b = v.bodies.slice(i * 24, i * 24 + 24);
+              const [x, y, r, lx, ly] = [b[0], b[1], b[2], b[8], b[9]];
+              return { planet: fineSky.sky.readAt(x + lx * r * 0.6, y - ly * r * 0.6),
+                       sky: fineSky.sky.readAt(x - lx * r * 3, y + ly * r * 3) };
+            }""")
+            assert sum(pixels["planet"]) > sum(pixels["sky"]) + 30, pixels
+            # A capture that could not be read keeps its own colour (a red edge) under the fine sky.
+            assert view.evaluate("skyMoonState({ kind: 'capture', state: 'failed' })") == 5
             view.evaluate("openMapFocus({kind: 'planet', orbit: 'o1'})")
             view.wait_for_selector("#starmap-card .card-foot .card-enter", timeout=5000)
             view.evaluate("closeMapFocus()")
@@ -586,3 +600,21 @@ def test_up_and_down_in_the_list_move_from_capture_to_capture(page):
     page.locator("#stream-search").focus()
     page.keyboard.press("ArrowDown")
     assert page.evaluate(chosen) == ids[0], "the find field's arrows moved the choice"
+
+
+
+def test_under_reduced_motion_the_fine_sky_holds_still(browser, server):
+    """Reduced motion freezes the worlds as well as the disk: two frames apart, the fine sky is handed
+    the same worlds, so nothing turns and nothing is drawn again until the view moves."""
+    view = browser.new_page(viewport={"width": 1280, "height": 860}, locale="en-US", color_scheme="dark",
+                            reduced_motion="reduce")
+    view.goto(f"{server}/#token={TOKEN}")
+    view.wait_for_selector("#starmap-svg .map-planet", timeout=30000)
+    view.wait_for_timeout(1200)
+    if view.evaluate("!fineSky.sky"):
+        view.close()
+        return  # no hardware sky here (CI's software GPU): nothing to hold still
+    first = view.evaluate("skyView().worldsKey")
+    view.wait_for_timeout(600)
+    assert view.evaluate("skyView().worldsKey") == first
+    view.close()
