@@ -322,8 +322,8 @@ def test_an_open_orbit_menu_in_the_waiting_card_survives_the_maps_refreshes(page
     closes."""
     _call(server, "POST", "/horizon", {"texts": ["A loose note that is in no orbit yet."]})
     page.reload()
-    page.wait_for_selector("#starmap-card .todo-list .orbit-pick-trigger", timeout=30000)
-    trigger = page.locator("#starmap-card .todo-list .orbit-pick-trigger").first
+    page.wait_for_selector("#starmap-card .card-list .orbit-pick-trigger", timeout=30000)
+    trigger = page.locator("#starmap-card .card-list .orbit-pick-trigger").first
     trigger.click()
     handle = trigger.element_handle()
     for _ in range(3):
@@ -717,6 +717,13 @@ def test_a_cards_head_and_the_rails_filter_stay_at_the_top_while_the_rest_scroll
     assert abs(offset) <= 1, offset
     assert view.evaluate("[...document.querySelectorAll('#starmap-card .card-list')]"
                          ".every((list) => getComputedStyle(list).overflowY === 'visible')")
+    # A lens card pins its close and kicker but not its chosen tags, which can number fifty.
+    view.evaluate("starMap.lenses = new Set(starMap.tags.map((tag) => tag.name));"
+                  " starMap.focus = { kind: 'lens' };"
+                  " paintStarMapLenses(); drawStarMap(); renderStarMapCard();")
+    view.wait_for_selector("#starmap-card .lens-heading", timeout=5000)
+    assert view.evaluate("!document.querySelector('#starmap-card .card-head .lens-heading')"
+                         " && !!document.querySelector('#starmap-card .card-head .card-kicker')")
     # The rail: its filter shows from six orbits; enough rows are stood in here to make it scroll.
     view.evaluate("""() => { document.getElementById('facet-tools').hidden = false;
       const list = document.getElementById('facet-list');

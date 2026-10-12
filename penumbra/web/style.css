@@ -5433,6 +5433,8 @@ body.is-resizing .studio-grip {
   gap: var(--space-0);
   padding: var(--ib-gap-lg) var(--space-4);
   overflow-y: auto;
+  /* Below the pinned filter row (`.facet-tools`). */
+  scroll-padding-top: calc(var(--space-12) + var(--space-7));
   /* `--surface-2`, not `--surface-1`. Measured rather than eyeballed: against `--bg` the first step
      is 2.5%% of lightness in Paper and 4%% in Study, and the app-shell guideline for a sidebar
      against a main surface is at least 4%%. My own read of the screenshots had it backwards, which
@@ -8361,6 +8363,7 @@ body.is-resizing .orbit-graph {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  scroll-padding-top: calc(var(--space-13) + var(--space-10));
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -9556,13 +9559,6 @@ body.is-resizing .orbit-graph {
   max-width: 100%;
 }
 
-/* The waiting card's lists are not boxes of their own: the column already scrolls, and a nested
-   260px scroller hid half the loose captures with nothing to say it could scroll. */
-.starmap-card .todo-list {
-  max-height: none;
-  overflow: visible;
-}
-
 .card-row .legend-dot {
   flex: none;
 }
@@ -9771,6 +9767,8 @@ body.is-resizing .cols {
   position: relative;
   min-height: 0;
   overflow-y: auto;
+  /* What the browser scrolls into view lands below the pinned card head, not under it. */
+  scroll-padding-top: calc(var(--space-13) + var(--space-12));
   border-left: 1px solid var(--border);
   background: var(--surface-1);
 }

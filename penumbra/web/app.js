@@ -16679,7 +16679,7 @@ function renderHorizonTodo(card, loose) {
       card.appendChild(elt("p", "card-note todo-why", t("map.todoLeftWhy",
         "Automatic filing has looked at the ones marked \u201cwaiting for a second\u201d: no orbit fits them and nothing else here shares their subject yet. The orbit opens when a second capture on the subject arrives, or file one yourself now.")));
     }
-    const list = elt("ul", "card-list todo-list");
+    const list = elt("ul", "card-list");
     shown.forEach((item) => {
       const row = elt("li", "card-row is-filing");
       const name = elt("button", "card-row-title", captureName(item.title));
@@ -16712,7 +16712,7 @@ function renderHorizonTodo(card, loose) {
     // so a capture past its first page is counted but not named, and the remainder says so.
     const waiting = horizonState.nodes.filter((n) => n.state === "ready_undistilled");
     if (waiting.length) {
-      const list = elt("ul", "card-list todo-list");
+      const list = elt("ul", "card-list");
       waiting.slice(0, TODO_SHOWN).forEach((node) => {
         const row = elt("li", "card-row");
         const name = elt("button", "card-row-title",
@@ -17087,8 +17087,9 @@ function renderStarMapCard() {
 }
 
 //: What heads a card: its close, its kicker, its title and the planet's tabs, in the order every
-//: card begins with them.
-const CARD_HEAD = ["card-close", "card-kicker", "card-title-row", "card-title", "lens-heading", "planet-card-tabs"];
+//: card begins with them. Not a lens card's chosen tags: up to fifty chips, pinned, grew taller
+//: than the column and hid the card under them.
+const CARD_HEAD = ["card-close", "card-kicker", "card-title-row", "card-title", "planet-card-tabs"];
 
 //: A card's head stays at the top of its column while the rest scrolls under it (`.card-head`), so
 //: a long card never scrolls away the name of what it shows, its close or its tabs. The leading run
