@@ -3506,6 +3506,8 @@ function marksGroups() {
       note: t("marks.g.listNote", "Everything kept, newest first, with removals where they happened."),
       rows: [
         [nodeChip("node-orbit", t("marks.list.orbitName", "Reading")), t("marks.list.orbit", "An orbit it is filed in. Click it to go there.")],
+        [() => mentionMark("YARA"), t("marks.list.mention", "A name the capture mentions. Captures and orbits that mention the same name are linked.")],
+        [() => elt("span", "mark mark-add", t("pick.add", "+ Orbit")), t("marks.list.add", "Adds a tag or files it into another orbit.")],
         [nodeChip("node-tag", "#focus"), t("marks.list.tag", "A tag. Click it to find everything carrying it.")],
         [nodeChip("node-more", "+3"), t("marks.list.more", "More tags than fit. Click it to show them all.")],
         [chip("span", "node-removed-badge", t("find.removedBadge", "Removed")), t("marks.list.removed", "A removal, kept at the moment it happened, saying which orbits it was taken out of too.")],
@@ -10366,7 +10368,7 @@ async function fillNodeBody(node, row, inner) {
   // missing` for a node visibly on screen. The state is knowable here without asking, so the section
   // says why instead of offering a control whose only outcome contradicts the screen.
   inner.appendChild(cardSection(t("map.sectionFiled", "In orbits")));
-  if (node.state === "ready" || node.state === "ready_undistilled") {
+  if (["ready", "ready_undistilled", "distilling"].includes(node.state)) {
     inner.appendChild(orbitPicker(node.id, detail.orbits || []));
   } else {
     inner.appendChild(elt("p", "node-filed", t("horizon.notFilable", "Nothing to file yet: it has no text.")));
@@ -10393,7 +10395,7 @@ async function nodeActions(node) {
     });
     actions.appendChild(retry);
   }
-  if (node.state === "ready" || node.state === "ready_undistilled") {
+  if (["ready", "ready_undistilled", "distilling"].includes(node.state)) {
     const read = elt("button", "btn", t("map.readInList", "Read it"));
     read.type = "button";
     read.addEventListener("click", () => void showNodeReader(node));
@@ -15543,19 +15545,33 @@ function orbitPicker(nodeId, memberships = []) {
   trigger.setAttribute("aria-expanded", "false");
   const label = elt("span", "orbit-pick-label", t("pick.add", "+ Orbit"));
   trigger.appendChild(label);
+  // Where it is, in words, as the button's description: its name stays the "+ Orbit" it shows.
+  const said = elt("span", "sr-only");
+  said.id = `orbit-pick-said-${(orbitPicker.count = (orbitPicker.count || 0) + 1)}`;
+  trigger.setAttribute("aria-describedby", said.id);
   let paintMenu = () => {};
   const paintLabel = () => {
     const chosen = orbits.filter((o) => selected.has(o.slug || o.id));
-    // What the old box said in words, kept for a screen reader on the button that opens the list.
-    trigger.setAttribute("aria-label", `${!chosen.length
+    said.textContent = !chosen.length
       ? t("pick.none", "In no orbit yet")
       : chosen.length === 1
         ? t("pick.one", `In \u201c${nameOf(chosen[0])}\u201d`, { name: nameOf(chosen[0]) })
-        : t("pick.many", `In ${chosen.length} orbits`, { n: chosen.length })}. ${t("pick.addLabel", "File into an orbit")}`);
+        : t("pick.many", `In ${chosen.length} orbits`, { n: chosen.length });
     marks.textContent = "";
+    // An empty row of marks would still take a gap before "+ Orbit".
+    marks.hidden = !chosen.length;
     chosen.forEach((o) => {
       const key = o.slug || o.id;
-      const mark = elt("span", "mark mark-orbit", nameOf(o));
+      const mark = elt("span", "mark mark-orbit");
+      // Its name goes to the orbit, as an orbit's chip in the list does.
+      const go = elt("button", "mark-go", nameOf(o));
+      go.type = "button";
+      go.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const orbit = starMap.orbits.find((one) => one.slug === key);
+        if (orbit) void enterOrbit(orbit);
+      });
+      mark.appendChild(go);
       const out = elt("button", "mark-x", "\u00d7");
       out.type = "button";
       out.setAttribute("aria-label", t("pick.takeOut", `Take it out of ${nameOf(o)}`, { name: nameOf(o) }));
@@ -15569,11 +15585,13 @@ function orbitPicker(nodeId, memberships = []) {
         selected.delete(key);
         paintLabel();
         if (!menu.hidden) paintMenu();
+        // The pressed × is gone with its mark; focus stays in the control rather than on <body>,
+        // where the map's keys no longer reach.
+        trigger.focus();
       });
       mark.appendChild(out);
       marks.appendChild(mark);
     });
-    wrap.classList.toggle("is-empty", !chosen.length);
   };
   paintLabel();
   if (unknown.length) {
@@ -15593,6 +15611,7 @@ function orbitPicker(nodeId, memberships = []) {
   }
   wrap.appendChild(marks);
   wrap.appendChild(trigger);
+  wrap.appendChild(said);
   const menu = elt("div", "orbit-pick-menu");
   menu.setAttribute("role", "group");
   menu.hidden = true;
@@ -16425,8 +16444,9 @@ function paintStarMapCard(mapCard) {
       name.type = "button";
       name.addEventListener("click", () => openMapFocus({ kind: "bridge", a: bridge.a, b: bridge.b }));
       head.appendChild(name);
-      const n = bridge.shared.length;
-      head.appendChild(elt("span", "share-count", t("map.shareCount", `Both mention ${n} names`, { n })));
+      // `shared` names at most five (topology.py); `weight` counts them all.
+      const n = bridge.weight || bridge.shared.length;
+      head.appendChild(elt("span", "share-count", t("map.shareCount", `Both mention ${plural(n, "name")}`, { n })));
       group.appendChild(head);
       const names = elt("div", "share-names marks");
       bridge.shared.forEach((entity) => names.appendChild(mentionMark(entity)));
@@ -18000,7 +18020,7 @@ function renderGraphPanel(litCaptures) {
   const entry = graphState.selected ? data.entities.find((e) => e.name === graphState.selected) : null;
   if (entry && entry.aliases && entry.aliases.length) {
     // Names concept alignment folded into this one, each one press from being itself again.
-    panel.appendChild(elt("p", "card-kicker", t("graph.aliases", "Also written as")));
+    panel.appendChild(cardSection(t("graph.aliases", "Also written as")));
     const merged = elt("div", "card-chips");
     entry.aliases.forEach((alias) => {
       const chip = mentionMark(alias);
@@ -18042,7 +18062,7 @@ function renderGraphPanel(litCaptures) {
     }
   }
   if (near.length) {
-    panel.appendChild(elt("p", "card-kicker", graphState.lenses.size || !graphState.selected
+    panel.appendChild(cardSection(graphState.lenses.size || !graphState.selected
       ? t("graph.entitiesHere", "Mentions here")
       : t("graph.together", "Often named together")));
     const chips = elt("div", "card-chips");
@@ -18109,22 +18129,33 @@ function graphItemList(captures) {
 function renderGraphCapturePanel(panel, chosen) {
   const data = graphState.data;
   const layout = graphState.layout;
+  // The same card as the map's and the list's (`renderCaptureCard`): summary, Tags, Mentions, In
+  // orbits, then what relates to it here, and the last row. Tags and orbits come with the capture
+  // itself, so their sections fill in where they belong once it arrives.
   panel.appendChild(cardStateLine(chosen.state));
   panel.appendChild(elt("h2", "card-title", chosen.title));
-  if (chosen.origin) panel.appendChild(elt("p", "card-meta", chosen.origin));
   const summary = elt("p", "card-summary", chosen.state === "ready_undistilled"
     ? t("graph.notSummarised", "Not summarised yet") : t("cite.loading", "Loading…"));
   panel.appendChild(summary);
+  const tagsSlot = elt("div", "graph-card-slot");
+  panel.appendChild(tagsSlot);
   const generation = graphState.generation;
   const wanted = chosen.node_id;
   let node = { id: chosen.node_id, title: chosen.title, origin: chosen.origin };
+  let where = [];
+  const orbitsSlot = elt("div", "graph-card-slot");
   void api(`/horizon/${encodeURIComponent(chosen.node_id)}`).then((got) => {
     if (graphState.generation !== generation || graphState.capture !== wanted || !summary.isConnected) return;
     node = got.node || node;
     if (node.summary) summary.textContent = node.summary;
     else if (chosen.state !== "ready_undistilled") summary.remove();
+    tagsSlot.replaceWith(captureTagEditor({ ...node, id: chosen.node_id }));
+    const memberships = got.orbits || [];
+    where = memberships.map((m) => orbitTitles.get(m.orbit_id) || t("suggest.anOrbit", "an orbit"));
+    orbitsSlot.replaceChildren(cardSection(t("map.sectionFiled", "In orbits")), orbitPicker(chosen.node_id, memberships));
   }).catch(() => {
     if (summary.isConnected && chosen.state !== "ready_undistilled") summary.remove();
+    tagsSlot.remove();
   });
 
   if (chosen.entities.length) {
@@ -18146,6 +18177,8 @@ function renderGraphCapturePanel(panel, chosen) {
     panel.appendChild(chips);
   }
 
+  panel.appendChild(orbitsSlot);
+
   // Related: most entities in common first, then those alike in content.
   const mine = new Set(chosen.entities);
   const alike = new Set((data.similar || [])
@@ -18163,10 +18196,18 @@ function renderGraphCapturePanel(panel, chosen) {
   else panel.appendChild(elt("p", "card-note", t("graph.noRelated", "Nothing else in this orbit names what it names.")));
 
   const actions = elt("div", "card-actions card-foot");
-  const read = elt("button", "btn", t("map.readInList", "Read it"));
+  const read = elt("button", "btn", t("map.readInList", "Read it in full"));
   read.type = "button";
   read.addEventListener("click", () => void showNodeReader(node));
   actions.appendChild(read);
+  const remove = elt("button", "btn btn-quiet-danger", t("map.removeCapture", "Remove\u2026"));
+  remove.type = "button";
+  remove.addEventListener("click", async () => {
+    await removeCapture(chosen.node_id, where);
+    graphState.capture = null;
+    void renderGraph();
+  });
+  actions.appendChild(remove);
   panel.appendChild(actions);
 }
 

@@ -5844,12 +5844,12 @@ textarea::placeholder {
   border-bottom: 1px solid transparent;
 }
 
-.node-tag:hover {
+.node-tag:not(.mark):hover {
   color: var(--accent);
   border-bottom-color: var(--accent);
 }
 
-.node-tag:focus-visible {
+.node-tag:not(.mark):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 2px;
@@ -6325,10 +6325,10 @@ textarea::placeholder {
 }
 
 
-/* `space-between` on a wrapping row, not a `<span class="spacer">` that flexes. A spacer only
-   spaces while everything fits on ONE line: the moment a node is filed and the "In <orbit>" line
-   appears, the row wrapped and Forget dropped to a second line hard against the left edge, directly
-   under the picker, reading as another primary control rather than as the destructive one. */
+/* A capture's last row in the list (also `.card-foot`): `space-between` on a wrapping row, not a
+   `<span class="spacer">` that flexes. A spacer only spaces while everything fits on ONE line; once
+   the row wrapped, Forget dropped to a second line hard against the left edge, reading as another
+   primary control rather than as the destructive one. Filing is no longer in this row. */
 .node-actions {
   display: flex;
   flex-wrap: wrap;
@@ -6338,11 +6338,9 @@ textarea::placeholder {
   margin-top: var(--ib-gap);
 }
 
-/* `margin-left: auto` AS WELL as the row's `space-between`. The comment above says the spacer was
-   replaced because a wrapped row put Forget hard against the left edge under the picker, reading as
-   another primary control - and `space-between` does not fix a wrapped line that holds ONE item.
-   Measured: `.node-actions` left 580.78, `.node-danger` left 580.78, on row two. The destructive
-   action moved depending on whether the node had been filed. */
+/* `margin-left: auto` AS WELL as the row's `space-between`, which does not fix a wrapped line that
+   holds ONE item. Measured: `.node-actions` left 580.78, `.node-danger` left 580.78, on row two, and
+   the destructive action moved depending on what else the row held. */
 .node-actions > .node-danger {
   margin-left: auto;
 }
@@ -7664,6 +7662,31 @@ body.dock-open .pending-note {
   background: currentColor;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 12'%3E%3Cellipse cx='8' cy='6.5' rx='6.2' ry='2.4' transform='rotate(-20 8 6.5)' fill='none' stroke='%23000' stroke-width='1.1'/%3E%3Ccircle cx='8' cy='6.5' r='1.3'/%3E%3Ccircle cx='14.2' cy='4.3' r='2.5'/%3E%3C/svg%3E") center / contain no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 12'%3E%3Cellipse cx='8' cy='6.5' rx='6.2' ry='2.4' transform='rotate(-20 8 6.5)' fill='none' stroke='%23000' stroke-width='1.1'/%3E%3Ccircle cx='8' cy='6.5' r='1.3'/%3E%3Ccircle cx='14.2' cy='4.3' r='2.5'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+/* An orbit mark's name, which goes to the orbit: the mark's own words, underlined under the pointer. */
+.mark-go {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.mark-go:hover,
+.mark-go:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.marks[hidden] {
+  display: none;
+}
+
+/* The graph's capture card fills its Tags and In orbits sections once the capture arrives. */
+.graph-card-slot:empty {
+  display: none;
 }
 
 .mark-add {
@@ -9715,6 +9738,10 @@ body.is-resizing .cols {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+.bridge-side > .card-section {
+  margin: 0;
 }
 
 /* --- The capture drawer ------------------------------------------------------------------------
