@@ -336,3 +336,42 @@ def test_a_capture_cards_orbits_are_marks_with_a_remove_and_an_add(page, server)
     page.locator("#starmap-card .card-title").first.click()  # closes the list
     page.locator(f"{marks} .mark-x").first.click()
     _until(lambda: not _call(server, "GET", f"/horizon/{moon['id']}").get("orbits"))
+
+
+def test_the_fine_sky_runs_only_in_the_dark_theme_and_says_why_when_it_cannot(browser, server):
+    """In the light theme the map never draws the fine sky. In the dark theme it is drawn exactly when
+    the machine allowed it, and the map's settings say which, so a missing sky is never unexplained.
+    Wherever WebGL2 exists at all (CI's is often software, which the map refuses), the shaders are
+    compiled and a frame drawn, so a shader that fails to build fails here rather than on a reader's
+    machine."""
+    for scheme in ("light", "dark"):
+        view = browser.new_page(viewport={"width": 1280, "height": 860}, locale="en-US", color_scheme=scheme)
+        errors: list[str] = []
+        view.on("pageerror", lambda err, seen=errors: seen.append(str(err)))
+        view.goto(f"{server}/#token={TOKEN}")
+        view.wait_for_selector("#starmap-svg .map-planet", timeout=30000)
+        view.wait_for_timeout(1500)
+        state = view.evaluate("({shown: !document.getElementById('starmap-sky').hidden,"
+                              " fine: document.getElementById('starmap').classList.contains('is-fine'),"
+                              " probe: fineSky.probe, failed: fineSky.failed, status: fineSky.status})")
+        if scheme == "light":
+            assert not state["shown"] and not state["fine"], state
+            assert state["status"] == "Only in the dark theme.", state
+        elif state["shown"]:
+            assert state["fine"] and not state["failed"] and state["status"].startswith("On, at"), state
+        else:
+            refused = state["status"].startswith(("Not on this computer", "Turned off"))
+            assert state["failed"] and refused, state
+        drew = view.evaluate("""() => {
+          const canvas = document.createElement('canvas');
+          canvas.style.width = '64px'; canvas.style.height = '64px';
+          document.body.appendChild(canvas);
+          if (!canvas.getContext('webgl2')) return 'no webgl2';
+          const sky = PenumbraSky.create(canvas, {view: () => ({cx: 32, cy: 32, pxPerRs: 3})});
+          const ms = sky.benchmark(1);
+          sky.destroy();
+          return ms > 0 ? 'drawn' : 'not drawn';
+        }""")
+        assert drew in ("drawn", "no webgl2"), drew
+        view.close()
+        assert not errors, f"the page threw: {errors}"

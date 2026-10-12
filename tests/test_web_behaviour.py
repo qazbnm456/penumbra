@@ -1275,3 +1275,26 @@ def test_the_title_editor_saves_once_never_after_escape_and_stops_its_suggestion
     assert got["enter"] == {"puts": 1, "done": ["New"]}
     assert got["close"] == ["/orbits/orbit-a/runs/slug-a-tok1/cancel"]
     assert got["retry"] == 3
+
+
+def test_the_fine_sky_picks_its_quality_from_a_measured_frame_and_refuses_software_gpus():
+    """`sky-gl.js`'s three decisions, run as shipped: the quality a measured frame time allows (none
+    once even the lowest would stutter), one step down at a time, and a GPU that is the processor in
+    disguise never offered the sky whatever it measured."""
+    source = (Path(__file__).parent.parent / "penumbra" / "web" / "sky-gl.js").read_text()
+    probe = (
+        "const window = {};\n" + source + "\nconst sky = window.PenumbraSky;\n"
+        "console.log(JSON.stringify({\n"
+        "  quality: [2, 6, 9, 12, 20, 30, 45, 0, -1, NaN].map(sky.chooseQuality),\n"
+        "  steps: ['high', 'medium', 'low', 'nonsense'].map(sky.lower),\n"
+        "  software: ['Google SwiftShader', 'llvmpipe (LLVM 15.0.7, 256 bits)',"
+        " 'Microsoft Basic Render Driver', 'Apple GPU', 'ANGLE (NVIDIA GeForce RTX 3060)', '']"
+        ".map(sky.isSoftware),\n"
+        "}));"
+    )
+    out = subprocess.run([shutil.which("node"), "-e", probe], capture_output=True, text=True, timeout=30,
+                         check=False)
+    got = json.loads(out.stdout or "null") or pytest.fail(out.stderr)
+    assert got["quality"] == ["high", "high", "medium", "medium", "low", "low", None, None, None, None]
+    assert got["steps"] == ["medium", "low", None, None]
+    assert got["software"] == [True, True, True, False, False, False]

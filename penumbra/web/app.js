@@ -15211,6 +15211,7 @@ function paintMapSettings(panel) {
     row.append(elt("span", "map-settings-name", label), select);
     panel.appendChild(row);
   });
+  mapSkySettings(panel);
   const reset = elt("button", "btn map-settings-reset", t("mapSettings.reset", "Back to the defaults"));
   reset.type = "button";
   reset.addEventListener("click", async () => {
@@ -15239,6 +15240,232 @@ window.addEventListener("ui-lang-changed", () => {
   const lang = typeof uiLang === "function" && uiLang().startsWith("zh") ? "zh" : "en";
   window.PennyScenes.mount(box, { name: showing.dataset.scene, lang });
 });
+
+// --- the fine sky -----------------------------------------------------------------------------------
+//
+// In the dark theme, on a machine that can afford it, the Horizon is drawn as a black hole whose light
+// is bent (`sky-gl.js`), on a canvas behind the map. The SVG keeps everything else: planets, rings,
+// labels and every control, so the reader presses and reads exactly what they did before. Only the
+// SVG's own black hole, star field and nebulae step aside. The light theme never gets it: a window
+// of deep space in a paper page tears the page in two.
+//
+// Whether a machine can afford it is found out here, where the GPU is: the server cannot see it, and
+// in the desktop app the page and the server share one machine anyway. A browser without WebGL2, or
+// whose GPU is software, is never offered it. Otherwise a short benchmark the first time picks the
+// quality, remembered for that GPU in this browser, and a sky that later stutters steps itself down
+// and, in Auto, gives way to the ordinary map with a word about why.
+
+//: Schwarzschild radii per map unit's worth of the hole: the SVG's core is 27 units across in radius,
+//: and a black hole's shadow is about 2.6 Schwarzschild radii, so one radius is about 10.4 units.
+const SKY_RS_UNITS = 10.4;
+const SKY_PREF_KEY = "penumbra-map-quality";
+const SKY_BENCH_KEY = "penumbra-map-bench";
+
+//: The reader's choice (auto, fine, off), what the machine allowed (`probe`), the canvas's sky, and
+//: what the settings panel says about it (`status`).
+const fineSky = { pref: "auto", probe: null, sky: null, failed: "", status: "", quality: "" };
+
+function skyPref() {
+  try {
+    const stored = localStorage.getItem(SKY_PREF_KEY);
+    return ["auto", "fine", "off"].includes(stored) ? stored : "auto";
+  } catch {
+    return "auto";
+  }
+}
+
+function themeIsDark() {
+  const set = document.documentElement.getAttribute("data-theme");
+  if (set) return set === "dark";
+  return Boolean(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+}
+
+//: A remembered benchmark for this GPU, in this browser: a convenience, so the map does not pause
+//: to measure at every launch. Any failure to read it just measures again.
+function rememberedBench(renderer) {
+  try {
+    const got = JSON.parse(localStorage.getItem(SKY_BENCH_KEY) || "null");
+    return got && got.renderer === renderer && got.ms > 0 ? got.ms : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function rememberBench(renderer, ms) {
+  try {
+    localStorage.setItem(SKY_BENCH_KEY, JSON.stringify({ renderer, ms }));
+  } catch {
+    // Unremembered: it measures again next time.
+  }
+}
+
+//: Where the hole is on the canvas, from the SVG's own transform, so the sky follows every pan,
+//: zoom and resize exactly. The canvas is laid over the SVG's box first.
+function skyView() {
+  const svg = horizonEl("starmap-svg");
+  const canvas = horizonEl("starmap-sky");
+  const world = starMap.world;
+  if (!svg || !canvas || !world || !world.isConnected) return null;
+  canvas.style.left = `${svg.offsetLeft}px`;
+  canvas.style.top = `${svg.offsetTop}px`;
+  canvas.style.width = `${svg.clientWidth}px`;
+  canvas.style.height = `${svg.clientHeight}px`;
+  const m = world.getScreenCTM();
+  if (!m) return null;
+  const box = svg.getBoundingClientRect();
+  return {
+    cx: m.a * MAP_CENTRE.x + m.c * MAP_CENTRE.y + m.e - box.left,
+    cy: m.b * MAP_CENTRE.x + m.d * MAP_CENTRE.y + m.f - box.top,
+    pxPerRs: Math.hypot(m.a, m.b) * SKY_RS_UNITS,
+  };
+}
+
+function setFineSkyShown(on) {
+  const map = horizonEl("starmap");
+  const canvas = horizonEl("starmap-sky");
+  if (!map || !canvas) return;
+  map.classList.toggle("is-fine", on);
+  canvas.hidden = !on;
+}
+
+//: Brings the sky in line with everything it depends on: the reader's choice, the theme, which view
+//: is up, whether the window is seen, and what the machine allowed. Called whenever any of them moves.
+function syncFineSky() {
+  const sky = window.PenumbraSky;
+  fineSky.pref = skyPref();
+  const onMap = viewIsHorizon() && viewMode("horizon") === "map" && !document.hidden;
+  const wanted = Boolean(sky) && fineSky.pref !== "off" && themeIsDark() && !fineSky.failed;
+  if (!themeIsDark()) fineSky.status = t("sky.statusLight", "Only in the dark theme.");
+  else if (fineSky.pref === "off") fineSky.status = t("sky.statusOff", "Off: the ordinary map.");
+  if (!wanted || !onMap) {
+    if (fineSky.sky) fineSky.sky.stop();
+    setFineSkyShown(false);
+    return;
+  }
+  if (!fineSky.probe) fineSky.probe = sky.probe();
+  if (!fineSky.probe.ok) {
+    fineSky.failed = fineSky.probe.reason;
+    fineSky.status = fineSky.probe.reason === "software"
+      ? t("sky.statusSoftware", "Not on this computer: its graphics are drawn by the processor.")
+      : t("sky.statusNoGl", "Not on this computer: it has no WebGL2.");
+    setFineSkyShown(false);
+    return;
+  }
+  if (!fineSky.sky) {
+    const canvas = horizonEl("starmap-sky");
+    // Laid out (and hidden behind the map's SVG while measuring) before anything is drawn.
+    setFineSkyShown(true);
+    skyView();
+    let made = null;
+    try {
+      made = sky.create(canvas, {
+        quality: "medium",
+        view: skyView,
+        still: !motionAllowed(),
+        onSlow: (down) => {
+          if (down) {
+            fineSky.quality = down;
+            fineSky.status = skyStatusFor(down);
+            return;
+          }
+          if (fineSky.pref === "auto") {
+            fineSky.failed = "slow";
+            fineSky.status = t("sky.statusSlow", "Turned off: this computer could not keep it smooth.");
+            notify(fineSky.status);
+            syncFineSky();
+          }
+        },
+        onLost: () => {
+          fineSky.failed = "lost";
+          fineSky.sky = null;
+          fineSky.status = t("sky.statusLost", "Turned off: the graphics stopped responding.");
+          syncFineSky();
+        },
+      });
+    } catch (err) {
+      made = null;
+      console.warn(err);
+    }
+    if (!made) {
+      fineSky.failed = "error";
+      fineSky.status = t("sky.statusError", "Not on this computer: the sky could not be drawn.");
+      setFineSkyShown(false);
+      return;
+    }
+    const renderer = fineSky.probe.renderer;
+    let ms = rememberedBench(renderer);
+    if (!ms) {
+      ms = made.benchmark();
+      rememberBench(renderer, ms);
+    }
+    const chosen = sky.chooseQuality(ms);
+    if (!chosen && fineSky.pref === "auto") {
+      made.destroy();
+      fineSky.failed = "slow";
+      fineSky.status = t("sky.statusSlow", "Turned off: this computer could not keep it smooth.");
+      setFineSkyShown(false);
+      return;
+    }
+    fineSky.quality = chosen || "low";
+    made.setQuality(fineSky.quality);
+    fineSky.sky = made;
+    fineSky.status = skyStatusFor(fineSky.quality);
+  }
+  setFineSkyShown(true);
+  fineSky.sky.start();
+}
+
+function skyStatusFor(quality) {
+  const word = {
+    high: t("sky.qualityHigh", "high"), medium: t("sky.qualityMedium", "medium"), low: t("sky.qualityLow", "low"),
+  }[quality] || quality;
+  return t("sky.statusOn", `On, at ${word} quality.`, { quality: word });
+}
+
+function initFineSky() {
+  // The theme and the view each change in several places; watching the attributes they set catches
+  // every one of them.
+  const watch = new MutationObserver(() => syncFineSky());
+  watch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  watch.observe(document.body, { attributes: true, attributeFilter: ["data-view"] });
+  if (window.matchMedia) {
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => syncFineSky());
+  }
+  document.addEventListener("visibilitychange", () => syncFineSky());
+  syncFineSky();
+}
+
+//: The map settings' sky section: the choice, and a line saying what it does on this computer.
+function mapSkySettings(panel) {
+  panel.appendChild(elt("h4", "map-settings-section", t("sky.section", "Sky quality")));
+  const row = elt("label", "map-settings-row");
+  const select = document.createElement("select");
+  [["auto", t("sky.auto", "Auto")], ["fine", t("sky.fine", "Fine")], ["off", t("sky.off", "Power saving")]]
+    .forEach(([value, word]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = word;
+      select.appendChild(option);
+    });
+  select.value = skyPref();
+  const note = elt("p", "map-settings-note", fineSky.status);
+  select.addEventListener("change", () => {
+    try {
+      localStorage.setItem(SKY_PREF_KEY, select.value);
+    } catch {
+      // Kept for this page only.
+    }
+    // Asking again is a fresh chance: a sky turned off for being slow may be asked for by name.
+    if (select.value === "fine" && fineSky.failed === "slow") fineSky.failed = "";
+    syncFineSky();
+    note.textContent = fineSky.status;
+  });
+  row.append(elt("span", "map-settings-name", t("sky.label", "Black hole and stars")), select);
+  panel.appendChild(row);
+  panel.appendChild(note);
+  panel.appendChild(elt("p", "map-settings-note", t("sky.help",
+    "Fine draws the Horizon as a black hole whose light is bent, in the dark theme only. Auto turns it on when this computer can keep it smooth. Kept in this browser.")));
+}
 
 function initMapSettings() {
   const open = horizonEl("map-settings-open");
@@ -18294,6 +18521,7 @@ initPanels();
 initStarMapCamera();
 initMapKeys();
 initMapSettings();
+initFineSky();
 initDesktopContextMenu();
 initWindowChrome();
 initViewModes();

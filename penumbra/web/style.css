@@ -7323,11 +7323,46 @@ body[data-view="horizon"] .orbit-picker {
 }
 
 .starmap-svg {
+  position: relative;
+  z-index: 1;
   flex: 1 1 auto;
   min-height: 0;
   width: 100%;
   border-radius: var(--radius-lg);
   background: radial-gradient(ellipse at 50% 52%, var(--surface-1) 0%, var(--bg) 70%);
+}
+
+/* The fine sky sits exactly under the SVG's box (`skyView` places it) and takes no pointer, so every
+   press still lands on the map above it. With it on, the SVG's own sky steps aside: its background,
+   its drawn black hole and disk, its star points and its nebulae. */
+.starmap-sky {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  /* Deep space fades into the page at its edges instead of ending in a black box on the dark
+     theme's warm ground, which read as a second window inside the first. */
+  -webkit-mask-image: radial-gradient(ellipse 72% 70% at 50% 50%, #000 55%, transparent 100%);
+  mask-image: radial-gradient(ellipse 72% 70% at 50% 50%, #000 55%, transparent 100%);
+}
+
+.starmap-sky[hidden] {
+  display: none;
+}
+
+.starmap.is-fine .starmap-svg {
+  background: transparent;
+}
+
+.starmap.is-fine .map-hole-glow,
+.starmap.is-fine .map-disk,
+.starmap.is-fine .map-hole-rim,
+.starmap.is-fine .map-hole-core,
+.starmap.is-fine .map-field,
+.starmap.is-fine .map-deep,
+.starmap.is-fine .map-nebula {
+  display: none;
 }
 
 

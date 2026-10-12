@@ -212,6 +212,10 @@
            (`topology.star_map`), never a model call. Shown instead of the list in map mode. -->
       <div class="starmap" id="starmap" hidden>
         <div class="lenses" id="starmap-lenses" role="group" aria-label="Tags" data-i18n-label="map.lenses"></div>
+        <!-- The fine sky (`sky-gl.js`): the Horizon as a black hole whose light is bent, drawn behind
+             the SVG in the dark theme when the machine can afford it. Decoration only: nothing on it
+             can be pressed or read, so it is hidden from assistive technology. -->
+        <canvas class="starmap-sky" id="starmap-sky" aria-hidden="true" hidden></canvas>
         <svg class="starmap-svg" id="starmap-svg" viewBox="0 0 1000 640" preserveAspectRatio="xMidYMid meet"
              role="img" aria-label="Star map" data-i18n-label="mode.map"></svg>
         <!-- Penny keeps an empty map company (`penny-scenes.js`). -->
@@ -804,4 +808,5 @@
 
 <script src="/i18n.js"></script>
 <script src="/penny-scenes.js"></script>
+<script src="/sky-gl.js"></script>
 <script src="/app.js"></script>
