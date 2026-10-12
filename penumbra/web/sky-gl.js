@@ -39,12 +39,14 @@
     return SOFTWARE.test(String(renderer || ""));
   }
 
-  //: The quality a measured frame time allows, measured at `medium`. Under a frame budget of about
-  //: 16ms with room left for the SVG and the rest of the page; null when even `low` would stutter.
+  //: The quality a measured frame time allows, measured at `medium`. `high` draws about four times
+  //: what `medium` does (finer steps, full resolution) and `low` about a third (half resolution, no
+  //: bloom), so each is chosen only where it would still fit a 60 Hz frame with room left for the SVG
+  //: and the rest of the page; null when even `low` would not.
   function chooseQuality(msPerFrame) {
     if (!(msPerFrame > 0)) return null;
-    if (msPerFrame <= 6) return "high";
-    if (msPerFrame <= 12) return "medium";
+    if (msPerFrame <= 2.5) return "high";
+    if (msPerFrame <= 9) return "medium";
     if (msPerFrame <= 30) return "low";
     return null;
   }
@@ -233,12 +235,13 @@ void main() {
   const BRIGHT = `#version 300 es
 precision highp float;
 uniform sampler2D uScene;
+uniform vec2 uKnee;        // where light starts and finishes bleeding: lower when the target clamps at 1
 in vec2 vUv;
 out vec4 outColor;
 void main() {
   vec3 c = texture(uScene, vUv).rgb;
   float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
-  outColor = vec4(c * smoothstep(0.7, 1.6, lum), 1.0);
+  outColor = vec4(c * smoothstep(uKnee.x, uKnee.y, lum), 1.0);
 }`;
 
   // One direction of a gaussian blur.
@@ -269,8 +272,10 @@ vec3 filmic(vec3 x) {
 }
 void main() {
   vec3 c = texture(uScene, vUv).rgb + uBloomOn * 0.55 * texture(uBloom, vUv).rgb;
-  c = filmic(c * uExposure);
-  outColor = vec4(pow(c, vec3(1.0 / 2.2)), 1.0);
+  c = pow(filmic(c * uExposure), vec3(1.0 / 2.2));
+  // Half a step of noise, so the near-black sky does not band into rings in eight bits.
+  float n = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+  outColor = vec4(c + (n - 0.5) / 255.0, 1.0);
 }`;
 
   function compile(gl, type, source) {
@@ -291,6 +296,10 @@ void main() {
     gl.attachShader(prog, compile(gl, gl.FRAGMENT_SHADER, fragment));
     gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(`sky program: ${gl.getProgramInfoLog(prog)}`);
+    gl.getAttachedShaders(prog).forEach((shader) => {
+      gl.detachShader(prog, shader);
+      gl.deleteShader(shader);
+    });
     const uniforms = {};
     const count = gl.getProgramParameter(prog, gl.ACTIVE_UNIFORMS);
     for (let i = 0; i < count; i += 1) {
@@ -301,7 +310,7 @@ void main() {
   }
 
   //: A target to render into: a texture and its framebuffer, at a size.
-  function target(gl, hdr) {
+  function target(gl, hdr, onIncomplete = () => {}) {
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -319,6 +328,11 @@ void main() {
       else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
       gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) onIncomplete();
+    };
+    t.free = () => {
+      gl.deleteTexture(tex);
+      gl.deleteFramebuffer(fb);
     };
     return t;
   }
@@ -333,30 +347,45 @@ void main() {
       premultipliedAlpha: false, preserveDrawingBuffer: false, powerPreference: "high-performance",
     });
     if (!gl) return null;
-    const hdr = Boolean(gl.getExtension("EXT_color_buffer_float"));
+    let hdr = Boolean(gl.getExtension("EXT_color_buffer_float"));
     const vao = gl.createVertexArray();
     let current = QUALITY[quality] ? quality : "medium";
+    // One scene program per quality, compiled the first time it is needed and kept: a step down or
+    // the benchmark switches between them without compiling again.
+    const scenes = {};
     let scene = null;
-    const passes = {};
     const build = () => {
-      const q = QUALITY[current];
-      if (scene) gl.deleteProgram(scene.prog);
-      scene = program(gl, SCENE.replace("out vec4 outColor;",
-        `out vec4 outColor;\n#define STEPS ${q.steps}\n#define STEP_SCALE ${q.stepScale.toFixed(2)}`));
+      if (!scenes[current]) {
+        const q = QUALITY[current];
+        scenes[current] = program(gl, SCENE.replace("out vec4 outColor;",
+          `out vec4 outColor;\n#define STEPS ${q.steps}\n#define STEP_SCALE ${q.stepScale.toFixed(2)}`));
+      }
+      scene = scenes[current];
     };
     build();
-    passes.bright = program(gl, BRIGHT);
-    passes.blur = program(gl, BLUR);
-    passes.final = program(gl, FINAL);
-    const sceneT = target(gl, hdr);
-    const brightT = target(gl, hdr);
-    const blurT = target(gl, hdr);
+    const passes = { bright: program(gl, BRIGHT), blur: program(gl, BLUR), final: program(gl, FINAL) };
+    // A driver that offers half floats but will not render to them gets eight-bit targets instead.
+    let targets = null;
+    const makeTargets = () => {
+      if (targets) Object.values(targets).forEach((t) => t.free());
+      const incomplete = () => {
+        if (hdr) {
+          hdr = false;
+          queueMicrotask(makeTargets);
+        }
+      };
+      targets = { scene: target(gl, hdr, incomplete), bright: target(gl, hdr, incomplete), blur: target(gl, hdr, incomplete) };
+    };
+    makeTargets();
     let raf = 0;
     let running = false;
     let lost = false;
+    let destroyed = false;
     let last = null;
-    const started = performance.now();
-    const pace = { at: 0, slow: 0, frames: 0 };
+    let started = performance.now();
+    // Frames counted over a window of wall time, not a count of frames, so a 120 Hz display and a
+    // 60 Hz one are judged over the same two seconds.
+    const pace = { at: 0, since: 0, slow: 0, frames: 0 };
 
     const draw = (v, seconds) => {
       const q = QUALITY[current];
@@ -369,10 +398,10 @@ void main() {
         canvas.width = w;
         canvas.height = h;
       }
-      sceneT.size(w, h);
+      targets.scene.size(w, h);
       gl.bindVertexArray(vao);
       // The scene.
-      gl.bindFramebuffer(gl.FRAMEBUFFER, sceneT.fb);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, targets.scene.fb);
       gl.viewport(0, 0, w, h);
       gl.useProgram(scene.prog);
       gl.uniform2f(scene.uniforms.uCenter, v.cx * dpr, (cssH - v.cy) * dpr);
@@ -385,24 +414,26 @@ void main() {
       const bw = Math.max(1, w >> 1);
       const bh = Math.max(1, h >> 1);
       if (q.bloom) {
-        brightT.size(bw, bh);
-        blurT.size(bw, bh);
+        targets.bright.size(bw, bh);
+        targets.blur.size(bw, bh);
         gl.viewport(0, 0, bw, bh);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, brightT.fb);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, targets.bright.fb);
         gl.useProgram(passes.bright.prog);
         gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, sceneT.tex);
+        gl.bindTexture(gl.TEXTURE_2D, targets.scene.tex);
         gl.uniform1i(passes.bright.uniforms.uScene, 0);
+        if (hdr) gl.uniform2f(passes.bright.uniforms.uKnee, 0.7, 1.6);
+        else gl.uniform2f(passes.bright.uniforms.uKnee, 0.5, 0.95);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
         gl.useProgram(passes.blur.prog);
         gl.uniform1i(passes.blur.uniforms.uSource, 0);
         for (let i = 0; i < 2; i += 1) {
-          gl.bindFramebuffer(gl.FRAMEBUFFER, blurT.fb);
-          gl.bindTexture(gl.TEXTURE_2D, brightT.tex);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, targets.blur.fb);
+          gl.bindTexture(gl.TEXTURE_2D, targets.bright.tex);
           gl.uniform2f(passes.blur.uniforms.uStep, (1 + i) / bw, 0);
           gl.drawArrays(gl.TRIANGLES, 0, 3);
-          gl.bindFramebuffer(gl.FRAMEBUFFER, brightT.fb);
-          gl.bindTexture(gl.TEXTURE_2D, blurT.tex);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, targets.bright.fb);
+          gl.bindTexture(gl.TEXTURE_2D, targets.blur.tex);
           gl.uniform2f(passes.blur.uniforms.uStep, 0, (1 + i) / bh);
           gl.drawArrays(gl.TRIANGLES, 0, 3);
         }
@@ -412,25 +443,26 @@ void main() {
       gl.viewport(0, 0, w, h);
       gl.useProgram(passes.final.prog);
       gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, sceneT.tex);
+      gl.bindTexture(gl.TEXTURE_2D, targets.scene.tex);
       gl.uniform1i(passes.final.uniforms.uScene, 0);
       gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, brightT.tex);
+      gl.bindTexture(gl.TEXTURE_2D, targets.bright.tex);
       gl.uniform1i(passes.final.uniforms.uBloom, 1);
-      gl.uniform1f(passes.final.uniforms.uBloomOn, q.bloom && brightT.w ? 1 : 0);
+      gl.uniform1f(passes.final.uniforms.uBloomOn, q.bloom && targets.bright.w ? 1 : 0);
       gl.uniform1f(passes.final.uniforms.uExposure, 0.95);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       gl.activeTexture(gl.TEXTURE0);
     };
 
-    //: Slower than about 30 frames a second for most of two seconds: one step down.
+    //: Slower than about 50 frames a second for most of two seconds of wall time: one step down. A
+    //: gap over 20ms is a missed 60 Hz frame; holding at a steady 30 would count as slow, since the
+    //: whole page would be held there with it.
     const watch = (now) => {
       if (pace.at) {
-        const gap = now - pace.at;
         pace.frames += 1;
-        if (gap > 34) pace.slow += 1;
-        if (pace.frames >= 120) {
-          if (pace.slow > 80) {
+        if (now - pace.at > 20) pace.slow += 1;
+        if (now - pace.since >= 2000) {
+          if (pace.frames >= 20 && pace.slow > pace.frames * 0.6) {
             const down = lower(current);
             if (down) {
               current = down;
@@ -438,9 +470,12 @@ void main() {
             }
             onSlow(down);
           }
+          pace.since = now;
           pace.frames = 0;
           pace.slow = 0;
         }
+      } else {
+        pace.since = now;
       }
       pace.at = now;
     };
@@ -452,7 +487,9 @@ void main() {
       if (v) {
         const key = `${v.cx.toFixed(1)}|${v.cy.toFixed(1)}|${v.pxPerRs.toFixed(3)}|${canvas.clientWidth}|${canvas.clientHeight}|${current}`;
         if (!still || key !== last) {
-          draw(v, still ? 0 : (now - started) / 1000);
+          // Wrapped once an hour, so a map left open for days keeps its angles precise; the disk's
+          // streaks jump once an hour instead of slowly coarsening.
+          draw(v, still ? 0 : ((now - started) / 1000) % 3600);
           last = key;
           if (!still) watch(now);
         }
@@ -464,7 +501,8 @@ void main() {
       event.preventDefault();
       lost = true;
       running = false;
-      onLost();
+      // `destroy()` loses the context on purpose; only a loss it did not ask for is news.
+      if (!destroyed) onLost();
     });
 
     return {
@@ -480,6 +518,7 @@ void main() {
         running = true;
         last = null;
         pace.at = 0;
+        started = performance.now();
         raf = requestAnimationFrame(frame);
       },
       stop() {
@@ -492,8 +531,10 @@ void main() {
       //: most expensive way it will usually appear.
       benchmark(frames = 8) {
         const was = current;
-        current = "medium";
-        build();
+        if (current !== "medium") {
+          current = "medium";
+          build();
+        }
         const v = { cx: canvas.clientWidth / 2, cy: canvas.clientHeight / 2, pxPerRs: Math.min(canvas.clientWidth, canvas.clientHeight) / 22 };
         // `finish()` is allowed to return before the GPU is done, and in WebKit it does; reading one
         // pixel back cannot, so each frame is waited for by reading one.
@@ -507,13 +548,20 @@ void main() {
           settle();
         }
         const ms = (performance.now() - begin) / frames;
-        current = was;
-        build();
+        if (current !== was) {
+          current = was;
+          build();
+        }
         last = null;
         return ms;
       },
       destroy() {
         this.stop();
+        destroyed = true;
+        Object.values(scenes).forEach((one) => gl.deleteProgram(one.prog));
+        Object.values(passes).forEach((one) => gl.deleteProgram(one.prog));
+        Object.values(targets).forEach((t) => t.free());
+        gl.deleteVertexArray(vao);
         const lose = gl.getExtension("WEBGL_lose_context");
         if (lose) lose.loseContext();
       },

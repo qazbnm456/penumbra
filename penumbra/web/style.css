@@ -7322,9 +7322,10 @@ body[data-view="horizon"] .orbit-picker {
   flex-direction: column;
 }
 
+/* Positioned, with no z-index of its own: it paints over the fine sky (`.starmap-sky`, before it in
+   the page) and under Penny and the empty map's line (after it), as it did before the sky existed. */
 .starmap-svg {
   position: relative;
-  z-index: 1;
   flex: 1 1 auto;
   min-height: 0;
   width: 100%;
@@ -7334,10 +7335,11 @@ body[data-view="horizon"] .orbit-picker {
 
 /* The fine sky sits exactly under the SVG's box (`skyView` places it) and takes no pointer, so every
    press still lands on the map above it. With it on, the SVG's own sky steps aside: its background,
-   its drawn black hole and disk, its star points and its nebulae. */
+   its drawn black hole and disk, its star points, and its deep sky (nebulae, galaxies, double stars).
+   The hole's rim stays, unseen at rest, because it is what lights when the Horizon is pointed at or
+   chosen. */
 .starmap-sky {
   position: absolute;
-  z-index: 0;
   pointer-events: none;
   border-radius: var(--radius-lg);
   background: var(--bg);
@@ -7357,12 +7359,14 @@ body[data-view="horizon"] .orbit-picker {
 
 .starmap.is-fine .map-hole-glow,
 .starmap.is-fine .map-disk,
-.starmap.is-fine .map-hole-rim,
 .starmap.is-fine .map-hole-core,
 .starmap.is-fine .map-field,
-.starmap.is-fine .map-deep,
-.starmap.is-fine .map-nebula {
+.starmap.is-fine .map-deep {
   display: none;
+}
+
+.starmap.is-fine .map-hole-rim {
+  stroke: transparent;
 }
 
 

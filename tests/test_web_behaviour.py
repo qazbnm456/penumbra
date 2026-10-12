@@ -1295,6 +1295,6 @@ def test_the_fine_sky_picks_its_quality_from_a_measured_frame_and_refuses_softwa
     out = subprocess.run([shutil.which("node"), "-e", probe], capture_output=True, text=True, timeout=30,
                          check=False)
     got = json.loads(out.stdout or "null") or pytest.fail(out.stderr)
-    assert got["quality"] == ["high", "high", "medium", "medium", "low", "low", None, None, None, None]
+    assert got["quality"] == ["high", "medium", "medium", "low", "low", "low", None, None, None, None]
     assert got["steps"] == ["medium", "low", None, None]
     assert got["software"] == [True, True, True, False, False, False]

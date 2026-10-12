@@ -918,6 +918,7 @@ const STRINGS = {
     "sky.help": "精緻模式把視界畫成會彎曲光線的黑洞，只在深色主題提供。自動模式會在這台電腦跑得順時開啟。這個選擇只存在這個瀏覽器。",
     "sky.statusLight": "只在深色主題提供。",
     "sky.statusOff": "已關閉，使用一般星圖。",
+    "sky.statusWaiting": "打開星圖時開啟。",
     "sky.statusSoftware": "這台電腦不支援：它的畫面由處理器代畫，沒有顯示卡加速。",
     "sky.statusNoGl": "這台電腦不支援：沒有 WebGL2。",
     "sky.statusError": "這台電腦不支援：畫不出來。",

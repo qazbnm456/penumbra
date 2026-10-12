@@ -12544,6 +12544,8 @@ function applyViewMode() {
     if (graph) void renderGraph();
   }
   syncDock();
+  // Map and list change neither the view nor the theme, which is all `initFineSky` watches.
+  syncFineSky();
 }
 
 function initViewModes() {
@@ -15261,9 +15263,9 @@ const SKY_RS_UNITS = 10.4;
 const SKY_PREF_KEY = "penumbra-map-quality";
 const SKY_BENCH_KEY = "penumbra-map-bench";
 
-//: The reader's choice (auto, fine, off), what the machine allowed (`probe`), the canvas's sky, and
-//: what the settings panel says about it (`status`).
-const fineSky = { pref: "auto", probe: null, sky: null, failed: "", status: "", quality: "" };
+//: The reader's choice (auto, fine, off), what the machine allowed (`probe`), the canvas's sky, why
+//: it is off when it is (`failed`), and the settings note that says so (`note`, while it is shown).
+const fineSky = { pref: "auto", probe: null, sky: null, failed: "", quality: "", note: null, ready: false };
 
 function skyPref() {
   try {
@@ -15280,12 +15282,21 @@ function themeIsDark() {
   return Boolean(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
 }
 
-//: A remembered benchmark for this GPU, in this browser: a convenience, so the map does not pause
-//: to measure at every launch. Any failure to read it just measures again.
+//: The canvas's area in CSS pixels, by which a remembered benchmark is matched: a frame measured in a
+//: small window says little about a full screen.
+function skyArea() {
+  const svg = horizonEl("starmap-svg");
+  return svg ? Math.round(svg.clientWidth * svg.clientHeight) : 0;
+}
+
+//: A remembered benchmark for this GPU at about this size, in this browser: a convenience, so the map
+//: does not pause to measure at every launch. Any failure to read it just measures again.
 function rememberedBench(renderer) {
   try {
     const got = JSON.parse(localStorage.getItem(SKY_BENCH_KEY) || "null");
-    return got && got.renderer === renderer && got.ms > 0 ? got.ms : 0;
+    const area = skyArea();
+    const near = got && got.area > 0 && area > 0 && Math.max(area / got.area, got.area / area) <= 1.5;
+    return got && got.renderer === renderer && near && got.ms > 0 ? got.ms : 0;
   } catch {
     return 0;
   }
@@ -15293,26 +15304,29 @@ function rememberedBench(renderer) {
 
 function rememberBench(renderer, ms) {
   try {
-    localStorage.setItem(SKY_BENCH_KEY, JSON.stringify({ renderer, ms }));
+    localStorage.setItem(SKY_BENCH_KEY, JSON.stringify({ renderer, ms, area: skyArea() }));
   } catch {
     // Unremembered: it measures again next time.
   }
 }
 
-//: Where the hole is on the canvas, from the SVG's own transform, so the sky follows every pan,
-//: zoom and resize exactly. The canvas is laid over the SVG's box first.
+//: Where the hole is on the canvas, from the SVG's own transform, so the sky follows every pan, zoom
+//: and resize exactly. The canvas is laid over the SVG's box first, measured from both boxes: an
+//: `<svg>` has no `offsetLeft`, so its position inside the map is the difference of the two rects.
 function skyView() {
+  const map = horizonEl("starmap");
   const svg = horizonEl("starmap-svg");
   const canvas = horizonEl("starmap-sky");
   const world = starMap.world;
-  if (!svg || !canvas || !world || !world.isConnected) return null;
-  canvas.style.left = `${svg.offsetLeft}px`;
-  canvas.style.top = `${svg.offsetTop}px`;
-  canvas.style.width = `${svg.clientWidth}px`;
-  canvas.style.height = `${svg.clientHeight}px`;
+  if (!map || !svg || !canvas || !world || !world.isConnected) return null;
+  const box = svg.getBoundingClientRect();
+  const frame = map.getBoundingClientRect();
+  canvas.style.left = `${box.left - frame.left - map.clientLeft}px`;
+  canvas.style.top = `${box.top - frame.top - map.clientTop}px`;
+  canvas.style.width = `${box.width}px`;
+  canvas.style.height = `${box.height}px`;
   const m = world.getScreenCTM();
   if (!m) return null;
-  const box = svg.getBoundingClientRect();
   return {
     cx: m.a * MAP_CENTRE.x + m.c * MAP_CENTRE.y + m.e - box.left,
     cy: m.b * MAP_CENTRE.x + m.d * MAP_CENTRE.y + m.f - box.top,
@@ -15328,27 +15342,69 @@ function setFineSkyShown(on) {
   canvas.hidden = !on;
 }
 
+//: What the settings note says, worked out from the state every time rather than set along the way,
+//: so it can never describe a sky the page is not drawing (invariant 60).
+function skyStatus() {
+  if (!themeIsDark()) return t("sky.statusLight", "Only in the dark theme.");
+  if (fineSky.pref === "off") return t("sky.statusOff", "Off: the ordinary map.");
+  const why = {
+    software: t("sky.statusSoftware", "Not on this computer: its graphics are drawn by the processor."),
+    "no-webgl2": t("sky.statusNoGl", "Not on this computer: it has no WebGL2."),
+    error: t("sky.statusError", "Not on this computer: the sky could not be drawn."),
+    slow: t("sky.statusSlow", "Turned off: this computer could not keep it smooth."),
+    lost: t("sky.statusLost", "Turned off: the graphics stopped responding."),
+  }[fineSky.failed];
+  if (why) return why;
+  if (fineSky.sky) return skyStatusFor(fineSky.quality);
+  return t("sky.statusWaiting", "On when the star map is shown.");
+}
+
+function paintSkyNote() {
+  fineSky.status = skyStatus();
+  if (fineSky.note && fineSky.note.isConnected) fineSky.note.textContent = fineSky.status;
+}
+
+//: A context that was lost, or given up, cannot draw again: a retry gets a new canvas in its place.
+function freshSkyCanvas() {
+  const old = horizonEl("starmap-sky");
+  if (!old) return;
+  const fresh = document.createElement("canvas");
+  fresh.className = old.className;
+  fresh.id = old.id;
+  fresh.setAttribute("aria-hidden", "true");
+  fresh.hidden = true;
+  old.replaceWith(fresh);
+}
+
+//: Gives the sky up: torn down (its own context loss is not news), its reason kept for the note.
+function dropSky(reason, { tell = false } = {}) {
+  if (fineSky.sky) fineSky.sky.destroy();
+  fineSky.sky = null;
+  fineSky.failed = reason;
+  setFineSkyShown(false);
+  paintSkyNote();
+  if (tell) notify(fineSky.status);
+}
+
 //: Brings the sky in line with everything it depends on: the reader's choice, the theme, which view
 //: is up, whether the window is seen, and what the machine allowed. Called whenever any of them moves.
 function syncFineSky() {
+  if (!fineSky.ready) return;
   const sky = window.PenumbraSky;
   fineSky.pref = skyPref();
   const onMap = viewIsHorizon() && viewMode("horizon") === "map" && !document.hidden;
   const wanted = Boolean(sky) && fineSky.pref !== "off" && themeIsDark() && !fineSky.failed;
-  if (!themeIsDark()) fineSky.status = t("sky.statusLight", "Only in the dark theme.");
-  else if (fineSky.pref === "off") fineSky.status = t("sky.statusOff", "Off: the ordinary map.");
   if (!wanted || !onMap) {
     if (fineSky.sky) fineSky.sky.stop();
     setFineSkyShown(false);
+    paintSkyNote();
     return;
   }
   if (!fineSky.probe) fineSky.probe = sky.probe();
   if (!fineSky.probe.ok) {
-    fineSky.failed = fineSky.probe.reason;
-    fineSky.status = fineSky.probe.reason === "software"
-      ? t("sky.statusSoftware", "Not on this computer: its graphics are drawn by the processor.")
-      : t("sky.statusNoGl", "Not on this computer: it has no WebGL2.");
+    fineSky.failed = fineSky.probe.reason === "software" ? "software" : "no-webgl2";
     setFineSkyShown(false);
+    paintSkyNote();
     return;
   }
   if (!fineSky.sky) {
@@ -15365,21 +15421,14 @@ function syncFineSky() {
         onSlow: (down) => {
           if (down) {
             fineSky.quality = down;
-            fineSky.status = skyStatusFor(down);
-            return;
-          }
-          if (fineSky.pref === "auto") {
-            fineSky.failed = "slow";
-            fineSky.status = t("sky.statusSlow", "Turned off: this computer could not keep it smooth.");
-            notify(fineSky.status);
-            syncFineSky();
+            paintSkyNote();
+          } else if (fineSky.pref === "auto") {
+            dropSky("slow", { tell: true });
           }
         },
         onLost: () => {
-          fineSky.failed = "lost";
           fineSky.sky = null;
-          fineSky.status = t("sky.statusLost", "Turned off: the graphics stopped responding.");
-          syncFineSky();
+          dropSky("lost", { tell: true });
         },
       });
     } catch (err) {
@@ -15387,11 +15436,10 @@ function syncFineSky() {
       console.warn(err);
     }
     if (!made) {
-      fineSky.failed = "error";
-      fineSky.status = t("sky.statusError", "Not on this computer: the sky could not be drawn.");
-      setFineSkyShown(false);
+      dropSky("error");
       return;
     }
+    fineSky.sky = made;
     const renderer = fineSky.probe.renderer;
     let ms = rememberedBench(renderer);
     if (!ms) {
@@ -15400,19 +15448,15 @@ function syncFineSky() {
     }
     const chosen = sky.chooseQuality(ms);
     if (!chosen && fineSky.pref === "auto") {
-      made.destroy();
-      fineSky.failed = "slow";
-      fineSky.status = t("sky.statusSlow", "Turned off: this computer could not keep it smooth.");
-      setFineSkyShown(false);
+      dropSky("slow", { tell: true });
       return;
     }
     fineSky.quality = chosen || "low";
     made.setQuality(fineSky.quality);
-    fineSky.sky = made;
-    fineSky.status = skyStatusFor(fineSky.quality);
   }
   setFineSkyShown(true);
   fineSky.sky.start();
+  paintSkyNote();
 }
 
 function skyStatusFor(quality) {
@@ -15423,8 +15467,10 @@ function skyStatusFor(quality) {
 }
 
 function initFineSky() {
+  fineSky.ready = true;
   // The theme and the view each change in several places; watching the attributes they set catches
-  // every one of them.
+  // every one of them. Switching the Horizon between list and map changes neither, so
+  // `applyViewMode` calls `syncFineSky` itself.
   const watch = new MutationObserver(() => syncFineSky());
   watch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
   watch.observe(document.body, { attributes: true, attributeFilter: ["data-view"] });
@@ -15432,6 +15478,7 @@ function initFineSky() {
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => syncFineSky());
   }
   document.addEventListener("visibilitychange", () => syncFineSky());
+  window.addEventListener("ui-lang-changed", () => paintSkyNote());
   syncFineSky();
 }
 
@@ -15448,17 +15495,22 @@ function mapSkySettings(panel) {
       select.appendChild(option);
     });
   select.value = skyPref();
-  const note = elt("p", "map-settings-note", fineSky.status);
+  const note = elt("p", "map-settings-note", skyStatus());
+  fineSky.note = note;
   select.addEventListener("change", () => {
     try {
       localStorage.setItem(SKY_PREF_KEY, select.value);
     } catch {
       // Kept for this page only.
     }
-    // Asking again is a fresh chance: a sky turned off for being slow may be asked for by name.
-    if (select.value === "fine" && fineSky.failed === "slow") fineSky.failed = "";
+    // Asking again is a fresh chance: a sky given up for being slow, or whose graphics stopped,
+    // may be asked for by name, on a new canvas since the old one's context is gone.
+    if (select.value === "fine" && (fineSky.failed === "slow" || fineSky.failed === "lost")) {
+      fineSky.failed = "";
+      freshSkyCanvas();
+    }
     syncFineSky();
-    note.textContent = fineSky.status;
+    paintSkyNote();
   });
   row.append(elt("span", "map-settings-name", t("sky.label", "Black hole and stars")), select);
   panel.appendChild(row);

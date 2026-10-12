@@ -359,6 +359,22 @@ def test_the_fine_sky_runs_only_in_the_dark_theme_and_says_why_when_it_cannot(br
             assert state["status"] == "Only in the dark theme.", state
         elif state["shown"]:
             assert state["fine"] and not state["failed"] and state["status"].startswith("On, at"), state
+            # Laid exactly over the SVG's box, whatever sits above the map (here a row of tags).
+            boxes = view.evaluate("""() => ['starmap-sky', 'starmap-svg'].map((id) => {
+              const r = document.getElementById(id).getBoundingClientRect();
+              return [r.left, r.top, r.width, r.height];
+            })""")
+            assert all(abs(a - b) < 1 for a, b in zip(*boxes)), boxes
+            # The note follows the state, through Off and back.
+            for choice, start in (("off", "Off"), ("auto", "On, at")):
+                view.evaluate(f"localStorage.setItem('penumbra-map-quality', '{choice}'); syncFineSky()")
+                assert view.evaluate("fineSky.status").startswith(start), choice
+            # The list and back: the sky stops behind the hidden map and starts again with it.
+            view.evaluate("setViewMode('horizon', 'list')")
+            assert view.evaluate("document.getElementById('starmap-sky').hidden")
+            view.evaluate("setViewMode('horizon', 'map')")
+            view.wait_for_timeout(500)
+            assert not view.evaluate("document.getElementById('starmap-sky').hidden")
         else:
             refused = state["status"].startswith(("Not on this computer", "Turned off"))
             assert state["failed"] and refused, state
