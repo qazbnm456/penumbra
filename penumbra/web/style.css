@@ -10915,6 +10915,18 @@ body:not([data-view="horizon"]) .capture-dock {
   box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 35%, transparent);
 }
 
+/* The arrows choose a row and focus it at once, so the row's focus ring (`.node:has(.node-open:
+   focus-visible)`) drew a second frame around the selection's own. The chosen row folds the two
+   into one: its frame turns full accent and doubles, which still tells the keyboard where it is. */
+.node.is-selected:has(.node-open:focus-visible) {
+  outline: none;
+}
+
+.node.is-selected:has(.node-open:focus-visible) .node-col {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
 .node-panel-body {
   margin-top: 0;
 }

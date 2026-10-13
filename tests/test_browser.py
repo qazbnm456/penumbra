@@ -610,6 +610,25 @@ def test_up_and_down_in_the_list_move_from_capture_to_capture(page):
     assert page.evaluate(chosen) == ids[0], "the find field's arrows moved the choice"
 
 
+def test_a_row_chosen_by_the_arrows_wears_one_frame(page):
+    """The arrows choose a row and focus it, and the row's focus ring used to draw a second frame
+    around the selection's, most plainly when Up was pressed again on the first row."""
+    page.locator(".view-mode-btn[aria-pressed=false]").click()
+    page.wait_for_selector("#stream .node[data-node-id]", timeout=10000)
+    page.evaluate("document.activeElement.blur()")
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("ArrowUp")
+    frames = page.evaluate("""() => {
+      const row = document.querySelector('#stream .node.is-selected');
+      const col = getComputedStyle(row.querySelector('.node-col'));
+      return { focused: row.contains(document.activeElement),
+               ring: getComputedStyle(row).outlineStyle, frame: col.boxShadow };
+    }""")
+    assert frames["focused"], frames
+    assert frames["ring"] == "none", frames
+    assert frames["frame"] != "none", frames
+
+
 
 def test_under_reduced_motion_the_fine_sky_holds_still(browser, server):
     """Reduced motion freezes the worlds as well as the disk: two frames apart, the fine sky is handed
