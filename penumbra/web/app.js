@@ -8741,7 +8741,7 @@ const HORIZON_PAGE = 25;
 
 //: Node states that mean the server is still working on it, so the stream keeps polling. Written
 //: down once: a state added later and missed here would leave a row pulsing forever.
-const HORIZON_BUSY_STATES = new Set(["queued", "parsing", "distilling"]);
+const HORIZON_BUSY_STATES = new Set(["queued", "parsing", "stored_unindexed", "distilling"]);
 
 function horizonEl(id) {
   return document.getElementById(id);
@@ -10432,7 +10432,7 @@ async function fillNodeBody(node, row, inner) {
   // id - which the row then showed under the heading "Could not read this", while it was being
   // read. Both halves wrong: the cause and the claim. Only `failed` avoided the fetch; every other
   // non-ready state fell through to it.
-  if (node.state === "queued" || node.state === "parsing") {
+  if (node.state === "queued" || node.state === "parsing" || node.state === "stored_unindexed") {
     inner.appendChild(elt("p", "hint", t("horizon.stillReading", "Still reading this one\u2026")));
     inner.appendChild(await nodeActions(node));
     return;
@@ -10473,13 +10473,22 @@ async function fillNodeBody(node, row, inner) {
 async function nodeActions(node) {
   const actions = elt("div", "node-actions card-foot");
   if (node.state === "failed") {
-    // Re-submitting the same origin is already the retry path (`intake.submit` resets a `failed`
-    // node to `queued`), so this needs no new endpoint - only a way to ask for it.
+    // The server decides how: text already stored is stored again, a link is read again, and a
+    // paste or a file with nothing stored says to capture it anew (`POST /horizon/{id}/retry`).
+    // Re-submitting the origin did the second only, and sent a paste's `pasted:` label as new text.
     const retry = elt("button", "btn node-retry", t("horizon.retry", "Try again"));
     retry.type = "button";
     retry.addEventListener("click", async () => {
       retry.disabled = true;
-      await captureValue(node.origin);
+      try {
+        await api(`/horizon/${encodeURIComponent(node.id)}/retry`, { method: "POST" });
+      } catch (err) {
+        showCaptureError(err.message);
+        retry.disabled = false;
+        return;
+      }
+      await refreshHorizon({ reset: true });
+      startHorizonPolling();
     });
     actions.appendChild(retry);
   }
@@ -14840,7 +14849,7 @@ function moonClass(item) {
   if (item.kind === "local") return "map-dot is-local";
   if (item.state === "ready") return "map-dot is-done";
   if (item.state === "failed") return "map-dot is-failed";
-  if (item.state === "queued" || item.state === "parsing" || item.state === "distilling") return "map-dot is-busy";
+  if (["queued", "parsing", "stored_unindexed", "distilling"].includes(item.state)) return "map-dot is-busy";
   return "map-dot";
 }
 
@@ -14848,7 +14857,7 @@ function moonStateLabel(item) {
   if (item.kind === "local") return t("map.moonLocal", "Not in the Horizon yet");
   if (item.state === "ready") return t("map.legendDone", "Summarised");
   if (item.state === "failed") return t("map.moonFailed", "Could not be read");
-  if (item.state === "queued" || item.state === "parsing") return t("map.moonReading", "Being read");
+  if (["queued", "parsing", "stored_unindexed"].includes(item.state)) return t("map.moonReading", "Being read");
   if (item.state === "distilling") return t("map.moonSummarising", "Being summarised");
   return t("map.legendPending", "Not summarised yet");
 }
@@ -15718,7 +15727,7 @@ function skyMoonState(item) {
   if (item.kind === "local") return 3;
   if (item.state === "ready") return 1;
   if (item.state === "failed") return 5;
-  if (["queued", "parsing", "distilling"].includes(item.state)) return 6;
+  if (["queued", "parsing", "stored_unindexed", "distilling"].includes(item.state)) return 6;
   return 2;
 }
 

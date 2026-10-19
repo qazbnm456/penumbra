@@ -18,7 +18,11 @@ SourceKind = Literal["text", "web", "pdf", "youtube", "docx"]
 #: promise of the Horizon is that throwing something in always works. A node whose distillation failed
 #: is still a usable node, listed under its origin — losing the capture because the summariser was
 #: unreachable would break the one thing the feature is for.
-NodeState = Literal["queued", "parsing", "distilling", "ready", "ready_undistilled", "failed"]
+#: `stored_unindexed`: the text is read and its blocks are on disk, but the kit's memory store has not
+#: taken it yet (it was busy, or the process stopped in between); intake stores it again without
+#: fetching anything (`horizon.index_stored`).
+NodeState = Literal["queued", "parsing", "stored_unindexed", "distilling", "ready", "ready_undistilled",
+                    "failed"]
 
 
 class SourceBlock(BaseModel):

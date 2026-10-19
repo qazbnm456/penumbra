@@ -2203,3 +2203,77 @@ def test_an_orbit_recreated_under_the_same_name_starts_as_a_new_planet(client):
     assert client.post("/orbits/again/sources", json={"texts": ["another note"]}).status_code == 200
     planet = client.get("/horizon/map").json()["planets"]["again"]
     assert planet["ring"] == 0 and planet["style"]["kind"] is None
+
+
+# --- a capture the memory store could not take yet ---------------------------------------------------
+
+
+def _store_busy_once(monkeypatch, base) -> None:
+    import sqlite3
+
+    from penumbra import memory_store
+
+    store = memory_store.store(base)
+    real, calls = store.add, [0]
+
+    def add(*args, **kwargs):
+        calls[0] += 1
+        if calls[0] == 1:
+            exc = sqlite3.OperationalError("database is locked")
+            exc.sqlite_errorcode = 5
+            raise exc
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(store, "add", add)
+
+
+def test_a_paste_the_store_could_not_take_is_stored_by_the_queue_without_a_second_paste(client, monkeypatch):
+    monkeypatch.setattr(intake, "_RETRY_FIRST_S", 0.05)
+    _store_busy_once(monkeypatch, api._horizon_queue_base())
+    node = client.post("/horizon", json={"texts": ["kept for a moment"]}).json()["nodes"][0]
+    assert node["state"] == "stored_unindexed"
+    assert _settle(client, node["id"]) == "ready_undistilled"
+
+
+def test_try_again_stores_stored_text_reads_a_link_again_and_refuses_a_paste_with_nothing_stored(
+    client, monkeypatch
+):
+    pasted = client.post("/horizon", json={"texts": ["already stored words"]}).json()["nodes"][0]
+    assert _settle(client, pasted["id"]) == "ready_undistilled"
+    assert client.post(f"/horizon/{pasted['id']}/retry").status_code == 409, "not failed"
+    horizon.update_node(pasted["id"], state="failed", error="x")
+    with horizon._connect() as conn:
+        conn.execute("UPDATE nodes SET memory_rowid = NULL WHERE id = ?", (pasted["id"],))
+    reply = client.post(f"/horizon/{pasted['id']}/retry")
+    assert reply.status_code == 200 and reply.json()["node"]["state"] == "stored_unindexed"
+    assert _settle(client, pasted["id"]) == "ready_undistilled"
+
+    link = client.post("/horizon", json={"urls": ["https://example.com/retry"]}).json()["nodes"][0]
+    assert _settle(client, link["id"]) == "ready_undistilled"
+    horizon.node_blocks_path(link["id"]).unlink()
+    horizon.update_node(link["id"], state="failed", error="x")
+    with horizon._connect() as conn:  # a link fails before it becomes an item, never after
+        conn.execute("UPDATE nodes SET memory_rowid = NULL WHERE id = ?", (link["id"],))
+    assert client.post(f"/horizon/{link['id']}/retry").status_code == 200
+    assert _settle(client, link["id"]) == "ready_undistilled", "read again"
+
+    horizon.node_blocks_path(pasted["id"]).unlink()
+    horizon.update_node(pasted["id"], state="failed", error="x")
+    reply = client.post(f"/horizon/{pasted['id']}/retry")
+    assert reply.status_code == 422 and "capture it again" in reply.json()["detail"]
+    assert client.post("/horizon/nd-nope/retry").status_code == 400
+
+
+def test_a_source_added_inside_an_orbit_that_waits_for_the_store_is_stored_without_another_capture(
+    client, monkeypatch
+):
+    monkeypatch.setattr(intake, "_RETRY_FIRST_S", 0.05)
+    _store_busy_once(monkeypatch, api._horizon_queue_base())
+    reply = client.post("/orbits/waits/sources", json={"texts": ["words added in an orbit"]})
+    assert reply.status_code == 200
+    for _ in range(150):
+        if horizon.nodes_in_orbit("waits"):
+            break
+        time.sleep(0.02)
+    [membership] = horizon.nodes_in_orbit("waits")
+    assert horizon.get_node(membership.node_id).state == "ready_undistilled"

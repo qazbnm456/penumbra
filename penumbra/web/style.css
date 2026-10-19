@@ -6154,6 +6154,7 @@ textarea::placeholder {
 
 .node[data-state="queued"] .node-dot,
 .node[data-state="parsing"] .node-dot,
+.node[data-state="stored_unindexed"] .node-dot,
 .node[data-state="distilling"] .node-dot {
   background: var(--text-faint);
   animation: node-pulse 1.6s ease-in-out infinite;
@@ -6209,6 +6210,7 @@ textarea::placeholder {
 .node[data-state="ready_undistilled"] .node-title,
 .node[data-state="queued"] .node-title,
 .node[data-state="parsing"] .node-title,
+.node[data-state="stored_unindexed"] .node-title,
 .node[data-state="failed"] .node-title {
   /* No title yet, so the origin stands in. Set lighter, so an unsummarised row reads as pending
      rather than as a thing that chose a bad name. */
@@ -6803,6 +6805,7 @@ body[data-view="horizon"] .orbit-picker {
   .node.is-new { animation: none; }
   .node[data-state="queued"] .node-dot,
   .node[data-state="parsing"] .node-dot,
+  .node[data-state="stored_unindexed"] .node-dot,
   .node[data-state="distilling"] .node-dot { animation: none; opacity: 0.8; }
   .intake-dot { animation: none; }
   .node-body { transition: none; }

@@ -50,10 +50,13 @@ _UNSPACED = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿가-힯]+")
 #: dominating the index's size.
 _BODY_CAP = 1_000_000
 
-#: The node states whose blocks are on disk. `queued`, `parsing` and `failed` have nothing to read.
-#: Derived from `schema.NodeState` minus those three, so a renamed or added state cannot silently
+#: The node states a search may return: a capture that is a memory item. `queued`, `parsing` and
+#: `failed` may have no text yet, and `stored_unindexed` has text that is not an item yet.
+#: Derived from `schema.NodeState` minus those four, so a renamed or added state cannot silently
 #: drop out of search: a summarised node is `ready`, and a hand-written list once said `distilled`.
-SEARCHABLE_STATES = tuple(s for s in get_args(NodeState) if s not in ("queued", "parsing", "failed"))
+SEARCHABLE_STATES = tuple(
+    s for s in get_args(NodeState) if s not in ("queued", "parsing", "stored_unindexed", "failed")
+)
 
 #: Weight of the distilled description against the body in `bm25`. A match in a title or a tag says
 #: more about what a capture is about than one somewhere in its text.

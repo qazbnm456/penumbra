@@ -1,5 +1,5 @@
 """Where each orbit sits on the star map: a ring and an angle, kept server-side in the Horizon's
-database (`map_planets`, added by `horizon._MIGRATIONS`).
+database (`map_planets`, in `horizon._SCHEMA`).
 
 **Placed once, then the reader's.** A planet's place used to follow how recently its orbit gained
 something, newest innermost, so filing one capture swapped two planets and every chat turn could

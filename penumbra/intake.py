@@ -63,6 +63,11 @@ _NUDGE = object()
 #: daemon thread, so process exit collects it either way.
 _JOIN_TIMEOUT = 120.0
 
+#: How long the queue waits before trying again to store captures whose text is on disk but which a
+#: busy memory store refused (`stored_unindexed`), doubling up to the cap while some remain.
+_RETRY_FIRST_S = 1.0
+_RETRY_MAX_S = 60.0
+
 ParseFn = Callable[[str, str], Source]
 
 
@@ -122,6 +127,9 @@ class IntakeQueue:
         self._idle = threading.Condition()
         self._outstanding = 0
         self._queued: set[str] = set()
+        #: The retry timer for `stored_unindexed` captures, armed while any exist. Guarded by `_guard`.
+        self._retry_timer: threading.Timer | None = None
+        self._retry_delay = _RETRY_FIRST_S
 
     # -- submitting -------------------------------------------------------------------------------
 
@@ -130,8 +138,8 @@ class IntakeQueue:
 
         Idempotent through `add_pending_node`, which is idempotent through `node_id_for`: submitting
         a URL already in the Horizon returns the node that is there rather than queueing it twice. A
-        node that previously FAILED is reset to `queued` and retried, which is what makes "try that
-        again" a submit rather than a second verb.
+        node that previously FAILED is tried again: stored again when its text is on disk
+        (`stored_unindexed`), otherwise reset to `queued` and read again.
         """
         # **A STOPPED queue refuses, rather than handing back a `queued` node nothing will parse.**
         # `nudge()` already guards on this; `submit` did not, so a capture racing ASGI shutdown
@@ -147,6 +155,13 @@ class IntakeQueue:
             if self._stopping:
                 raise RuntimeError("this intake queue has been stopped and cannot accept captures")
         node = horizon.add_pending_node(origin, kind_for(origin), base_dir=self._base_dir)
+        if node.state == "failed" and horizon.has_stored_blocks(node, base_dir=self._base_dir):
+            # Its text was read and stored; only becoming a memory item failed. Store it again
+            # rather than fetching it again (`index_stored`, on this queue's thread).
+            node = horizon.update_node(
+                node.id, base_dir=self._base_dir, state="stored_unindexed", error=None) or node
+            self.nudge()
+            return node
         if node.state == "failed":
             # `update_node` returns None if the row vanished in this window. Keep the node we
             # already have rather than returning None under a non-optional annotation; `_process`
@@ -228,12 +243,12 @@ class IntakeQueue:
         """Re-enqueue everything a previous run left unfinished, and return what was picked up.
 
         Rows in an OWNED state are reset first (`horizon.reset_interrupted_states`): the process that
-        owned them is gone, so the state is a lie. `parsing` falls back to `queued` — the blocks
-        file was never written — and `distilling` to `ready_undistilled`, where the blocks exist and
-        only the summary is missing. `failed` rows are NOT resumed — a parse that failed on its own
-        terms would fail again, and retrying it forever on every restart is how a poisoned item
-        becomes a loop. Submitting it
-        again is an explicit act.
+        owned them is gone, so the state is a lie. `parsing` falls back to `queued` and is read
+        again, overwriting any blocks file a crash left half-recorded, and `distilling` to
+        `ready_undistilled`, where the blocks exist and only the summary is missing. `failed` rows
+        are NOT resumed — a parse that failed on its own terms would fail again, and retrying it
+        forever on every restart is how a poisoned item becomes a loop. Submitting it again is an
+        explicit act.
 
         Safe to call while the queue is busy: `_enqueue` refuses an id already waiting, so a node
         submitted a moment ago is not parsed twice.
@@ -247,7 +262,36 @@ class IntakeQueue:
             for node in horizon.list_nodes(state="queued", limit=10_000, base_dir=self._base_dir)
             if self._enqueue(node.id)
         ]
+        # Captures whose text was stored but which never became memory items (a crash between the
+        # two, or a busy store): stored again on the worker thread, never fetched again.
+        if horizon.stored_unindexed(base_dir=self._base_dir):
+            self.nudge()
         return resumed
+
+    def arm_retry(self) -> None:
+        """Try the `stored_unindexed` captures again after a delay that doubles while some remain.
+        Called by a capture path that left one behind, and by the queue itself."""
+        with self._guard:
+            if self._stopping or self._retry_timer is not None:
+                return
+            timer = threading.Timer(self._retry_delay, self._retry_fired)
+            timer.daemon = True
+            self._retry_timer = timer
+            self._retry_delay = min(_RETRY_MAX_S, self._retry_delay * 2)
+        timer.start()
+
+    def cancel_retry(self) -> None:
+        """Stop a pending retry (for clearing everything)."""
+        with self._guard:
+            timer, self._retry_timer = self._retry_timer, None
+            self._retry_delay = _RETRY_FIRST_S
+        if timer is not None:
+            timer.cancel()
+
+    def _retry_fired(self) -> None:
+        with self._guard:
+            self._retry_timer = None
+        self.nudge()
 
     # -- observing and stopping -------------------------------------------------------------------
 
@@ -283,8 +327,8 @@ class IntakeQueue:
 
         So a dropped item lands in a state that is TRUE and ACTIONABLE: `failed`, carrying "stopped
         before it was read". That is not a parse failure and the message says so, but it is the same
-        SHAPE — terminal, visible, retryable — and `submit` already treats a `failed` node as the
-        retry path, so the row's Try again button works with no new endpoint.
+        SHAPE — terminal, visible, retryable — and the row's Try again reads it again
+        (`POST /horizon/{id}/retry`).
 
         The item currently being parsed is not affected: a native PDFium parse cannot be interrupted
         without taking the process with it, so the guarantee is "nothing further starts", not "this
@@ -298,12 +342,10 @@ class IntakeQueue:
         # OUTSIDE the lock: each of these is a SQL write, and holding `_guard` across them would
         # block every `submit` for the length of the batch.
         for node_id in dropped:
-            horizon.update_node(
-                node_id,
-                base_dir=self._base_dir,
-                state="failed",
-                error="stopped before it was read",
-            )
+            # Only one still `queued`: an orbit may have stored this capture while it waited, and
+            # that one was read; marking it failed would offer to read it again.
+            if horizon.claim_node(node_id, expect="queued", to="failed", base_dir=self._base_dir):
+                horizon.update_node(node_id, base_dir=self._base_dir, error="stopped before it was read")
         return len(dropped)
 
     def stop(self, *, timeout: float = _JOIN_TIMEOUT) -> bool:
@@ -316,6 +358,7 @@ class IntakeQueue:
         An earlier version cleared `_thread`, released, and then enqueued — and a `submit()` landing
         in that window started a second worker. See the module docstring.
         """
+        self.cancel_retry()
         with self._guard:
             self._stopping = True
             thread = self._thread
@@ -428,6 +471,7 @@ class IntakeQueue:
                 return
             if item is _NUDGE:
                 self._queue.task_done()
+                self._store_waiting()
                 self._maybe_idle()
                 continue
             node_id = str(item)
@@ -444,7 +488,42 @@ class IntakeQueue:
                 self._current = None
                 self._queue.task_done()
                 self._finish_one(node_id)
+                self._store_waiting()
                 self._maybe_idle()
+
+    def _store_waiting(self) -> None:
+        """Store every `stored_unindexed` capture as a memory item, on this thread, and run the
+        after-parse hook for each that became ready, as a parse would. One a busy store still
+        refuses re-arms the retry timer; none left resets its delay. Never raises."""
+        try:
+            waiting = horizon.stored_unindexed(base_dir=self._base_dir)
+        except Exception:  # noqa: BLE001 - the worker must outlive the index
+            _log.exception("intake: could not list the captures waiting to be stored")
+            return
+        for node_id in waiting:
+            try:
+                node = horizon.index_stored(node_id, base_dir=self._base_dir)
+            except Exception:  # noqa: BLE001
+                _log.exception("intake: could not store %s", node_id)
+                continue
+            if node is not None and node.state == "ready_undistilled":
+                self._ready(node.id)
+        try:
+            remaining = bool(horizon.stored_unindexed(base_dir=self._base_dir))
+        except Exception:  # noqa: BLE001
+            remaining = True
+        if remaining:
+            self.arm_retry()
+        else:
+            with self._guard:
+                self._retry_delay = _RETRY_FIRST_S
+
+    def _ready(self, node_id: str) -> None:
+        if self._on_ready is not None:
+            try:
+                self._on_ready(node_id)
+            except BaseException:  # noqa: BLE001 - see `_maybe_idle`: a policy hook never ends intake
+                _log.exception("intake: the after-parse hook failed for %s", node_id)
 
     def _maybe_idle(self) -> None:
         """Run the idle hook if this was the last outstanding item.
@@ -495,27 +574,33 @@ class IntakeQueue:
         in any of the three left the node at `parsing` with no message — measured with a raising
         `store_blocks`: `state='parsing', error=None`, recoverable only by a restart.
         """
-        try:
-            node = horizon.get_node(node_id, base_dir=self._base_dir)
-            if node is None:
-                # Removed while it sat in the queue. Not an error — the reader changed their mind.
-                return
-            horizon.update_node(node_id, base_dir=self._base_dir, state="parsing")
-            source = self._parse(node.origin, node_id)
-            # `store_blocks` handles the node being removed DURING the parse: it deletes the blocks
-            # it just wrote rather than leaving an orphan, which `add_node` would otherwise adopt.
-            horizon.store_blocks(node_id, source, base_dir=self._base_dir)
-        except Exception as exc:  # noqa: BLE001 - a parser may raise anything; the node records it
-            # Broad on purpose. `ingest_one` reaches trafilatura, pypdfium2, yt-dlp and two OCR
-            # backends, and the contract is that a capture never kills the worker and never
-            # disappears — it becomes a `failed` node the reader can see and retry.
-            self._record_failure(node_id, exc)
+        # Claimed only while the raw row is still `queued`: a capture another path has stored in
+        # the meantime (an orbit recording the same address) is never fetched again or demoted.
+        if not horizon.claim_for_parse(node_id, base_dir=self._base_dir):
             return
-        if self._on_ready is not None:
+        try:
             try:
-                self._on_ready(node_id)
-            except BaseException:  # noqa: BLE001 - see `_maybe_idle`: a policy hook never ends intake
-                _log.exception("intake: the after-parse hook failed for %s", node_id)
+                node = horizon.get_node(node_id, base_dir=self._base_dir)
+                if node is None:
+                    # Removed while it sat in the queue. Not an error — the reader changed their mind.
+                    return
+                horizon.update_node(node_id, base_dir=self._base_dir, state="parsing")
+                source = self._parse(node.origin, node_id)
+                # `store_blocks` handles the node being removed DURING the parse: it deletes the
+                # blocks it just wrote rather than leaving an orphan, which `add_node` would adopt.
+                stored = horizon.store_blocks(node_id, source, base_dir=self._base_dir)
+            except Exception as exc:  # noqa: BLE001 - a parser may raise anything; the node records it
+                # Broad on purpose. `ingest_one` reaches trafilatura, pypdfium2, yt-dlp and two OCR
+                # backends, and the contract is that a capture never kills the worker and never
+                # disappears — it becomes a `failed` node the reader can see and retry.
+                self._record_failure(node_id, exc)
+                return
+        finally:
+            horizon.release_parse(node_id)
+        if stored is not None and stored.state == "ready_undistilled":
+            self._ready(node_id)
+        elif stored is not None and stored.state == "stored_unindexed":
+            self.arm_retry()
 
 
 #: The API's single queue, created on first use. Single-process, like `api._ACTIVE_RUNS`
