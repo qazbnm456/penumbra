@@ -14,11 +14,19 @@ Landing has to survive filing too. Two files named `notes.txt` are now two nodes
 
 `Node.kind` is decided before anything is read, by `ingest.kind_for`, the same dispatch `ingest_one` uses. `ingest_one` reads `kind_for`'s answer, and `test_kind_for_agrees_with_ingest_ones_own_dispatch` drives the real `ingest_one` with recording parsers and fails if the two ever take different branches; a second dispatch is how a `.pdf` URL ends up filed as `web`. For a URL the kind is a guess by design: `parse_web` reads the content type and magic bytes, so a URL serving a PDF is filed as `web` at capture and comes back as `pdf` from the parse, and `store_blocks` overwrites the kind with the parsed one.
 
+## Stored text waits for the memory store, not for a second fetch
+
+A capture's text becomes an item in the kit's memory store (invariant 78) after its blocks are written, in two steps: the row goes in as `stored_unindexed` with its blocks file named, and only then is the item added and the row marked `ready_undistilled`, in one transaction that also writes any orbit membership recorded while it waited (`pending_memberships`). A crash or a busy store between the two leaves a row whose text is on disk, never a ready row without an item.
+
+`stored_unindexed` is a waiting state, drawn like a capture still being read. A transient SQLite error (`SQLITE_BUSY` or `SQLITE_LOCKED`, read from the base result code) keeps it there; the queue stores every waiting capture on its own thread after each item and on a timer that starts at one second and doubles to a minute while any remain, and at startup. Any other error makes the capture `failed`, with its text still on disk. Storing again never fetches: `index_stored` reads the blocks file, and finds an item a crash already added by the capture's id and its capture time (`find_meta`, `captured_at`) instead of adding a second.
+
+Only one caller makes a given capture an item at a time. A direct capture claims its id in the same hold of `_CAPTURE_LOCK` that inserts the row; intake claims only while the raw row is still `queued` (`claim_for_parse`), so a capture an orbit stored meanwhile is never fetched again; an orbit recording a waiting or failed capture of the same address claims it the same way before storing its own text. A paste, an upload or an extension page that has to wait files where it was asked to once it becomes an item, through the same after-parse hook a link uses, and the extension is told it will be filed when read. A source recorded from inside an orbit that has to wait arms the same retry, and its membership is written in a transaction serialised with the one that makes it an item, so it is never left pending for a capture that already is one. The hook files a capture into the landing orbit only when it is in no orbit yet. A capture that is already an item when a retry reaches it is only marked ready.
+
 ## A failure is a state, not an escaping exception
 
 `ingest_one` reaches trafilatura, pypdfium2, yt-dlp and two OCR backends, and any of them can raise anything. The worker catches broadly on purpose and records `state="failed"` with the message, because two things must hold:
 
-- The capture is never lost. It stays visible and can be retried; a retry is simply a re-submit, and a successful one clears the old message.
+- The capture is never lost. It stays visible and can be retried (`POST /horizon/{id}/retry`, Try again): one whose text is stored is stored again, a link is read again, and a paste or a file with nothing stored says to capture it anew, since its origin is a label, not something to read. A successful retry clears the old message.
 - The worker outlives the item. One bad link must not stop intake for everything behind it. A worker that died silently would leave every later capture permanently `queued`, which looks exactly like still working.
 
 The message is kept rather than reduced to a boolean, because a dead link and an unparseable PDF are different problems, and a reader who cannot tell them apart cannot act on either.
@@ -35,9 +43,9 @@ Three details keep that single worker single and in one place. The drain and the
 
 `cancel_pending` drops everything still waiting and returns how many. The item being parsed runs to completion, because a native PDFium parse cannot be interrupted without taking the process with it. The guarantee is "nothing further starts", not "this stops now", and `status()` names the node that is still going (invariant 60).
 
-Cancelled items become `failed` with the message "stopped before it was read". Leaving them `queued` would draw them exactly like nodes still being read, keep the page polling as if busy, offer no Try again and answer "no stored text yet" when opened. `failed` is terminal, visible and retryable through the reset `submit` already has.
+Cancelled items still `queued` become `failed` with the message "stopped before it was read"; one an orbit stored while it waited is left as it is. Leaving them `queued` would draw them exactly like nodes still being read, keep the page polling as if busy, offer no Try again and answer "no stored text yet" when opened. `failed` is terminal, visible and retryable with Try again.
 
-`resume_interrupted` recovers from a crash: it resets `parsing` rows, whose owning process is gone, and re-queues only nodes not already waiting. It deliberately does not retry `failed` nodes, because retrying a parse that failed on its own terms at every restart is how a poisoned item becomes a loop.
+`resume_interrupted` recovers from a crash: it resets `parsing` rows, whose owning process is gone, re-queues only nodes not already waiting, and stores the `stored_unindexed` ones. It deliberately does not retry `failed` nodes, because retrying a parse that failed on its own terms at every restart is how a poisoned item becomes a loop.
 
 ## Single process
 

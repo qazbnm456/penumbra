@@ -986,32 +986,46 @@ def test_edited_is_part_of_the_row_and_says_which_names_are_the_readers():
     assert horizon.edit_node(node.id, title="T").edited == ["title", "tags"]
 
 
-def test_an_older_database_is_migrated_and_a_new_one_starts_at_the_latest_version(tmp_path):
-    """`_SCHEMA` is the first shape and `_MIGRATIONS` its history, counted in `user_version`. A
-    database written before the `edited` column keeps its rows and gains the column; a new one runs
-    every step; running the steps again changes nothing."""
-    old = tmp_path / "old"
-    old.mkdir()
-    with sqlite3.connect(horizon.index_path(old)) as conn:
+#: A stand-in for the first step a later change appends: the shipped baseline has none yet
+#: (invariant 84), and the mechanism has to be proven before one is needed.
+_PROBE_STEP = "ALTER TABLE nodes ADD COLUMN probe TEXT"
+
+
+def _baseline_database(base: Path) -> None:
+    """A database at the baseline shape, version 0, holding one row, as this build writes it."""
+    base.mkdir()
+    with sqlite3.connect(horizon.index_path(base)) as conn:
         conn.executescript(horizon._SCHEMA)
+        conn.execute(f"PRAGMA application_id = {horizon._APPLICATION_ID}")
         conn.execute(
-            "INSERT INTO nodes (id, kind, origin, state, created_at, updated_at) "
-            "VALUES ('nd-0000000000000001', 'text', 'pasted:x', 'ready', 1, 1)"
+            "INSERT INTO nodes (id, kind, origin, state, created_at, updated_at, blocks_file) "
+            "VALUES ('nd-0000000000000001', 'text', 'pasted:x', 'ready_undistilled', 1, 1, "
+            "'nd-0000000000000001.json')"
         )
-    kept = horizon.get_node("nd-0000000000000001", base_dir=old)
-    assert kept is not None and kept.edited == [] and kept.distilled_at is None
+
+
+def test_a_database_behind_the_steps_is_migrated_and_a_new_one_starts_at_the_latest(tmp_path, monkeypatch):
+    """`_SCHEMA` is the first shape and `_MIGRATIONS` its history, counted in `user_version`. A
+    database written before a step keeps its rows and gains the column; a new one runs every step;
+    running the steps again changes nothing."""
+    monkeypatch.setattr(horizon, "_MIGRATIONS", (_PROBE_STEP,))
+    monkeypatch.setattr(horizon, "_INITIALIZED", set())
+    old = tmp_path / "old"
+    _baseline_database(old)
+    assert horizon.get_node("nd-0000000000000001", base_dir=old) is not None
     fresh = tmp_path / "fresh"
     horizon.add_node(_source(), base_dir=fresh)
     for base in (old, fresh):
         with sqlite3.connect(horizon.index_path(base)) as conn:
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS)
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+            assert "probe" in [r[1] for r in conn.execute("PRAGMA table_info(nodes)")]
             horizon._migrate(conn)  # nothing left to apply
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS)
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
 
 
 def test_processes_migrating_an_old_database_at_once_never_apply_a_step_twice(tmp_path):
     """Invariant 84's concurrency claim, executed: six processes run `_migrate` on one database
-    written before any step, at once. Each step runs inside `BEGIN IMMEDIATE` with the version read
+    written before a step, at once. Each step runs inside `BEGIN IMMEDIATE` with the version read
     inside it, so none applies a step another already applied, every row survives, and the version
     ends at the last step.
 
@@ -1023,15 +1037,10 @@ def test_processes_migrating_an_old_database_at_once_never_apply_a_step_twice(tm
     import time
 
     old = tmp_path / "old"
-    old.mkdir()
-    with sqlite3.connect(horizon.index_path(old)) as conn:
-        conn.executescript(horizon._SCHEMA)
-        conn.execute(
-            "INSERT INTO nodes (id, kind, origin, state, created_at, updated_at) "
-            "VALUES ('nd-0000000000000001', 'text', 'pasted:x', 'ready', 1, 1)"
-        )
+    _baseline_database(old)
     probe = (
         "import sqlite3, sys, time; from penumbra import horizon\n"
+        f"horizon._MIGRATIONS = ({_PROBE_STEP!r},)\n"
         "conn = sqlite3.connect(horizon.index_path(sys.argv[1]), timeout=30)\n"
         "time.sleep(max(0.0, float(sys.argv[2]) - time.time()))\n"
         "horizon._migrate(conn)\n"
@@ -1049,5 +1058,5 @@ def test_processes_migrating_an_old_database_at_once_never_apply_a_step_twice(tm
     assert all(run.returncode == 0 for run in runs), [err for _, err in results]
     assert all(out.strip() == "[]" for out, _ in results)
     with sqlite3.connect(horizon.index_path(old)) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0] == 1

@@ -12,7 +12,11 @@ Two processes can open an old database at the same moment (the server and a CLI 
 
 ## What it makes possible
 
-Without a version, `CREATE TABLE IF NOT EXISTS` cannot add a column to a database that already exists. The first two steps add `edited` and `distilled_at` for the reader's own labels (invariant 83), steps 3 to 5 create `map_planets` and `map_settings` and give each planet a `style` for the star map (invariant 85), and the persisted `readable` flag that `_READABLE`'s comment asks for is one more step. This is the usual way an embedded SQLite database evolves.
+Without a version, `CREATE TABLE IF NOT EXISTS` cannot add a column to a database that already exists. The persisted `readable` flag that `_READABLE`'s comment asks for is one step, and so is every later column. This is the usual way an embedded SQLite database evolves. The mechanism is tested with a stand-in step, so it is proven before the first real step ships.
+
+## The baseline was reset once, before release
+
+When a capture's text moved into the kit's memory store (invariant 78), `_SCHEMA` became a new baseline that already holds everything the five earlier steps added, and `_MIGRATIONS` started empty again. That is allowed exactly once, while nothing has been released, because no reader holds a database the old steps would bring forward. The file is marked as this layout with `PRAGMA application_id` (`horizon._APPLICATION_ID`). A database with a `nodes` table and any other mark is from before the reset: it is moved, with its `nodes/` directory, into `pre-memory-<time>/` beside it, and an empty Horizon starts. Nothing is deleted or converted. After release, the rule above holds without exception.
 
 Tables owned by other modules in the same file (`search.py`, `vectors.py`, `asks.py`, `concepts.py`) still create themselves with `IF NOT EXISTS`, and they do so after `_migrate` has run. A step in `_MIGRATIONS` can therefore change only the tables in `_SCHEMA`: on a new database, a step that alters one of the others finds no such table and fails every time. Changing one of those tables needs that module's own guarded step, or its table moved into `_SCHEMA` first.
 

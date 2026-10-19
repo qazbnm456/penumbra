@@ -1288,6 +1288,10 @@ def _record_in_horizon(orbit: Orbit) -> int:
         return 0
     if added:
         _forget_suggestions()
+        # One the memory store could not take yet is stored by the queue's retry, not by whatever
+        # capture happens to wake the queue next.
+        if horizon.stored_unindexed():
+            _horizon_queue().arm_retry()
     return added
 
 
@@ -1438,10 +1442,11 @@ async def delete_orbit_endpoint(orbit_id: str, captures: bool = False) -> dict:
 
 
 def _captures_only_in(orbit_key: str) -> list[str]:
-    """The captures filed into this orbit and into no other."""
-    here = sorted({m.node_id for m in horizon.nodes_in_orbit(orbit_key)})
-    elsewhere = horizon.memberships_for_nodes(here)
-    return [n for n in here if all(m.orbit_id == orbit_key for m in elsewhere[n])]
+    """The captures filed into this orbit and into no other, counting those still waiting to be."""
+    here = sorted({m.node_id for m in horizon.nodes_in_orbit(orbit_key)}
+                  | set(horizon.pending_in_orbit(orbit_key)))
+    held = horizon.held_by_orbits(here)
+    return [n for n in here if held[n] <= {orbit_key}]
 
 
 @app.get("/data/export")
@@ -1508,6 +1513,8 @@ def _work_in_flight() -> str:
         return "the local relations download"
     if _horizon_queue().status()["running"]:
         return "reading new captures"
+    if horizon.indexing_in_flight():
+        return "storing new captures"
     return ""
 
 
@@ -1534,7 +1541,12 @@ async def clear_all_endpoint(body: ClearAllRequest) -> dict:
             raise HTTPException(409, f"{busy} is running; stop it first")
         _CLEARING.set()
     try:
-        return await _clear_everything()
+        # Held around everything deleted: no capture starts storing, so a clear never deletes the
+        # orbits and then finds the Horizon busy.
+        with horizon.clearing():
+            return await _clear_everything()
+    except horizon.IndexingInFlight as exc:
+        raise HTTPException(409, "storing new captures is running; try again in a moment") from exc
     finally:
         _CLEARING.clear()
 
@@ -1558,7 +1570,8 @@ async def _clear_everything() -> dict:
                     path.unlink(missing_ok=True)
                     traces += 1
         base = _horizon_queue_base()
-        captures = horizon.clear_all(base_dir=base)
+        _horizon_queue().cancel_retry()
+        captures = horizon.clear_all(base_dir=base, held=True)
         vectors.clear_index(base)
         return {"orbits": len(orbits) + len(unreadable), "captures": captures, "traces": traces}
 
@@ -4153,7 +4166,9 @@ def _on_capture_ready(node_id: str) -> None:
         target = _FILE_ON_READY.pop(node_id, None)
     if target:
         _file_status(node_id, target, reader=True)  # the reader chose it, from the extension
-    else:
+    elif not horizon.memberships_for(node_id):
+        # A capture recorded from inside an orbit that waited for the store is already where it
+        # belongs; the landing orbit is for captures that came in through the Horizon.
         _file_into_landing_orbit(node_id)
     _vector_worker().nudge()
 
@@ -4281,6 +4296,27 @@ def _similar_or_none():
             return []
 
     return similar
+
+
+def _file_or_wait(node: Node, target: str | None = None) -> bool:
+    """For a capture whose text came with the request: when the memory store could not take it yet
+    (`stored_unindexed`), register where it was asked to go and let the queue store it and file it
+    from the after-parse hook, as a link's capture is; returns True then. Otherwise False, and the
+    caller files it now."""
+    if node.state != "stored_unindexed":
+        return False
+    if target:
+        with _FILE_ON_READY_LOCK:
+            _FILE_ON_READY[node.id] = target
+        # Stored before it was registered (a retry already armed): the hook has run without it, so
+        # the caller files it now, unless the hook took the target after all.
+        current = horizon.get_node(node.id)
+        if current is not None and current.state in ("ready", "ready_undistilled"):
+            with _FILE_ON_READY_LOCK:
+                if _FILE_ON_READY.pop(node.id, None) is not None:
+                    return False
+    _horizon_queue().arm_retry()
+    return True
 
 
 def _file_quietly(node_id: str) -> None:
@@ -4673,7 +4709,8 @@ async def upload_into_horizon(request: Request) -> dict:
                 #: An UPLOAD: the origin is the filename the caller sent, which is not an
                 #: identity even when it is spelled like a URL — see `node_id_for`.
                 node = horizon.add_node(source)
-                _file_quietly(node.id)
+                if not _file_or_wait(node):
+                    _file_quietly(node.id)
                 stored.append(node)
             except Exception as exc:  # noqa: BLE001 - a parser may raise anything
                 # **`Exception`, not `(ValueError, OSError)`, and the difference was a 500 that lost
@@ -4745,7 +4782,8 @@ async def capture_into_horizon(body: CaptureRequest, request: Request) -> dict:
             #: PASTED text: `ingest_pasted_text` already builds a content-derived origin, so the
             #: identity is the content either way. Left False so there is one rule, not two.
             node = await asyncio.to_thread(horizon.add_node, source)
-            await asyncio.to_thread(_file_quietly, node.id)
+            if not _file_or_wait(node):
+                await asyncio.to_thread(_file_quietly, node.id)
             nodes.append(node)
     except (ValueError, OSError) as exc:
         raise HTTPException(422, f"could not capture that: {type(exc).__name__}: {exc}") from exc
@@ -4860,7 +4898,9 @@ async def extension_capture(request: Request) -> dict:
                 return existing, None, True
         node = horizon.add_node(with_injection_flags(source))
         outcome = None
-        if target:
+        if _file_or_wait(node, target):
+            pass   # filed when the store takes it: the card says "files when read" (`filed: None`)
+        elif target:
             _vector_worker().nudge()
             outcome = _file_status(node.id, target, reader=True)[0]
         else:
@@ -5637,6 +5677,27 @@ class NodeTagsRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
     tags: list[str]
+
+
+@app.post("/horizon/{node_id}/retry")
+async def retry_horizon_node(node_id: str) -> dict:
+    """Try a capture that could not be read or stored again. One whose text is already stored is
+    stored again, never fetched (`horizon.index_stored`, on the queue's thread); a link is read
+    again; anything else (a paste or a file whose text was never stored) has nothing to read again,
+    and the reader captures it anew."""
+    node = await asyncio.to_thread(_node_or_404, node_id)
+    if node.state != "failed":
+        raise HTTPException(409, f"capture {node_id!r} is {node.state}, not failed")
+    queue = _horizon_queue()
+    if await asyncio.to_thread(horizon.has_stored_blocks, node):
+        node = await asyncio.to_thread(
+            lambda: horizon.update_node(node.id, state="stored_unindexed", error=None) or node)
+        queue.nudge()
+    elif is_url(node.origin):
+        node = await asyncio.to_thread(queue.submit, node.origin)
+    else:
+        raise HTTPException(422, "there is nothing stored to read again; capture it again")
+    return {"node": _node_view(node)}
 
 
 @app.put("/horizon/{node_id}/title")

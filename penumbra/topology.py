@@ -123,7 +123,7 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
             loose["count"] += 1
             if row["state"] == "ready_undistilled":
                 loose["undistilled"] += 1
-            elif row["state"] in ("queued", "parsing", "distilling"):
+            elif row["state"] in ("queued", "parsing", "stored_unindexed", "distilling"):
                 loose["busy"] += 1
             continue
         entry = orbits.setdefault(row["orbit_id"], {

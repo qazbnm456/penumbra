@@ -112,3 +112,32 @@ def test_clearing_sweeps_the_lock_files_of_deleted_orbits(client):
         assert client.post("/data/clear", json={"confirm": "clear everything"}).status_code == 200
         assert held.exists()
     assert not gone.exists() and not Path("orbits/.kept-lock.json.lock").exists()
+
+
+def test_clearing_erases_the_memory_store_and_waits_for_a_capture_being_stored(client):
+    from penumbra import memory_store
+
+    node_id = _capture(client, "Text that must not outlive a clear.")
+    base = api._horizon_queue_base()
+    assert memory_store.store(base).find_meta("node_id", node_id)
+    assert horizon._claim("nd-" + "2" * 16)
+    try:
+        reply = client.post("/data/clear", json={"confirm": "clear everything"})
+        assert reply.status_code == 409 and "storing new captures" in reply.json()["detail"]
+    finally:
+        horizon._release("nd-" + "2" * 16)
+    assert client.post("/data/clear", json={"confirm": "clear everything"}).status_code == 200
+    assert memory_store.store(base).search("outlive") == []
+    assert memory_store.store(base).find_meta("node_id", node_id) == []
+
+
+def test_a_capture_that_starts_storing_after_the_check_holds_the_whole_clear_off(client, monkeypatch):
+    client.post("/orbits/kept/notes", json={"text": "an orbit that must survive a refused clear"})
+    monkeypatch.setattr(horizon, "indexing_in_flight", lambda: False)   # the check has passed
+    assert horizon._claim("nd-" + "3" * 16)
+    try:
+        reply = client.post("/data/clear", json={"confirm": "clear everything"})
+    finally:
+        horizon._release("nd-" + "3" * 16)
+    assert reply.status_code == 409
+    assert [o.id for o in list_orbit_summaries()[0]] == ["kept"]
