@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import contextlib
+import os
+
 import pytest
 
 from penumbra.config import PenumbraConfig, max_trace_files, trace_retention_seconds
@@ -272,6 +275,7 @@ def test_setup_forwards_every_budget_to_the_harness(monkeypatch):
     assert forwarded.max_iterations == 13
     assert forwarded.max_llm_calls == 17
     assert forwarded.max_output_chars == 12345
+    assert forwarded.sandbox_sub_agents is False, "model code could build host-side sub-agents"
 
 
 def test_the_planner_token_cap_is_this_projects_own_choice(monkeypatch):
@@ -447,3 +451,105 @@ def test_the_trace_reports_the_budget_the_run_actually_had():
     assert _effective_max_tokens(Cfg("myproxy/x")) == 32768
     assert _effective_max_tokens(Cfg("openai/gpt-4o-mini", "", 4000)) == 4000
     assert _effective_max_tokens(object()) is None
+
+
+@pytest.mark.parametrize(("base_url", "lm_kwargs", "engine"), [
+    ("http://127.0.0.1:9/v1", '{"extra_body": {"thinking_token_budget": 2048}}', "litellm"),
+    (None, '{"extra_body": {"thinking_token_budget": 2048}}', "litellm"),
+    (None, None, "lm15"),
+])
+def test_dspy_routes_each_model_shape_without_dropping_its_kwargs(monkeypatch, base_url, lm_kwargs, engine):
+    """Measured on dspy 3.4.1, which can send a call through its native lm15 engine instead of
+    litellm. A proxy (`PN_BASE_URL`) always goes through litellm: the kit pins
+    `custom_llm_provider`, a key the native engine does not take. A direct model goes native, unless
+    its kwargs carry something native cannot (here `extra_body`), in which case dspy selects litellm
+    BEFORE sending, with the body intact. So no `PN_*_LM_KWARGS` value is silently dropped. The
+    engines' send methods are replaced by a recorder, so nothing reaches the network.
+    """
+    import json as _json
+
+    import dspy
+    from dspy.clients.engines import litellm_engine, lm15_engine
+
+    from penumbra import config as config_module
+
+    for name in list(os.environ):
+        if name.startswith(("PN_", "OPENAI_")):
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PN_MAIN_MODEL", "openai/gpt-5-mini")
+    monkeypatch.setenv("PN_API_KEY", "sk-test")
+    if base_url:
+        monkeypatch.setenv("PN_BASE_URL", base_url)
+    if lm_kwargs:
+        monkeypatch.setenv("PN_MAIN_LM_KWARGS", lm_kwargs)
+
+    class Sent(Exception):
+        pass
+
+    def recorder(name):
+        def send(self, *args, **kwargs):
+            blob = _json.dumps([repr(args), {k: repr(v) for k, v in kwargs.items()}])
+            raise Sent(name, "thinking_token_budget" in blob)
+        return send
+
+    monkeypatch.setattr(litellm_engine.LiteLLMEngine, "complete", recorder("litellm"))
+    monkeypatch.setattr(litellm_engine.LiteLLMEngine, "complete_legacy", recorder("litellm"))
+    monkeypatch.setattr(lm15_engine.LM15Engine, "complete", recorder("lm15"))
+    config_module.setup(PenumbraConfig.from_env())
+    with pytest.raises(Exception) as raised:
+        dspy.settings.lm("hi")
+    chain = raised.value
+    while chain is not None and not isinstance(chain, Sent):
+        chain = chain.__cause__ or chain.__context__
+    assert chain is not None, f"neither engine was asked to send: {raised.value!r}"
+    assert chain.args == (engine, bool(lm_kwargs)), chain.args
+
+
+def test_the_prompt_a_task_sends_offers_no_sandbox_sub_agents(monkeypatch):
+    """Through this project's own `setup`, then a real `AnswerQuestion` turn: the text the model
+    RECEIVES, read off the LM's history, carries neither dspy 3.4.1's sub-agent paragraph nor an
+    invitation to `import dspy`. The static signature still contains the paragraph (dspy adds it at
+    construction and withdraws it per call), so only the sent prompt is evidence."""
+    import asyncio
+
+    import rlm_harness.runtime as rt
+    from rlm_harness import RLMConfig
+    from rlm_harness.testing import scripted_lm
+
+    from penumbra import config as config_module
+    from penumbra.task import AnswerQuestion
+
+    for name in list(os.environ):
+        if name.startswith("PN_"):
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PN_MAIN_MODEL", "openai/x")
+    config_module.setup(PenumbraConfig.from_env())
+    cfg = rt.get_config()
+    assert cfg.sandbox_sub_agents is False
+    lm = scripted_lm([{"reasoning": "go", "code": "print(1)"}, {"answer": "{}"}])
+    fields = {f: getattr(cfg, f) for f in cfg.__dataclass_fields__}
+    fields.update(interpreter="mock", max_iterations=1, disable_history=False)
+    rt.configure(RLMConfig(**fields), main_lm=lm, sub_lm=lm)
+    with contextlib.suppress(Exception):   # `mock` never SUBMITs; the first turn is all we read
+        asyncio.run(AnswerQuestion().arun(sources="[[SRC:1|p1]] text", source_index="1", history="",
+                                          question="q", output_language="English"))
+    sent = "".join(str(m.get("content", "")) for m in lm.history[0]["messages"])
+    assert "Sub-agents (dspy)" not in sent and "import dspy" not in sent
+
+
+def test_the_sub_agent_notice_is_quiet_and_every_other_warning_is_not(monkeypatch, caplog):
+    """dspy warns on every forward pass that sub-agents are unavailable, which is `setup` working
+    as intended; that one line is dropped, and any other warning on the same logger still shows."""
+    import logging
+
+    from penumbra import config as config_module
+
+    monkeypatch.setenv("PN_MAIN_MODEL", "openai/x")
+    config_module.setup(PenumbraConfig.from_env())
+    config_module.setup(PenumbraConfig.from_env())   # twice: one filter, not two
+    rlm_log = logging.getLogger("dspy.predict.rlm")
+    assert sum(isinstance(f, config_module._NoSubAgentNotice) for f in rlm_log.filters) == 1
+    with caplog.at_level(logging.WARNING, logger="dspy.predict.rlm"):
+        rlm_log.warning("RLM sub-agents are unavailable on %s: %s", "_NoSubAgentInterpreter", "off")
+        rlm_log.warning("something else went wrong")
+    assert [r.getMessage() for r in caplog.records] == ["something else went wrong"]

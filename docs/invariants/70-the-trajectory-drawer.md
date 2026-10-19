@@ -18,11 +18,9 @@ A duration measured by the tool beats the gap on the strip, and a turn's first c
 
 ## Cache and Regenerate
 
-A run can legitimately make no model calls. `dspy.LM` caches by default, so a run with an unchanged corpus, language and tier replays the previous one: same turns, same reasoning, zero calls, 3.4 seconds instead of 263.6. The drawer then reports a cap with no usage and omits per-turn timing, both correctly.
+No run is served from dspy's response cache. `config.setup` switches it off for every run, in the CLI and the worker alike, because a run tried again after a bad reply got the same reply back in seconds; and rlm-harness (since 1.15) builds its LMs with `cache=False` as well. So every run makes its model calls, and the drawer always has usage and per-turn timing to show. Before that, an unchanged corpus, language and tier replayed the previous run with zero calls, 3.4 seconds instead of 263.6, and a drawer with a cap but no usage looked broken.
 
-Regenerate bypasses that cache (`RunOptions.fresh`); a first generate does not, because there a cache hit is a free correct answer. The flag follows whether the artifact exists (`Boolean(state.overview)`, `Boolean(state.podcast)`, `AskRequest.regenerate` for chat), never a constant. It travels alongside the task arguments, never inside them, because anything in the arguments reaches the model as a signature field (invariant 39). The worker switches the cache globally with `dspy.configure_cache(...)` before `setup`, which is correct because a worker handles exactly one run, and rebuilding the LMs instead would duplicate `runtime.configure`'s `lm_kwargs`.
-
-Four of the five run-taking handlers accept it. `/title` is exempt because a title is never overwritten, so there is nothing to regenerate. `guide` accepts it although no client sends it today, because a handler that ignored a shared field would be a silent exception. The CLI cannot bypass the cache at all; that is a gap, not a decision.
+`RunOptions.fresh` (Regenerate) predates the change. The worker still accepts it and still switches the cache off when it is set, so an older client keeps working, but it no longer changes what a run does. It travels alongside the task arguments, never inside them, because anything in the arguments reaches the model as a signature field (invariant 39).
 
 ## The drawer in the page
 

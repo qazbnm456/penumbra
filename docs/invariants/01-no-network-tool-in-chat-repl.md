@@ -8,6 +8,8 @@ A source's content is untrusted (invariant 6). If a fetch tool were reachable fr
 
 If "fetch one more page" is ever wanted, it must be a separate action the user explicitly confirms, not a tool the model decides to call.
 
+The same goes for anything the model could build in the sandbox. dspy 3.4.1 lets model code `import dspy` and construct sub-agents that run on the host and may be handed the task's tools; `config.setup` turns that off (`sandbox_sub_agents=False`), so the tools a task registers stay the only things its code can reach.
+
 ---
 
 Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)
