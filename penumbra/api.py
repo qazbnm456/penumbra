@@ -1798,10 +1798,10 @@ class RunOptions(BaseModel):
     server-generated id, invisible to the caller until the response arrives."""
 
     run_id: str | None = None
-    #: Ask the worker to run with dspy's LM cache OFF. Set by a REGENERATE, never by a first
-    #: generate: pressing Regenerate on an unchanged corpus otherwise replays the previous run
-    #: byte-identically for zero model calls, and a button that returns what you already had is a
-    #: UI that lies. A first generate keeps the cache, where a hit is a free correct answer.
+    #: Set by a REGENERATE. It used to switch dspy's LM cache off for that run, so Regenerate on an
+    #: unchanged corpus did not replay the previous run for zero model calls. `config.setup` now
+    #: turns the cache off for every run (invariant 70), so the flag is accepted for older clients
+    #: and no longer changes what a run does.
     fresh: bool = False
 
 
@@ -2866,8 +2866,15 @@ def _headline(text: str | None) -> str | None:
     return (head + "." if sep else head).strip() or None
 
 
+#: The kit's bookkeeping events (trace/v2): per-call usage rounds of a subscription model and the
+#: note that compiled instructions were loaded. They say nothing about the run a reader is watching,
+#: and an empty headline is how the web UI keeps an event off the line (`traceLabel`); without this
+#: the fallback below showed the bare event name, as `run_start` once did.
+_QUIET_TRACE_EVENTS = frozenset({"api_rounds", "compiled_instructions"})
+
+
 def _translate_trace_event(event: dict) -> dict:
-    """Raw `trace/v1` event -> a small, stable, product-facing shape for the web UI's live ticker.
+    """Raw `rlm-harness/trace/v2` event -> a small, stable, product-facing shape for the web UI's live ticker.
     Kept in ONE function, the same discipline the sibling studios' own `mapper.to_event` already
     uses, so the raw-to-product translation lives in one place rather than being duplicated at
     every call site.
@@ -2909,6 +2916,8 @@ def _translate_trace_event(event: dict) -> dict:
             "summary": f"{primary} \u00b7 {clipped}" if clipped else primary,
         }
 
+    if etype in _QUIET_TRACE_EVENTS:
+        return shape("other", "")
     if etype == "run_start":
         task = ((payload.get("meta") or {}).get("task") or "").rsplit(":", 1)[-1]
         return shape("start", "Starting", None, task or None)

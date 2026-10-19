@@ -949,6 +949,25 @@ def applied_lms() -> dict:
         return {}
 
 
+class _NoSubAgentNotice(logging.Filter):
+    """Drops the one warning dspy logs on every forward pass because sub-agents are off.
+
+    `setup` turns them off on purpose (`sandbox_sub_agents=False`), so "RLM sub-agents are
+    unavailable" is the configuration working, not a fault; left in, it printed on every CLI `ask`
+    and crowded the head of a worker's stderr, which is what a crash report shows. Every other
+    record on that logger passes.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not str(record.msg).startswith("RLM sub-agents are unavailable on")
+
+
+def _quiet_the_sub_agent_notice() -> None:
+    target = logging.getLogger("dspy.predict.rlm")
+    if not any(isinstance(f, _NoSubAgentNotice) for f in target.filters):
+        target.addFilter(_NoSubAgentNotice())
+
+
 def setup(config: PenumbraConfig) -> PenumbraConfig:
     """Configure rlm-harness (main + sub LM) for this process, and return `config` unchanged.
 
@@ -985,6 +1004,7 @@ def setup(config: PenumbraConfig) -> PenumbraConfig:
     # retried, a question asked again. Only Regenerate used to switch it off. A cache hit is never
     # what a second press means here, so it is off for every run, in the CLI and the worker alike.
     dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=False)
+    _quiet_the_sub_agent_notice()
 
     # None → configure builds a dspy.LM from the PN_* proxy config (the pre-existing behavior).
     main_lm = _maybe_subscription_lm(config.main_model)
@@ -1021,6 +1041,12 @@ def setup(config: PenumbraConfig) -> PenumbraConfig:
             main_lm_kwargs=config.main_lm_kwargs,
             sub_lm_kwargs=config.sub_lm_kwargs,
             request_timeout_s=config.request_timeout_s,
+            # Off, against the kit's default. dspy 3.4.1 lets model code in the sandbox `import
+            # dspy` and build sub-agents that run on the host, spend `max_llm_calls` and may be
+            # handed this task's tools; a nested RLM built that way leaves only its final answer in
+            # the trace, so the Trajectory drawer (invariant 70) could not show what it did, and
+            # every prompt would carry a paragraph the measured budgets were not taken under.
+            sandbox_sub_agents=False,
         ),
         main_lm=main_lm,
         sub_lm=sub_lm,

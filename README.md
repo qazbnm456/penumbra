@@ -42,10 +42,9 @@ Penumbra is an application, not a library. Nothing here is meant to be imported 
 
 ```bash
 uv tool install "penumbra[api] @ git+https://github.com/qazbnm456/penumbra"
-# or: pipx install "penumbra[api] @ git+https://github.com/qazbnm456/penumbra"
 ```
 
-It is not on PyPI yet, hence the repository URL. Drop `[api]` if you only want the CLI. It needs **Python 3.11 or newer**, including 3.13 and 3.14.
+It is not on PyPI yet, hence the repository URL. Use `uv`: until `rlm-harness` 1.21.0 is published, Penumbra takes it from a git commit that only `uv` reads, so `pipx` and plain `pip` cannot resolve it. Drop `[api]` if you only want the CLI. It needs **Python 3.11 or newer**, including 3.13 and 3.14.
 
 It also needs system binaries that no Python manifest can express, which is why there is a container:
 

@@ -32,19 +32,19 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "rlm-harness==1.13.0",
-    # BELOW 3.4, and the bound is load-bearing: dspy 3.4.0 made `RLM.aforward` keyword-only, and
-    # rlm-harness (through 1.13.0) hands it the sandbox as the first POSITIONAL argument, so every
-    # RLM run fails with "aforward() takes 1 positional argument but 2 were given". rlm-harness
-    # itself only asks for `dspy>=3.3.1`, so without this an unlocked install (the desktop runtime,
-    # `uv tool install`) resolves 3.4 and every ask, guide, podcast and long summary breaks.
-    # `tests/test_task.py` drives a real `aforward` and fails the moment this bound is lifted early.
-    "dspy>=3.3.1,<3.4",
-    # numpy>=2 is REQUIRED, not preferred: dspy 3.3.1 installs a lazy-import proxy for numpy
-    # (`dspy/utils/lazy_import.py`), and against numpy 1.x that proxy re-executes numpy's
-    # `__init__` while it is already partially imported the moment another extension module
-    # touches it — `import dspy; import cv2` dies with a circular import of `numpy.core`, taking
-    # this project's whole OCR path (rapidocr -> cv2) with it. Verified on 3.11 with numpy 1.26.4.
+    # Installed from git (`[tool.uv.sources]` below) until 1.21.0 is published, so `uv run`, CI,
+    # the Docker image and the desktop runtime all get the same kit.
+    "rlm-harness==1.21.0",
+    # The kit's own bound, repeated so an install that does not go through the kit's metadata
+    # first (a stale lock, `uv tool install`) cannot resolve something else. 3.4.1 rather than
+    # 3.4.0: 3.4.0's lazy-import proxy for openai broke `import litellm` after `import dspy` with
+    # numpy installed. `tests/test_task.py` drives a real `aforward` on it.
+    "dspy>=3.4.1,<3.5",
+    # numpy>=2 is required: dspy 3.3.1 installed a lazy-import proxy for numpy that, against numpy
+    # 1.x, re-executed numpy's `__init__` while it was partly imported, so `import dspy; import cv2`
+    # died with a circular import of `numpy.core` and took the OCR path (rapidocr -> cv2) with it.
+    # dspy 3.4.1 keeps its proxies out of `sys.modules`; the floor stays because cv2 and the OCR
+    # models are built against numpy 2.
     "numpy>=2",
     "pydantic>=2.9",
     # Simplified/Traditional character mapping, used ONLY by `instructions`'s pre-SUBMIT script
@@ -190,6 +190,11 @@ subscription-sdk = ["claude-agent-sdk>=0.1.60"]
 # sync with `uv sync --no-group subscription-sdk`.
 [tool.uv]
 default-groups = ["dev", "subscription-sdk"]
+
+# rlm-harness 1.21.0 is not on PyPI yet; it comes from this commit of its main branch until it is.
+# A kit change this project needs lands in the kit first, then this `rev` moves.
+[tool.uv.sources]
+rlm-harness = { git = "https://github.com/qazbnm456/rlm-harness", rev = "63aea4b074c105d4223a885af989abc0a306fc25" }
 
 [project.scripts]
 penumbra = "penumbra.cli:main"

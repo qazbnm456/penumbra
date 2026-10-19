@@ -33,6 +33,8 @@ ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl unzip \
+        # `git`, because rlm-harness comes from a git source until it is published (`uv.lock`)
+        git \
         tesseract-ocr \
         # rapidocr pulls opencv, which needs these at runtime even in its headless build
         libglib2.0-0 libgl1 \
@@ -50,14 +52,25 @@ RUN set -eux; \
     rm /tmp/deno.zip; \
     deno --version
 
+# The locked set, not a fresh resolve: `pip install .` ignores `[tool.uv.sources]`, so it could not
+# find rlm-harness 1.21.0 (a git source until it is published) and would resolve everything else
+# afresh. `uv` is copied in at a pinned version rather than installed by a script.
+COPY --from=ghcr.io/astral-sh/uv:0.12.21 /uv /usr/local/bin/uv
+
 WORKDIR /src
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY penumbra ./penumbra
 
-# The `api` extra only. `chatterbox` is deliberately absent: it is marked `python_full_version >=
-# '3.13'` and drags torch in for a provider that is 33x the wall clock of the default
-# (invariant 43), which is not what an image anybody pulls should carry.
-RUN pip install --no-cache-dir '.[api]'
+# The `api` extra only, and no dependency group (`dev` and the subscription SDK stay out), as the
+# `pip install '.[api]'` this replaced did. `chatterbox` is deliberately absent: it is marked
+# `python_full_version >= '3.13'` and drags torch in for a provider that is 33x the wall clock of
+# the default (invariant 43), which is not what an image anybody pulls should carry.
+# `--no-editable` installs the package itself, so the image does not depend on /src staying put.
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PATH=/opt/venv/bin:$PATH
+RUN uv sync --locked --no-default-groups --no-editable --extra api --no-cache
 
 # `orbits/`, `traces/` and `horizon/` are relative paths resolved against the working directory
 # (a generated episode lives at `orbits/audio/`, inside the first of them, not beside it)

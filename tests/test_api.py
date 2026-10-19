@@ -1362,6 +1362,12 @@ def test_translate_trace_event_carries_a_headline_a_specific_and_a_fact():
     sub = api._translate_trace_event({"type": "sub_call", "step_id": 2, "payload": {}})
     assert sub["kind"] == "escalation"
 
+    # The kit's bookkeeping events (trace/v2) carry no headline, so the UI keeps them off the line
+    # instead of showing their internal names.
+    for quiet in ("api_rounds", "compiled_instructions"):
+        event = api._translate_trace_event({"type": quiet, "step_id": 3, "payload": {"rounds": []}})
+        assert (event["kind"], event["primary"]) == ("other", ""), quiet
+
     # A failed run is its own kind, so the UI can end the stream AND say which way it ended.
     ended = api._translate_trace_event({"type": "run_end", "step_id": 3, "payload": {"ok": True}})
     assert ended["kind"] == "done"
