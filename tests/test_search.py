@@ -50,53 +50,54 @@ def _raw_tags(node_id: str, value_json: str) -> None:
         conn.close()
 
 
-def test_grams_pairs_unspaced_runs_and_leaves_latin_alone():
-    assert search.grams("海馬迴").split() == ["海馬", "馬迴"]
-    assert search.grams("記").split() == ["記"]
-    assert search.grams("REM 睡眠").split() == ["REM", "睡眠"]
-    # NFKC: a full-width PDF is the same word as a half-width one.
-    assert search.grams("ＰＤＦ").split() == ["PDF"]
+def _found(question: str) -> list[str]:
+    """The captures an ask over everything would read, in order, with room for all of them."""
+    return search.select_for_ask(question, budget_chars=10_000_000, max_items=100, base_dir=BASE).node_ids
 
 
-def test_query_terms_are_distinct_and_drop_single_latin_letters():
-    assert search.query_terms("a memory, memory 記憶") == ["memory", "記憶"]
-
-
-def test_match_expression_quotes_every_term_so_nothing_is_read_as_syntax():
-    assert search.match_expression(['a"b', "OR"]) == '"a""b" OR "OR"'
+def _matched(question: str) -> list[str]:
+    """Only the captures the question's words found, best first."""
+    picked = search.select_for_ask(question, budget_chars=10_000_000, max_items=100, base_dir=BASE)
+    return [p.node_id for p in picked.items if p.matched]
 
 
 def test_a_two_character_chinese_word_is_found():
     """The failure that ruled out FTS5's trigram tokenizer: most Chinese words are two characters."""
     a = _capture("https://x.example/a", "睡眠紡錘波與記憶鞏固的關係")
     _capture("https://x.example/b", "Rust ownership and borrowing")
-    assert search.search("關係", base_dir=BASE) == [a]
+    assert _matched("關係") == [a]
 
 
 def test_a_term_a_dictionary_segmenter_cut_wrongly_is_found():
     """jieba cut 海馬迴 into 海馬 / 迴在 with every dictionary tried, so a search for it missed."""
     b = _capture("https://x.example/b", "這篇論文討論海馬迴在空間記憶裡扮演的角色")
     _capture("https://x.example/c", "海邊的馬")
-    assert search.search("海馬迴", base_dir=BASE)[0] == b
+    assert _matched("海馬迴")[0] == b
 
 
 def test_a_natural_question_ranks_the_document_that_matches_more_of_it_first():
     a = _capture("https://x.example/a", "睡眠紡錘波與記憶鞏固的關係")
     b = _capture("https://x.example/b", "空間記憶")
-    assert search.search("睡眠和記憶有什麼關係？", base_dir=BASE) == [a, b]
+    assert _matched("睡眠和記憶有什麼關係？") == [a, b]
 
 
-def test_the_description_counts_for_more_than_the_body():
+def test_a_label_counts_for_more_than_the_body():
     body_only = _capture("https://x.example/a", "a long text that mentions caffeine once")
     described = _capture("https://x.example/b", "unrelated body", tags=["caffeine"])
-    assert search.search("caffeine", base_dir=BASE) == [described, body_only]
+    assert _matched("caffeine") == [described, body_only]
 
 
-def test_an_edit_is_picked_up_by_the_next_search():
+def test_an_edit_is_picked_up_by_the_next_ask():
     node = _capture("https://x.example/a", "plain text")
-    assert search.search("serotonin", base_dir=BASE) == []
+    assert _matched("serotonin") == []
     label(node, base_dir=BASE, state=None, summary="about serotonin")
-    assert search.search("serotonin", base_dir=BASE) == [node]
+    assert _matched("serotonin") == [node]
+
+
+def test_a_readers_title_is_found():
+    node = _capture("https://x.example/a", "plain text")
+    horizon.edit_node(node, title="Mitochondria notes", base_dir=BASE)
+    assert _matched("mitochondria") == [node]
 
 
 def test_a_summarised_node_is_searchable():
@@ -104,7 +105,7 @@ def test_a_summarised_node_is_searchable():
     that does not exist, and every summarised capture dropped out of search."""
     node = _capture("https://x.example/a", "hippocampus")
     label(node, base_dir=BASE, summary="memory")
-    assert search.search("hippocampus", base_dir=BASE) == [node]
+    assert _matched("hippocampus") == [node]
     assert search.select_for_ask("memory", budget_chars=10_000, max_items=5, base_dir=BASE).node_ids == [node]
 
 
@@ -112,36 +113,39 @@ def test_every_state_with_text_on_disk_is_searchable():
     assert set(search.SEARCHABLE_STATES) == {"ready_undistilled", "distilling", "ready"}
 
 
-def test_sync_is_idempotent():
-    _capture("https://x.example/a", "one")
-    assert search.sync(base_dir=BASE) == 1
-    assert search.sync(base_dir=BASE) == 0
-
-
-def test_removing_a_node_removes_its_index_row():
+def test_a_removed_capture_is_never_selected():
     node = _capture("https://x.example/a", "hippocampus")
-    assert search.search("hippocampus", base_dir=BASE) == [node]
+    assert _matched("hippocampus") == [node]
     horizon.remove_node(node, base_dir=BASE)
-    conn = sqlite3.connect(horizon.index_path(BASE))
-    try:
-        assert conn.execute("SELECT COUNT(*) FROM search_rows").fetchone()[0] == 0
-        left = conn.execute("SELECT rowid FROM search_fts WHERE search_fts MATCH 'hippocampus'").fetchall()
-        assert left == []
-    finally:
-        conn.close()
+    assert _found("hippocampus") == []
 
 
-def test_a_node_without_readable_text_is_not_searchable():
+def test_a_capture_without_an_item_is_never_selected(monkeypatch):
+    """A capture still being read, or one whose text is stored but is not an item, has no place in
+    the kit's index and is outside the readable states."""
     horizon.add_pending_node("https://x.example/q", "web", base_dir=BASE)
-    assert search.sync(base_dir=BASE) == 0
+
+    def busy(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(memory_store.store(BASE), "add", busy)
+    url = "https://x.example/waiting"
+    temp = horizon.node_id_for(url)
+    horizon.add_pending_node(url, "web", base_dir=BASE)
+    horizon.store_blocks(
+        temp, Source(id=temp, kind="web", origin=url, blocks=[SourceBlock(locator="whole", text="anything")]),
+        base_dir=BASE,
+    )
+    waiting = horizon.get_node(temp, base_dir=BASE)
+    # Its text is on disk, but the kit refused it, so it keeps its temporary id and is no item.
+    assert waiting.id == temp and horizon.node_blocks_path(temp, base_dir=BASE).is_file()
+    assert _found("anything") == []
 
 
-def test_an_unreadable_blocks_file_still_indexes_the_description():
-    node = _capture("https://x.example/a", "body", title="Mitochondria notes")
-    former = horizon.get_node(node, base_dir=BASE).former_id
-    horizon.node_blocks_path(former, base_dir=BASE).write_text("{not json", encoding="utf-8")
-    label(node, base_dir=BASE, state=None, summary="energy")
-    assert search.search("mitochondria", base_dir=BASE) == [node]
+def test_an_origin_is_found():
+    """A URL is often the one word a reader remembers (`memory_store` indexes origins)."""
+    node = _capture("https://penguins.example/a", "plain text")
+    assert _matched("penguins") == [node]
 
 
 # --- select_for_ask ---------------------------------------------------------------------------
@@ -252,3 +256,10 @@ def test_concepts_never_offer_a_value_a_scope_would_refuse():
     node = _capture("https://x.example/a", "x")
     _raw_tags(node, json.dumps(["t" * (search.SCOPE_VALUE_MAX + 1), "ok"]))
     assert [row["name"] for row in search.concepts(base_dir=BASE)["tags"]] == ["ok"]
+
+
+def test_an_empty_question_matches_nothing():
+    """The kit lists every item for an empty query; an ask must not call that a match."""
+    _capture("https://x.example/a", "hippocampus")
+    picked = search.select_for_ask("   ", budget_chars=10_000, max_items=5, base_dir=BASE)
+    assert picked.strategy == "all" and not any(p.matched for p in picked.items)

@@ -6,8 +6,10 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import sqlite3
 import time
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -87,6 +89,13 @@ def test_the_export_holds_the_data_a_vault_bookmarks_and_a_true_manifest(client)
     blocks_name = horizon.get_node(filed).former_id
     assert f"data/blocks/{blocks_name}.json" in names and "data/orbits/crafts.json" in names
     assert "README.md" in names and "bookmarks.html" in names
+    # The kit's memory store, a consistent SQLite copy holding both captures' text and labels.
+    copied = Path("exported-memory.db")
+    copied.write_bytes(zf.read("data/memory.db"))
+    with sqlite3.connect(copied) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM labels WHERE kind = 'title'").fetchone()[0] >= 1
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
 
     note = "markdown/Captures/Origami.md"
     text = zf.read(note).decode()

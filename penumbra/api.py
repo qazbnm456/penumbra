@@ -5273,8 +5273,6 @@ def _select_or_http(question: str, scope: HorizonAskScope) -> search.Selection:
             question, scope.kind, scope.value, budget_chars=budget, max_items=items_cap,
             orbit=_scope_orbit_arg(scope),
         )
-    except search.SearchUnavailable as exc:
-        raise HTTPException(500, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 

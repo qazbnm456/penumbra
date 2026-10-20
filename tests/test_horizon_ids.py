@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from penumbra import filing, horizon, memory_store, organize, search
+from penumbra import filing, horizon, memory_store, organize
 from penumbra.schema import Source, SourceBlock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -68,10 +68,8 @@ def test_the_re_key_moves_every_row_that_names_the_capture(monkeypatch):
     assert waiting.state == "stored_unindexed" and waiting.id.startswith("nd-")
     temp = waiting.id
     with horizon._connect() as conn:
-        search._ensure(conn)
         filing._ensure(conn)
         conn.executescript(organize._LEFT_SCHEMA)
-        conn.execute("INSERT INTO search_rows (node_id, indexed_at) VALUES (?, 0)", (temp,))
         conn.execute("INSERT INTO filing_dismissed (node_id, orbit_id, dismissed_at) "
                      "VALUES (?, 'o', 0)", (temp,))
         conn.execute("INSERT INTO organize_left (node_id, orbits, left_at) VALUES (?, 'sig', 0)", (temp,))
@@ -80,7 +78,7 @@ def test_the_re_key_moves_every_row_that_names_the_capture(monkeypatch):
     done = horizon.index_stored(temp)
     assert done.id.startswith("m") and done.former_id == temp
     with horizon._connect() as conn:
-        for table in ("search_rows", "filing_dismissed", "organize_left", "memberships"):
+        for table in ("filing_dismissed", "organize_left", "memberships"):
             ids = {r[0] for r in conn.execute(f"SELECT node_id FROM {table}")}
             assert ids == {done.id}, table
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
@@ -193,6 +191,28 @@ def _three_b_one_database(base: Path) -> None:
             "INSERT INTO nodes (id, kind, origin, state, created_at, updated_at, blocks_file) "
             "VALUES ('nd-0000000000000001', 'text', 'pasted:x', 'queued', 1, 1, 'nd-0000000000000001.json')"
         )
+        # The tables other modules created for themselves then, which steps 10-13 drop.
+        conn.executescript(_OLD_MODULE_TABLES)
+
+
+#: `search.py`'s index and `concepts.py`'s alias tables as builds before the kit's search made them.
+_OLD_MODULE_TABLES = """
+CREATE TABLE search_rows (
+    rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id TEXT NOT NULL UNIQUE REFERENCES nodes(id) ON DELETE CASCADE,
+    indexed_at REAL NOT NULL
+);
+CREATE VIRTUAL TABLE search_fts USING fts5(meta, body, content='', contentless_delete=1);
+CREATE TRIGGER search_rows_forget AFTER DELETE ON search_rows BEGIN
+    DELETE FROM search_fts WHERE rowid = old.rowid;
+END;
+CREATE TABLE entity_aliases (alias TEXT PRIMARY KEY, canonical TEXT NOT NULL);
+CREATE TABLE entity_seen (name TEXT NOT NULL);
+INSERT INTO search_rows (node_id, indexed_at) VALUES ('nd-0000000000000001', 1);
+"""
+
+#: Every name the dropped tables left in `sqlite_master`, the FTS5 shadow tables included.
+_OLD_NAMES = ("search_rows", "search_fts", "search_rows_forget", "entity_aliases", "entity_seen")
 
 
 def _shape(base: Path) -> list:
@@ -206,11 +226,15 @@ def test_a_database_from_before_the_steps_gains_them_and_a_restart_changes_nothi
     node = horizon.get_node("nd-0000000000000001", base_dir=base)
     assert node is not None and node.former_id is None
     with sqlite3.connect(horizon.index_path(base)) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS) == 9
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS) == 13
         columns = [r[1] for r in conn.execute("PRAGMA table_info(nodes)")]
         assert "former_id" in columns
         # Steps 4-9: the labels live in the kit's memory store, so their old columns are gone.
         assert not {"title", "summary", "tags", "entities", "edited", "distilled_at"} & set(columns)
+        # Steps 10-13: search and the alias tables are the kit's, so Penumbra's copies are gone.
+        left = [r[0] for r in conn.execute("SELECT name FROM sqlite_master")
+                if r[0].startswith(_OLD_NAMES)]
+        assert left == []
         assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'nodes_former_id'").fetchone()
         assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'horizon_meta'").fetchone()
     before = _shape(base)
@@ -237,7 +261,7 @@ def test_six_processes_bring_one_old_database_through_the_real_steps(tmp_path):
     results = [run.communicate(timeout=60) for run in runs]
     assert all(run.returncode == 0 for run in runs), [err for _, err in results]
     with sqlite3.connect(horizon.index_path(old)) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS)
         assert conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0] == 1
         assert "title" not in [r[1] for r in conn.execute("PRAGMA table_info(nodes)")]
 
@@ -299,3 +323,27 @@ def test_filing_a_waiting_capture_survives_it_becoming_an_item_meanwhile(monkeyp
     membership = horizon.promote_node(waiting.id, "orb", orbits_dir=tmp_path / "orbits")
     assert membership.node_id.startswith("m") and membership.node_id == horizon.resolve_id(waiting.id)
     assert [m.orbit_id for m in horizon.memberships_for(waiting.id)] == ["orb"]
+
+
+def test_the_dropped_tables_are_named_only_by_the_steps_that_drop_them():
+    """`entity_aliases` and `entity_seen` are also tables in the kit's store, attached as `mem` on
+    every labels connection, so an unqualified name left anywhere would quietly read the kit's
+    tables (or fail on a write). The four names may occur only in their `DROP TABLE` steps, and a
+    deliberate read of the kit's own (`mem.entity_aliases`) is refused too: the kit's methods are
+    the way in."""
+    import re
+
+    names = re.compile(r"\b(search_rows|search_fts|entity_aliases|entity_seen)\b")
+    package = Path(horizon.__file__).parent
+    found = []
+    for path in sorted(package.rglob("*")):
+        if path.suffix not in (".py", ".js", ".html") or not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if names.search(line):
+                found.append((path.name, line.strip()))
+    drops = {f'"DROP TABLE IF EXISTS main.{n}",' for n in ("search_rows", "search_fts", "entity_aliases",
+                                                      "entity_seen")}
+    assert sorted(found) == sorted(("horizon.py", d) for d in drops)
+    assert {f"DROP TABLE IF EXISTS main.{n}" for n in ("search_rows", "search_fts", "entity_aliases",
+                                                  "entity_seen")} <= set(horizon._MIGRATIONS)
