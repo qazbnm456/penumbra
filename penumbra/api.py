@@ -1575,7 +1575,8 @@ async def clear_all_endpoint(body: ClearAllRequest) -> dict:
         # Held around everything deleted: no capture starts storing, so a clear never deletes the
         # orbits and then finds the Horizon busy.
         with horizon.clearing():
-            return await _clear_everything()
+            async with _vector_worker_halted():
+                return await _clear_everything()
     except horizon.IndexingInFlight as exc:
         raise HTTPException(409, "storing new captures is running; try again in a moment") from exc
     finally:
@@ -1603,7 +1604,7 @@ async def _clear_everything() -> dict:
         base = _horizon_queue_base()
         _horizon_queue().cancel_retry()
         captures = horizon.clear_all(base_dir=base, held=True)
-        vectors.clear_index(base)
+        vectors.forget_cache(base)   # its file went with the store
         return {"orbits": len(orbits) + len(unreadable), "captures": captures, "traces": traces}
 
     counts = await asyncio.to_thread(_clear)
@@ -4253,7 +4254,14 @@ def _on_capture_ready(node_id: str, former_id: str | None = None) -> None:
 
 # --- local relations (`vectors.py`) --------------------------------------------------------------
 
-_VECTORS: dict[str, object] = {"worker": None}
+_VECTORS: dict[str, object] = {"worker": None, "halted": False}
+
+
+class _NoWorker:
+    """What a nudge reaches while the worker is halted for a delete: nothing starts."""
+
+    def nudge(self) -> None:
+        pass
 _VECTORS_LOCK = threading.Lock()
 
 #: The model download's visible, stoppable state (invariant 47). A download is not a model call and
@@ -4264,12 +4272,50 @@ _VECTOR_DL: dict[str, object] = {"running": False, "done": 0, "total": 0, "error
 def _vector_worker() -> vectors.Worker:
     with _VECTORS_LOCK:
         worker = _VECTORS["worker"]
-        if worker is None:
+        if _VECTORS["halted"]:
+            return _NoWorker()   # a delete is under way (`_vector_worker_halted`)
+        # A worker being halted stays in the slot until its thread ends (`_halt_vector_worker`), so
+        # no second one starts beside it; once it has ended, a fresh one takes its place.
+        if worker is None or worker.finished():
             # New embeddings are what an unsummarised capture's suggestion comes from.
             worker = vectors.Worker(_horizon_queue_base(), on_synced=_auto_file_suggested)
             worker.start()
             _VECTORS["worker"] = worker
         return worker
+
+
+@contextlib.asynccontextmanager
+async def _vector_worker_halted():
+    """No embedding worker runs, and none can start, for the length of the block: for deleting the
+    vectors file (turning relations off, clearing everything). Afterwards a nudge starts a fresh
+    worker when the model is still installed."""
+    with _VECTORS_LOCK:
+        _VECTORS["halted"] = True
+    try:
+        await _halt_vector_worker()
+        yield
+    finally:
+        with _VECTORS_LOCK:
+            _VECTORS["halted"] = False
+    if await asyncio.to_thread(_vectors_ready):
+        _vector_worker().nudge()
+
+
+async def _halt_vector_worker() -> None:
+    """Stop the embedding worker and wait for its thread to end, before its file is deleted: a batch
+    being embedded is written when it finishes, and into a deleted file that write would fail, or,
+    after a clear, put a vanished capture's vector into the new one. 409 while a batch still runs
+    past the wait, with the worker kept in its slot, so a retry waits for the same thread rather
+    than finding the slot empty and deleting under it. The next nudge starts a fresh worker."""
+    with _VECTORS_LOCK:
+        worker = _VECTORS["worker"]
+    if worker is None:
+        return
+    if not await asyncio.to_thread(worker.stop, 30.0):
+        raise HTTPException(409, "local relations are finishing a batch; try again in a moment")
+    with _VECTORS_LOCK:
+        if _VECTORS["worker"] is worker:
+            _VECTORS["worker"] = None
 
 
 def _horizon_queue_base():
@@ -4355,13 +4401,14 @@ async def remove_vector_model() -> dict:
     with _VECTORS_LOCK:
         if _VECTOR_DL["running"]:
             raise HTTPException(409, "the model is downloading; stop it first")
-    await asyncio.to_thread(vectors.remove, _horizon_queue_base())
+    async with _vector_worker_halted():
+        await asyncio.to_thread(vectors.remove, _horizon_queue_base())
     return await asyncio.to_thread(_vector_status)
 
 
 def _similar_or_none():
     """The similarity function readers use, or `None` when local relations are off or the index
-    cannot be read (a missing extension, a corrupt table): relations from summaries still work."""
+    cannot be read (a corrupt file, numpy missing): relations from summaries still work."""
     if not _vectors_ready():
         return None
     base = _horizon_queue_base()
@@ -5579,17 +5626,18 @@ def _forget_suggestions() -> None:
 
 
 def _matches_or_none():
-    """`vectors.mutual_matches` for filing, or `None` when local relations are off or unreadable."""
+    """`vectors.mutual_matches_each` for filing, or `None` when local relations are off or
+    unreadable."""
     if not _vectors_ready():
         return None
     base = _horizon_queue_base()
 
-    def matches(node_id: str, among: set[str]) -> list[tuple[str, float]]:
+    def matches(node_ids: list[str], among: set[str]) -> dict[str, list[tuple[str, float]]]:
         try:
-            return vectors.mutual_matches(node_id, among, base_dir=base)
+            return vectors.mutual_matches_each(node_ids, among, base_dir=base)
         except Exception as exc:  # noqa: BLE001 - a weak signal is dropped, never an error page
             _log.warning("vectors: similarity unavailable: %s", exc)
-            return []
+            return {}
 
     return matches
 
@@ -5800,6 +5848,8 @@ async def rename_horizon_node(node_id: str, body: NodeTitleRequest) -> dict:
     node = await asyncio.to_thread(_edit_or_409, node_id, title=title)
     if node is None:
         raise HTTPException(404, f"no capture {node_id!r}")
+    if await asyncio.to_thread(_vectors_ready):
+        _vector_worker().nudge()   # a capture is embedded from its title too (tags are not)
     return {"node": _node_view(node)}
 
 

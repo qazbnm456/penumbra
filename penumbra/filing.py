@@ -54,8 +54,8 @@ def _names(raw: str | None) -> list[str]:
     return [v.strip() for v in values if isinstance(v, str) and v.strip()] if isinstance(values, list) else []
 
 
-#: How many unsummarised captures one call compares by similarity, newest first. Each costs at most
-#: five vector searches (`vectors.mutual_matches`).
+#: How many unsummarised captures one call compares by similarity, newest first, all against one
+#: load of the vectors (`vectors.mutual_matches_each`).
 _SIMILAR_CANDIDATES = 30
 
 
@@ -125,9 +125,9 @@ def suggestions(
 
 def _by_similarity(similar, landing, orbits_of, dismissed, base_dir) -> list[dict]:
     """Unsummarised captures, offered for the orbit of the filed capture they most resemble, when
-    local relations are on. `similar(node_id, filed)` returns that capture's mutual matches among
-    the filed ones. The score is placed at the threshold, below any match by shared entities,
-    because similarity is the weaker signal (`vectors.py`)."""
+    local relations are on. `similar(node_ids, filed)` returns each capture's mutual matches among
+    the filed ones, for all of them at once. The score is placed at the threshold, below any match
+    by shared entities, because similarity is the weaker signal (`vectors.py`)."""
     with horizon._connect_labels(base_dir) as conn:
         rows = conn.execute(
             "SELECT id, title, origin, preview FROM labelled WHERE state = 'ready_undistilled' "
@@ -137,15 +137,16 @@ def _by_similarity(similar, landing, orbits_of, dismissed, base_dir) -> list[dic
         titles = {r[0]: r[1] or r[2] for r in conn.execute("SELECT id, title, origin FROM labelled")}
     filed = {node for node, orbits in orbits_of.items() if orbits - ({landing} if landing else set())}
     out: list[dict] = []
-    for row in rows:
+    unfiled = [row for row in rows
+               if not orbits_of.get(row["id"], set()) - ({landing} if landing else set())]
+    # One load of the vectors for every candidate, never one per candidate or per filed capture:
+    # the first version searched once for every filed capture, per candidate, and took 27 seconds
+    # at a thousand captures on an endpoint the island polls every four seconds.
+    matches = similar([row["id"] for row in unfiled], filed) if unfiled and filed else {}
+    for row in unfiled:
         node_id = row["id"]
-        if orbits_of.get(node_id, set()) - ({landing} if landing else set()):
-            continue
-        # A handful of vector searches for this capture, never one per filed capture: the first
-        # version searched once for every filed capture, per candidate, and took 27 seconds at a
-        # thousand captures on an endpoint the island polls every four seconds.
         best = None
-        for other, score in similar(node_id, filed):
+        for other, score in matches.get(node_id, []):
             if other not in filed:
                 continue
             for orbit_id in orbits_of.get(other, set()) - ({landing} if landing else set()):

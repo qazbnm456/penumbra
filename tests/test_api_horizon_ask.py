@@ -590,11 +590,17 @@ def test_an_unsummarised_capture_can_be_suggested_by_similarity(client, monkeypa
     filed = _capture("https://x.example/a", "x", entities=["REM"], state="ready", title="Sleep review")
     horizon.promote_node(filed, "sleep", create=True)
     loose = _capture("https://x.example/b", "y")
-    monkeypatch.setattr(api, "_matches_or_none",
-                        lambda: (lambda node_id, among: [(filed, 0.9)] if node_id == loose else []))
+    calls = []
+
+    def matches(node_ids, among):
+        calls.append(list(node_ids))
+        return {loose: [(filed, 0.9)]} if loose in node_ids else {}
+
+    monkeypatch.setattr(api, "_matches_or_none", lambda: matches)
     body = client.get("/horizon/suggestions").json()
     row = next(s for s in body["suggestions"] if s["node_id"] == loose)
     assert row["orbit"] == "sleep" and row["like"] == "Sleep review"
+    assert calls == [[loose]], "every candidate in one call, against one load of the vectors"
 
 
 def test_vector_status_and_a_second_download_is_refused(client, monkeypatch):
@@ -606,6 +612,53 @@ def test_vector_status_and_a_second_download_is_refused(client, monkeypatch):
     assert client.delete("/horizon/vectors").status_code == 409
     with api._VECTORS_LOCK:
         api._VECTOR_DL.update(running=False, cancel=False)
+
+
+def test_no_worker_starts_while_its_file_is_being_deleted(client, monkeypatch):
+    """Between the halt and the delete, a nudge (a rename, a capture landing) must not start a
+    worker whose batch would land in the deleted file."""
+    started = []
+
+    def remove(base):
+        started.append(api._vector_worker())
+        api._vector_worker().nudge()
+
+    monkeypatch.setattr(api.vectors, "remove", remove)
+    assert client.delete("/horizon/vectors").status_code == 200
+    assert isinstance(started[0], api._NoWorker) and api._VECTORS["worker"] is None
+
+
+def test_turning_relations_off_waits_for_the_worker_or_refuses(client, monkeypatch):
+    """A batch still embedding would be written into the file being deleted, so removing the model
+    (and clearing everything) waits for the worker's thread to end, and answers 409 if it does not."""
+    class Stuck:
+        done = False
+
+        def stop(self, timeout):
+            return self.done
+
+        def finished(self):
+            return self.done
+
+    removed, stuck = [], Stuck()
+    monkeypatch.setattr(api.vectors, "remove", lambda base: removed.append(base))
+    with api._VECTORS_LOCK:
+        api._VECTORS["worker"] = stuck
+    assert client.delete("/horizon/vectors").status_code == 409
+    # Kept, so a retry waits for the same thread instead of deleting under it, and no second
+    # worker starts beside it.
+    assert api._VECTORS["worker"] is stuck and api._vector_worker() is stuck
+    assert client.delete("/horizon/vectors").status_code == 409 and removed == []
+    assert api._VECTORS["halted"] is False, "a refused delete lifts the halt"
+    stuck.done = True
+    assert client.delete("/horizon/vectors").status_code == 200
+    assert len(removed) == 1 and api._VECTORS["worker"] is None
+    with api._VECTORS_LOCK:
+        api._VECTORS["worker"] = Stuck()
+    refused = client.post("/data/clear", json={"confirm": api._CLEAR_ALL_WORDS})
+    assert refused.status_code == 409 and "finishing a batch" in refused.json()["detail"]
+    with api._VECTORS_LOCK:
+        api._VECTORS["worker"] = None
 
 
 

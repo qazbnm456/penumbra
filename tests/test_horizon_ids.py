@@ -195,7 +195,8 @@ def _three_b_one_database(base: Path) -> None:
         conn.executescript(_OLD_MODULE_TABLES)
 
 
-#: `search.py`'s index and `concepts.py`'s alias tables as builds before the kit's search made them.
+#: `search.py`'s index, `concepts.py`'s alias tables and `vectors.py`'s `sqlite-vec` index as builds
+#: before the kit's made them (the virtual table's entry written by hand: the extension is gone).
 _OLD_MODULE_TABLES = """
 CREATE TABLE search_rows (
     rowid INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -209,10 +210,25 @@ END;
 CREATE TABLE entity_aliases (alias TEXT PRIMARY KEY, canonical TEXT NOT NULL);
 CREATE TABLE entity_seen (name TEXT NOT NULL);
 INSERT INTO search_rows (node_id, indexed_at) VALUES ('nd-0000000000000001', 1);
+CREATE TABLE vector_rows (
+    rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id TEXT NOT NULL UNIQUE REFERENCES nodes(id) ON DELETE CASCADE,
+    embedded_at REAL NOT NULL
+);
+CREATE TABLE node_vectors_info (key TEXT PRIMARY KEY, value ANY);
+CREATE TABLE node_vectors_chunks (chunk_id INTEGER PRIMARY KEY, size INTEGER, validity BLOB, rowids BLOB);
+CREATE TABLE node_vectors_rowids (rowid INTEGER PRIMARY KEY, id, chunk_id INTEGER, chunk_offset INTEGER);
+CREATE TABLE node_vectors_vector_chunks00 (rowid PRIMARY KEY, vectors BLOB NOT NULL);
+INSERT INTO node_vectors_vector_chunks00 (rowid, vectors) VALUES (1, x'00000000');
+PRAGMA writable_schema = ON;
+INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql) VALUES ('table', 'node_vectors',
+    'node_vectors', 0, 'CREATE VIRTUAL TABLE node_vectors USING vec0(embedding float[384])');
+PRAGMA writable_schema = OFF;
 """
 
 #: Every name the dropped tables left in `sqlite_master`, the FTS5 shadow tables included.
-_OLD_NAMES = ("search_rows", "search_fts", "search_rows_forget", "entity_aliases", "entity_seen")
+_OLD_NAMES = ("search_rows", "search_fts", "search_rows_forget", "entity_aliases", "entity_seen",
+              "vector_rows", "node_vectors_")
 
 
 def _shape(base: Path) -> list:
@@ -226,21 +242,29 @@ def test_a_database_from_before_the_steps_gains_them_and_a_restart_changes_nothi
     node = horizon.get_node("nd-0000000000000001", base_dir=base)
     assert node is not None and node.former_id is None
     with sqlite3.connect(horizon.index_path(base)) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS) == 13
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS) == 18
         columns = [r[1] for r in conn.execute("PRAGMA table_info(nodes)")]
         assert "former_id" in columns
         # Steps 4-9: the labels live in the kit's memory store, so their old columns are gone.
         assert not {"title", "summary", "tags", "entities", "edited", "distilled_at"} & set(columns)
-        # Steps 10-13: search and the alias tables are the kit's, so Penumbra's copies are gone.
+        # Steps 10-18: search, the alias tables and the vectors are the kit's, so Penumbra's copies
+        # are gone, the old embeddings with them; only the virtual table's inert entry stays.
         left = [r[0] for r in conn.execute("SELECT name FROM sqlite_master")
                 if r[0].startswith(_OLD_NAMES)]
         assert left == []
+        assert [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE name = 'node_vectors'")]
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'nodes_former_id'").fetchone()
         assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'horizon_meta'").fetchone()
     before = _shape(base)
     monkeypatch.setattr(horizon, "_INITIALIZED", set())
     horizon.count_nodes(base_dir=base)
     assert _shape(base) == before, "a second start leaves the schema as it was"
+    # The inert virtual table's entry breaks nothing a reader does: a capture is stored and re-keyed
+    # (which reads every table's foreign keys), and the Horizon clears.
+    stored = horizon.add_node(_source("pasted:after"), base_dir=base)
+    assert stored.id.startswith("m")
+    assert horizon.clear_all(base_dir=base) == 2
 
 
 def test_six_processes_bring_one_old_database_through_the_real_steps(tmp_path):
@@ -333,7 +357,7 @@ def test_the_dropped_tables_are_named_only_by_the_steps_that_drop_them():
     the way in."""
     import re
 
-    names = re.compile(r"\b(search_rows|search_fts|entity_aliases|entity_seen)\b")
+    names = re.compile(r"\b(search_rows|search_fts|entity_aliases|entity_seen|vector_rows|node_vectors\w*)\b")
     package = Path(horizon.__file__).parent
     found = []
     for path in sorted(package.rglob("*")):
@@ -342,8 +366,9 @@ def test_the_dropped_tables_are_named_only_by_the_steps_that_drop_them():
         for line in path.read_text(encoding="utf-8").splitlines():
             if names.search(line):
                 found.append((path.name, line.strip()))
-    drops = {f'"DROP TABLE IF EXISTS main.{n}",' for n in ("search_rows", "search_fts", "entity_aliases",
-                                                      "entity_seen")}
+    dropped = ("search_rows", "search_fts", "entity_aliases", "entity_seen", "vector_rows",
+               "node_vectors_vector_chunks00", "node_vectors_chunks", "node_vectors_rowids",
+               "node_vectors_info")
+    drops = {f'"DROP TABLE IF EXISTS main.{n}",' for n in dropped}
     assert sorted(found) == sorted(("horizon.py", d) for d in drops)
-    assert {f"DROP TABLE IF EXISTS main.{n}" for n in ("search_rows", "search_fts", "entity_aliases",
-                                                  "entity_seen")} <= set(horizon._MIGRATIONS)
+    assert {f"DROP TABLE IF EXISTS main.{n}" for n in dropped} <= set(horizon._MIGRATIONS)

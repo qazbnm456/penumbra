@@ -4,8 +4,9 @@ The package has a lossless half and a readable half, side by side:
 
 - `data/` is canonical: every capture row as stored with its text file, every orbit file exactly as
   stored, the alias table, removal records and Horizon asks, and `memory.db`, the kit's memory store
-  as SQLite (each capture's text, every label with who wrote it, the aliases). It is what a later
-  restore would read, and nothing else in the zip is meant to be parsed back.
+  as SQLite (each capture's text, every label with who wrote it, the aliases), with its vectors file
+  when local relations are on. It is what a later restore would read, and nothing else in the zip is
+  meant to be parsed back.
 - `media/` holds the generated audio, one file per orbit.
 - `markdown/` is a folder of notes that Obsidian opens as a vault, and that Logseq, Capacities,
   Heptabase, Bear, Notion, Apple Notes and NotebookLM can import: one note per capture, per orbit
@@ -32,6 +33,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import ValidationError
+from rlm_harness.memory import vectors_path
 
 from . import __version__, asks, concepts, horizon, mapstore, memory_store
 from .citations import strip_markers
@@ -248,15 +250,21 @@ def _all_asks(base_dir) -> list:
 
 
 def _put_memory_store(out: _Zip, horizon_dir: Path) -> None:
-    """The kit's memory store as `data/memory.db`, copied through SQLite's backup API: the file
-    is in WAL mode and may be written by a summary pass meanwhile, and a byte copy of it could
-    miss what the WAL holds or catch a page half written. Nothing is written when there is no
-    store yet."""
-    source_path = memory_store.store_path(horizon_dir)
+    """The kit's memory store as `data/memory.db`, and its vectors as `data/memory.db.vectors.db`
+    when local relations made any (derived, but it spares re-embedding every capture)."""
+    store = memory_store.store_path(horizon_dir)
+    _put_sqlite(out, store, "data/memory.db")
+    _put_sqlite(out, vectors_path(store), f"data/{vectors_path(store).name}")
+
+
+def _put_sqlite(out: _Zip, source_path: Path, name: str) -> None:
+    """A SQLite file copied through the backup API: it is in WAL mode and may be written by a
+    summary pass or the embedding worker meanwhile, and a byte copy could miss what the WAL holds
+    or catch a page half written. Nothing is written when the file does not exist."""
     if not source_path.is_file():
         return
     with tempfile.TemporaryDirectory() as scratch:
-        copy_path = Path(scratch) / "memory.db"
+        copy_path = Path(scratch) / "copy.db"
         source = sqlite3.connect(source_path.resolve().as_uri() + "?mode=ro", uri=True)
         try:
             copy = sqlite3.connect(copy_path)
@@ -267,7 +275,7 @@ def _put_memory_store(out: _Zip, horizon_dir: Path) -> None:
                 copy.close()
         finally:
             source.close()
-        out.put_large("data/memory.db", copy_path)
+        out.put_large(name, copy_path)
 
 
 def _orbit_files(orbits_dir: Path) -> list[Path]:

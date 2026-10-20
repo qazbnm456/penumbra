@@ -96,6 +96,7 @@ def test_the_export_holds_the_data_a_vault_bookmarks_and_a_true_manifest(client)
         assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 2
         assert conn.execute("SELECT COUNT(*) FROM labels WHERE kind = 'title'").fetchone()[0] >= 1
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+    assert "data/memory.db.vectors.db" not in names, "no vectors file until local relations made one"
 
     note = "markdown/Captures/Origami.md"
     text = zf.read(note).decode()
@@ -161,3 +162,23 @@ def test_a_footnote_never_reopens_a_code_fence():
     text = _answer_markdown("Run this:\n\n```\nls\n```", [C(source_id="s1", locator="whole", quote="q")],
                             {"s1": "Note"}.get, "t1-")
     assert "```[^" not in text and "\n\n[^t1-1]\n\n[^t1-1]:" in text
+
+
+def test_the_vectors_file_is_exported_when_local_relations_made_one(client):
+    from rlm_harness.memory_vectors import DEFAULT_MODEL, MemoryVectors
+
+    from penumbra import memory_store
+
+    _capture(client, "Lighthouses guide ships along the coast at night, every night of the year.")
+
+    class Flat:
+        def embed(self, texts):
+            return [[1.0] + [0.0] * (DEFAULT_MODEL.dimensions - 1) for _ in texts]
+
+    store = memory_store.store(horizon.DEFAULT_HORIZON_DIR)
+    assert MemoryVectors(store, model=DEFAULT_MODEL, embedder=Flat()).sync().embedded == 1
+    zf = _export(client)
+    copied = Path("exported-vectors.db")
+    copied.write_bytes(zf.read("data/memory.db.vectors.db"))
+    with sqlite3.connect(copied) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM vectors WHERE embedding IS NOT NULL").fetchone()[0] == 1
