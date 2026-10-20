@@ -291,6 +291,8 @@ def test_status_and_cancel_report_what_is_actually_happening(client):
                    "stopped_unreachable": False},
         "align": {"running": False, "error": ""},
         "organize": {"running": False, "error": ""},
+        # The Horizon's epoch, which a page holding ids sends so a clear cannot repoint them.
+        "epoch": horizon.epoch(api._horizon_queue_base()),
     }
     body = client.post("/horizon/cancel").json()
     assert body["dropped"] == 0
@@ -1305,7 +1307,9 @@ def test_an_unreadable_blocks_file_is_a_409_naming_the_right_file(client, tmp_pa
     _settle(client, node["id"])
     assert client.get(f"/horizon/{node['id']}/source").status_code == 200
 
-    horizon.node_blocks_path(node["id"]).write_text('{"not": "a list of blocks"}', encoding="utf-8")
+    # The blocks file keeps the capture's temporary id as its name.
+    blocks = horizon.node_blocks_path(horizon.get_node(node["id"]).former_id)
+    blocks.write_text('{"not": "a list of blocks"}', encoding="utf-8")
 
     read = client.get(f"/horizon/{node['id']}/source")
     assert read.status_code == 409, f"expected a 409, got {read.status_code}"
@@ -2253,11 +2257,13 @@ def test_try_again_stores_stored_text_reads_a_link_again_and_refuses_a_paste_wit
     horizon.node_blocks_path(link["id"]).unlink()
     horizon.update_node(link["id"], state="failed", error="x")
     with horizon._connect() as conn:  # a link fails before it becomes an item, never after
-        conn.execute("UPDATE nodes SET memory_rowid = NULL WHERE id = ?", (link["id"],))
+        # `link` is the queued answer, so its id is the temporary one the stored row keeps.
+        conn.execute("UPDATE nodes SET memory_rowid = NULL WHERE id = ? OR former_id = ?",
+                     (link["id"], link["id"]))
     assert client.post(f"/horizon/{link['id']}/retry").status_code == 200
     assert _settle(client, link["id"]) == "ready_undistilled", "read again"
 
-    horizon.node_blocks_path(pasted["id"]).unlink()
+    horizon.node_blocks_path(horizon.get_node(pasted["id"]).former_id).unlink()
     horizon.update_node(pasted["id"], state="failed", error="x")
     reply = client.post(f"/horizon/{pasted['id']}/retry")
     assert reply.status_code == 422 and "capture it again" in reply.json()["detail"]

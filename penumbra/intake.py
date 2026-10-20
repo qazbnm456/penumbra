@@ -111,7 +111,9 @@ class IntakeQueue:
         #: Called on the WORKER thread after a node's blocks are stored. Same contract as `_on_idle`:
         #: the policy (filing into the landing orbit) belongs to whoever configures the queue, and
         #: anything it raises is logged and swallowed, because a capture that parsed has landed.
-        self._on_ready: Callable[[str], None] | None = None
+        #: Called with the capture's id and its `former_id` (the temporary id it had before it became
+        #: a kit item), ids rather than a node that may be removed by the time the hook runs.
+        self._on_ready: Callable[[str, str | None], None] | None = None
         self._queue: queue.Queue[object] = queue.Queue()
         self._thread: threading.Thread | None = None
         #: Guards `_thread`, `_stopping`, and the pairing of "drain" with "enqueue the sentinel".
@@ -229,7 +231,7 @@ class IntakeQueue:
         self._ensure_worker()
         self._queue.put(_NUDGE)
 
-    def set_ready_hook(self, on_ready: Callable[[str], None] | None) -> None:
+    def set_ready_hook(self, on_ready: Callable[[str, str | None], None] | None) -> None:
         """Install the after-parse policy. See `_on_ready`."""
         self._on_ready = on_ready
 
@@ -302,6 +304,7 @@ class IntakeQueue:
         zero in the window between the worker's `get()` and its first state write. An earlier
         version reported `{"running": False, "current": "nd-…", "pending": 1}` — simultaneously
         denying that anything was running, naming the node being parsed, and counting a sentinel.
+        `current` is the capture's temporary id: a capture being read is not an item yet.
         """
         with self._idle:
             outstanding = self._outstanding
@@ -507,7 +510,7 @@ class IntakeQueue:
                 _log.exception("intake: could not store %s", node_id)
                 continue
             if node is not None and node.state == "ready_undistilled":
-                self._ready(node.id)
+                self._ready(node.id, node.former_id)
         try:
             remaining = bool(horizon.stored_unindexed(base_dir=self._base_dir))
         except Exception:  # noqa: BLE001
@@ -518,10 +521,10 @@ class IntakeQueue:
             with self._guard:
                 self._retry_delay = _RETRY_FIRST_S
 
-    def _ready(self, node_id: str) -> None:
+    def _ready(self, node_id: str, former_id: str | None) -> None:
         if self._on_ready is not None:
             try:
-                self._on_ready(node_id)
+                self._on_ready(node_id, former_id)
             except BaseException:  # noqa: BLE001 - see `_maybe_idle`: a policy hook never ends intake
                 _log.exception("intake: the after-parse hook failed for %s", node_id)
 
@@ -598,7 +601,8 @@ class IntakeQueue:
         finally:
             horizon.release_parse(node_id)
         if stored is not None and stored.state == "ready_undistilled":
-            self._ready(node_id)
+            # Under its item id now: the parse re-keyed it (`horizon._record_item`).
+            self._ready(stored.id, stored.former_id)
         elif stored is not None and stored.state == "stored_unindexed":
             self.arm_retry()
 

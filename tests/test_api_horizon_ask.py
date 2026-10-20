@@ -41,7 +41,8 @@ def _capture(url: str, text: str, **fields) -> str:
     )
     if fields:
         horizon.update_node(node_id, **fields)
-    return node_id
+    # Stored, the capture carries its kit item id; the temporary id is only its `former_id`.
+    return horizon.resolve_id(node_id)
 
 
 class _Process:

@@ -142,12 +142,12 @@ def _ensure(conn) -> None:
         _READY.add(key)
 
 
-def _node_text(node_id: str, base_dir: str | Path) -> str:
-    """The node's block text, capped. An unreadable blocks file indexes as empty rather than
-    failing the whole sync: the description is still searchable, and the listing already marks
-    the node as unreadable when it is opened."""
+def _node_text(node_id: str, blocks_file: str, base_dir: str | Path) -> str:
+    """The node's block text, capped, from the row's `blocks_file`. An unreadable blocks file
+    indexes as empty rather than failing the whole sync: the description is still searchable, and
+    the listing already marks the node as unreadable when it is opened."""
     try:
-        path = horizon.node_blocks_path(node_id, base_dir=base_dir)
+        path = horizon.blocks_file_path(blocks_file, base_dir=base_dir)
         blocks = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         _log.warning("search: cannot read the text of %s (%s)", node_id, exc)
@@ -185,7 +185,7 @@ def sync(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> int:
     with horizon._connect(base_dir) as conn:
         _ensure(conn)
         rows = conn.execute(
-            f"""SELECT n.id, n.title, n.summary, n.origin, n.tags, n.entities, n.updated_at
+            f"""SELECT n.id, n.title, n.summary, n.origin, n.tags, n.entities, n.updated_at, n.blocks_file
                 FROM nodes n LEFT JOIN search_rows s ON s.node_id = n.id
                 WHERE n.state IN ({placeholders})
                   AND (s.node_id IS NULL OR n.updated_at > s.indexed_at)""",
@@ -194,7 +194,7 @@ def sync(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> int:
     done = 0
     for row in rows:
         meta = grams(_meta_text(row))
-        body = grams(_node_text(row["id"], base_dir))
+        body = grams(_node_text(row["id"], row["blocks_file"], base_dir))
         with horizon._connect(base_dir) as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -487,7 +487,7 @@ def lens(tags: list[str], *, limit: int = 40, base_dir: str | Path = DEFAULT_HOR
     with horizon._connect(base_dir) as conn:
         total = conn.execute(f"SELECT COUNT(*) FROM nodes WHERE {where}", names).fetchone()[0]
         rows = conn.execute(
-            f"SELECT id, title, origin, preview, summary, tags, state, created_at FROM nodes "
+            f"SELECT id, former_id, title, origin, preview, summary, tags, state, created_at FROM nodes "
             f"WHERE {where} ORDER BY created_at DESC, id ASC LIMIT ?",
             [*names, limit],
         ).fetchall()
@@ -508,7 +508,8 @@ def lens(tags: list[str], *, limit: int = 40, base_dir: str | Path = DEFAULT_HOR
         except ValueError:
             carried = []
         captures.append({
-            "id": row["id"], "title": polish(_label(row)), "summary": polish(row["summary"] or ""),
+            "id": row["id"], "former_id": row["former_id"], "title": polish(_label(row)),
+            "summary": polish(row["summary"] or ""),
             "matched": [t for t in carried if t in wanted], "tags": carried,
             "state": row["state"], "created_at": row["created_at"], "orbits": filed[row["id"]],
         })

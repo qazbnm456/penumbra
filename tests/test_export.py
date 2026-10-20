@@ -82,7 +82,9 @@ def test_the_export_holds_the_data_a_vault_bookmarks_and_a_true_manifest(client)
 
     captures = [json.loads(line) for line in zf.read("data/captures.jsonl").decode().splitlines()]
     assert {c["id"] for c in captures} == {loose, filed}
-    assert f"data/blocks/{filed}.json" in names and "data/orbits/crafts.json" in names
+    # A blocks file keeps the capture's temporary id as its name (`blocks_file`).
+    blocks_name = horizon.get_node(filed).former_id
+    assert f"data/blocks/{blocks_name}.json" in names and "data/orbits/crafts.json" in names
     assert "README.md" in names and "bookmarks.html" in names
 
     note = "markdown/Captures/Origami.md"

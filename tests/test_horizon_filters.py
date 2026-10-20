@@ -12,14 +12,16 @@ def _node(origin: str, *, tags=(), orbits=(), state="ready", created: float = 0.
     horizon.store_blocks(node.id, Source(id="s0", kind="web", origin=origin,
                                          blocks=[SourceBlock(locator="whole", text=f"text of {origin}")]))
     horizon.update_node(node.id, state=state, title=origin.rsplit("/", 1)[-1], tags=list(tags))
+    # Stored, the capture carries its kit item id; the raw SQL below has to name that row.
+    node_id = horizon.resolve_id(node.id)
     with horizon._connect() as conn:
         if created:
-            conn.execute("UPDATE nodes SET created_at = ? WHERE id = ?", (created, node.id))
+            conn.execute("UPDATE nodes SET created_at = ? WHERE id = ?", (created, node_id))
         for i, orbit in enumerate(orbits):
             conn.execute(
-                "INSERT INTO memberships VALUES (?, ?, ?, ?)", (node.id, orbit, f"s{i + 1}", created or 1.0)
+                "INSERT INTO memberships VALUES (?, ?, ?, ?)", (node_id, orbit, f"s{i + 1}", created or 1.0)
             )
-    return node.id
+    return node_id
 
 
 def _ids(**kw) -> set[str]:

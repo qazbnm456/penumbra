@@ -15,7 +15,8 @@ AGENTS.md's table.
 ## Storage
 
     horizon/index.db               SQLite index — one row per node, WAL
-    horizon/nodes/<node_id>.json   the parsed Source's blocks, verbatim (named in `blocks_file`)
+    horizon/nodes/<nd-id>.json     the parsed Source's blocks, verbatim (named in `blocks_file`,
+                                   by the capture's temporary id, which the file keeps)
     horizon/memory.db              the kit's memory store: each capture's text as an item
                                    (`memory_store.py`; the row's `memory_rowid`)
 
@@ -33,8 +34,9 @@ decides where your data lives", applied to a fourth thing rather than given a fi
 - **`journal_mode` belongs in `_initialize`, never in `_connect`**, and `busy_timeout` and
   `foreign_keys` belong in `_connect`, every time. Each of those three has its measurement in the
   function that owns it.
-- **A caller-supplied node id is validated before it becomes a path** (`node_blocks_path`). Hex ids
-  are filename-safe only when this module MINTED them.
+- **No caller-supplied id becomes a path.** A capture's blocks file is named by its temporary id at
+  minting (`node_blocks_path`, which validates that shape) and found afterwards only through the
+  row's `blocks_file`, itself validated before it becomes a path (`blocks_file_path`).
 - **Import cost, since it is not obvious:** importing this reaches `rlm_harness` transitively —
   `orbit.py` -> `ingest.py` -> `parsers/web.py`, whose SSRF guard is `rlm_harness.tools.fetch`.
   It needs neither the `api` nor the `chatterbox` extra, and `rlm-harness` is a core dependency, so
@@ -51,6 +53,7 @@ import hashlib
 import json
 import logging
 import re
+import secrets
 import shutil
 import sqlite3
 import threading
@@ -95,7 +98,8 @@ _JSON_COLUMNS = ("tags", "entities", "preview", "flags", "edited")
 
 #: Every column `update_node` will write. A field not in here is rejected rather than silently
 #: ignored: a typo'd keyword that quietly does nothing is the failure mode this is guarding, and it
-#: also keeps `id`/`created_at` out of reach, which are the two things that must never change.
+#: also keeps `id`/`created_at` out of reach: `created_at` never changes, and `id` changes once, only
+#: by the re-key that makes a capture a kit item (`_record_item`).
 _UPDATABLE = frozenset(
     {"kind", "origin", "state", "error", "title", "summary", "tags", "entities", "preview", "flags", "chars",
      "distilled_at"}
@@ -145,7 +149,8 @@ CREATE TABLE IF NOT EXISTS pending_memberships (
     recorded_at REAL NOT NULL,
     PRIMARY KEY (node_id, orbit_id)
 );
--- Reserved for the switch to the kit's item ids: a capture's temporary id and the item it became.
+-- Unused: superseded by `nodes.former_id` (a step below). It stays because a shipped baseline is
+-- never edited, and a step dropping it would be undone by this `IF NOT EXISTS` at every start.
 CREATE TABLE IF NOT EXISTS node_ids (
     nd_id     TEXT PRIMARY KEY,
     memory_id TEXT NOT NULL
@@ -184,7 +189,13 @@ _APPLICATION_ID = 0x504E4D31
 #: runs only the steps it lacks, so both end identical and no step has to guess which it is facing.
 #: Append; never edit or reorder a step that has shipped. Restarted once, empty, when the layout moved
 #: to the kit's memory store (see `_APPLICATION_ID`; invariant 84).
-_MIGRATIONS: tuple[str, ...] = ()
+_MIGRATIONS: tuple[str, ...] = (
+    # 1-2: a capture's temporary id, kept when it is re-keyed to its kit item id (`_record_item`).
+    "ALTER TABLE nodes ADD COLUMN former_id TEXT",
+    "CREATE UNIQUE INDEX IF NOT EXISTS nodes_former_id ON nodes(former_id)",
+    # 3: the Horizon's epoch (`epoch`), replaced by every clear.
+    "CREATE TABLE IF NOT EXISTS horizon_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+)
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -216,20 +227,68 @@ def index_path(base_dir: str | Path = DEFAULT_HORIZON_DIR) -> Path:
     return horizon_dir(base_dir) / "index.db"
 
 
-#: The exact shape `node_id_for` mints. A WHITELIST, deliberately coupled to the minting format:
-#: changing one without the other should fail loudly here rather than widen a path.
+#: The exact shape `node_id_for` mints: a capture's temporary id, and the name of its blocks file. A
+#: WHITELIST, deliberately coupled to the minting format: changing one without the other should fail
+#: loudly here rather than widen a path.
 _NODE_ID_RE = re.compile(r"^nd-[0-9a-f]{16}$")
+
+#: A capture's id once it is a kit memory item: the item's own id (`m<n>`).
+_ITEM_ID_RE = re.compile(r"^m[1-9][0-9]{0,18}$")
 
 
 def is_node_id(value: str) -> bool:
-    """Whether `value` is the shape `node_id_for` mints.
+    """Whether `value` is a capture id: the temporary shape `node_id_for` mints, or the kit item id
+    a capture takes once it is stored (`m<n>`).
 
     Public because a caller needs to tell "not an id" from "no such node" WITHOUT reaching for the
     pattern itself — the HTTP layer maps the first to 400 and the second to 404 (invariant 27), and
     `get_node` cannot make that distinction on its own: it is a SQL lookup, so a malformed id simply
     misses and looks identical to a missing one.
     """
-    return bool(_NODE_ID_RE.match(value))
+    return bool(_NODE_ID_RE.match(value) or _ITEM_ID_RE.match(value))
+
+
+def resolve_id(value: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> str | None:
+    """The current id of the capture `value` names, or `None` when there is none. An item id is
+    looked up as itself; a temporary id is the row still carrying it or the row it became
+    (`former_id`). SQL only: it never parses the row, so it also resolves a row that cannot be
+    read (which is how `DELETE /horizon/{id}` removes one)."""
+    if not is_node_id(value):
+        return None
+    with _connect(base_dir) as conn:
+        row = conn.execute("SELECT id FROM nodes WHERE id = ? OR former_id = ?", (value, value)).fetchone()
+    return None if row is None else row[0]
+
+
+def ids_of(value: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> set[str]:
+    """Every id the capture `value` names may be held by: its current id and its temporary id, or
+    nothing when there is no such capture. SQL only, like `resolve_id`."""
+    if not is_node_id(value):
+        return set()
+    with _connect(base_dir) as conn:
+        row = conn.execute("SELECT id, former_id FROM nodes WHERE id = ? OR former_id = ?",
+                           (value, value)).fetchone()
+    return set() if row is None else {key for key in row if key}
+
+
+def _resolved_in(conn: sqlite3.Connection, node_id: str) -> str:
+    """`_resolved` on a connection already inside a write transaction, so the answer cannot be
+    overtaken by a re-key committed between the lookup and the write."""
+    if _NODE_ID_RE.match(node_id):
+        row = conn.execute("SELECT id FROM nodes WHERE id = ? OR former_id = ?",
+                           (node_id, node_id)).fetchone()
+        if row is not None:
+            return row[0]
+    return node_id
+
+
+def _resolved(node_id: str, base_dir: str | Path) -> str:
+    """`node_id` as the row now carries it, for the public functions that take one: a temporary id
+    whose capture became an item names that item. Anything else is returned unchanged, so a missing
+    capture still misses where it did."""
+    if _NODE_ID_RE.match(node_id):
+        return resolve_id(node_id, base_dir=base_dir) or node_id
+    return node_id
 
 
 def node_blocks_path(node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> Path:
@@ -256,7 +315,9 @@ def node_blocks_path(node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR
 
 
 def node_id_for(origin: str, text: str = "", *, origin_is_the_identity: bool | None = None) -> str:
-    """A node's stable handle.
+    """A capture's temporary handle, and the name of its blocks file: stable for the same content,
+    so it dedupes a capture at submission; once the capture is a kit item its id is the item's and
+    this one stays as `former_id`.
 
     Hashed from the ORIGIN for a URL, so **dedupe is free and automatic**: the same URL captured
     twice is the same row, which is the property invariant 12 already requires of `--source`. It has
@@ -349,6 +410,7 @@ def _initialize(path: Path) -> None:
         if key in _INITIALIZED and path.exists():
             return
         _INITIALIZED.discard(key)
+        _EPOCHS.pop(key, None)   # a database rebuilt underneath has a new epoch
         _set_aside_an_old_layout(path)
         last: sqlite3.OperationalError | None = None
         for attempt in range(10):
@@ -371,6 +433,34 @@ def _initialize(path: Path) -> None:
             finally:
                 conn.close()
         raise last  # every iteration either returns or assigns this, so it is never None here
+
+
+#: The epoch of each Horizon database (by resolved path), so a request's check never opens SQLite on
+#: the event loop (`api`'s epoch middleware). Loaded from `horizon_meta` by `epoch`, replaced by a
+#: clear right after its commit, dropped when `_initialize` rebuilds a database removed underneath.
+_EPOCHS: dict[str, str] = {}
+
+
+def epoch(base_dir: str | Path = DEFAULT_HORIZON_DIR) -> str:
+    """The Horizon's epoch: a random token that every clear replaces. An `m<n>` is never reused
+    within one store, but a clear starts a new store numbered from `m1`, so a page holding ids from
+    before a clear sends its epoch and is refused rather than naming a different capture. Created
+    lazily with `INSERT OR IGNORE` and read back, so two first readers agree."""
+    key = str(index_path(base_dir).resolve())
+    cached = _EPOCHS.get(key)
+    if cached is not None:
+        return cached
+    with _connect(base_dir) as conn:
+        conn.execute("INSERT OR IGNORE INTO horizon_meta (key, value) VALUES ('epoch', ?)",
+                     (secrets.token_hex(8),))
+        value = conn.execute("SELECT value FROM horizon_meta WHERE key = 'epoch'").fetchone()[0]
+    _EPOCHS[key] = value
+    return value
+
+
+def cached_epoch(base_dir: str | Path = DEFAULT_HORIZON_DIR) -> str | None:
+    """The epoch if this process has read it, without touching SQLite (for the event loop)."""
+    return _EPOCHS.get(str(index_path(base_dir).resolve()))
 
 
 def _set_aside_an_old_layout(path: Path) -> None:
@@ -422,8 +512,9 @@ def _connect(base_dir: str | Path = DEFAULT_HORIZON_DIR) -> Iterator[sqlite3.Con
 #: Captures being made into kit items right now, by temporary id, so only one caller indexes a
 #: capture at a time: a direct capture claims its id when it inserts the row, intake when the parse
 #: starts, an orbit recording a waiting or failed capture (`_claim_unstored`), and `index_stored` for
-#: the rows it takes. Guarded by `_CAPTURE_LOCK`; a crash empties it,
-#: and `stored_unindexed` rows are what recovery picks up.
+#: the rows it takes. Always the temporary id (`former_id or id`), which a capture keeps as it is
+#: re-keyed, so a claim taken before the re-key is released by the same id after it. Guarded by
+#: `_CAPTURE_LOCK`; a crash empties it, and `stored_unindexed` rows are what recovery picks up.
 _INDEXING: set[str] = set()
 
 #: Set by `clear_all` in the same hold of `_CAPTURE_LOCK` that finds `_INDEXING` empty, so no claim
@@ -469,6 +560,12 @@ def _blocks_file_path(blocks_file: str, base_dir: str | Path) -> Path:
     return node_blocks_path(stem, base_dir=base_dir)
 
 
+def blocks_file_path(blocks_file: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> Path:
+    """Where a row's blocks are, from its `blocks_file` column: the one way a reader outside this
+    module finds a capture's text, since the file keeps the capture's temporary id as its name."""
+    return _blocks_file_path(blocks_file, base_dir)
+
+
 def _provenance(origin: str) -> str:
     """Pasted text is the reader's own words; everything else was taken from a source."""
     return "said" if origin.startswith("pasted:") else "observed"
@@ -483,17 +580,20 @@ def _become_item(node_id: str, *, base_dir: str | Path) -> Node | None:
     holds the lock) leaves the row `stored_unindexed` with the message, for `index_stored` to retry;
     anything else makes it `failed` with the message. The caller holds the claim.
 
-    Returns the node as it now is, or `None` when it was removed meanwhile, in which case the item
-    this call added is purged and the blocks file unlinked, so nothing of a removed capture is kept.
+    Returns the node as it now is, under its item id (`m<n>`, the temporary id kept as
+    `former_id`), or `None` when it was removed meanwhile, in which case the item this call added is
+    purged and the blocks file unlinked, so nothing of a removed capture is kept.
     """
     with _connect(base_dir) as conn:
-        row = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        row = conn.execute("SELECT * FROM nodes WHERE id = ? OR former_id = ?", (node_id, node_id)).fetchone()
     if row is None:
         return None
+    #: The id the item is made for and found by (`meta.node_id`), before and after the re-key.
+    temp = row["former_id"] or row["id"]
     if row["memory_rowid"] is not None:
         # Already an item (an orbit stored it while it also waited in the queue): a retry only has
         # to say so, or a `stored_unindexed` row would wait for a store that has nothing to do.
-        current = _record_item(node_id, row["memory_rowid"], row["created_at"], base_dir=base_dir)
+        current = _record_item(temp, row["memory_rowid"], row["created_at"], base_dir=base_dir)
         return None if current is None else _row_to_node(current)
     store = memory_store.store(base_dir)
     added = None
@@ -502,12 +602,12 @@ def _become_item(node_id: str, *, base_dir: str | Path) -> Node | None:
         text = "\n".join(b.get("text", "") for b in blocks if isinstance(b, dict))
         # Only an item of THIS row (its capture time): a removed capture of the same content had the
         # same id, and its item is about to be purged.
-        found = [i for i in store.find_meta("node_id", node_id)
+        found = [i for i in store.find_meta("node_id", temp)
                  if i.meta.get("captured_at") == row["created_at"]]
         if found:
             item = found[0]
         else:
-            meta = {"node_id": node_id, "kind": row["kind"], "preview": json.loads(row["preview"] or "{}"),
+            meta = {"node_id": temp, "kind": row["kind"], "preview": json.loads(row["preview"] or "{}"),
                     "flags": json.loads(row["flags"] or "[]"), "captured_at": row["created_at"]}
             if not text.strip():
                 meta["empty_text"] = True
@@ -521,15 +621,26 @@ def _become_item(node_id: str, *, base_dir: str | Path) -> Node | None:
             # This row only: a capture of the same content made since keeps its own state.
             changed = conn.execute(
                 "UPDATE nodes SET state = ?, error = ?, updated_at = ? WHERE id = ? AND created_at = ?",
-                (state, f"{type(exc).__name__}: {exc}"[:500], time.time(), node_id, row["created_at"]),
+                (state, f"{type(exc).__name__}: {exc}"[:500], time.time(), row["id"], row["created_at"]),
             ).rowcount
-        return get_node(node_id, base_dir=base_dir) if changed else None
+        return get_node(row["id"], base_dir=base_dir) if changed else None
     rowid = int(item.id[1:])
-    current = _record_item(node_id, rowid, row["created_at"], base_dir=base_dir)
+    try:
+        current = _record_item(temp, rowid, row["created_at"], base_dir=base_dir)
+    except sqlite3.IntegrityError as exc:
+        # The item id is taken by another row: the kit store was deleted under a kept index and
+        # numbers from `m1` again. The capture lands `failed` with the reason instead of raising.
+        _log.warning("horizon: %s could not take its item id %s: %s", temp, item.id, exc)
+        with _connect(base_dir) as conn:
+            conn.execute("UPDATE nodes SET state = 'failed', error = ?, updated_at = ? WHERE id = ? "
+                         "AND created_at = ?",
+                         (f"the memory store's item id {item.id} is already in use; clear the Horizon "
+                          "or restore its memory.db"[:500], time.time(), row["id"], row["created_at"]))
+        return get_node(row["id"], base_dir=base_dir)
     if current is None or current["created_at"] != row["created_at"]:
         # Removed while the item was being stored: nothing of it may stay, whether this call added
         # the item or found it. `remove_node` purges what it can see; this purges what it could not.
-        _unlink_blocks_of_gone(node_id, row["blocks_file"], base_dir=base_dir)
+        _unlink_blocks_of_gone(row["blocks_file"], base_dir=base_dir)
         _purge_items([item.id], reason="removed while it was being stored", base_dir=base_dir)
         return None
     if added is not None and current["memory_rowid"] != rowid:
@@ -538,37 +649,72 @@ def _become_item(node_id: str, *, base_dir: str | Path) -> Node | None:
 
 
 def _record_item(
-    node_id: str, rowid: int, created_at: float, *, base_dir: str | Path
+    temp_id: str, rowid: int, created_at: float, *, base_dir: str | Path
 ) -> sqlite3.Row | None:
-    """In ONE transaction: point the row at its item, mark a waiting or failed row ready, and write
-    the orbit memberships recorded while it waited. Serialised with `remove_node`'s transaction, so
-    a removal either sees the item or makes this find no row. Only the row captured at `created_at`:
-    a capture of the same content made since under the same id is another row, and its own text
-    becomes its own item. Returns the row now carrying the id, if any."""
+    """In ONE transaction: point the row at its item and re-key it to the item's id (`m<n>`, the
+    temporary id kept as `former_id`), mark a waiting or failed row ready, and write the orbit
+    memberships recorded while it waited. Serialised with `remove_node`'s transaction, so a removal
+    either sees the item or makes this find no row. Only the row captured at `created_at`: a capture
+    of the same content made since under the same temporary id is another row, and its own text
+    becomes its own item. Returns the row now carrying the id, if any.
+
+    The re-key updates every table holding a foreign key to `nodes(id)`, read from the file rather
+    than listed, since some (the search and vector rows, dismissed suggestions, organising notes)
+    are created by other modules without `ON UPDATE CASCADE`; `defer_foreign_keys` lets the parent
+    and its children change in one transaction. Raises `sqlite3.IntegrityError` when the item id is
+    already a row's (see `_become_item`)."""
+    now = time.time()
     with _connect(base_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            changed = conn.execute(
-                "UPDATE nodes SET memory_rowid = ?, "
-                "state = CASE WHEN state IN ('stored_unindexed', 'failed') THEN 'ready_undistilled' "
-                "ELSE state END, "
-                "error = CASE WHEN state IN ('stored_unindexed', 'failed') THEN NULL ELSE error END, "
-                "updated_at = ? WHERE id = ? AND created_at = ? "
-                "AND (memory_rowid IS NULL OR memory_rowid = ?)",
-                (rowid, time.time(), node_id, created_at, rowid)).rowcount
-            if changed:
+            conn.execute("PRAGMA defer_foreign_keys = ON")   # reset by every COMMIT
+            row = conn.execute(
+                "SELECT id, memory_rowid FROM nodes WHERE (id = ? OR former_id = ?) AND created_at = ?",
+                (temp_id, temp_id, created_at)).fetchone()
+            target = None
+            if row is not None and row["memory_rowid"] in (None, rowid):
+                target = row["id"]
+                ready = ("state = CASE WHEN state IN ('stored_unindexed', 'failed') THEN 'ready_undistilled' "
+                         "ELSE state END, "
+                         "error = CASE WHEN state IN ('stored_unindexed', 'failed') THEN NULL ELSE error END")
+                if _NODE_ID_RE.match(target):
+                    item_id = f"m{rowid}"
+                    conn.execute(f"UPDATE nodes SET id = ?, former_id = ?, memory_rowid = ?, {ready}, "
+                                 "updated_at = ? WHERE id = ?", (item_id, target, rowid, now, target))
+                    for table, column in _node_children(conn):
+                        conn.execute(f'UPDATE "{table}" SET "{column}" = ? WHERE "{column}" = ?',
+                                     (item_id, target))
+                    target = item_id
+                else:
+                    conn.execute(f"UPDATE nodes SET memory_rowid = ?, {ready}, updated_at = ? WHERE id = ?",
+                                 (rowid, now, target))
                 conn.execute(
                     "INSERT OR IGNORE INTO memberships (node_id, orbit_id, source_id, promoted_at) "
                     "SELECT node_id, orbit_id, source_id, recorded_at FROM pending_memberships "
                     "WHERE node_id = ?",
-                    (node_id,))
-                conn.execute("DELETE FROM pending_memberships WHERE node_id = ?", (node_id,))
-            current = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+                    (target,))
+                conn.execute("DELETE FROM pending_memberships WHERE node_id = ?", (target,))
+            if target is not None:
+                current = conn.execute("SELECT * FROM nodes WHERE id = ?", (target,)).fetchone()
+            else:
+                current = conn.execute("SELECT * FROM nodes WHERE id = ? OR former_id = ?",
+                                       (temp_id, temp_id)).fetchone()
             conn.execute("COMMIT")
         except BaseException:
             conn.execute("ROLLBACK")
             raise
     return current
+
+
+def _node_children(conn: sqlite3.Connection) -> list[tuple[str, str]]:
+    """Every (table, column) in the file with a foreign key to `nodes(id)`."""
+    tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+    children = []
+    for table in tables:
+        for fk in conn.execute('SELECT "table", "from" FROM pragma_foreign_key_list(?)', (table,)):
+            if fk[0] == "nodes":
+                children.append((table, fk[1]))
+    return children
 
 
 def _purge_items(
@@ -614,18 +760,23 @@ def index_stored(
 ) -> Node | None:
     """Turn a `stored_unindexed` capture (or a `failed` one whose blocks are stored) into a kit item.
     Never fetches or parses: the blocks are already on disk. `claimed=True` means the caller holds
-    the claim; otherwise this takes it, and returns `None` without doing anything when another
-    caller holds it. Returns the node as it now is."""
-    if not claimed and not _claim(node_id):
+    the claim; otherwise this takes it, under the capture's temporary id like every claim, and
+    returns `None` without doing anything when another caller holds it. Returns the node as it now
+    is, under its item id once it is one."""
+    node = get_node(node_id, base_dir=base_dir)
+    if node is None:
+        return None
+    key = node.former_id or node.id
+    if not claimed and not _claim(key):
         return None
     try:
-        node = get_node(node_id, base_dir=base_dir)
+        node = get_node(key, base_dir=base_dir)
         if node is None or node.state not in ("stored_unindexed", "failed"):
             return node
-        return _become_item(node_id, base_dir=base_dir)
+        return _become_item(node.id, base_dir=base_dir)
     finally:
         if not claimed:
-            _release(node_id)
+            _release(key)
 
 
 def stored_unindexed(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> list[str]:
@@ -638,7 +789,8 @@ def stored_unindexed(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> list[str]
 def has_stored_blocks(node: Node, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> bool:
     """Whether a capture's blocks are on disk, so a retry can store them rather than fetch again."""
     with _connect(base_dir) as conn:
-        row = conn.execute("SELECT blocks_file FROM nodes WHERE id = ?", (node.id,)).fetchone()
+        row = conn.execute("SELECT blocks_file FROM nodes WHERE id = ? OR former_id = ?",
+                           (node.id, node.id)).fetchone()
     return row is not None and _blocks_file_path(row["blocks_file"], base_dir).exists()
 
 
@@ -690,7 +842,9 @@ def add_node(
     # and nothing retries. The same run left `row.chars = 80` against 40 characters of blocks on
     # disk, because every losing thread still wrote the file.
     with _CAPTURE_LOCK, _connect(base_dir) as conn:
-        existing = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        # By the temporary id, which a capture keeps as `former_id` once it is an item.
+        existing = conn.execute("SELECT * FROM nodes WHERE id = ? OR former_id = ?",
+                                (node_id, node_id)).fetchone()
         if existing is not None:
             return _row_to_node(existing)
         if blocks_path.exists():
@@ -768,7 +922,8 @@ def add_pending_node(
     #: refuses anything that is not `is_url` before it reaches the queue, so this stays the URL set.
     node_id = node_id_for(origin, origin_is_the_identity=True)
     with _CAPTURE_LOCK, _connect(base_dir) as conn:
-        existing = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        existing = conn.execute("SELECT * FROM nodes WHERE id = ? OR former_id = ?",
+                                (node_id, node_id)).fetchone()
         if existing is not None:
             return _row_to_node(existing)
         conn.execute(
@@ -801,7 +956,12 @@ def store_blocks(
     is the moment there is something to learn it from. `error` is cleared explicitly, so a node that
     failed and was retried does not keep the old message next to a successful parse.
     """
-    path = node_blocks_path(node_id, base_dir=base_dir)
+    with _connect(base_dir) as conn:
+        named = conn.execute("SELECT blocks_file FROM nodes WHERE id = ? OR former_id = ?",
+                             (node_id, node_id)).fetchone()
+    if named is None:
+        return None
+    path = _blocks_file_path(named["blocks_file"], base_dir)
     atomic_write_text(
         path, json.dumps([block.model_dump() for block in source.blocks], ensure_ascii=False)
     )
@@ -822,14 +982,15 @@ def store_blocks(
         # would silently get this stale text instead of what it just fetched. Measured before this
         # line existed: a re-capture with 10 characters of fresh text reported `chars=4`, the length
         # of the orphan.
-        path.unlink(missing_ok=True)
+        _unlink_blocks_of_gone(named["blocks_file"], base_dir=base_dir)
         return None
-    return _become_item(node_id, base_dir=base_dir)
+    return _become_item(node.id, base_dir=base_dir)
 
 
 def get_node(node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> Node | None:
+    """The capture `node_id` names, by its id or its temporary id (`former_id`)."""
     with _connect(base_dir) as conn:
-        row = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        row = conn.execute("SELECT * FROM nodes WHERE id = ? OR former_id = ?", (node_id, node_id)).fetchone()
     return _row_to_node(row) if row is not None else None
 
 
@@ -1064,6 +1225,7 @@ def update_node(
     An unknown field raises rather than being ignored, so a typo is a test failure and not a value
     that silently never persisted.
     """
+    node_id = _resolved(node_id, base_dir)
     unknown = set(fields) - _UPDATABLE
     if unknown:
         raise ValueError(f"not updatable: {sorted(unknown)} (updatable: {sorted(_UPDATABLE)})")
@@ -1076,6 +1238,7 @@ def update_node(
     with _connect(base_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            node_id = _resolved_in(conn, node_id)   # again under the lock: a re-key may have landed
             if respect_edits:
                 for column in _edited(conn, node_id):
                     checked.pop(column, None)
@@ -1112,6 +1275,7 @@ def _edited(conn: sqlite3.Connection, node_id: str) -> list[str]:
 
 def edited_fields(node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> list[str]:
     """Which of `EDITABLE` the reader has set on this node, in that order."""
+    node_id = _resolved(node_id, base_dir)
     with _connect(base_dir) as conn:
         return _edited(conn, node_id)
 
@@ -1123,6 +1287,7 @@ def edit_node(
     `edited` in the same write, so a later summary (`update_node(respect_edits=True)`) leaves them
     alone. No model call (invariant 80). The caller cleans the values; this validates
     their type. `None` when there is no such node."""
+    node_id = _resolved(node_id, base_dir)
     unknown = set(fields) - set(EDITABLE)
     if unknown or not fields:
         raise ValueError(f"not editable: {sorted(unknown)} (editable: {list(EDITABLE)})")
@@ -1130,6 +1295,7 @@ def edit_node(
     with _connect(base_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            node_id = _resolved_in(conn, node_id)   # again under the lock: a re-key may have landed
             if conn.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone() is None:
                 conn.execute("ROLLBACK")
                 return None
@@ -1188,10 +1354,11 @@ def claim_node(
     `add_node`'s `ON CONFLICT` uses, and the reason neither can be expressed as a read followed by an
     `update_node`. Still a DELTA (invariant 78): one column, named explicitly.
     """
+    node_id = _resolved(node_id, base_dir)
     with _connect(base_dir) as conn:
         changed = conn.execute(
-            "UPDATE nodes SET state = ?, updated_at = ? WHERE id = ? AND state = ?",
-            (to, time.time(), node_id, expect),
+            "UPDATE nodes SET state = ?, updated_at = ? WHERE (id = ? OR former_id = ?) AND state = ?",
+            (to, time.time(), node_id, node_id, expect),
         ).rowcount
     return bool(changed)
 
@@ -1222,17 +1389,21 @@ def remove_node(
     `only_if_unfiled` removes it only while it is filed into no orbit, checked inside the same
     transaction: deleting an orbit whole removes its captures this way, after its memberships went,
     so one filed into another orbit in the meantime stays."""
-    node_blocks_path(node_id, base_dir=base_dir)   # refuses a value that is not a node id at all
+    if not is_node_id(node_id):
+        raise ValueError(f"not a node id: {node_id!r}")
     with _connect(base_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            # Either id names it; SQL only, so a row that cannot be parsed is still removed.
             row = conn.execute(
-                "SELECT title, origin, preview, tags, memory_rowid, blocks_file FROM nodes WHERE id = ?",
-                (node_id,),
+                "SELECT id, former_id, title, origin, preview, tags, memory_rowid, blocks_file FROM nodes "
+                "WHERE id = ? OR former_id = ?",
+                (node_id, node_id),
             ).fetchone()
             if row is None:
                 conn.execute("ROLLBACK")
                 return False
+            node_id = row["id"]
             orbits = [r[0] for r in conn.execute(
                 "SELECT orbit_id FROM memberships WHERE node_id = ?", (node_id,)
             ).fetchall()]
@@ -1241,7 +1412,6 @@ def remove_node(
             if only_if_unfiled and (orbits or pending):
                 conn.execute("ROLLBACK")
                 return False
-            conn.execute("DELETE FROM node_ids WHERE nd_id = ?", (node_id,))
             changed = conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,)).rowcount
             if changed and row is not None:
                 try:
@@ -1273,18 +1443,21 @@ def remove_node(
     # meantime) never costs a kept capture its text. Its own item, plus any a crash left that no row
     # points at (`find_meta`); one being added right now is purged by `_become_item`, which then
     # finds no row.
-    _unlink_blocks_of_gone(node_id, row["blocks_file"], base_dir=base_dir)
+    _unlink_blocks_of_gone(row["blocks_file"], base_dir=base_dir)
     items = [f"m{row['memory_rowid']}"] if row["memory_rowid"] is not None else []
-    _purge_items(items, reason="removed by the reader", base_dir=base_dir, node_id=node_id)
+    # By the temporary id: the items carry it (`meta.node_id`), and so does a re-capture's row.
+    _purge_items(items, reason="removed by the reader", base_dir=base_dir,
+                 node_id=row["former_id"] or row["id"])
     return bool(changed)
 
 
-def _unlink_blocks_of_gone(node_id: str, blocks_file: str, *, base_dir: str | Path) -> None:
-    """Delete a removed capture's blocks file, under `_CAPTURE_LOCK` and only while no row carries
-    the id: `add_node` writes a re-capture's blocks and row in one hold of that lock, so a removal
-    never deletes the text of a capture of the same content made since."""
-    with _CAPTURE_LOCK:
-        if get_node(node_id, base_dir=base_dir) is None:
+def _unlink_blocks_of_gone(blocks_file: str, *, base_dir: str | Path) -> None:
+    """Delete a removed capture's blocks file, under `_CAPTURE_LOCK` and only while no row uses the
+    file: `add_node` writes a re-capture's blocks and row in one hold of that lock, and a re-capture
+    of the same content has the same file under a fresh temporary id, so a removal naming the old
+    item id never deletes the text of a capture made since."""
+    with _CAPTURE_LOCK, _connect(base_dir) as conn:
+        if conn.execute("SELECT 1 FROM nodes WHERE blocks_file = ?", (blocks_file,)).fetchone() is None:
             _blocks_file_path(blocks_file, base_dir).unlink(missing_ok=True)
 
 
@@ -1361,10 +1534,14 @@ def _clear_all(base_dir: str | Path) -> int:
             for table in _CLEARED_TABLES:
                 if table in present:
                     conn.execute(f"DELETE FROM {table}")  # a fixed name from the tuple above
+            # A new epoch in the same transaction: no reader sees the old one over an empty store.
+            new_epoch = secrets.token_hex(8)
+            conn.execute("INSERT OR REPLACE INTO horizon_meta (key, value) VALUES ('epoch', ?)", (new_epoch,))
             conn.execute("COMMIT")
         except BaseException:
             conn.execute("ROLLBACK")
             raise
+    _EPOCHS[str(index_path(base_dir).resolve())] = new_epoch
     nodes = horizon_dir(base_dir) / "nodes"
     if nodes.is_dir():
         for path in nodes.glob("nd-*.json"):
@@ -1451,12 +1628,17 @@ def node_source(node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> 
     node = get_node(node_id, base_dir=base_dir)
     if node is None:
         return None
-    path = node_blocks_path(node_id, base_dir=base_dir)
+    with _connect(base_dir) as conn:
+        named = conn.execute("SELECT blocks_file FROM nodes WHERE id = ? OR former_id = ?",
+                             (node.id, node.id)).fetchone()
+    if named is None:
+        return None
+    path = _blocks_file_path(named["blocks_file"], base_dir)
     if not path.exists():
         return None
     blocks = json.loads(path.read_text(encoding="utf-8"))
     return Source(
-        id=node_id,
+        id=node.id,
         kind=node.kind,
         origin=node.origin,
         blocks=blocks,
@@ -1493,6 +1675,7 @@ class UnreadableNodeText(ValueError):
 
 
 def memberships_for(node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> list[NodeMembership]:
+    node_id = _resolved(node_id, base_dir)
     with _connect(base_dir) as conn:
         rows = conn.execute(
             "SELECT * FROM memberships WHERE node_id = ? ORDER BY promoted_at ASC", (node_id,)
@@ -1508,13 +1691,15 @@ def memberships_for_nodes(
     out: dict[str, list[NodeMembership]] = {node_id: [] for node_id in node_ids}
     if not node_ids:
         return out
-    marks = ", ".join("?" for _ in node_ids)
+    # Keyed by the ids the caller passed, a temporary one included.
+    asked = {_resolved(node_id, base_dir): node_id for node_id in node_ids}
+    marks = ", ".join("?" for _ in asked)
     with _connect(base_dir) as conn:
         rows = conn.execute(
-            f"SELECT * FROM memberships WHERE node_id IN ({marks}) ORDER BY promoted_at ASC", node_ids
+            f"SELECT * FROM memberships WHERE node_id IN ({marks}) ORDER BY promoted_at ASC", list(asked)
         ).fetchall()
     for row in rows:
-        out[row["node_id"]].append(NodeMembership.model_validate(dict(row)))
+        out[asked[row["node_id"]]].append(NodeMembership.model_validate(dict(row)))
     return out
 
 
@@ -1640,9 +1825,11 @@ def record_orbit_sources(
             node = add_node(source, origin_is_the_identity=is_url(source.origin), base_dir=base_dir)
         except CaptureRemoved:
             continue  # removed in between; the next call records it again
-        if node.state in ("queued", "failed") and _claim_unstored(node.id, base_dir=base_dir):
+        claim = node.former_id or node.id
+        if node.state in ("queued", "failed") and _claim_unstored(node.id, claim, base_dir=base_dir):
             # A capture of this address that is waiting or failed takes this text. Claimed FIRST, under
-            # the same lock and state check as intake, so the two never both store it.
+            # the same lock and state check as intake, so the two never both store it. Released under
+            # the id it was claimed by: storing it re-keys the row to its item id.
             try:
                 try:
                     node = store_blocks(node.id, source, base_dir=base_dir) or node
@@ -1652,15 +1839,17 @@ def record_orbit_sources(
                     _log.exception("horizon: could not store %s for %s", node.id, orbit_id)
                     continue
             finally:
-                _release(node.id)
+                _release(claim)
         try:
             with _connect(base_dir) as conn:
                 # One transaction, serialised with `_record_item`'s: a pending membership written
                 # after the capture's pending ones were drained would wait for nothing, forever.
                 conn.execute("BEGIN IMMEDIATE")
                 try:
+                    # Either id: intake may have re-keyed the row to its item id since `add_node`.
                     is_item = conn.execute(
-                        "SELECT memory_rowid IS NOT NULL FROM nodes WHERE id = ?", (node.id,)).fetchone()
+                        "SELECT memory_rowid IS NOT NULL, id FROM nodes WHERE id = ? OR former_id = ?",
+                        (node.id, node.id)).fetchone()
                     if is_item is None:
                         conn.execute("ROLLBACK")
                         continue  # removed in between; the next call records it again
@@ -1671,7 +1860,7 @@ def record_orbit_sources(
                     conn.execute(
                         f"INSERT OR IGNORE INTO {table} (node_id, orbit_id, source_id, {column}) "
                         "VALUES (?, ?, ?, ?)",
-                        (node.id, slug(orbit_id), source.id, time.time()),
+                        (is_item[1], slug(orbit_id), source.id, time.time()),
                     )
                     conn.execute("COMMIT")
                 except BaseException:
@@ -1693,17 +1882,18 @@ def _pending_sources(orbit_id: str, *, base_dir: str | Path) -> set[str]:
             "WHERE p.orbit_id = ? AND n.state != 'failed'", (slug(orbit_id),)).fetchall()}
 
 
-def _claim_unstored(node_id: str, *, base_dir: str | Path) -> bool:
-    """Claim a capture that has no stored text yet, only while its raw row is still `queued` or
-    `failed`: intake claims the same way, so the one that wins stores it and the other leaves it."""
+def _claim_unstored(node_id: str, claim: str, *, base_dir: str | Path) -> bool:
+    """Claim a capture (under `claim`, its temporary id) that has no stored text yet, only while its
+    raw row is still `queued` or `failed`: intake claims the same way, so the one that wins stores it
+    and the other leaves it."""
     with _CAPTURE_LOCK:
-        if _CLEARING["on"] or node_id in _INDEXING:
+        if _CLEARING["on"] or claim in _INDEXING:
             return False
         with _connect(base_dir) as conn:
             row = conn.execute("SELECT state FROM nodes WHERE id = ?", (node_id,)).fetchone()
         if row is None or row["state"] not in ("queued", "failed"):
             return False
-        _INDEXING.add(node_id)
+        _INDEXING.add(claim)
         return True
 
 
@@ -1792,6 +1982,7 @@ def promote_node(
     alternative — a 409 — would make "add everything from this tag" fail on the one item the reader
     had already added by hand.
     """
+    node_id = _resolved(node_id, base_dir)
     try:
         source = node_source(node_id, base_dir=base_dir)
     except UNREADABLE_SOURCE as exc:
@@ -1919,13 +2110,22 @@ def promote_node(
     )
     try:
         with _connect(base_dir) as conn:
-            # `INSERT OR REPLACE`, because promoting the same node into the same orbit twice is
-            # the same "not an error" case as above — the second one just restates where it went.
-            conn.execute(
-                "INSERT OR REPLACE INTO memberships (node_id, orbit_id, source_id, promoted_at) "
-                "VALUES (?, ?, ?, ?)",
-                (membership.node_id, membership.orbit_id, membership.source_id, membership.promoted_at),
-            )
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                # Resolved again under the lock: a waiting capture may have become an item (and
+                # taken its item id) while the orbit file was written, and is not "removed".
+                membership = membership.model_copy(update={"node_id": _resolved_in(conn, node_id)})
+                # `INSERT OR REPLACE`, because promoting the same node into the same orbit twice
+                # is the same "not an error" case as above — the second one restates where it went.
+                conn.execute(
+                    "INSERT OR REPLACE INTO memberships (node_id, orbit_id, source_id, promoted_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (membership.node_id, membership.orbit_id, membership.source_id, membership.promoted_at),
+                )
+                conn.execute("COMMIT")
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
     except sqlite3.IntegrityError as exc:
         # **The node was REMOVED while this promotion was running.** `memberships.node_id` has a
         # foreign key, so the insert is refused — and by then `mutate_orbit` has already written

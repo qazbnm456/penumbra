@@ -23,6 +23,10 @@ def _offline(monkeypatch):
 
     monkeypatch.setattr(ingest, "parse_web", fake)
     monkeypatch.setenv("PN_FILING_MODE", "manual")
+    # Each test has a fresh Horizon whose items number from `m1` again, so an id the extension
+    # captured in an earlier test would otherwise still count as "just made" here.
+    with api._EXTENSION_RECENT_LOCK:
+        api._EXTENSION_RECENT.clear()
     yield
     if intake._SHARED is not None:
         intake._SHARED.stop(timeout=5)
@@ -295,6 +299,8 @@ def test_the_icon_state_machine_captures_withdraws_cancels_and_recovers():
     assert out.returncode == 0, out.stderr
     got = json.loads(out.stdout.strip().splitlines()[-1])
     assert got["afterCapture"]["state"] == "saved" and got["afterCapture"]["mine"] is True
+    # The temporary id, not the item id: item ids start again from `m1` after a clear.
+    assert got["afterCapture"]["nodeId"] == "nd-1" and got["undoSent"] == "nd-1"
     assert got["withdrawn"] == {"undo": True, "state": None}
     assert got["cancelFlag"] is True
     assert got["cancelled"] == {"undo": True, "state": None}

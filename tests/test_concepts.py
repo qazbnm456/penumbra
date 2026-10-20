@@ -14,7 +14,8 @@ def _capture(url: str, entities, text="t") -> str:
     horizon.store_blocks(node_id, Source(id=node_id, kind="web", origin=url,
                                           blocks=[SourceBlock(locator="whole", text=text)]), base_dir=BASE)
     horizon.update_node(node_id, base_dir=BASE, state="ready", entities=list(entities))
-    return node_id
+    # Stored, the capture carries its kit item id; the temporary id is only its `former_id`.
+    return horizon.resolve_id(node_id, base_dir=BASE)
 
 
 def test_unseen_names_are_the_ones_no_alignment_has_considered():

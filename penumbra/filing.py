@@ -168,6 +168,8 @@ def _by_similarity(similar, landing, orbits_of, dismissed, base_dir) -> list[dic
 
 
 def dismiss(node_id: str, orbit_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> None:
+    """Never suggest this capture for this orbit again. Either of the capture's ids names it."""
+    node_id = horizon.resolve_id(node_id, base_dir=base_dir) or node_id
     with horizon._connect(base_dir) as conn:
         _ensure(conn)
         conn.execute(

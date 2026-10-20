@@ -88,8 +88,8 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
     bridges between orbits that share an entity."""
     with horizon._connect(base_dir) as conn:
         rows = conn.execute(
-            """SELECT n.id, n.state, n.entities, n.tags, n.created_at, n.title, n.origin, n.preview,
-                      m.orbit_id, m.promoted_at
+            """SELECT n.id, n.former_id, n.state, n.entities, n.tags, n.created_at, n.title, n.origin,
+                      n.preview, m.orbit_id, m.promoted_at
                FROM nodes n LEFT JOIN memberships m ON m.node_id = n.id"""
         ).fetchall()
 
@@ -115,7 +115,10 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
             total["count"] += 1
             if row["state"] == "ready":
                 total["distilled"] += 1
-        item = {"id": node_id, "title": _label(row), "state": row["state"], "orbits": filed_in[node_id],
+        # `former_id`: a moon still being read is drawn under its temporary id, and the page re-keys
+        # what it holds when the capture becomes an item.
+        item = {"id": node_id, "former_id": row["former_id"], "title": _label(row), "state": row["state"],
+                "orbits": filed_in[node_id],
                 # So a tag lens can light the moon itself, not only the planet it circles.
                 "tags": _names(row["tags"])}
         if row["orbit_id"] is None:

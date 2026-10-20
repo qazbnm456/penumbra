@@ -23,7 +23,8 @@ def _capture(url: str, text: str = "text", *, state="ready", tags=(), entities=(
     if title:
         fields["title"] = title
     horizon.update_node(node_id, base_dir=BASE, **fields)
-    return node_id
+    # Stored, the capture carries its kit item id; the temporary id is only its `former_id`.
+    return horizon.resolve_id(node_id, base_dir=BASE)
 
 
 def _file(node_id: str, orbit_id: str) -> None:
@@ -144,7 +145,8 @@ def test_each_drawn_moon_and_loose_dot_carries_a_name_newest_first():
     (orbit,) = found["orbits"]
     assert [m["title"] for m in orbit["moons"]] == ["Newer", "Older"]
     assert orbit["moons"][0] == {
-        "id": second, "title": "Newer", "state": "ready_undistilled", "orbits": ["sleep"], "tags": [],
+        "id": second, "former_id": horizon.node_id_for("https://x.example/b"), "title": "Newer",
+        "state": "ready_undistilled", "orbits": ["sleep"], "tags": [],
     }
     assert [i["title"] for i in found["loose"]["items"]] == ["Loose one"]
 
