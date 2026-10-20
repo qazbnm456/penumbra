@@ -65,6 +65,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import TypeAdapter, ValidationError
+from rlm_harness.memory import SHORT_LIMIT, fold_name
 
 from . import memory_store
 from .atomic import atomic_write_text
@@ -92,18 +93,25 @@ DEFAULT_HORIZON_DIR = "horizon"
 #: because something else was being written is the least acceptable failure this feature can have.
 _BUSY_TIMEOUT_SECONDS = 15.0
 
-#: Columns stored as JSON text. Named once so `_row_to_node` and `update_node` cannot disagree about
-#: which ones need encoding — two lists that must match are two lists that will drift.
-_JSON_COLUMNS = ("tags", "entities", "preview", "flags", "edited")
+#: Columns stored as JSON text in `nodes`. Named once so `_row_to_node` and `update_node` cannot
+#: disagree about which ones need encoding — two lists that must match are two lists that will drift.
+_JSON_COLUMNS = ("preview", "flags")
+
+#: The labels a row carries once read through `_connect_labels` (the `labelled` view), from the
+#: kit's memory store. JSON text where the kit keeps a list.
+_LABEL_KEYS = ("title", "summary", "tags", "entities", "edited", "distilled_at")
+_LABEL_JSON = ("tags", "entities", "edited")
+
+#: How many failed summaries take a capture out of the automatic queue (the kit's `max_failures`):
+#: a press that names it still runs it.
+DISTILL_MAX_FAILURES = 3
 
 #: Every column `update_node` will write. A field not in here is rejected rather than silently
 #: ignored: a typo'd keyword that quietly does nothing is the failure mode this is guarding, and it
 #: also keeps `id`/`created_at` out of reach: `created_at` never changes, and `id` changes once, only
 #: by the re-key that makes a capture a kit item (`_record_item`).
-_UPDATABLE = frozenset(
-    {"kind", "origin", "state", "error", "title", "summary", "tags", "entities", "preview", "flags", "chars",
-     "distilled_at"}
-)
+#: Labels are not here: they live in the kit's memory store (`horizon.edit_node`, the summary pass).
+_UPDATABLE = frozenset({"kind", "origin", "state", "error", "preview", "flags", "chars"})
 
 #: One validator per `Node` field, built once. `_UPDATABLE` checks the column NAME; this checks the
 #: VALUE, and without it `update_node(id, state="bogus")` committed happily and then every later
@@ -195,6 +203,14 @@ _MIGRATIONS: tuple[str, ...] = (
     "CREATE UNIQUE INDEX IF NOT EXISTS nodes_former_id ON nodes(former_id)",
     # 3: the Horizon's epoch (`epoch`), replaced by every clear.
     "CREATE TABLE IF NOT EXISTS horizon_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    # 4-9: a capture's labels live in the kit's memory store, read through `labelled`; the columns
+    # that held them before go, so a read left behind fails rather than finding stale values.
+    "ALTER TABLE nodes DROP COLUMN title",
+    "ALTER TABLE nodes DROP COLUMN summary",
+    "ALTER TABLE nodes DROP COLUMN tags",
+    "ALTER TABLE nodes DROP COLUMN entities",
+    "ALTER TABLE nodes DROP COLUMN edited",
+    "ALTER TABLE nodes DROP COLUMN distilled_at",
 )
 
 
@@ -509,6 +525,69 @@ def _connect(base_dir: str | Path = DEFAULT_HORIZON_DIR) -> Iterator[sqlite3.Con
         conn.close()
 
 
+#: A capture's labels, read from the kit's memory store (attached read-only as `mem`) beside its row:
+#: the current title, summary, tags and entities (`current_labels`: a reader's `said` row over the
+#: summary's `inferred` one), which of the title and tags are the reader's (`edited`), when the
+#: summary landed (`distilled_at`) and how often it failed (`distill_tries`, `distill_error`). A
+#: TEMP view, so it lives with the connection; every label reader selects from it as
+#: `labelled nodes`, so `nodes.tags` and the rest read as they always did.
+_LABELLED_VIEW = """CREATE TEMP VIEW IF NOT EXISTS labelled AS SELECT n.*,
+    (SELECT json_extract(c.value_json, '$') FROM mem.current_labels c
+     WHERE c.item_id = n.memory_rowid AND c.kind = 'title') AS title,
+    (SELECT json_extract(c.value_json, '$') FROM mem.current_labels c
+     WHERE c.item_id = n.memory_rowid AND c.kind = 'summary') AS summary,
+    COALESCE((SELECT c.value_json FROM mem.current_labels c
+              WHERE c.item_id = n.memory_rowid AND c.kind = 'tags'), '[]') AS tags,
+    COALESCE((SELECT c.value_json FROM mem.current_labels c
+              WHERE c.item_id = n.memory_rowid AND c.kind = 'entities'), '[]') AS entities,
+    (SELECT json_group_array(c.kind) FROM mem.current_labels c
+     WHERE c.item_id = n.memory_rowid AND c.provenance = 'said' AND c.kind IN ('title', 'tags')) AS edited,
+    (SELECT MAX(l.created_at) FROM mem.labels l
+     WHERE l.item_id = n.memory_rowid AND l.kind = 'summary' AND l.provenance = 'inferred') AS distilled_at,
+    (SELECT COUNT(*) FROM mem.distill_failures f WHERE f.item_id = n.memory_rowid) AS distill_tries,
+    (SELECT f.error FROM mem.distill_failures f WHERE f.item_id = n.memory_rowid
+     ORDER BY f.id DESC LIMIT 1) AS distill_error
+    FROM main.nodes n"""
+
+
+@contextmanager
+def _connect_labels(base_dir: str | Path = DEFAULT_HORIZON_DIR) -> Iterator[sqlite3.Connection]:
+    """`_connect`, with the kit's memory store attached read-only as `mem` and the `labelled` view.
+
+    Its own connection, never the base `_connect`: every transaction on an attached connection holds
+    a read snapshot of `memory.db`, which keeps a purge's TRUNCATE checkpoint from finishing. The
+    store is made to exist first (a fresh directory, a read racing a clear between the erase and
+    the new store), and the URI is percent-encoded: an unencoded `#` or `?` in the path attaches an
+    empty database without an error. `mode=ro`, so nothing here can write the kit's tables.
+
+    A label is written in the kit FIRST and outside any transaction here, and read back after this
+    side commits: a transaction's `mem` snapshot is fixed when it begins."""
+    memory_store.store(base_dir)
+    path = index_path(base_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _initialize(path)
+    store_uri = memory_store.store_path(base_dir).resolve().as_uri() + "?mode=ro"
+    conn = sqlite3.connect(path, timeout=_BUSY_TIMEOUT_SECONDS, isolation_level=None, uri=True)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA busy_timeout={int(_BUSY_TIMEOUT_SECONDS * 1000)}")
+        conn.execute("PRAGMA foreign_keys=ON")
+        try:
+            conn.execute("ATTACH ? AS mem", (store_uri,))
+        except sqlite3.OperationalError:
+            memory_store.store(base_dir)   # erased under this read by a clear: the new one is made
+            conn.execute("ATTACH ? AS mem", (store_uri,))
+        conn.execute(_LABELLED_VIEW)
+        yield conn
+    finally:
+        conn.close()
+
+
+def _readings(base_dir: str | Path) -> dict[str, str]:
+    """How the kit reads each entity name (aliases, case variants of a canonical), by folded name."""
+    return memory_store.store(base_dir).readings()
+
+
 #: Captures being made into kit items right now, by temporary id, so only one caller indexes a
 #: capture at a time: a direct capture claims its id when it inserts the row, intake when the parse
 #: starts, an orbit recording a waiting or failed capture (`_claim_unstored`), and `index_stored` for
@@ -594,7 +673,7 @@ def _become_item(node_id: str, *, base_dir: str | Path) -> Node | None:
         # Already an item (an orbit stored it while it also waited in the queue): a retry only has
         # to say so, or a `stored_unindexed` row would wait for a store that has nothing to do.
         current = _record_item(temp, row["memory_rowid"], row["created_at"], base_dir=base_dir)
-        return None if current is None else _row_to_node(current)
+        return None if current is None else get_node(current["id"], base_dir=base_dir)
     store = memory_store.store(base_dir)
     added = None
     try:
@@ -626,7 +705,7 @@ def _become_item(node_id: str, *, base_dir: str | Path) -> Node | None:
         return get_node(row["id"], base_dir=base_dir) if changed else None
     rowid = int(item.id[1:])
     try:
-        current = _record_item(temp, rowid, row["created_at"], base_dir=base_dir)
+        current = _record_item(temp, rowid, row["created_at"], chars=len(item.text), base_dir=base_dir)
     except sqlite3.IntegrityError as exc:
         # The item id is taken by another row: the kit store was deleted under a kept index and
         # numbers from `m1` again. The capture lands `failed` with the reason instead of raising.
@@ -645,11 +724,11 @@ def _become_item(node_id: str, *, base_dir: str | Path) -> Node | None:
         return None
     if added is not None and current["memory_rowid"] != rowid:
         _purge_items([added.id], reason="a second copy of a capture already stored", base_dir=base_dir)
-    return _row_to_node(current)
+    return get_node(current["id"], base_dir=base_dir)
 
 
 def _record_item(
-    temp_id: str, rowid: int, created_at: float, *, base_dir: str | Path
+    temp_id: str, rowid: int, created_at: float, *, chars: int | None = None, base_dir: str | Path
 ) -> sqlite3.Row | None:
     """In ONE transaction: point the row at its item and re-key it to the item's id (`m<n>`, the
     temporary id kept as `former_id`), mark a waiting or failed row ready, and write the orbit
@@ -662,7 +741,8 @@ def _record_item(
     than listed, since some (the search and vector rows, dismissed suggestions, organising notes)
     are created by other modules without `ON UPDATE CASCADE`; `defer_foreign_keys` lets the parent
     and its children change in one transaction. Raises `sqlite3.IntegrityError` when the item id is
-    already a row's (see `_become_item`)."""
+    already a row's (see `_become_item`). `chars` records the item's text length, the kit's own
+    measure of short and long, so the summary queue can defer long captures without reading text."""
     now = time.time()
     with _connect(base_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -680,14 +760,15 @@ def _record_item(
                 if _NODE_ID_RE.match(target):
                     item_id = f"m{rowid}"
                     conn.execute(f"UPDATE nodes SET id = ?, former_id = ?, memory_rowid = ?, {ready}, "
-                                 "updated_at = ? WHERE id = ?", (item_id, target, rowid, now, target))
+                                 "chars = COALESCE(?, chars), updated_at = ? WHERE id = ?",
+                                 (item_id, target, rowid, chars, now, target))
                     for table, column in _node_children(conn):
                         conn.execute(f'UPDATE "{table}" SET "{column}" = ? WHERE "{column}" = ?',
                                      (item_id, target))
                     target = item_id
                 else:
-                    conn.execute(f"UPDATE nodes SET memory_rowid = ?, {ready}, updated_at = ? WHERE id = ?",
-                                 (rowid, now, target))
+                    conn.execute(f"UPDATE nodes SET memory_rowid = ?, {ready}, chars = COALESCE(?, chars), "
+                                 "updated_at = ? WHERE id = ?", (rowid, chars, now, target))
                 conn.execute(
                     "INSERT OR IGNORE INTO memberships (node_id, orbit_id, source_id, promoted_at) "
                     "SELECT node_id, orbit_id, source_id, recorded_at FROM pending_memberships "
@@ -794,10 +875,27 @@ def has_stored_blocks(node: Node, *, base_dir: str | Path = DEFAULT_HORIZON_DIR)
     return row is not None and _blocks_file_path(row["blocks_file"], base_dir).exists()
 
 
-def _row_to_node(row: sqlite3.Row) -> Node:
+def _row_to_node(row: sqlite3.Row, readings: dict[str, str] | None = None) -> Node:
+    """A `Node` from a row read through `labelled` (`_connect_labels`). A row read without its
+    labels raises rather than coming back with empty ones (every label field of `Node` has a
+    default). Entities are read as the kit reads them when `readings` is given."""
     data = dict(row)
-    for column in _JSON_COLUMNS:
+    missing = [key for key in _LABEL_KEYS if key not in data]
+    if missing:
+        raise KeyError(f"a capture row read without its labels {missing}: read it through `labelled`")
+    for column in (*_JSON_COLUMNS, *_LABEL_JSON):
         data[column] = json.loads(data[column])
+    data["edited"] = [kind for kind in EDITABLE if kind in data["edited"]]
+    if readings:
+        seen: list[str] = []
+        for name in data["entities"]:
+            read = readings.get(fold_name(name), name)
+            if read not in seen:
+                seen.append(read)
+        data["entities"] = seen
+    tries, error = data.pop("distill_tries", 0) or 0, data.pop("distill_error", None)
+    data["summary_paused"] = ({"tries": int(tries), "error": error or ""}
+                              if tries >= DISTILL_MAX_FAILURES and data["summary"] is None else None)
     return Node.model_validate(data)
 
 
@@ -843,10 +941,10 @@ def add_node(
     # disk, because every losing thread still wrote the file.
     with _CAPTURE_LOCK, _connect(base_dir) as conn:
         # By the temporary id, which a capture keeps as `former_id` once it is an item.
-        existing = conn.execute("SELECT * FROM nodes WHERE id = ? OR former_id = ?",
+        existing = conn.execute("SELECT id FROM nodes WHERE id = ? OR former_id = ?",
                                 (node_id, node_id)).fetchone()
         if existing is not None:
-            return _row_to_node(existing)
+            return get_node(existing["id"], base_dir=base_dir)
         if blocks_path.exists():
             # Blocks with no row: a previous capture died between the two writes below. ADOPT them
             # rather than overwrite — the surviving text may already have been read, and adopting is
@@ -922,17 +1020,16 @@ def add_pending_node(
     #: refuses anything that is not `is_url` before it reaches the queue, so this stays the URL set.
     node_id = node_id_for(origin, origin_is_the_identity=True)
     with _CAPTURE_LOCK, _connect(base_dir) as conn:
-        existing = conn.execute("SELECT * FROM nodes WHERE id = ? OR former_id = ?",
+        existing = conn.execute("SELECT id FROM nodes WHERE id = ? OR former_id = ?",
                                 (node_id, node_id)).fetchone()
         if existing is not None:
-            return _row_to_node(existing)
+            return get_node(existing["id"], base_dir=base_dir)
         conn.execute(
             "INSERT INTO nodes (id, kind, origin, state, blocks_file, created_at, updated_at) "
             "VALUES (?, ?, ?, 'queued', ?, ?, ?) ON CONFLICT(id) DO NOTHING",
             (node_id, kind, origin, f"{node_id}.json", now, now),
         )
-        row = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
-    return _row_to_node(row)
+    return get_node(node_id, base_dir=base_dir)
 
 
 def store_blocks(
@@ -988,10 +1085,11 @@ def store_blocks(
 
 
 def get_node(node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> Node | None:
-    """The capture `node_id` names, by its id or its temporary id (`former_id`)."""
-    with _connect(base_dir) as conn:
-        row = conn.execute("SELECT * FROM nodes WHERE id = ? OR former_id = ?", (node_id, node_id)).fetchone()
-    return _row_to_node(row) if row is not None else None
+    """The capture `node_id` names, by its id or its temporary id (`former_id`), with its labels."""
+    with _connect_labels(base_dir) as conn:
+        row = conn.execute("SELECT * FROM labelled WHERE id = ? OR former_id = ?",
+                           (node_id, node_id)).fetchone()
+    return _row_to_node(row, _readings(base_dir)) if row is not None else None
 
 
 #: The columns a text query looks in, and the reason the Horizon needs no second store to be
@@ -1128,15 +1226,17 @@ def _where(
             parts.append(f"state IN ({', '.join('?' for _ in filters.states)})")
             params.extend(filters.states)
         if filters.tags:
-            marks = ", ".join("?" for _ in filters.tags)
+            # Folded, as the kit stores a tag, so `Rust` finds `rust`.
+            wanted = list(dict.fromkeys(fold_name(tag) for tag in filters.tags))
+            marks = ", ".join("?" for _ in wanted)
             if filters.tag_mode == "all":
                 parts.append(
                     f"(SELECT COUNT(DISTINCT value) FROM json_each(nodes.tags) WHERE value IN ({marks})) = ?"
                 )
-                params.extend([*filters.tags, len(set(filters.tags))])
+                params.extend([*wanted, len(wanted)])
             else:
                 parts.append(f"EXISTS (SELECT 1 FROM json_each(nodes.tags) WHERE value IN ({marks}))")
-                params.extend(filters.tags)
+                params.extend(wanted)
         if filters.orbits:
             named = [o for o in filters.orbits if o != NO_ORBIT]
             either = []
@@ -1172,10 +1272,11 @@ def list_nodes(
     past what an orbit could hold — a listing that loads all of it has the problem Tier 0 exists
     to avoid, one level up."""
     where, params = _where(state, query, filters)
-    sql = f"SELECT * FROM nodes{where} ORDER BY {SORTS.get(sort, SORTS['newest'])} LIMIT ? OFFSET ?"
+    sql = f"SELECT * FROM labelled nodes{where} ORDER BY {SORTS.get(sort, SORTS['newest'])} LIMIT ? OFFSET ?"
     params.extend([limit, offset])
-    with _connect(base_dir) as conn:
+    with _connect_labels(base_dir) as conn:
         rows = conn.execute(sql, params).fetchall()
+    readings = _readings(base_dir)
     #: **ONE UNREADABLE ROW MUST NOT COST THE LISTING.** `_row_to_node` calls `json.loads` and
     #: `Node.model_validate`, and this endpoint is the application's FRONT PAGE — a single row that
     #: a hand-edit, a partial restore or a future required field made unparseable turned it into a
@@ -1188,7 +1289,7 @@ def list_nodes(
     out: list[Node] = []
     for row in rows:
         try:
-            out.append(_row_to_node(row))
+            out.append(_row_to_node(row, readings))
         except (json.JSONDecodeError, ValidationError, TypeError) as exc:
             _log.warning("horizon: skipping unreadable row %r (%s)", dict(row).get("id"), exc)
     return out
@@ -1202,19 +1303,18 @@ def count_nodes(
     filters: NodeFilter | None = None,
 ) -> int:
     where, params = _where(state, query, filters)
-    with _connect(base_dir) as conn:
-        return int(conn.execute(f"SELECT COUNT(*) FROM nodes{where}", params).fetchone()[0])
+    with _connect_labels(base_dir) as conn:
+        return int(conn.execute(f"SELECT COUNT(*) FROM labelled nodes{where}", params).fetchone()[0])
 
 
 def update_node(
-    node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR, respect_edits: bool = False, **fields: object
+    node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR, **fields: object
 ) -> Node | None:
     """Apply a DELTA — only the fields named — and return the node as it now is, or `None` if there
     is no such node.
 
-    `respect_edits` is the summary pass's write: it leaves out every field the reader has edited
-    (`edit_node`), checked inside the same transaction as the write, so an edit made while the model
-    was thinking is not overwritten by the answer.
+    Labels are not written here: they are rows in the kit's memory store (`edit_node`, the summary
+    pass), so a reader's label and the summary's never share a column to overwrite.
 
     **This is invariant 34's rule at Tier 0, and the signature is what enforces it.** There is
     deliberately no `save_node(node)`: a whole-object write is precisely the fault invariant 34
@@ -1239,16 +1339,12 @@ def update_node(
         conn.execute("BEGIN IMMEDIATE")
         try:
             node_id = _resolved_in(conn, node_id)   # again under the lock: a re-key may have landed
-            if respect_edits:
-                for column in _edited(conn, node_id):
-                    checked.pop(column, None)
             _write_fields(conn, node_id, checked)
-            row = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
             conn.execute("COMMIT")
         except BaseException:
             conn.execute("ROLLBACK")
             raise
-    return _row_to_node(row) if row is not None else None
+    return get_node(node_id, base_dir=base_dir)   # after the commit, with its labels
 
 
 def _write_fields(conn: sqlite3.Connection, node_id: str, checked: dict[str, object]) -> None:
@@ -1268,45 +1364,45 @@ def _write_fields(conn: sqlite3.Connection, node_id: str, checked: dict[str, obj
 EDITABLE = ("title", "tags")
 
 
-def _edited(conn: sqlite3.Connection, node_id: str) -> list[str]:
-    row = conn.execute("SELECT edited FROM nodes WHERE id = ?", (node_id,)).fetchone()
-    return json.loads(row["edited"]) if row is not None else []
+class NotAnItem(ValueError):
+    """The capture is still being read, so it has no labels yet to change (it becomes a kit item
+    once its text is stored)."""
 
 
 def edited_fields(node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> list[str]:
     """Which of `EDITABLE` the reader has set on this node, in that order."""
-    node_id = _resolved(node_id, base_dir)
-    with _connect(base_dir) as conn:
-        return _edited(conn, node_id)
+    node = get_node(node_id, base_dir=base_dir)
+    return node.edited if node is not None else []
 
 
 def edit_node(
     node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR, **fields: object
 ) -> Node | None:
-    """The reader's own title or tags, written as a delta (invariant 78) and recorded in the row's
-    `edited` in the same write, so a later summary (`update_node(respect_edits=True)`) leaves them
-    alone. No model call (invariant 80). The caller cleans the values; this validates
-    their type. `None` when there is no such node."""
+    """The reader's own title or tags, written to the kit's memory store as `said` labels, which
+    outrank every `inferred` one the summary pass writes (invariant 83), before or after it. No model
+    call (invariant 80). The caller cleans the values; this validates their type. `None` when there
+    is no such node; `NotAnItem` while the capture is still being read (it has no item to label)."""
     node_id = _resolved(node_id, base_dir)
     unknown = set(fields) - set(EDITABLE)
     if unknown or not fields:
         raise ValueError(f"not editable: {sorted(unknown)} (editable: {list(EDITABLE)})")
     checked = {column: _FIELD_ADAPTERS[column].validate_python(value) for column, value in fields.items()}
     with _connect(base_dir) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            node_id = _resolved_in(conn, node_id)   # again under the lock: a re-key may have landed
-            if conn.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone() is None:
-                conn.execute("ROLLBACK")
-                return None
-            marked = [column for column in EDITABLE if column in set(_edited(conn, node_id)) | set(checked)]
-            _write_fields(conn, node_id, {**checked, "edited": marked})
-            row = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
-            conn.execute("COMMIT")
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
-    return _row_to_node(row)
+        row = conn.execute("SELECT id, memory_rowid FROM nodes WHERE id = ? OR former_id = ?",
+                           (node_id, node_id)).fetchone()
+    if row is None:
+        return None
+    if row["memory_rowid"] is None:
+        raise NotAnItem(f"capture {node_id} is still being read")
+    try:
+        # The kit first, outside any transaction here; the row is read back after (`_connect_labels`).
+        memory_store.store(base_dir).label(row["id"], provenance="said", **checked)
+    except KeyError:
+        return None   # removed in between
+    with _connect(base_dir) as conn:
+        # So the search index and the vectors, which follow `updated_at`, read the new label.
+        conn.execute("UPDATE nodes SET updated_at = ? WHERE id = ?", (time.time(), row["id"]))
+    return get_node(row["id"], base_dir=base_dir)
 
 
 #: The states that mean "a process owns this node RIGHT NOW", and what each one falls back to once
@@ -1336,7 +1432,71 @@ def reset_interrupted_states(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> d
             claim_node(node_id, expect=stale, to=fallback, base_dir=base_dir)
         if ids:
             recovered[stale] = ids
+    # The state follows the labels: a summary written just before a crash, with the state write
+    # after it lost, is summarised, not waiting.
+    with _connect_labels(base_dir) as conn:
+        summarised = [r[0] for r in conn.execute(
+            "SELECT id FROM labelled WHERE state = 'ready_undistilled' AND summary IS NOT NULL").fetchall()]
+    for node_id in summarised:
+        claim_node(node_id, expect="ready_undistilled", to="ready", base_dir=base_dir)
     return recovered
+
+
+def waiting_ids(
+    *,
+    base_dir: str | Path = DEFAULT_HORIZON_DIR,
+    node_ids: list[str] | None = None,
+    orbit_id: str | None = None,
+    defer_long: bool = False,
+    limit: int | None = None,
+) -> list[str]:
+    """`waiting` without the lengths."""
+    return [node_id for node_id, _ in waiting(base_dir=base_dir, node_ids=node_ids, orbit_id=orbit_id,
+                                              defer_long=defer_long, limit=limit)]
+
+
+def waiting(
+    *,
+    base_dir: str | Path = DEFAULT_HORIZON_DIR,
+    node_ids: list[str] | None = None,
+    orbit_id: str | None = None,
+    defer_long: bool = False,
+    limit: int | None = None,
+) -> list[tuple[str, int]]:
+    """The captures waiting for a summary, newest first: the one queue every summary pass takes from
+    and every count reports. A capture is waiting when it is a kit item (its id is the item's),
+    `ready_undistilled`, has no summary label, and the kit has not given up on it (fewer than
+    `DISTILL_MAX_FAILURES` failures); `defer_long` keeps only short ones (`nodes.chars` is the kit's
+    own length, set when the item was made). `node_ids` names captures, and a capture named that way
+    is waiting despite the cap, as a press that names it runs it; `orbit_id` narrows to one orbit.
+
+    Penumbra's query rather than the kit's `unlabelled`, which would also pick items with no live
+    capture: one whose row is still under its temporary id, one a crash left, one being purged."""
+    # `_READABLE` too: a row the listing cannot show is not counted or taken either.
+    where = ["n.memory_rowid IS NOT NULL", "n.id LIKE 'm%'", "n.state = 'ready_undistilled'",
+             "n.summary IS NULL", _READABLE]
+    params: list[object] = []
+    if node_ids is not None:
+        wanted = [_resolved(n, base_dir) for n in node_ids]
+        if not wanted:
+            return []
+        where.append(f"n.id IN ({', '.join('?' for _ in wanted)})")
+        params.extend(wanted)
+    else:
+        where.append(f"n.distill_tries < {DISTILL_MAX_FAILURES}")
+    if orbit_id is not None:
+        where.append("EXISTS (SELECT 1 FROM memberships m WHERE m.node_id = n.id AND m.orbit_id = ?)")
+        params.append(slug(orbit_id))
+    if defer_long:
+        where.append("n.chars <= ?")
+        params.append(SHORT_LIMIT)
+    sql = (f"SELECT n.id, n.chars FROM labelled n WHERE {' AND '.join(where)} "
+           "ORDER BY n.created_at DESC, n.id ASC")
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(int(limit))
+    with _connect_labels(base_dir) as conn:
+        return [(r[0], int(r[1] or 0)) for r in conn.execute(sql, params).fetchall()]
 
 
 def claim_node(
@@ -1391,12 +1551,13 @@ def remove_node(
     so one filed into another orbit in the meantime stays."""
     if not is_node_id(node_id):
         raise ValueError(f"not a node id: {node_id!r}")
-    with _connect(base_dir) as conn:
+    with _connect_labels(base_dir) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            # Either id names it; SQL only, so a row that cannot be parsed is still removed.
+            # Either id names it; SQL only, so a row that cannot be parsed is still removed. Its
+            # labels come from the kit, for the removal record.
             row = conn.execute(
-                "SELECT id, former_id, title, origin, preview, tags, memory_rowid, blocks_file FROM nodes "
+                "SELECT id, former_id, title, origin, preview, tags, memory_rowid, blocks_file FROM labelled "
                 "WHERE id = ? OR former_id = ?",
                 (node_id, node_id),
             ).fetchone()
@@ -1609,9 +1770,9 @@ def removal_events(
 
 def all_tags(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> list[dict]:
     """Every tag a readable capture carries, with how many carry it, most carried first."""
-    with _connect(base_dir) as conn:
+    with _connect_labels(base_dir) as conn:
         rows = conn.execute(
-            f"""SELECT json_each.value AS name, COUNT(*) AS n FROM nodes, json_each(nodes.tags)
+            f"""SELECT json_each.value AS name, COUNT(*) AS n FROM labelled nodes, json_each(nodes.tags)
                 WHERE {_READABLE} AND json_each.type = 'text' GROUP BY json_each.value"""
         ).fetchall()
     found = [{"name": r["name"], "count": int(r["n"])} for r in rows]

@@ -10288,11 +10288,18 @@ function renderNodeCard(card, node) {
 // editors carry `title-editor`, so a repaint of the card waits while one is open (`editingTitleIn`).
 
 //: The card's heading with a rename button beside it, as an orbit's card has.
+//: A capture's labels live on its memory item, which it has once its text is stored: its id is then
+//: the item's (`m<n>`). Until then it cannot be renamed or retagged, and the card offers neither.
+function isMemoryItem(node) {
+  return /^m[1-9][0-9]*$/.test(String((node && node.id) || ""));
+}
+
 function captureTitleRow(node, headline) {
   const row = elt("div", "card-title-row");
   const title = elt("h2", "card-title", headline);
   if ((node.edited || []).includes("title")) title.title = t("capture.namedByYou", "You named this.");
   row.appendChild(title);
+  if (!isMemoryItem(node)) return row;
   const rename = elt("button", "card-rename", "\u270e\ufe0e");
   rename.type = "button";
   rename.title = t("app.rename", "Rename");
@@ -10424,6 +10431,7 @@ function captureTagEditor(node) {
     chip.appendChild(remove);
     list.appendChild(chip);
   });
+  if (!isMemoryItem(node)) return box;   // still being read: tags come once it has landed
   const add = elt("button", "tag-add mark mark-add", t("tags.add", "+ Tag"));
   add.type = "button";
   add.addEventListener("click", () => {
@@ -10560,6 +10568,13 @@ async function fillNodeBody(node, row, inner) {
       nodeErrorBlock(node.error || t("horizon.failed", "could not read it"))
     );
   } else {
+    // The summary pass gave up on it after its own failed tries; a press names it and runs it again.
+    const paused = (detail.node && detail.node.summary_paused) || node.summary_paused;
+    if (paused) {
+      inner.appendChild(elt("p", "hint node-paused", t("horizon.summaryPaused",
+        `Gave up summarising this after ${paused.tries} tries: ${paused.error}`,
+        { n: paused.tries, error: paused.error })));
+    }
     const entities = (detail.node && detail.node.entities) || node.entities || [];
     if (entities.length) {
       inner.appendChild(cardSection(t("map.sectionNames", "Mentions")));
@@ -10609,6 +10624,38 @@ async function nodeActions(node) {
       startHorizonPolling();
     });
     actions.appendChild(retry);
+  }
+  if (node.state === "ready_undistilled" && node.summary_paused) {
+    const again = elt("button", "btn node-summarise", t("horizon.summariseAgain", "Summarise again"));
+    again.type = "button";
+    again.addEventListener("click", async () => {
+      again.disabled = true;
+      let started;
+      try {
+        started = await api("/horizon/distil", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ limit: 1, node_ids: [node.id] }),
+        });
+      } catch (err) {
+        // 409: a pass is running already, and this capture waits for the next press.
+        if (err.status === 409) {
+          notify(t("horizon.summaryBusy", "A summary pass is already running; try again once it ends."));
+        } else {
+          showCaptureError(err.message);
+        }
+        again.disabled = false;
+        return;
+      }
+      if (started && started.started === false) {
+        // Summarised or removed meanwhile (this card was drawn before): the list catches up.
+        notify(t("horizon.summaryNothing", "This capture is no longer waiting for a summary."));
+        await refreshHorizon({ reset: true });
+        return;
+      }
+      startHorizonPolling();
+    });
+    actions.appendChild(again);
   }
   if (["ready", "ready_undistilled", "distilling"].includes(node.state)) {
     const read = elt("button", "btn", t("map.readInList", "Read it"));

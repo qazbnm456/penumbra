@@ -104,7 +104,7 @@ def test_every_function_that_takes_a_node_id_accepts_the_temporary_one(tmp_path)
     node = horizon.add_node(_source("pasted:x", text="some text"))
     temp = node.former_id
     assert horizon.get_node(temp).id == node.id
-    assert horizon.update_node(temp, title="T").id == node.id
+    assert horizon.update_node(temp, error=None).id == node.id
     assert horizon.edit_node(temp, tags=["t"]).id == node.id
     assert horizon.edited_fields(temp) == ["tags"]
     assert horizon.claim_node(temp, expect="ready_undistilled", to="distilling") is True
@@ -206,8 +206,11 @@ def test_a_database_from_before_the_steps_gains_them_and_a_restart_changes_nothi
     node = horizon.get_node("nd-0000000000000001", base_dir=base)
     assert node is not None and node.former_id is None
     with sqlite3.connect(horizon.index_path(base)) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS) == 3
-        assert "former_id" in [r[1] for r in conn.execute("PRAGMA table_info(nodes)")]
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS) == 9
+        columns = [r[1] for r in conn.execute("PRAGMA table_info(nodes)")]
+        assert "former_id" in columns
+        # Steps 4-9: the labels live in the kit's memory store, so their old columns are gone.
+        assert not {"title", "summary", "tags", "entities", "edited", "distilled_at"} & set(columns)
         assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'nodes_former_id'").fetchone()
         assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'horizon_meta'").fetchone()
     before = _shape(base)
@@ -234,8 +237,9 @@ def test_six_processes_bring_one_old_database_through_the_real_steps(tmp_path):
     results = [run.communicate(timeout=60) for run in runs]
     assert all(run.returncode == 0 for run in runs), [err for _, err in results]
     with sqlite3.connect(horizon.index_path(old)) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 9
         assert conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0] == 1
+        assert "title" not in [r[1] for r in conn.execute("PRAGMA table_info(nodes)")]
 
 
 def test_the_epoch_is_made_once_kept_and_replaced_by_a_clear(monkeypatch):

@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from penumbra import api, asks, auth, horizon
 from penumbra.schema import Source, SourceBlock
+from tests._labels import label
 
 
 @pytest.fixture(autouse=True)
@@ -39,10 +40,21 @@ def _capture(url: str, text: str, **fields) -> str:
     horizon.store_blocks(
         node_id, Source(id=node_id, kind="web", origin=url, blocks=[SourceBlock(locator="whole", text=text)])
     )
-    if fields:
-        horizon.update_node(node_id, **fields)
     # Stored, the capture carries its kit item id; the temporary id is only its `former_id`.
-    return horizon.resolve_id(node_id)
+    item_id = horizon.resolve_id(node_id)
+    named = {k: fields.pop(k) for k in ("title", "summary", "tags", "entities") if k in fields}
+    if named:
+        label(item_id, state=fields.pop("state", None), **named)
+    if fields:
+        horizon.update_node(item_id, **fields)
+    return item_id
+
+
+def _unseen() -> list[str]:
+    """Entity names alignment has not been asked about yet (the kit's own record)."""
+    from penumbra import memory_store
+
+    return memory_store.store(horizon.DEFAULT_HORIZON_DIR).unseen_entities()
 
 
 class _Process:
@@ -350,8 +362,8 @@ def test_an_orbit_narrowed_ask_is_kept_with_its_orbit(client, monkeypatch):
 def test_the_summary_pass_can_be_limited_to_one_orbit(client, monkeypatch):
     seen: list = []
 
-    def fake_pass(limit, language, node_ids=None):
-        seen.append((limit, node_ids))
+    def fake_pass(limit, language, node_ids=None, orbit_id=None):
+        seen.append((limit, node_ids, orbit_id))
         with api._DISTIL_GUARD:
             api._DISTIL.update({"running": False})
 
@@ -368,7 +380,9 @@ def test_the_summary_pass_can_be_limited_to_one_orbit(client, monkeypatch):
         if seen:
             break
         time.sleep(0.01)
-    assert seen == [(1, [inside])]
+    # The pass is handed the orbit, and its queue there holds only the capture filed into it.
+    assert seen == [(1, None, "sleep")]
+    assert horizon.waiting_ids(orbit_id="sleep") == [inside]
 
 
 def test_stopping_one_orbits_summary_leaves_the_capture_queue_alone(client, monkeypatch):
@@ -452,9 +466,9 @@ def test_a_pass_that_wrote_new_names_ends_with_one_alignment(client, monkeypatch
     with api._DISTIL_GUARD:
         api._DISTIL["cancel"] = False
     api._align_after_pass(horizon.DEFAULT_HORIZON_DIR)
-    assert len(calls) == 1 and calls[0][0].endswith(":AlignConcepts")
+    assert len(calls) == 1 and calls[0][0].endswith(":AlignEntities")
     assert concepts.aliases() == {"馬修·沃克": "Matthew Walker"}, "an invented name was merged"
-    assert concepts.unseen() == []
+    assert _unseen() == []
     api._align_after_pass(horizon.DEFAULT_HORIZON_DIR)
     assert len(calls) == 1, "names already aligned were paid for again"
     assert client.post("/horizon/aliases/remove", json={"alias": "馬修·沃克"}).json() == {"removed": True}
@@ -475,8 +489,6 @@ def test_a_stopped_pass_does_not_go_on_to_align(monkeypatch):
 
 
 def test_a_failed_alignment_is_reported_and_tried_again_next_pass(client, monkeypatch):
-    from penumbra import concepts
-
     _capture("https://x.example/a", "x", entities=["A"], state="ready")
     _capture("https://x.example/b", "y", entities=["B"], state="ready")
 
@@ -488,9 +500,9 @@ def test_a_failed_alignment_is_reported_and_tried_again_next_pass(client, monkey
         api._DISTIL["cancel"] = False
     api._align_after_pass(horizon.DEFAULT_HORIZON_DIR)
     assert "worker died" in client.get("/horizon/status").json()["align"]["error"]
-    assert set(concepts.unseen()) == {"A", "B"}
+    assert set(_unseen()) == {"A", "B"}
     api._align_after_pass(horizon.DEFAULT_HORIZON_DIR)  # the same names failing a second time
-    assert concepts.unseen() == [], "a persistent failure would be paid for at the end of every pass"
+    assert _unseen() == [], "a persistent failure would be paid for at the end of every pass"
     with api._DISTIL_GUARD:
         api._ALIGN.update({"error": "", "failures": 0})
 
@@ -537,7 +549,7 @@ def test_a_stopped_node_is_not_counted_as_a_failure(monkeypatch):
     node = _capture("https://x.example/long", "x" * (distill.SHORT_LIMIT + 5))
     monkeypatch.setattr(api, "_configure_in_process_model", lambda: None)
 
-    def stopped_worker(source, language):
+    def stopped_worker(fields):
         with api._DISTIL_GUARD:
             api._DISTIL["cancel"] = True  # the reader pressed Stop while it ran
         raise RuntimeError("worker produced no output (exit -9)")

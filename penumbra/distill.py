@@ -1,341 +1,83 @@
-"""Distillation: the cheap summary that makes a captured node findable again.
+"""The summary pass: a capture's title, summary, tags and entities, written by the kit's labelling
+pass (`rlm_harness.memory_tasks.distill_pending`) into the kit's memory store.
 
 The rule and its cost argument live in
-`docs/invariants/80-capture-never-pays-for-a-summary.md`; the incidents live in `CHANGELOG.md`.
-The short version: **capture makes no model call**, this is a SEPARATE pass the reader starts on
-purpose, and a failed summary leaves the node at `ready_undistilled` rather than costing the
-capture.
+`docs/invariants/80-capture-never-pays-for-a-summary.md`. The short version: **capture makes no model
+call**, this is a SEPARATE pass the reader starts on purpose (or turns on), a failed summary leaves the
+capture at `ready_undistilled` rather than costing the capture, and after `horizon.DISTILL_MAX_FAILURES`
+failures a capture leaves the automatic queue until a press names it.
 
-What a reader of THIS file needs, and the invariant does not carry:
+What this module adds to the kit's pass, and why each is the host's:
 
-- **Sanitisation happens in `distil_source`, not only in `DistillNode.arun`.** Both apply it, and
-  that redundancy is deliberate: an earlier version cleaned only inside `arun`, so every caller that
-  injected its own `run=` — which is every test, and any future caller that swaps the model —
-  wrote raw values straight through to `horizon.update_node`. Deleting the cleaning from `arun` left
-  the whole suite green. `_sanitize` is idempotent, so applying it twice costs nothing.
-- **The "nothing to summarise" check reads the SOURCE, not the excerpt.** `Corpus.excerpt`
-  unconditionally prepends `[[SRC:...]]`, so an empty document still produces a truthy string — the
-  guard in `arun` was dead on the only path that reaches it, and a page trafilatura extracted
-  nothing from cost a call.
-- **`distil_pending` CLAIMS each node** (`horizon.claim_node`) rather than labelling it. Two
-  concurrent passes each wrote `state="distilling"` unconditionally: five model calls for three
-  nodes, each pass overwriting the other's summary.
-- **Never call this from inside a running event loop.** It uses `asyncio.run`, and the intended
-  caller is a FastAPI handler — so it raises loudly rather than letting the bare `except` turn
-  `RuntimeError: asyncio.run() cannot be called from a running event loop` into a silent "the model
-  was unreachable". Use `asyncio.to_thread(distil_pending, ...)`, which is what `api.py` already
-  does for every other blocking call.
-- **`import dspy` lives inside `arun`**, because a top-level import would make every `cli.py`
-  command pay for it. Pinned by a subprocess blocker in `tests/test_distill.py`.
+- **Which captures.** `horizon.waiting_ids` is the queue, passed as the pass's `item_ids`: the kit's
+  own selection would also pick items with no live capture (a row still under its temporary id, one a
+  crash left, one being purged).
+- **The capture's state.** `distilling` while its call runs, then `ready` or back to
+  `ready_undistilled` (the list and the map draw it), with a failure's reason on the row.
+- **What counts as the capture's failure.** A Stop, an unreachable model or a misconfigured server is
+  not: the run wrapper raises `StepNotCounted`, which the kit reports without counting toward the cap.
+- **A capture with no text** is labelled empty without a call: its kit item holds its origin instead,
+  which must not be summarised.
+- **Where each step runs.** A short capture is the kit's one `SummariseShort` call, in this process; a
+  long one is the kit's `DistillLongItem`, an RLM run, which the caller runs in a worker subprocess
+  (`run_long`, invariant 21).
+
+**Never call this from inside a running event loop.** It uses `asyncio.run`; the API calls it from a
+thread of its own.
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
-import time
 from collections.abc import Callable
 from pathlib import Path
 
-from . import horizon
-from .citations import strip_markers
+from rlm_harness.memory import SHORT_LIMIT, fold_name
+
+from . import horizon, memory_store
 from .config import clean_language, output_language
-from .corpus import Corpus
-from .schema import Distillation, LongDistillation
 
 _log = logging.getLogger(__name__)
 
-#: Up to this many characters of text, a document is summarised by ONE call that reads all of it.
-#: Past it, by `distill_long.DistillLongDocument`, an RLM run that reads the whole document from a
-#: section map, when the caller supplies a way to run one (`run_long`). A summary made from a
-#: document's first few thousand characters named the subject of its introduction and nothing else,
-#: which is why the one-call path reads the whole of a short document rather than a prefix.
-SHORT_LIMIT = 12_000
+__all__ = ["MAX_TAGS", "MAX_TAG_CHARS", "SHORT_LIMIT", "clean_tags", "distil_pending", "summarise_short"]
 
-#: What the one-call path is shown: the whole of a short document, and the head of a long one only
-#: when no RLM runner was supplied (tests, or a caller with no subprocess to run it in).
-_EXCERPT_CHARS = SHORT_LIMIT
-
-#: How many lines the section map may have. A document with more blocks is mapped by runs of
-#: consecutive blocks, so the map stays a map rather than a second copy of the document.
-_MAP_LINES = 160
-
-#: Caps on what comes back, applied host-side. A model asked for "two or three sentences" that
-#: returns two pages is not an error worth failing a capture over — it is a value to trim.
-_MAX_TITLE_CHARS = 80
-_MAX_SUMMARY_CHARS = 600
-_MAX_TAGS = 8
-_MAX_ENTITIES = 8
-
-_INSTRUCTIONS = """\
-Summarise one captured document so its owner can find it again months later, when they have
-forgotten the words it used.
-
-Write:
-- title: a short, specific label. Name the actual subject, not the document type. Never "Article"
-  or "PDF document".
-- summary: two or three sentences on what this says and why someone kept it. Start with the
-  subject itself. No preamble in any language: not "This document...", "This article...", not
-  "本文件為", "本文介紹", "這份文件", and no closing "In summary" or "總的來說". No dashes (— or –);
-  use a comma or a full stop.
-- tags: up to 6 lowercase topic labels, reusable across other documents. Broad subjects a person
-  would search by (sleep, memory, coffee), not phrases unique to this text.
-- entities: up to 6 specific things this is ABOUT: people, organisations, products, places, and
-  named concepts such as a theory, a method, a condition, a stage or a part of the body (slow-wave
-  sleep, the hippocampus). Narrower than a tag, and each one something another document could
-  name too. Not every name that appears.
-
-Rules:
-- Write title and summary in the requested language. If none is given, use the document's own.
-  Never translate a proper noun that has no established translation.
-- `known` lists the tags and entities this person's other captures already use. When one of them
-  means what you would write, write it exactly as it appears there, so related documents connect.
-  Add a new tag or entity only when none of them fits, and never use a known one just because it is
-  common. A new tag is written in the requested language when one is given.
-- The text contains `[[SRC:...]]` coordinate markers. They are not content. Never copy one into
-  anything you write.
-- Say only what the text supports. If it is too short or too garbled to summarise, give an empty
-  summary rather than inventing one.
-"""
-
-
-def _clean(value: object, limit: int) -> str:
-    return strip_markers(str(value or "")).strip()[:limit].strip()
-
-
-#: How long one tag may be. A tag is a label to filter and join by, the same for the model's tags and
-#: the reader's own (`clean_tags`).
+#: The most tags a capture carries, and the longest a tag may be: the kit's own bounds.
+MAX_TAGS = 8
 MAX_TAG_CHARS = 40
-MAX_TAGS = _MAX_TAGS
+
+#: The fields each step reads; nothing else in a payload reaches a step (not `step`, `item_id` or
+#: `run_id`).
+_STEP_FIELDS = {
+    "summarise_short": ("text", "language", "known"),
+    "distill_long": ("text", "section_map", "language", "known"),
+}
 
 
-def clean_tags(value: object, count: int = _MAX_TAGS) -> list[str]:
-    """Tags as the Horizon stores them, whoever chose them: lowercased, trimmed to `MAX_TAG_CHARS`,
-    deduplicated in order, at most `count`. One function for the summary pass and the reader's edit,
-    so a tag the reader types joins the ones the model wrote."""
-    return _clean_list(value, MAX_TAG_CHARS, count, lower=True)
-
-
-def _clean_list(value: object, limit: int, count: int, *, lower: bool = False) -> list[str]:
-    """Deduplicated and order-preserving. A model handed a `list[str]` signature can still return a
-    comma-joined string, so both shapes are accepted.
-
-    **`lower` is applied BEFORE the dedup, not by the caller afterwards.** Lowercasing the result
-    turned `["ML", "ml", "Ml"]` into `["ml", "ml", "ml"]` — and `schema.Distillation` calls tags
-    "the join key a later slice needs for implicit edges", where duplicates are not cosmetic.
-    """
+def clean_tags(value: object, count: int = MAX_TAGS) -> list[str]:
+    """Tags as the store keeps them (`fold_name`: NFKC, casefolded, spaces collapsed), each at most
+    `MAX_TAG_CHARS`, empty and repeated ones dropped, at most `count`. A reader's typed tags go through
+    this before `horizon.edit_node`, so `Rust` joins `rust` and a growth past `MAX_TAGS` can be refused
+    rather than cut by the store."""
     if isinstance(value, str):
-        items = [part for part in value.split(",")]
-    elif isinstance(value, (list, tuple, set, frozenset)):
-        items = [str(part) for part in value]
-    else:
-        if value not in (None, ""):
-            # Not silently empty: "the model returned a dict" and "the model returned no tags" are
-            # different problems and a reader of the logs should be able to tell them apart.
-            _log.warning("distill: ignoring %s of unexpected type %s", "tags/entities", type(value))
+        value = value.split(",")
+    if not isinstance(value, list):
         return []
-    seen: list[str] = []
-    for item in items:
-        cleaned = _clean(item, limit)
-        if lower:
-            cleaned = cleaned.lower()
-        if cleaned and cleaned not in seen:
-            seen.append(cleaned)
-    return seen[:count]
+    out: list[str] = []
+    for item in value:
+        tag = fold_name(str(item))[:MAX_TAG_CHARS].strip()
+        if tag and tag not in out:
+            out.append(tag)
+    return out[:count]
 
 
-def _sanitize(result: Distillation) -> Distillation:
-    """Cap every field and strip `[[SRC:...]]` from all of them (invariant 62).
+def summarise_short(fields: dict):
+    """One short capture's labels: the kit's `SummariseShort`, one `dspy.Predict` call in this
+    process. The default `run_short`, looked up when each capture is summarised."""
+    from rlm_harness.memory_tasks import arun_step
 
-    Applied by BOTH `DistillNode.arun` and `distil_source`, deliberately — see the module docstring.
-    Idempotent, so the double application costs nothing and neither path can be the one that forgot.
-    """
-    return Distillation(
-        title=_clean(result.title, _MAX_TITLE_CHARS),
-        summary=_clean(result.summary, _MAX_SUMMARY_CHARS),
-        tags=clean_tags(result.tags),
-        entities=_clean_list(result.entities, 60, _MAX_ENTITIES),
-    )
-
-
-class DistillNode:
-    """`worker.py`-compatible in shape (`arun(**kwargs)`), so this can be moved behind a subprocess
-    later without changing its callers — the same contract `naming.SuggestTitle` satisfies.
-
-    `arun(sources=<corpus excerpt>, language=<resolved language>, known=<labels in use>) -> Distillation`.
-    """
-
-    async def arun(self, *, sources: str = "", language: str = "", known: str = "") -> Distillation:
-        # Room for the marker lines `Corpus.excerpt` adds, so a document at the limit is read whole.
-        excerpt = (sources or "")[: _EXCERPT_CHARS + 400]
-        if not excerpt.strip():
-            return Distillation()
-        import dspy
-
-        predictor = dspy.Predict(
-            dspy.Signature(
-                "sources: str, language: str, known: str -> title: str, summary: str, tags: list[str], "
-                "entities: list[str]",
-                _INSTRUCTIONS,
-            )
-        )
-        result = await predictor.acall(sources=excerpt, language=language or "", known=known or "")
-        return _sanitize(
-            Distillation(
-                title=str(getattr(result, "title", "") or ""),
-                summary=str(getattr(result, "summary", "") or ""),
-                tags=clean_tags(getattr(result, "tags", [])),
-                entities=_clean_list(getattr(result, "entities", []), 60, _MAX_ENTITIES),
-            )
-        )
-
-
-#: How many of the labels already in use a summary is shown: the most used first, so the list stays
-#: a few hundred words however large the Horizon grows (invariant 78: never a blob over it).
-KNOWN_TAGS = 80
-KNOWN_ENTITIES = 60
-#: Captures between two readings of the labels in use during one pass.
-KNOWN_REFRESH = 10
-
-
-def known_labels(*, base_dir: str | Path = horizon.DEFAULT_HORIZON_DIR) -> str:
-    """The tags and entity names other captures already use, most used first, for `known`.
-
-    Summarised one at a time with no view of the rest, two captures on one subject wrote `coffee`
-    and `咖啡`, or `finance` and `金融`, and a tag region or a shared entity then missed the pair.
-    Shown what is in use, a summary writes the same label when it means the same thing. Entity names
-    pass through the alias table first (`concepts.resolver`), so a merged name is offered once.
-    """
-    from . import concepts
-    from .search import SEARCHABLE_STATES
-
-    placeholders = ", ".join("?" for _ in SEARCHABLE_STATES)
-    with horizon._connect(base_dir) as conn:
-        rows = conn.execute(
-            f"""SELECT json_each.value AS name, COUNT(*) AS n
-                FROM (SELECT tags FROM nodes WHERE state IN ({placeholders})
-                      AND CASE WHEN json_valid(tags) THEN json_type(tags) = 'array' ELSE 0 END)
-                     AS readable, json_each(readable.tags)
-                WHERE json_each.type = 'text'
-                GROUP BY json_each.value""",
-            SEARCHABLE_STATES,
-        ).fetchall()
-    tags = sorted(((row["name"], int(row["n"])) for row in rows), key=lambda item: (-item[1], item[0]))
-    resolve = concepts.resolver(base_dir=base_dir)
-    entity_count: dict[str, int] = {}
-    for name, n in concepts.all_names(base_dir=base_dir).items():
-        canonical = resolve(name)
-        entity_count[canonical] = entity_count.get(canonical, 0) + n
-    entities = sorted(entity_count.items(), key=lambda item: (-item[1], item[0]))
-    lines = []
-    if tags:
-        lines.append("Tags in use: " + ", ".join(name for name, _ in tags[:KNOWN_TAGS]))
-    if entities:
-        lines.append("Entities in use: " + ", ".join(name for name, _ in entities[:KNOWN_ENTITIES]))
-    return "\n".join(lines)
-
-
-def text_length(source) -> int:
-    return sum(len(block.text) for block in source.blocks)
-
-
-def section_map(source) -> str:
-    """One line per block (locator, size, opening words), or per run of blocks past `_MAP_LINES`.
-
-    The opening words are the block's own text, cut short; they are for finding a section, and the
-    model reads the section itself in the REPL before saying anything about it.
-    """
-    blocks = list(source.blocks)
-    if not blocks:
-        return ""
-    per_line = max(1, -(-len(blocks) // _MAP_LINES))
-    lines = [f"{text_length(source)} characters in {len(blocks)} blocks."]
-    for start in range(0, len(blocks), per_line):
-        group = blocks[start : start + per_line]
-        size = sum(len(b.text) for b in group)
-        opening = " ".join(group[0].text.split())[:90]
-        where = group[0].locator if len(group) == 1 else f"{group[0].locator} .. {group[-1].locator}"
-        lines.append(f"{where} ({size} chars): {opening}")
-    return "\n".join(lines)
-
-
-def from_long(result: LongDistillation, source) -> Distillation:
-    """A `Distillation` from a long document's result, keeping only the entities whose coordinate
-    is a real block of THIS document. The validator checked the same thing before SUBMIT; this is
-    the host holding the line when a run submitted anyway (invariant 66)."""
-    real = {block.locator for block in source.blocks}
-    names = [
-        mention.name
-        for mention in result.entities
-        if mention.source_id == source.id and mention.locator in real
-    ]
-    return _sanitize(Distillation(
-        title=result.title, summary=result.summary, tags=list(result.tags), entities=names,
-    ))
-
-
-def distil_source(
-    source,
-    language: str = "",
-    *,
-    run: Callable[..., Distillation] | None = None,
-    on_error: Callable[[Exception], None] | None = None,
-    run_long: Callable[..., Distillation] | None = None,
-    known: str = "",
-) -> Distillation | None:
-    """Distil one already-parsed `Source`. Returns `None` if the model call failed.
-
-    `Corpus.excerpt` rather than the raw text (invariant 61), and `None` rather than a raised
-    exception, because the caller's job is to record `ready_undistilled` and move on — the capture
-    already succeeded and must not be lost to a summariser being unreachable.
-
-    **`on_error` is how the reason gets OUT, and it exists because swallowing it was a real defect.**
-    Returning `None` is right for CONTROL FLOW and wrong as the whole story: an independent review
-    ran the pass with no model credentials and watched the progress strip count to 2 / 2 and
-    disappear, because the only record of `ValueError: No LM is loaded` was a log line on the
-    server. This is the one action in the product that spends the reader's money, and it was the
-    only one with no failure channel at all. The callback does not change what this function
-    RETURNS, so nothing downstream had to learn a new shape.
-    """
-    # The emptiness check reads the SOURCE, not the excerpt. `Corpus.excerpt` unconditionally
-    # prepends `[[SRC:...]]`, so a document with nothing in it still produces a truthy string — the
-    # guard inside `arun` was dead on this path, and a page trafilatura extracted nothing from was
-    # costing a model call.
-    if not "".join(block.text for block in source.blocks).strip():
-        return Distillation()
-
-    # OUTSIDE the try, and loudly. `asyncio.run` refuses to run inside an existing loop, and the
-    # intended caller is a FastAPI handler — swallowing that below would turn a wiring mistake into
-    # "every node bounced back to ready_undistilled", indistinguishable from an unreachable model.
-    if run is None:
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            pass
-        else:
-            raise RuntimeError(
-                "distil_source cannot run inside an event loop — call it through "
-                "asyncio.to_thread(...), the way api.py handles every other blocking call"
-            )
-
-    long = run_long is not None and text_length(source) > SHORT_LIMIT
-    excerpt = "" if long else Corpus(sources=[source]).excerpt(_EXCERPT_CHARS)
-    try:
-        # `known` goes to the model paths only when there is any: an injected `run`/`run_long` keeps
-        # the two-argument shape the tests and other callers already use.
-        if long:
-            result = run_long(source, language, known=known) if known else run_long(source, language)
-        elif run is not None:
-            result = run(sources=excerpt, language=language)
-        else:
-            result = asyncio.run(DistillNode().arun(sources=excerpt, language=language, known=known))
-    except Exception as exc:  # noqa: BLE001 - a missing summary must never cost a capture
-        _log.exception("distill: could not summarise %s", getattr(source, "origin", "?"))
-        if on_error is not None:
-            on_error(exc)
-        return None
-    # Sanitised HERE as well as in `arun`, so an injected `run=` cannot write raw values through.
-    return _sanitize(result)
+    return arun_step({"step": "summarise_short", **fields})
 
 
 def distil_pending(
@@ -345,120 +87,88 @@ def distil_pending(
     base_dir: str | Path = horizon.DEFAULT_HORIZON_DIR,
     should_stop: Callable[[], bool] | None = None,
     on_node: Callable[[], None] | None = None,
-    on_error: Callable[[str, Exception], None] | None = None,
-    run: Callable[..., Distillation] | None = None,
+    on_error: Callable[[str, str], None] | None = None,
+    not_counted: Callable[[str], bool] | None = None,
     node_ids: list[str] | None = None,
-    run_long: Callable[..., Distillation] | None = None,
+    orbit_id: str | None = None,
+    run_short: Callable[[dict], object] | None = None,
+    run_long: Callable[[dict], dict] | None = None,
     defer_long: bool = False,
 ) -> list[str]:
-    """Summarise up to `limit` nodes sitting at `ready_undistilled`, newest first. Returns the ids
-    actually distilled.
+    """Summarise up to `limit` waiting captures (`horizon.waiting_ids`), newest first, and return the
+    ids summarised. `node_ids` names captures (a press on them; the failure cap does not apply) and
+    `orbit_id` narrows to one orbit. Without `run_long`, long captures are left waiting, as
+    `defer_long` asks.
 
-    `node_ids` narrows the pass to those nodes, in that order (one orbit's unsummarised captures,
-    for the star map's per-orbit button); any of them no longer at `ready_undistilled` is skipped.
+    `on_node` is called once per capture attempted, after its call; `on_error(node_id, reason)` for a
+    capture that failed, with the reason as reported; `not_counted(reason)` says a failure is not the
+    capture's (an unreachable model), and so is a failure while `should_stop()` holds.
+    `run_short(fields)` and `run_long(fields)` run one step given its own fields and return its
+    labels; `run_short` defaults to `summarise_short`, and `run_long` is called on a thread.
 
-    **The language ladder, and why it is shorter here than for an orbit.** `output_language()` is
-    the operator's stated preference and wins whenever it is set (invariant 39's ladder, top rung).
-    Below it, the CALLER supplies one — the future HTTP handler has the request, and therefore the
-    `X-Penumbra-Interface-Language` and `Accept-Language` signals invariant 69 ranks. This function has
-    neither, which is exactly why it does not try to resolve one itself. With nothing at all, the
-    prompt tells the model to follow the document; that is a KNOWN narrowing of invariant 39 for
-    Tier 0, and the way out is a caller that passes the signal, not a resolver in here.
-
-    One node failing never stops the pass: it is left at `ready_undistilled` and the next is tried.
+    **The language ladder.** `output_language()` is the operator's stated preference and wins whenever
+    it is set (invariant 39's top rung); below it, the caller's (the request's interface language, or
+    the one the reader last used). With nothing, the kit tells the model to write in the text's own.
     """
-    # `clean_language` on the caller's rung too. `output_language()` is cleaned inside `config`, but
-    # the caller's value is meant to come from `X-Penumbra-Interface-Language` / `Accept-Language` — both
-    # attacker-controlled headers — and it is spliced into the prompt. `api.put_settings` already
-    # records that 40 characters of "language" is enough for a persistent injected instruction,
-    # which is the entire reason `clean_language` exists.
+    from rlm_harness.memory_tasks import StepNotCounted
+    from rlm_harness.memory_tasks import distill_pending as kit_distill_pending
+
     chosen = output_language() or clean_language(language) or ""
+    deferring = defer_long or run_long is None
+    ids = horizon.waiting_ids(base_dir=base_dir, node_ids=node_ids, orbit_id=orbit_id,
+                              defer_long=deferring, limit=max(1, min(int(limit), 500)))
+    if not ids:
+        return []
+    store = memory_store.store(base_dir)
     distilled: list[str] = []
-    if node_ids is None:
-        # With long captures deferred, the newest `limit` SHORT ones: filtering a newest-`limit`
-        # page afterwards left older short captures behind whenever the newest were long.
-        page = 100_000 if defer_long else limit
-        candidates = horizon.list_nodes(state="ready_undistilled", limit=page, base_dir=base_dir)
-    else:
-        candidates = [
-            node for node in (horizon.get_node(i, base_dir=base_dir) for i in node_ids)
-            if node is not None and node.state == "ready_undistilled"
-        ][:limit]
-    if defer_long:
-        # Left waiting for a press rather than summarised from a prefix: see the auto pass.
-        candidates = [node for node in candidates if node.chars <= SHORT_LIMIT][:limit]
-    known: str | None = None
-    done_here = 0
-    for node in candidates:
-        if should_stop is not None and should_stop():
-            break
-        # CLAIM it, do not label it. Two concurrent passes each snapshotted the same rows and each
-        # wrote `distilling` unconditionally — five model calls for three nodes, each overwriting
-        # the other. Losing the race here means another pass owns the node; skip it.
-        if not horizon.claim_node(node.id, expect="ready_undistilled", to="distilling", base_dir=base_dir):
-            continue
+    #: Captures this pass did not try (removed, or no longer waiting): neither progress nor failure.
+    passed_over: set[str] = set()
+
+    def stopping() -> bool:
+        return bool(should_stop is not None and should_stop())
+
+    async def run(payload: dict) -> dict:
+        item_id = payload["item_id"]
+        # Claimed, not labelled: a compare-and-set, so a second pass running at the same time
+        # (the API runs one, but this function does not rely on it) never pays for it twice.
+        if not horizon.claim_node(item_id, expect="ready_undistilled", to="distilling", base_dir=base_dir):
+            passed_over.add(item_id)
+            raise StepNotCounted(f"CaptureGone: {item_id} is no longer waiting")
+        item = store.get(item_id)
+        if item is not None and item.meta.get("empty_text"):
+            # Its item's text is its origin, kept so the item is findable; nothing to summarise.
+            return {"title": "", "summary": "", "tags": [], "entities": []}
+        step = payload["step"]
+        fields = {name: payload.get(name, "") for name in _STEP_FIELDS[step]}
         try:
-            source = horizon.node_source(node.id, base_dir=base_dir)
-        except horizon.UNREADABLE_SOURCE as exc:
-            # **PRESENT BUT UNREADABLE is not the same as absent, and it used to end the batch.**
-            # `node_source` handles a MISSING blocks file by returning None; a truncated or
-            # wrong-shape one RAISES, and the exception escaped after `claim_node` had already
-            # written `distilling`. Three things followed, all reproduced: every node after the bad
-            # one was silently skipped, the node was stranded in `distilling` where nothing selects
-            # it (only a restart's `reset_interrupted_states` recovers it), and because
-            # `distilling` is one of the UI's busy states the Horizon then polled ~2.2 times a second
-            # for the life of the tab with its progress strip hidden — invariant 79's named failure
-            # ("a permanent `queued` — which looks exactly like still working"), one state over.
+            if step == "distill_long":
+                if run_long is None:
+                    raise RuntimeError("no long-document runner")
+                return await asyncio.to_thread(run_long, fields)
+            result = (run_short or summarise_short)(fields)
+            return await result if inspect.isawaitable(result) else result
+        except Exception as exc:
+            reason = f"{type(exc).__name__}: {exc}"
+            if stopping() or (not_counted is not None and not_counted(reason)):
+                raise StepNotCounted(reason) from exc
+            raise
+
+    def progress(event: dict) -> None:
+        item_id = event["item_id"]
+        if item_id in passed_over or horizon.get_node(item_id, base_dir=base_dir) is None:
+            return   # removed meanwhile, or no longer waiting: nothing to report about it
+        if event["ok"]:
+            horizon.update_node(item_id, base_dir=base_dir, state="ready", error=None)
+            distilled.append(item_id)
+        else:
+            horizon.update_node(item_id, base_dir=base_dir, state="ready_undistilled")
             if on_error is not None:
-                on_error(node.id, exc)
-            if on_node is not None:
-                on_node()
-            horizon.update_node(node.id, base_dir=base_dir, state="ready_undistilled")
-            continue
-        # The node id travels WITH the exception, because the caller reporting "one of these
-        # failed" without saying which is the same silence one level up.
-        report = (lambda exc, _id=node.id: on_error(_id, exc)) if on_error is not None else None
-        if source is None:
-            # **A MISSING BLOCKS FILE IS A FAILURE, not a quiet skip.** The node is claimed, ticked
-            # as done and put back at `ready_undistilled` with nothing changed — so the strip read
-            # `done 1 / 1, failed 0` over a node that had not been summarised and never would be.
-            # Exactly the shape the model-error case was fixed for one round earlier, through the
-            # one path that bypassed `distil_source` and therefore its `on_error`.
-            if report is not None:
-                report(FileNotFoundError(f"no stored text for {node.id}"))
-            if on_node is not None:
-                on_node()
-            horizon.update_node(node.id, base_dir=base_dir, state="ready_undistilled")
-            continue
-        # Read afresh every few captures, so labels written earlier in a long pass are offered too
-        # without an aggregation over the whole Horizon for every one of up to 500.
-        if run is None and (known is None or done_here % KNOWN_REFRESH == 0):
-            known = known_labels(base_dir=base_dir)
-        done_here += 1
-        result = distil_source(source, chosen, run=run, on_error=report, run_long=run_long, known=known or "")
-        # Counted after the CALL, not before it: progress that runs ahead of the spend would tell a
-        # reader a node was summarised while the model was still thinking about it (invariant 60).
+                on_error(item_id, event["error"])
         if on_node is not None:
             on_node()
-        if result is None:
-            # Back to where it was. `ready_undistilled` is a real state, not a degraded `ready`:
-            # the capture succeeded and only the summary is missing.
-            horizon.update_node(node.id, base_dir=base_dir, state="ready_undistilled")
-            continue
-        horizon.update_node(
-            node.id,
-            base_dir=base_dir,
-            # A title or tags the reader set, even while this call was running, stay theirs.
-            respect_edits=True,
-            state="ready",
-            distilled_at=time.time(),
-            # A summary that now exists clears the reason an earlier attempt failed (`api`
-            # records it on the node so the waiting card can say so after a restart).
-            error=None,
-            title=result.title,
-            summary=result.summary,
-            tags=result.tags,
-            entities=result.entities,
-        )
-        distilled.append(node.id)
+
+    asyncio.run(kit_distill_pending(
+        store, limit=len(ids), language=chosen, item_ids=ids, defer_long=False, run=run,
+        should_stop=stopping, on_progress=progress, max_failures=horizon.DISTILL_MAX_FAILURES,
+    ))
     return distilled

@@ -23,6 +23,7 @@ from penumbra import horizon
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 from penumbra.orbit import load_orbit
 from penumbra.schema import Source, SourceBlock
+from tests._labels import label
 
 
 def _source(origin: str = "https://example.com/a", *, kind: str = "web", text: str = "hello") -> Source:
@@ -113,12 +114,19 @@ def test_two_writers_to_different_fields_both_survive():
     inside itself, so the snapshot is never stale. `test_update_node_emits_a_delta_not_a_whole_row`
     below is the one that actually discriminates; this one is the readable statement of intent."""
     node = horizon.add_node(_source())
-    horizon.update_node(node.id, summary="written by B")
-    horizon.update_node(node.id, title="written by A")
+    horizon.update_node(node.id, error="written by B")
+    horizon.update_node(node.id, chars=42)
 
     fresh = horizon.get_node(node.id)
-    assert fresh.title == "written by A"
-    assert fresh.summary == "written by B"
+    assert fresh.chars == 42
+    assert fresh.error == "written by B"
+
+    # The labels, now rows in the kit's memory store, one per kind: a summary and a title written
+    # by two writers both survive too.
+    label(node.id, state=None, summary="summary by B")
+    label(node.id, state=None, title="title by A")
+    fresh = horizon.get_node(node.id)
+    assert (fresh.title, fresh.summary) == ("title by A", "summary by B")
 
 
 def test_update_node_emits_a_delta_not_a_whole_row(monkeypatch):
@@ -144,7 +152,7 @@ def test_update_node_emits_a_delta_not_a_whole_row(monkeypatch):
         return conn
 
     monkeypatch.setattr(horizon.sqlite3, "connect", traced)
-    horizon.update_node(node.id, title="t", summary="s")
+    horizon.update_node(node.id, error="e", chars=5)
 
     updates = [stmt for stmt in statements if stmt.strip().upper().startswith("UPDATE")]
     assert len(updates) == 1, statements
@@ -152,7 +160,7 @@ def test_update_node_emits_a_delta_not_a_whole_row(monkeypatch):
     # can compare — which is the property anyway: a whole-row write names all twelve.
     set_clause = updates[0].split(" SET ", 1)[1].rsplit(" WHERE ", 1)[0]
     columns = [part.split("=", 1)[0].strip() for part in set_clause.split(",")]
-    assert columns == ["title", "summary", "updated_at"], updates[0]
+    assert columns == ["error", "chars", "updated_at"], updates[0]
     before = statements[: statements.index(updates[0])]
     assert not [stmt for stmt in before if stmt.strip().upper().startswith("SELECT")], (
         f"update_node read the row before writing it, which is the whole-row shape: {before}"
@@ -665,10 +673,7 @@ def test_recovery_is_a_no_op_when_nothing_was_interrupted():
 
 def _distilled(origin: str, title: str, summary: str, tags: list[str], entities: list[str]):
     node = horizon.add_node(_source(origin, text="body"))
-    horizon.update_node(
-        node.id, state="ready", title=title, summary=summary, tags=tags, entities=entities
-    )
-    return node
+    return label(node.id, title=title, summary=summary, tags=tags, entities=entities)
 
 
 def test_search_reads_every_field_distillation_produces():
@@ -760,7 +765,7 @@ def test_search_ands_its_terms_and_leaves_cjk_alone(tmp_path):
             Source(id="s0", kind="text", origin=origin, blocks=[SourceBlock(locator="whole", text="x")]),
             base_dir=tmp_path,
         )
-        horizon.update_node(made.id, base_dir=tmp_path, state="ready", **fields)
+        label(made.id, base_dir=tmp_path, **fields)
 
     node("pasted:one", title="Less, but better", summary="Rams argues that good design removes.",
          tags=["design", "principles"])
@@ -950,20 +955,18 @@ def test_an_underscore_in_a_search_is_a_character_not_a_wildcard(tmp_path):
 
 
 def test_a_readers_title_and_tags_survive_a_later_summary():
-    """The reader's own label is theirs. `edit_node` writes it and records the edit; the summary
-    pass's write (`respect_edits=True`) then leaves the edited fields alone and still writes the rest.
-    A capture renamed before its summary landed kept that name only because of this."""
+    """The reader's own label is theirs. `edit_node` writes it as a `said` label in the kit's store;
+    the summary pass's `inferred` labels written later then leave the edited fields alone and still
+    set the rest. A capture renamed before its summary landed kept that name only because of this."""
     node = horizon.add_node(_source())
     edited = horizon.edit_node(node.id, title="My name for it", tags=["mine"])
     assert (edited.title, edited.tags) == ("My name for it", ["mine"])
     assert horizon.edited_fields(node.id) == ["title", "tags"]
-    after = horizon.update_node(
-        node.id, respect_edits=True, state="ready", title="Model title", tags=["model"], summary="S."
-    )
+    after = label(node.id, title="Model title", tags=["model"], summary="S.")
     assert (after.title, after.tags) == ("My name for it", ["mine"])
     assert (after.summary, after.state) == ("S.", "ready")
-    # Any other writer is not filtered: this is the summary pass's rule, not a lock on the row.
-    assert horizon.update_node(node.id, title="Forced").title == "Forced"
+    # A later edit by the reader is not filtered: this is the summary's rule, not a lock on the label.
+    assert horizon.edit_node(node.id, title="Forced").title == "Forced"
 
 
 def test_editing_only_the_title_leaves_the_tags_to_the_summary():
@@ -971,7 +974,7 @@ def test_editing_only_the_title_leaves_the_tags_to_the_summary():
     horizon.edit_node(node.id, title="Renamed")
     horizon.edit_node(node.id, title="Renamed again")
     assert horizon.edited_fields(node.id) == ["title"]
-    after = horizon.update_node(node.id, respect_edits=True, title="Model", tags=["model"])
+    after = label(node.id, state=None, title="Model", tags=["model"])
     assert (after.title, after.tags) == ("Renamed again", ["model"])
 
 
@@ -981,6 +984,10 @@ def test_edit_node_refuses_the_body_and_answers_none_for_a_missing_node():
         with pytest.raises(ValueError, match="not editable"):
             horizon.edit_node(node.id, **bad)
     assert horizon.edit_node("nd-nope", title="x") is None
+    # A capture still being read has no kit item to label yet.
+    pending = horizon.add_pending_node("https://example.com/still-reading", "web")
+    with pytest.raises(horizon.NotAnItem):
+        horizon.edit_node(pending.id, title="x")
 
 
 def test_edited_is_part_of_the_row_and_says_which_names_are_the_readers():

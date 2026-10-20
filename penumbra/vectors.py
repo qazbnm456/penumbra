@@ -293,7 +293,8 @@ def _pack(vector: list[float]) -> bytes:
 
 
 def _capture_text(row, base_dir) -> str:
-    parts = [row["title"] or "", row["summary"] or ""]
+    node = horizon.get_node(row["id"], base_dir=base_dir)   # its labels, from the kit's store
+    parts = [(node.title or "") if node else "", (node.summary or "") if node else ""]
     try:
         path = horizon.blocks_file_path(row["blocks_file"], base_dir=base_dir)
         blocks = json.loads(path.read_text("utf-8"))
@@ -316,7 +317,7 @@ def sync(
     with _vec_connect(base_dir) as conn:
         conn.execute("DELETE FROM node_vectors WHERE rowid NOT IN (SELECT rowid FROM vector_rows)")
         rows = conn.execute(
-            f"""SELECT n.id, n.title, n.summary, n.updated_at, n.blocks_file FROM nodes n
+            f"""SELECT n.id, n.updated_at, n.blocks_file FROM nodes n
                 LEFT JOIN vector_rows v ON v.node_id = n.id
                 WHERE n.state IN ({marks}) AND (v.node_id IS NULL OR n.updated_at > v.embedded_at)""",
             SEARCHABLE_STATES,

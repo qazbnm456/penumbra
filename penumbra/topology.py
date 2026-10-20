@@ -71,14 +71,20 @@ def _newest(stamped: list[tuple[float, dict]], limit: int) -> list[dict]:
     return [item for _, item in sorted(stamped, key=lambda pair: -pair[0])[:limit]]
 
 
-def _entity(name: str, count: int, alias_table: dict[str, str]) -> dict:
-    """An entity as drawn, with the other names a merge folded into it, so the reader can see and
-    undo each one."""
+def _entity(name: str, count: int, groups: dict[str, list[str]]) -> dict:
+    """An entity as drawn, with the other names a merge folded into it, as summaries wrote them, so
+    the reader can see and undo each one."""
     entry: dict = {"name": name, "count": count}
-    merged = sorted(alias for alias, canonical in alias_table.items() if canonical == name)
+    merged = groups.get(name, [])
     if merged:
         entry["aliases"] = merged
     return entry
+
+
+def _waiting(row) -> bool:
+    """In the summary pass's queue (`horizon.waiting_ids`): not summarised, and not given up on."""
+    return (row["state"] == "ready_undistilled" and row["summary"] is None
+            and int(row["distill_tries"] or 0) < horizon.DISTILL_MAX_FAILURES)
 
 
 def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
@@ -86,11 +92,11 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
     `/orbits` also reports): how many captures are filed into it, how many of those are unsummarised, when it
     last gained one, and its most-named entities and tags. Plus the captures filed nowhere, and the
     bridges between orbits that share an entity."""
-    with horizon._connect(base_dir) as conn:
+    with horizon._connect_labels(base_dir) as conn:
         rows = conn.execute(
             """SELECT n.id, n.former_id, n.state, n.entities, n.tags, n.created_at, n.title, n.origin,
-                      n.preview, m.orbit_id, m.promoted_at
-               FROM nodes n LEFT JOIN memberships m ON m.node_id = n.id"""
+                      n.preview, n.summary, n.distill_tries, m.orbit_id, m.promoted_at
+               FROM labelled n LEFT JOIN memberships m ON m.node_id = n.id"""
         ).fetchall()
 
     # Aliases applied as the rows are read (`concepts.py`): a merge changes what is drawn and
@@ -124,7 +130,7 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
         if row["orbit_id"] is None:
             loose_items.append((float(row["created_at"] or 0), item))
             loose["count"] += 1
-            if row["state"] == "ready_undistilled":
+            if _waiting(row):
                 loose["undistilled"] += 1
             elif row["state"] in ("queued", "parsing", "stored_unindexed", "distilling"):
                 loose["busy"] += 1
@@ -135,7 +141,7 @@ def star_map(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dict:
         })
         entry["captures"] += 1
         moons[row["orbit_id"]].append((float(row["promoted_at"] or 0), item))
-        if row["state"] == "ready_undistilled":
+        if _waiting(row):
             entry["undistilled"] += 1
         entry["last_filed_at"] = max(entry["last_filed_at"], float(row["promoted_at"] or 0))
         entities = list(dict.fromkeys(resolve(e) for e in _names(row["entities"])))
@@ -200,17 +206,17 @@ def graph(
     """
     placeholders = ", ".join("?" for _ in SEARCHABLE_STATES)
     sql = (f"SELECT n.id, n.title, n.origin, n.preview, n.state, n.entities, n.tags, n.created_at "
-           f"FROM nodes n WHERE n.state IN ({placeholders})")
+           f"FROM labelled n WHERE n.state IN ({placeholders})")
     params: list[object] = list(SEARCHABLE_STATES)
     if orbit_id is not None:
         sql += " AND EXISTS (SELECT 1 FROM memberships m WHERE m.node_id = n.id AND m.orbit_id = ?)"
         params.append(orbit_id)
     sql += " ORDER BY n.created_at DESC, n.id ASC"
-    with horizon._connect(base_dir) as conn:
+    with horizon._connect_labels(base_dir) as conn:
         rows = conn.execute(sql, params).fetchall()
 
     resolve = concepts.resolver(base_dir=base_dir)
-    alias_table = concepts.aliases(base_dir=base_dir)
+    groups = concepts.alias_groups(base_dir=base_dir)
     entity_count: Counter[str] = Counter()
     tag_count: Counter[str] = Counter()
     parsed = []
@@ -257,7 +263,7 @@ def graph(
         alike = [p for p in alike if p["a"] in shown and p["b"] in shown]
     return {
         "similar": alike,
-        "entities": [_entity(name, entity_count[name], alias_table)
+        "entities": [_entity(name, entity_count[name], groups)
                      for name in sorted(kept, key=lambda n: (-entity_count[n], n))],
         "edges": [{"a": a, "b": b, "weight": w} for (a, b), w in sorted(pairs.items())],
         "tags": [{"name": name, "count": n} for name, n in tag_count.most_common()],
@@ -275,10 +281,10 @@ def bridge(a: str, b: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> dic
     orbits name, the captures on each side that name it. Aliases apply, as everywhere a reader sees
     an entity (`concepts.py`). Derived from summaries only, never a model call."""
     resolve = concepts.resolver(base_dir=base_dir)
-    with horizon._connect(base_dir) as conn:
+    with horizon._connect_labels(base_dir) as conn:
         rows = conn.execute(
             """SELECT n.id, n.title, n.origin, n.preview, n.entities, m.orbit_id
-               FROM nodes n JOIN memberships m ON m.node_id = n.id
+               FROM labelled n JOIN memberships m ON m.node_id = n.id
                WHERE m.orbit_id IN (?, ?)""",
             (a, b),
         ).fetchall()

@@ -53,11 +53,8 @@ def test_a_request_records_it_and_background_runs_use_it(monkeypatch):
         def has_pending_work(self):
             return False
 
-    class Node:
-        chars = 10
-
     monkeypatch.setattr(api.intake, "shared", lambda: Queue())
-    monkeypatch.setattr(api.horizon, "list_nodes", lambda **kw: [Node()])
+    monkeypatch.setattr(api.horizon, "waiting_ids", lambda **kw: ["m1"])
     monkeypatch.setattr(api, "_vector_worker", lambda: type("W", (), {"nudge": lambda self: None})())
     monkeypatch.setattr(api, "_auto_file_suggested", lambda: 0)
     monkeypatch.setattr(api, "auto_distil_enabled", lambda: True)

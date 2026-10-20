@@ -6411,9 +6411,15 @@ textarea::placeholder {
   color: var(--bad);
 }
 
-/* Try again on a failed row: the same box as Forget beside it, with the accent carrying which of
-   the two is the way forward. */
-.node-retry {
+/* Why a capture is no longer summarised automatically: a quiet line above its actions. */
+.node-paused {
+  color: var(--text-dim);
+}
+
+/* Try again on a failed row, and Summarise again on a capture the summary pass gave up on: the
+   same box as Forget beside them, with the accent carrying which is the way forward. */
+.node-retry,
+.node-summarise {
   border: 1px solid var(--field-border);
   background: none;
   color: var(--accent);
@@ -6425,14 +6431,17 @@ textarea::placeholder {
   padding: var(--space-1) var(--space-3);
 }
 
-.node-retry:hover {
+.node-retry:hover,
+.node-summarise:hover {
   border-color: var(--accent);
 }
 
-.node-retry:active {
+.node-retry:active,
+.node-summarise:active {
   transform: scale(0.94);
 }
 
+.node-summarise:disabled,
 .node-retry:disabled {
   color: var(--text-dim);
   cursor: default;

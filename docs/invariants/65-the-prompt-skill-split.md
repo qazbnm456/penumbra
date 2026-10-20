@@ -18,6 +18,8 @@ There is one directory for every task, because `discover_skills` reads a single 
 
 Provenance is part of the craft. A skill is a lasting claim about how to work, and an unchecked quote in one is worse than no skill, because a later reader has no reason to doubt it. Every technique in `podcast-craft` must trace to a source someone actually opened, or to this project's own measurement.
 
+The kit's labelling tasks, which Penumbra runs for the summary pass and concept alignment, are outside this rule; invariant 67's file says why.
+
 ---
 
 Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

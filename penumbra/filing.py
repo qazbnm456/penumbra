@@ -72,10 +72,10 @@ def suggestions(
     everything lands there by default, and it is never itself suggested.
     """
     resolve = concepts.resolver(base_dir=base_dir)
-    with horizon._connect(base_dir) as conn:
+    with horizon._connect_labels(base_dir) as conn:
         _ensure(conn)
         rows = conn.execute(
-            "SELECT id, title, origin, preview, state, entities, tags FROM nodes WHERE state = 'ready'"
+            "SELECT id, title, origin, preview, state, entities, tags FROM labelled WHERE state = 'ready'"
         ).fetchall()
         members = conn.execute("SELECT node_id, orbit_id FROM memberships").fetchall()
         dismissed = {(r[0], r[1]) for r in conn.execute("SELECT node_id, orbit_id FROM filing_dismissed")}
@@ -128,13 +128,13 @@ def _by_similarity(similar, landing, orbits_of, dismissed, base_dir) -> list[dic
     local relations are on. `similar(node_id, filed)` returns that capture's mutual matches among
     the filed ones. The score is placed at the threshold, below any match by shared entities,
     because similarity is the weaker signal (`vectors.py`)."""
-    with horizon._connect(base_dir) as conn:
+    with horizon._connect_labels(base_dir) as conn:
         rows = conn.execute(
-            "SELECT id, title, origin, preview FROM nodes WHERE state = 'ready_undistilled' "
+            "SELECT id, title, origin, preview FROM labelled WHERE state = 'ready_undistilled' "
             "ORDER BY created_at DESC LIMIT ?",
             (_SIMILAR_CANDIDATES,),
         ).fetchall()
-        titles = {r[0]: r[1] or r[2] for r in conn.execute("SELECT id, title, origin FROM nodes")}
+        titles = {r[0]: r[1] or r[2] for r in conn.execute("SELECT id, title, origin FROM labelled")}
     filed = {node for node, orbits in orbits_of.items() if orbits - ({landing} if landing else set())}
     out: list[dict] = []
     for row in rows:

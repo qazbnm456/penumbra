@@ -40,12 +40,15 @@ def store_path(base_dir: str | Path) -> Path:
 def store(base_dir: str | Path) -> MemoryStore:
     """The store for this Horizon directory, created on first use and again if its file was removed
     under a running process (the same reason `horizon._initialize` re-checks the path)."""
-    path = store_path(base_dir)
-    key = str(path.resolve())
+    # Resolved once, here: a store kept for a relative path would be reopened against whatever the
+    # working directory is at each later call, which is not where it was made.
+    path = store_path(base_dir).resolve()
+    key = str(path)
     with _LOCK:
         cached = _STORES.get(key)
         if cached is not None and path.exists():
             return cached
+        path.parent.mkdir(parents=True, exist_ok=True)   # a fresh Horizon directory
         opened = MemoryStore(path, max_item_chars=sys.maxsize, max_index_chars=INDEX_CHARS,
                              index_origins=True)
         _STORES[key] = opened

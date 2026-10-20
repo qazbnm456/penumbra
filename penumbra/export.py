@@ -195,10 +195,11 @@ def _node_rows(base_dir) -> list[dict]:
     """Every capture row as stored, oldest first, JSON columns parsed where they parse and kept as
     text where they do not: nothing is dropped for being malformed, since this is the copy a reader
     is told to keep."""
-    with horizon._connect(base_dir) as conn:
-        rows = [dict(r) for r in conn.execute("SELECT * FROM nodes ORDER BY created_at ASC, id ASC")]
+    with horizon._connect_labels(base_dir) as conn:
+        # With its labels, from the kit's memory store, as every reader sees them.
+        rows = [dict(r) for r in conn.execute("SELECT * FROM labelled ORDER BY created_at ASC, id ASC")]
     for row in rows:
-        for column in horizon._JSON_COLUMNS:
+        for column in (*horizon._JSON_COLUMNS, *horizon._LABEL_JSON):
             if isinstance(row.get(column), str):
                 try:
                     row[column] = json.loads(row[column])
@@ -303,6 +304,7 @@ def _write(out: _Zip, orbits_dir: Path, horizon_dir: Path, words: dict, lang: st
     }
     resolve = concepts.resolver(base_dir=horizon_dir)
     alias_table = concepts.aliases(base_dir=horizon_dir)
+    groups = concepts.alias_groups(base_dir=horizon_dir)
 
     # --- data/: the lossless half -------------------------------------------------------------
     lines = []
@@ -371,9 +373,9 @@ def _write(out: _Zip, orbits_dir: Path, horizon_dir: Path, words: dict, lang: st
             body.append(f"## {words['text']}\n\n" + _blocks_markdown(source))
         out.put(f"markdown/Captures/{capture_notes[node_id]}.md", head + "\n".join(body))
 
-    also: dict[str, list[str]] = {}
-    for alias, canonical in alias_table.items():
-        also.setdefault(_line(_clean(canonical)), []).append(alias)
+    also: dict[str, list[str]] = {
+        _line(_clean(canonical)): spellings for canonical, spellings in groups.items()
+    }
     for name, captured in sorted(entity_captures.items()):
         head = _frontmatter({"type": "entity", "aliases": sorted(also.get(name, []))})
         links = "\n".join(f"- [[{capture_notes[i]}]]" for i in captured)

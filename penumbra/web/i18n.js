@@ -235,6 +235,10 @@ const STRINGS = {
     "horizon.tooBigToUpload": "這個檔案超過 {limit} 的上限。",
     "horizon.wasStopped": "你停掉了這一則",
     "horizon.stillReading": "還在讀這一則…",
+    "horizon.summaryPaused": "試了 {n} 次都沒能寫出摘要：{error}",
+    "horizon.summariseAgain": "再寫一次摘要",
+    "horizon.summaryBusy": "已經有一輪摘要在跑了，等它結束再試一次。",
+    "horizon.summaryNothing": "這一則已經不在等待摘要了。",
     "horizon.notFilable": "還沒有文字，無法歸入軌道",
     "horizon.filedInGone": "一個已刪除的軌道",
     // The summary pass's own failure count. The REASON beside it is the server's own

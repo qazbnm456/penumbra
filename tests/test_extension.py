@@ -250,7 +250,9 @@ def test_a_link_with_tracking_is_the_link_already_captured(client):
     again = client.post("/extension/capture", headers=key,
                         json={"kind": "link", "url": "https://www.example.com/read/?utm_source=x"}).json()
     assert first["duplicate"] is False and again["duplicate"] is True
-    assert again["node"]["id"] == first["node"]["id"]
+    # The same capture: it may have been read in between, taking its item id, with the id the first
+    # answer gave kept as `former_id`.
+    assert first["node"]["id"] in {again["node"]["id"], again["node"]["former_id"]}
 
 
 def test_same_page_ignores_only_a_text_directive():
