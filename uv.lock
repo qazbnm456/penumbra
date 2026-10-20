@@ -2924,7 +2924,7 @@ requires-dist = [
     { name = "pytesseract", specifier = ">=0.3.10" },
     { name = "python-multipart", marker = "extra == 'api'", specifier = ">=0.0.9" },
     { name = "rapidocr", specifier = ">=3.9" },
-    { name = "rlm-harness", git = "https://github.com/qazbnm456/rlm-harness?rev=afed9e87d77a2c5035483a4932cb622b3d6cafb9" },
+    { name = "rlm-harness", git = "https://github.com/qazbnm456/rlm-harness?rev=15b3e6f3bc6c850db80265e96ee278bf1cc02e82" },
     { name = "setuptools", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = "<82" },
     { name = "soundfile", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = ">=0.12" },
     { name = "sqlite-vec", specifier = ">=0.1.6" },
@@ -3848,7 +3848,7 @@ wheels = [
 [[package]]
 name = "rlm-harness"
 version = "1.21.0"
-source = { git = "https://github.com/qazbnm456/rlm-harness?rev=afed9e87d77a2c5035483a4932cb622b3d6cafb9#afed9e87d77a2c5035483a4932cb622b3d6cafb9" }
+source = { git = "https://github.com/qazbnm456/rlm-harness?rev=15b3e6f3bc6c850db80265e96ee278bf1cc02e82#15b3e6f3bc6c850db80265e96ee278bf1cc02e82" }
 dependencies = [
     { name = "dspy" },
     { name = "pydantic" },

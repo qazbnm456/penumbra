@@ -18,6 +18,8 @@ A proper noun outranks the script rule in both directions, and the rule says so 
 
 Register has its own rule, `NATURAL_REGISTER`. A Traditional Chinese answer once wrote `源文` for "the source text" where a reader expects `原文`, a word-for-word rendering of the English. Both are ordinary Traditional characters, so no script rule can catch it; this is about wording and applies to single-script languages too.
 
+Entity labels are not prose: they follow the text, or a name already in use, never the reader (invariant 67).
+
 ## Choosing the output language
 
 `Accept-Language` answers which language an app's interface should use, not which language a person reads research in, so it is not ranked first. Resolution is one cheap `dspy.Predict` (`naming.SuggestLanguage`, not an `RLMTask`, for invariant 37's reason) that weighs the interface language (invariant 69), the header, the sources' language and any questions already asked. Questions weigh most, because they are the one place the reader chose a language instead of inheriting one.
