@@ -586,21 +586,28 @@ def test_the_graph_draws_similar_captures_including_an_unsummarised_one(client, 
 
 
 def test_an_unsummarised_capture_can_be_suggested_by_similarity(client, monkeypatch):
+    from rlm_harness.memory_vectors import DEFAULT_MODEL, MemoryVectors
+
+    from penumbra import memory_store
+
     monkeypatch.setenv("PN_LANDING_ORBIT", "off")
-    filed = _capture("https://x.example/a", "x", entities=["REM"], state="ready", title="Sleep review")
+    long = " about sleep, memory and the hippocampus, long enough to be compared"
+    filed = _capture("https://x.example/a", "x" + long, entities=["REM"], state="ready",
+                     title="Sleep review")
     horizon.promote_node(filed, "sleep", create=True)
-    loose = _capture("https://x.example/b", "y")
-    calls = []
+    loose = _capture("https://x.example/b", "y" + long)
 
-    def matches(node_ids, among):
-        calls.append(list(node_ids))
-        return {loose: [(filed, 0.9)]} if loose in node_ids else {}
+    class Same:
+        def embed(self, texts):
+            return [[1.0] + [0.0] * (DEFAULT_MODEL.dimensions - 1) for _ in texts]
 
-    monkeypatch.setattr(api, "_matches_or_none", lambda: matches)
+    index = MemoryVectors(memory_store.store(horizon.DEFAULT_HORIZON_DIR), model=DEFAULT_MODEL,
+                          embedder=Same())
+    assert index.sync().embedded == 2
+    monkeypatch.setattr(api, "_vectors_or_none", lambda: index)
     body = client.get("/horizon/suggestions").json()
     row = next(s for s in body["suggestions"] if s["node_id"] == loose)
-    assert row["orbit"] == "sleep" and row["like"] == "Sleep review"
-    assert calls == [[loose]], "every candidate in one call, against one load of the vectors"
+    assert row["orbit"] == "sleep" and row["like"] == "Sleep review" and row["similarity"] > 0.99
 
 
 def test_vector_status_and_a_second_download_is_refused(client, monkeypatch):

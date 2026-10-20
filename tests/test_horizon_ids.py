@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from penumbra import filing, horizon, memory_store, organize
+from penumbra import filing, horizon, memory_store
 from penumbra.schema import Source, SourceBlock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -61,24 +61,21 @@ def test_a_capture_still_being_read_has_only_its_temporary_id():
 
 
 def test_the_re_key_moves_every_row_that_names_the_capture(monkeypatch):
-    """`memberships` and `pending_memberships` cascade; the tables other modules create do not, so
-    the re-key updates each by name, read from the file's foreign keys."""
+    """Every table with a foreign key to `nodes` is re-keyed by name, read from the file's foreign
+    keys, so one a later module adds without `ON UPDATE CASCADE` cannot be missed."""
     _fail_first_add(monkeypatch)
     waiting = horizon.add_node(_source("pasted:w", text="waiting words"))
     assert waiting.state == "stored_unindexed" and waiting.id.startswith("nd-")
     temp = waiting.id
     with horizon._connect() as conn:
-        filing._ensure(conn)
-        conn.executescript(organize._LEFT_SCHEMA)
-        conn.execute("INSERT INTO filing_dismissed (node_id, orbit_id, dismissed_at) "
-                     "VALUES (?, 'o', 0)", (temp,))
-        conn.execute("INSERT INTO organize_left (node_id, orbits, left_at) VALUES (?, 'sig', 0)", (temp,))
+        conn.execute("CREATE TABLE later_notes (node_id TEXT REFERENCES nodes(id), note TEXT)")
+        conn.execute("INSERT INTO later_notes (node_id, note) VALUES (?, 'x')", (temp,))
         conn.execute("INSERT INTO memberships (node_id, orbit_id, source_id, promoted_at) "
                      "VALUES (?, 'm', 's1', 0)", (temp,))
     done = horizon.index_stored(temp)
     assert done.id.startswith("m") and done.former_id == temp
     with horizon._connect() as conn:
-        for table in ("filing_dismissed", "organize_left", "memberships"):
+        for table in ("later_notes", "memberships"):
             ids = {r[0] for r in conn.execute(f"SELECT node_id FROM {table}")}
             assert ids == {done.id}, table
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
@@ -114,8 +111,7 @@ def test_every_function_that_takes_a_node_id_accepts_the_temporary_one(tmp_path)
     assert membership.node_id == node.id
     assert [m.node_id for m in horizon.memberships_for(temp)] == [node.id]
     assert list(horizon.memberships_for_nodes([temp])) == [temp], "keyed by the id the caller passed"
-    filing.dismiss(temp, "elsewhere")
-    organize.remember_left({temp}, "sig")
+    filing.dismiss(temp, "orb", orbits_dir=tmp_path / "orbits")
     assert horizon.remove_node(temp) is True
     assert horizon.get_node(temp) is None and horizon.get_node(node.id) is None
 
@@ -242,7 +238,7 @@ def test_a_database_from_before_the_steps_gains_them_and_a_restart_changes_nothi
     node = horizon.get_node("nd-0000000000000001", base_dir=base)
     assert node is not None and node.former_id is None
     with sqlite3.connect(horizon.index_path(base)) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS) == 18
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == len(horizon._MIGRATIONS) == 21
         columns = [r[1] for r in conn.execute("PRAGMA table_info(nodes)")]
         assert "former_id" in columns
         # Steps 4-9: the labels live in the kit's memory store, so their old columns are gone.
@@ -357,7 +353,9 @@ def test_the_dropped_tables_are_named_only_by_the_steps_that_drop_them():
     the way in."""
     import re
 
-    names = re.compile(r"\b(search_rows|search_fts|entity_aliases|entity_seen|vector_rows|node_vectors\w*)\b")
+    # The API's `organize_left` response field (and the page reading it) is a name, not a table.
+    names = re.compile(r"(?<!data\.)\b(search_rows|search_fts|entity_aliases|entity_seen|vector_rows"
+                       r"|node_vectors\w*|filing_dismissed|organize_left)\b(?!\":)")
     package = Path(horizon.__file__).parent
     found = []
     for path in sorted(package.rglob("*")):
@@ -368,7 +366,7 @@ def test_the_dropped_tables_are_named_only_by_the_steps_that_drop_them():
                 found.append((path.name, line.strip()))
     dropped = ("search_rows", "search_fts", "entity_aliases", "entity_seen", "vector_rows",
                "node_vectors_vector_chunks00", "node_vectors_chunks", "node_vectors_rowids",
-               "node_vectors_info")
+               "node_vectors_info", "filing_dismissed", "organize_left")
     drops = {f'"DROP TABLE IF EXISTS main.{n}",' for n in dropped}
     assert sorted(found) == sorted(("horizon.py", d) for d in drops)
     assert {f"DROP TABLE IF EXISTS main.{n}" for n in dropped} <= set(horizon._MIGRATIONS)

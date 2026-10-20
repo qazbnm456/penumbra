@@ -191,7 +191,7 @@ default-groups = ["dev", "subscription-sdk"]
 # rlm-harness 1.21.0 is not on PyPI yet; it comes from this commit of its main branch until it is.
 # A kit change this project needs lands in the kit first, then this `rev` moves.
 [tool.uv.sources]
-rlm-harness = { git = "https://github.com/qazbnm456/rlm-harness", rev = "357b94053aec4955255b225db5fcdef4865fbb5b" }
+rlm-harness = { git = "https://github.com/qazbnm456/rlm-harness", rev = "cafddab8851e4fa55087c2aa322f5b768bcac176" }
 
 [project.scripts]
 penumbra = "penumbra.cli:main"

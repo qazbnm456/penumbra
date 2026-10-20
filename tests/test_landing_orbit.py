@@ -16,7 +16,7 @@ fastapi = pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient
 
-from penumbra import api, auth, config, horizon, ingest, intake
+from penumbra import api, auth, config, horizon, ingest, intake, memory_store, topics
 from penumbra.orbit import load_orbit
 from penumbra.schema import Source, SourceBlock
 
@@ -229,6 +229,5 @@ def test_an_automatic_filing_is_announced_once_with_what_undoes_it(client, monke
     # Undoing it is removing that source, which also declines the pair for next time.
     assert client.delete(f"/orbits/reading/sources/{source_id}").status_code == 200
     assert horizon.memberships_for(node_id) == []
-    with horizon._connect() as conn:
-        declined = conn.execute("SELECT node_id, orbit_id FROM filing_dismissed").fetchall()
-    assert (node_id, "reading") in [tuple(r) for r in declined]
+    store = memory_store.store(horizon.DEFAULT_HORIZON_DIR)
+    assert (node_id, topics.topic_of("reading")) in store.removed_pairs()
