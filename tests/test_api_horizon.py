@@ -23,7 +23,8 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
 from penumbra import api, auth, horizon, ingest, intake
-from penumbra.schema import Distillation, Source, SourceBlock
+from penumbra.schema import Source, SourceBlock
+from tests._labels import labels
 
 
 @pytest.fixture(autouse=True)
@@ -48,12 +49,12 @@ def _fake_web(monkeypatch):
 @pytest.fixture(autouse=True)
 def _a_model_is_configured(monkeypatch):
     """The summary pass now CONFIGURES a model before it claims the first node, so these tests need
-    `PN_*` set even though every one of them replaces `distil_source` with a stand-in.
+    `PN_*` set even though every one of them replaces the short step (`summarise_short`) with a stand-in.
 
     That is not fixture noise, it is the defect this file could not see. `config.setup()` was never
     called anywhere in the server process, so `POST /horizon/distil` could only ever produce
     `ValueError: No LM is loaded` — and the tests here were green throughout, because they patch
-    `distil_source`, which is exactly the function whose real body could not work. `setup()` builds
+    the summary step, which is exactly the function whose real body could not work. `setup()` builds
     LM objects and opens no socket, so this costs nothing; `tests/test_distil_live.py` is the file
     that exercises the real path.
     """
@@ -308,7 +309,7 @@ def test_capturing_makes_no_model_call(client, monkeypatch):
     from penumbra import distill
 
     calls: list[object] = []
-    monkeypatch.setattr(distill, "distil_source", lambda *a, **k: calls.append(a) or Distillation())
+    monkeypatch.setattr(distill, "summarise_short", lambda fields: calls.append(fields) or labels())
 
     for n in range(3):
         client.post("/horizon", json={"urls": [f"https://example.com/{n}"]})
@@ -322,7 +323,7 @@ def test_distil_is_a_separate_verb_that_names_its_own_number(client, monkeypatch
     from penumbra import distill
 
     monkeypatch.setattr(
-        distill, "distil_source", lambda *a, **k: Distillation(title="T", summary="S", tags=["x"])
+        distill, "summarise_short", lambda fields: labels(title="T", summary="S", tags=["x"])
     )
     for n in range(3):
         client.post("/horizon", json={"texts": [f"note {n}"]})
@@ -346,7 +347,7 @@ def test_distil_is_a_separate_verb_that_names_its_own_number(client, monkeypatch
         "stopped_unreachable": False,
     }
 
-    for _ in range(200):
+    for _ in range(750):   # up to 15s: a loaded machine runs the pass slowly, a quiet one in well under 1s
         if client.get("/horizon/status").json()["distil"]["running"] is False:
             break
         time.sleep(0.02)
@@ -364,7 +365,7 @@ def test_auto_distillation_is_off_by_default_and_on_when_the_operator_says_so(cl
 
     seen: list[int] = []
     monkeypatch.setattr(
-        distill, "distil_source", lambda *a, **k: seen.append(1) or Distillation(title="auto")
+        distill, "summarise_short", lambda fields: seen.append(1) or labels(title="auto")
     )
 
     monkeypatch.delenv("PN_AUTO_DISTIL", raising=False)
@@ -388,11 +389,13 @@ def test_the_auto_pass_leaves_long_captures_for_a_press_unless_told_otherwise(cl
     from penumbra import api, distill, ingest
 
     long_text = "word " * (distill.SHORT_LIMIT // 4)
+    # The text opens with its URL: a long step is given the text, not the capture.
     monkeypatch.setattr(ingest, "parse_web", lambda url, source_id: Source(
-        id=source_id, kind="web", origin=url, blocks=[SourceBlock(locator="whole", text=long_text)]))
+        id=source_id, kind="web", origin=url,
+        blocks=[SourceBlock(locator="whole", text=f"{url} {long_text}")]))
     runs: list[str] = []
-    monkeypatch.setattr(api, "_run_long_distil", lambda source, language: runs.append(source.origin)
-                        or Distillation(title="long", summary="S", tags=["t"]))
+    monkeypatch.setattr(api, "_run_long_distil", lambda fields: runs.append(fields["text"].split()[0])
+                        or labels(title="long", summary="S", tags=["t"]))
     monkeypatch.setenv("PN_AUTO_DISTIL", "on")
 
     left = client.post("/horizon", json={"urls": ["https://example.com/long-a"]}).json()["nodes"][0]
@@ -447,8 +450,8 @@ def test_the_auto_pass_never_reports_more_done_than_it_said_it_would(client, mon
     calls: list[str] = []
     monkeypatch.setattr(
         distill,
-        "distil_source",
-        lambda *a, **k: calls.append("x") or Distillation(title="T", summary="S", tags=["x"]),
+        "summarise_short",
+        lambda fields: calls.append("x") or labels(title="T", summary="S", tags=["x"]),
     )
 
     real_configure = api._configure_in_process_model
@@ -745,12 +748,12 @@ def test_the_idle_hook_yields_to_a_capture_that_arrives_mid_batch(client, monkey
     held = threading.Event()
     reached = threading.Event()
 
-    def slow(*args, **kwargs):
+    def slow(fields):
         calls.append(1)
         if len(calls) == 1:
             reached.set()
             held.wait(5)
-        return Distillation(title="auto")
+        return labels(title="auto")
 
     # The count is recorded from INSIDE the parse, not polled afterwards. Polling reads the state and
     # the counter as two separate actions, and the NEXT idle hook runs between them — which is how
@@ -765,7 +768,7 @@ def test_the_idle_hook_yields_to_a_capture_that_arrives_mid_batch(client, monkey
         )
 
     monkeypatch.setattr(ingest, "parse_web", parse)
-    monkeypatch.setattr(distill, "distil_source", slow)
+    monkeypatch.setattr(distill, "summarise_short", slow)
     for n in range(6):
         client.post("/horizon", json={"texts": [f"note {n}"]})
     client.post("/horizon", json={"urls": ["https://example.com/trigger"]})
@@ -1063,12 +1066,12 @@ def test_cancel_actually_reaches_a_running_summary_pass(client, monkeypatch):
 
     seen: list[int] = []
 
-    def slow(*args, **kwargs):
+    def slow(fields):
         seen.append(1)
         time.sleep(0.05)
-        return Distillation(title="T", summary="S", tags=["x"])
+        return labels(title="T", summary="S", tags=["x"])
 
-    monkeypatch.setattr(distill, "distil_source", slow)
+    monkeypatch.setattr(distill, "summarise_short", slow)
     for n in range(12):
         client.post("/horizon", json={"texts": [f"note {n}"]})
 
@@ -1105,8 +1108,8 @@ def test_a_second_summary_pass_is_refused_while_one_is_running(client, monkeypat
 
     monkeypatch.setattr(
         distill,
-        "distil_source",
-        lambda *a, **k: time.sleep(0.05) or Distillation(title="T", summary="S", tags=["x"]),
+        "summarise_short",
+        lambda fields: time.sleep(0.05) or labels(title="T", summary="S", tags=["x"]),
     )
     for n in range(8):
         client.post("/horizon", json={"texts": [f"slow note {n}"]})
@@ -1126,11 +1129,10 @@ def test_a_failed_summary_is_named_and_can_be_retried_on_its_own(client, monkeyp
     """The failure card names the captures that failed and retries exactly those."""
     from penumbra import distill
 
-    class Unreachable:
-        async def arun(self, **kwargs):
-            raise RuntimeError("the summariser is unreachable")
+    def unreachable(fields):
+        raise RuntimeError("the summariser is unreachable")
 
-    monkeypatch.setattr(distill, "DistillNode", Unreachable)
+    monkeypatch.setattr(distill, "summarise_short", unreachable)
     ids = [
         client.post("/horizon", json={"texts": [f"doomed {n}"]}).json()["nodes"][0]["id"] for n in range(2)
     ]
@@ -1156,11 +1158,10 @@ def test_a_pass_stops_when_the_model_cannot_be_reached_three_times_in_a_row(clie
     """Every later capture would fail the same way; the rest stay waiting for when it answers."""
     from penumbra import distill
 
-    class Unreachable:
-        async def arun(self, **kwargs):
-            raise RuntimeError("litellm.InternalServerError: OpenAIException - Connection error.")
+    def unreachable(fields):
+        raise RuntimeError("litellm.InternalServerError: OpenAIException - Connection error.")
 
-    monkeypatch.setattr(distill, "DistillNode", Unreachable)
+    monkeypatch.setattr(distill, "summarise_short", unreachable)
     for n in range(6):
         client.post("/horizon", json={"texts": [f"waiting {n}"]})
     client.post("/horizon/distil", json={"limit": 6})
@@ -1187,16 +1188,14 @@ def test_a_failed_node_is_counted_and_its_reason_reported(client, monkeypatch):
     pinned only by its own absence."""
     from penumbra import distill
 
-    # **Patched BELOW `distil_source`, on purpose.** Replacing `distil_source` itself is what every
-    # other distillation test does, and it bypasses the exact mechanism this test exists to observe:
-    # the real `distil_source` is what catches the failure, calls `on_error` and returns `None`. A
-    # stub that raises instead just propagates, and a stub that returns `None` never reports a
-    # reason. `DistillNode.arun` is the seam the real code actually fails at.
-    class Unreachable:
-        async def arun(self, **kwargs):
-            raise RuntimeError("the summariser is unreachable")
+    # **Patched at the short STEP, on purpose, never above `distil_pending`.** A stand-in for the
+    # whole pass would bypass the exact mechanism this test exists to observe: the kit's pass is
+    # what catches the step's failure, reports it and calls `on_error`. `summarise_short` is the
+    # seam the real code actually fails at.
+    def unreachable(fields):
+        raise RuntimeError("the summariser is unreachable")
 
-    monkeypatch.setattr(distill, "DistillNode", Unreachable)
+    monkeypatch.setattr(distill, "summarise_short", unreachable)
     for n in range(2):
         client.post("/horizon", json={"texts": [f"doomed {n}"]})
 
@@ -1388,7 +1387,8 @@ def test_one_unreadable_row_does_not_take_down_the_whole_listing(client):
     assert client.get("/horizon").json()["total"] == 2
 
     with sqlite3.connect(horizon.index_path()) as conn:
-        conn.execute("UPDATE nodes SET tags = ? WHERE id = ?", ("{not json", bad["id"]))
+        # `flags`: a JSON column the row itself keeps (labels live in the kit's store).
+        conn.execute("UPDATE nodes SET flags = ? WHERE id = ?", ("{not json", bad["id"]))
         conn.commit()
 
     listing = client.get("/horizon")
@@ -1425,7 +1425,8 @@ def test_an_unreadable_index_row_can_be_removed_and_stops_inflating_the_counts(c
     assert client.get("/horizon").json()["total"] == 2
 
     with sqlite3.connect(horizon.index_path()) as conn:
-        conn.execute("UPDATE nodes SET tags = ? WHERE id = ?", ("{not json", bad["id"]))
+        # `flags`: a JSON column the row itself keeps (labels live in the kit's store).
+        conn.execute("UPDATE nodes SET flags = ? WHERE id = ?", ("{not json", bad["id"]))
         conn.commit()
 
     listing = client.get("/horizon").json()
@@ -2118,14 +2119,15 @@ def test_a_captures_tags_can_be_edited_and_are_cleaned_like_the_models(client):
     assert too_many.status_code == 422
     assert client.get(f"/horizon/{node['id']}").json()["node"]["tags"] == []
     assert client.put(f"/horizon/{node['id']}/tags", json={"tag": ["x"]}).status_code == 422
-    # Removing is never refused, even from a list already over the cap (a summary pass with a
-    # larger cap, or a hand-edited row): only growing past it is.
-    from penumbra import horizon
-    horizon.edit_node(node["id"], tags=[f"t{i}" for i in range(10)])
-    fewer = client.put(f"/horizon/{node['id']}/tags", json={"tags": [f"t{i}" for i in range(9)]})
-    assert fewer.status_code == 200 and len(fewer.json()["node"]["tags"]) == 9
-    more = client.put(f"/horizon/{node['id']}/tags", json={"tags": [f"t{i}" for i in range(10)]})
+    # Removing is never refused; only growing past the cap is. The store holds at most eight on
+    # every write (a summary's and a reader's alike), so a list over the cap cannot exist to shrink.
+    full = client.put(f"/horizon/{node['id']}/tags", json={"tags": [f"t{i}" for i in range(8)]})
+    assert full.status_code == 200 and len(full.json()["node"]["tags"]) == 8
+    fewer = client.put(f"/horizon/{node['id']}/tags", json={"tags": [f"t{i}" for i in range(7)]})
+    assert fewer.status_code == 200 and len(fewer.json()["node"]["tags"]) == 7
+    more = client.put(f"/horizon/{node['id']}/tags", json={"tags": [f"t{i}" for i in range(9)]})
     assert more.status_code == 422
+    assert len(client.get(f"/horizon/{node['id']}").json()["node"]["tags"]) == 7
 
 
 def test_moving_a_capture_between_orbits_never_moves_their_planets(client):
@@ -2283,3 +2285,117 @@ def test_a_source_added_inside_an_orbit_that_waits_for_the_store_is_stored_witho
         time.sleep(0.02)
     [membership] = horizon.nodes_in_orbit("waits")
     assert horizon.get_node(membership.node_id).state == "ready_undistilled"
+
+
+# --- the summary queue's counts and the failure cap, through the API --------------------------------
+
+
+def test_a_capture_the_pass_gave_up_on_is_not_counted_as_waiting(client, monkeypatch):
+    from penumbra import distill
+
+    def unusable(fields):
+        raise ValueError("unusable reply")
+
+    monkeypatch.setattr(distill, "summarise_short", unusable)
+    node = client.post("/horizon", json={"texts": ["a note the model cannot label"]}).json()["nodes"][0]
+    client.post("/orbits/kept/notes", json={"text": "an orbit to hold it"})   # a note is no capture
+    client.post(f"/horizon/{node['id']}/promote", json={"orbit_id": "kept", "create": False})
+    for _ in range(horizon.DISTILL_MAX_FAILURES):
+        client.post("/horizon/distil", json={"node_ids": [node["id"]], "limit": 1})
+        _wait_for_pass(client)
+    assert client.get("/horizon").json()["undistilled"] == 0
+    planets = {p["slug"]: p for p in client.get("/horizon/topology").json()["orbits"]}
+    assert planets["kept"]["undistilled"] == 0
+    assert client.get(f"/horizon/{node['id']}").json()["node"]["summary_paused"]["tries"] == 3
+
+
+def test_a_provider_that_refuses_every_call_sets_nothing_aside(client, monkeypatch):
+    from penumbra import distill
+
+    class AuthenticationError(Exception):
+        pass
+
+    def refused(fields):
+        raise AuthenticationError("Incorrect API key provided")
+
+    monkeypatch.setattr(distill, "summarise_short", refused)
+    node = client.post("/horizon", json={"texts": ["a note behind a bad key"]}).json()["nodes"][0]
+    for _ in range(5):
+        client.post("/horizon/distil", json={"limit": 1})
+        _wait_for_pass(client)
+    after = client.get(f"/horizon/{node['id']}").json()["node"]
+    assert after["summary_paused"] is None and client.get("/horizon").json()["undistilled"] == 1
+
+
+def test_retrying_failures_skips_a_capture_removed_since(client, monkeypatch):
+    from penumbra import distill
+
+    monkeypatch.setattr(distill, "summarise_short", lambda fields: labels(title="T", summary="S"))
+    kept = client.post("/horizon", json={"texts": ["one that is still here"]}).json()["nodes"][0]
+    gone = client.post("/horizon", json={"texts": ["one removed since it failed"]}).json()["nodes"][0]
+    client.delete(f"/horizon/{gone['id']}")
+    started = client.post("/horizon/distil", json={"node_ids": [kept["id"], gone["id"]], "limit": 5})
+    assert started.status_code == 200 and started.json()["total"] == 1
+    _wait_for_pass(client)
+    assert client.get(f"/horizon/{kept['id']}").json()["node"]["title"] == "T"
+    assert client.post("/horizon/distil", json={"node_ids": ["not-an-id"], "limit": 1}).status_code == 400
+
+
+def test_a_capture_still_being_read_cannot_be_renamed_yet(client):
+    pending = horizon.add_pending_node("https://example.com/still-reading", "web",
+                                       base_dir=api._horizon_queue_base())
+    reply = client.put(f"/horizon/{pending.id}/title", json={"title": "Too soon"})
+    assert reply.status_code == 409 and "still being read" in reply.json()["detail"]
+    assert client.put(f"/horizon/{pending.id}/tags", json={"tags": ["x"]}).status_code == 409
+
+
+def _wait_for_pass(client) -> None:
+    for _ in range(750):
+        if client.get("/horizon/status").json()["distil"]["running"] is False:
+            return
+        time.sleep(0.02)
+    raise AssertionError("the pass did not end")
+
+
+def test_a_rate_limit_counts_against_the_capture_and_three_stop_the_pass(client, monkeypatch):
+    from penumbra import distill
+
+    class RateLimitError(Exception):
+        pass
+
+    def throttled(fields):
+        raise RateLimitError("Request too large for tokens per min")
+
+    monkeypatch.setattr(distill, "summarise_short", throttled)
+    for n in range(4):
+        client.post("/horizon", json={"texts": [f"a note the provider throttles {n}"]})
+    client.post("/horizon/distil", json={"limit": 4})
+    _wait_for_pass(client)
+    status = client.get("/horizon/status").json()["distil"]
+    assert status["stopped_unreachable"] is True and status["done"] == 3, "three in a row stop it"
+    tried = [n for n in client.get("/horizon").json()["nodes"] if n["error"]]
+    assert len(tried) == 3
+    for node in tried:
+        assert horizon.get_node(node["id"]).summary_paused is None, "one try is not the cap"
+    with horizon._connect_labels(api._horizon_queue_base()) as conn:
+        counts = [r[0] for r in conn.execute("SELECT distill_tries FROM labelled WHERE error IS NOT NULL")]
+    assert counts == [1, 1, 1], "a rate limit counts against the capture"
+
+
+@pytest.mark.parametrize("reason", [
+    "LMServerError: [openai/x] litellm.InternalServerError: OpenAIException - Connection error.",
+    "LMServerError: [openai/x] litellm.InternalServerError: OpenAIException - Missing credentials.",
+    "litellm.AuthenticationError: Incorrect API key provided",
+    "RuntimeError: server misconfigured: PN_MAIN_MODEL is not set",
+])
+def test_an_unreachable_model_or_a_missing_key_never_counts_against_a_capture(reason):
+    assert api._not_the_captures(reason) is True
+
+
+@pytest.mark.parametrize("reason", [
+    "litellm.RateLimitError: Request too large for tokens per min",
+    "litellm.InternalServerError: model ran out of memory on this input",
+    "ValueError: the reply could not be read",
+])
+def test_a_failure_that_may_be_the_captures_counts(reason):
+    assert api._not_the_captures(reason) is False

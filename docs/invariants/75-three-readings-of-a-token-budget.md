@@ -10,6 +10,8 @@ Three different kinds of exhaustion are reported separately: the token cap, the 
 
 The ratio of used to cap is shown as a number, with an honest status: a shape to expect, not a figure confirmed on this project's runs. The rlm-harness maintainer measured no early-warning gradient in that ratio at a 32768 cap, the cap this project now uses (invariant 59), and this project's own sample at 32768 is small: two capped calls in 54, at ratios 1.0 and 0.275. What carries to any cap is the mechanism: a truncated code cell is a `SyntaxError` the planner's next turn usually repairs, while a truncated final answer ends the run.
 
+The corpus-size line counts the text a run read, under whichever name its task takes it: Penumbra's tasks take `sources`, the kit's labelling task `text` (`traces.run_meta`).
+
 ---
 
 Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

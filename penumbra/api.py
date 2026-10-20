@@ -131,6 +131,7 @@ from . import (
     horizon,
     intake,
     mapstore,
+    memory_store,
     organize,
     runner,
     search,
@@ -138,7 +139,6 @@ from . import (
     vectors,
 )
 from . import traces as trace_files
-from .align import AlignConcepts
 from .audio import GeneratePodcastScript
 from .citations import locate_answer_spans, strip_markers, verify_citations
 from .config import (
@@ -162,7 +162,6 @@ from .config import (
     write_settings,
 )
 from .corpus import Corpus, CorpusTooLargeError
-from .distill_long import DistillLongDocument
 from .guide import GenerateFAQ, GenerateKeyInsight, GenerateSummary, GenerateTimeline
 from .ingest import ingest_pasted_text, ingest_uploaded_file, is_url, with_injection_flags
 from .naming import SuggestLanguage, SuggestTitle, fallback_title, normalize_title
@@ -199,9 +198,7 @@ from .schema import (
     AskSource,
     ChatTurn,
     Citation,
-    ConceptMerges,
     KeyInsight,
-    LongDistillation,
     Node,
     Orbit,
     Overview,
@@ -3394,6 +3391,10 @@ _DISTIL_FAILURES_KEPT = 20
 #: about the capture or the reply is wrong, so retrying the node is pointless and so is going on.
 _CONNECTION_FAILURE = (
     "ConnectError", "ConnectTimeout", "Connection error", "APIConnectionError", "Connection refused",
+    # The provider refusing every call: a key it does not accept, an exhausted quota or rate, an
+    # outage. Nothing about the capture, and every later one would fail the same way.
+    "AuthenticationError", "PermissionDeniedError", "RateLimitError", "ServiceUnavailableError",
+    "InternalServerError", "insufficient_quota", "Missing credentials",
 )
 #: Captures in a row that could not reach the model before a pass stops: the model server is down
 #: or unreachable, and every later capture would fail the same way, one timeout at a time.
@@ -3402,6 +3403,25 @@ _UNREACHABLE_STOP = 3
 
 def _is_connection_failure(text: str) -> bool:
     return any(mark in text for mark in _CONNECTION_FAILURE)
+
+
+#: Of `_CONNECTION_FAILURE`, the ones that can also come from one capture: a request too large for
+#: the provider's rate, or a local server running out of memory on one long input. They still stop
+#: a pass after three in a row, but they count against the capture, so one that keeps causing them
+#: is set aside rather than retried, and stopping, at every later pass.
+_MAYBE_THE_CAPTURES = ("RateLimitError", "InternalServerError", "ServiceUnavailableError")
+
+
+def _not_the_captures(reason: str) -> bool:
+    """A failure that says nothing about the capture, so it does not count toward the summary
+    pass's give-up (`horizon.DISTILL_MAX_FAILURES`): the model could not be reached, the provider
+    refuses the key or the account, or the server is misconfigured."""
+    if "server misconfigured" in reason:
+        return True
+    # A mark that can only mean the model or the key wins over a wrapper that can mean either:
+    # litellm reports a refused connection and a missing key as `InternalServerError: ... Connection
+    # error.` / `... Missing credentials.`.
+    return any(mark in reason for mark in _CONNECTION_FAILURE if mark not in _MAYBE_THE_CAPTURES)
 
 
 def _tick_node() -> None:
@@ -3418,10 +3438,10 @@ def _model_unreachable() -> bool:
     return int(_DISTIL["unreachable"]) >= _UNREACHABLE_STOP
 
 
-def _record_failure(node_id: str, exc: Exception) -> None:
-    """Count a capture that failed in the running pass and keep its name and reason. The caller
-    holds `_DISTIL_GUARD`."""
-    reason = f"{type(exc).__name__}: {exc}"[:300]
+def _record_failure(node_id: str, reason: str) -> None:
+    """Count a capture that failed in the running pass and keep its name and reason (as the pass
+    reported it: `"Type: message"`). The caller holds `_DISTIL_GUARD`."""
+    reason = reason[:300]
     # On the node as well: `_DISTIL` is process state, and after a restart the waiting card read the
     # capture as merely unsummarised, with no word of why (`_stored_failures`).
     with contextlib.suppress(Exception):
@@ -3520,10 +3540,6 @@ def _distil_status() -> dict:
 #: rather than after a multi-minute RLM run (invariant 47). Guarded by `_DISTIL_GUARD`.
 _DISTIL_RUN: dict[str, object] = {"run": None}
 
-#: What `DistillLongDocument` is told when no output language was resolved.
-_DEFAULT_DISTIL_LANGUAGE = "the language the document is written in"
-
-
 #: A run that failed on the SHAPE of the model's reply rather than on time, a Stop or a setting. One
 #: fresh attempt recovers it: a sibling project measured this failure on 6 of 685 runs and all of
 #: its re-runs came back fine. Only for the pass's own runs, which nobody pressed one by one; a
@@ -3575,23 +3591,19 @@ def _run_pass_once(
     return asyncio.run(go())
 
 
-def _run_long_distil(source, language: str, known: str = ""):
-    """Summarise one long document with `DistillLongDocument`. Raises on failure, which
-    `distil_source` turns into a node left at `ready_undistilled` with the reason reported."""
-    doc = source.model_copy(update={"id": "s1"})
-    blob = Corpus(sources=[doc]).blob(max_chars=max_corpus_chars())
+#: The kit's long-document labelling task, run in a worker subprocess (invariant 21).
+_DISTIL_LONG_TASK = "rlm_harness.memory_tasks:DistillLongItem"
+
+
+def _run_long_distil(fields: dict) -> dict:
+    """Label one long capture with the kit's `DistillLongItem` in a worker, from the step's own
+    fields (`text`, `section_map`, `language`, `known`). Raises on failure; the kit's pass records it
+    and `distill.distil_pending` decides whether it counts."""
     result = _run_pass_task(
-        _dotted(DistillLongDocument),
-        {
-            "sources": blob,
-            "section_map": distill.section_map(doc),
-            "output_language": language or _DEFAULT_DISTIL_LANGUAGE,
-            "known": known,
-        },
-        "horizon-distil",
-        timeout_factor=_long_distil_timeout_factor(distill.text_length(doc)),
+        _DISTIL_LONG_TASK, dict(fields), "horizon-distil",
+        timeout_factor=_long_distil_timeout_factor(len(fields.get("text", ""))),
     )
-    return distill.from_long(LongDistillation.model_validate(result), doc)
+    return result.model_dump() if hasattr(result, "model_dump") else dict(result)
 
 
 #: Characters a long-document summary is given one `PN_RUN_TIMEOUT_SECONDS` for, and the most that
@@ -3618,58 +3630,66 @@ _ALIGN_BATCH = 60
 
 
 def _align_after_pass(base_dir) -> None:
-    """Concept alignment, once, at the end of a summary pass that wrote new entity names.
+    """Concept alignment, once, at the end of a summary pass that wrote new entity names: the kit's
+    `align_pending`, its `AlignEntities` run in a worker (invariant 21).
 
-    Only ever after a pass the reader pressed or turned on (invariant 80): alignment never starts on
-    its own. Skipped when the pass was stopped, when nothing new was named, and when there is
-    nothing to compare against. A failure is reported and leaves the names unseen, so the next pass
-    tries again; the summaries themselves are already saved either way.
+    Only ever after a pass the reader pressed (invariant 80): alignment never starts on its own.
+    Skipped when the pass was stopped, when nothing new was named, and with fewer than two names in
+    use (nothing to compare against: they are marked seen). A failure is reported and leaves the
+    names unseen, so the next pass tries again, until the same names failed twice in a row, when they
+    are set aside; the summaries themselves are already saved either way.
     """
+    from rlm_harness.memory_tasks import align_pending
+
     with _DISTIL_GUARD:
         if _DISTIL["cancel"]:
             return
-    new = concepts.unseen(base_dir=base_dir)
-    if not new:
+    store = memory_store.store(base_dir)
+    batch = store.unseen_entities(limit=_ALIGN_BATCH)
+    if not batch:
         return
-    counts = concepts.all_names(base_dir=base_dir)
-    batch = new[:_ALIGN_BATCH]
-    if len(counts) < 2:
-        concepts.mark_seen(batch, base_dir=base_dir)
+    if len(store.entity_names()) < 2:
+        store.mark_seen(batch)
         return
     with _DISTIL_GUARD:
         _ALIGN.update({"running": True, "error": ""})
-    try:
-        result = _run_pass_task(
-            _dotted(AlignConcepts),
-            {"known": concepts.known_listing(counts, set(batch)), "new_names": concepts.json_list(batch)},
-            "horizon-align",
-        )
-        merges = ConceptMerges.model_validate(result)
-        concepts.apply_merges(
-            [(m.alias, m.canonical) for m in merges.merges], set(counts), batch=set(batch),
-            base_dir=base_dir,
-        )
-        concepts.mark_seen(batch, base_dir=base_dir)
-    except Exception as exc:  # noqa: BLE001 - reported on the page; the summaries are already kept
+
+    async def run(payload: dict) -> dict:
+        result = await asyncio.to_thread(
+            _run_pass_task, "rlm_harness.memory_tasks:AlignEntities",
+            {"known": payload["known"], "new_names": payload["new_names"]}, "horizon-align")
+        return result.model_dump() if hasattr(result, "model_dump") else dict(result)
+
+    def stopped() -> bool:
         with _DISTIL_GUARD:
-            stopped = bool(_DISTIL["cancel"])
-            if not stopped:
-                # Counted per BATCH: a failure of other names does not count against these.
-                key = tuple(batch)
-                failures = int(_ALIGN.get("failures", 0)) + 1 if _ALIGN.get("batch") == key else 1
-                _ALIGN.update({"failures": failures, "batch": key})
-                _ALIGN["error"] = f"{type(exc).__name__}: {exc}"[:300]
-            gave_up = int(_ALIGN.get("failures", 0)) >= _ALIGN_GIVE_UP
-        _log.warning("align: %s", exc)
-        if gave_up:
-            # The same names failing twice in a row are set aside rather than paid for at the end of
-            # every later pass; the error stays on the page, and new names are still aligned.
-            concepts.mark_seen(batch, base_dir=base_dir)
+            return bool(_DISTIL["cancel"])
+
+    try:
+        report = asyncio.run(align_pending(store, limit=_ALIGN_BATCH, run=run, should_stop=stopped))
+        error = report.error
+        asked = tuple(report.asked or batch)
+    except Exception as exc:  # noqa: BLE001 - reported on the page; the summaries are already kept
+        error, asked = f"{type(exc).__name__}: {exc}", tuple(batch)
+    try:
+        if error:
+            with _DISTIL_GUARD:
+                stopping = bool(_DISTIL["cancel"])
+                if not stopping:
+                    # Counted per BATCH: a failure of other names does not count against these.
+                    failures = int(_ALIGN.get("failures", 0)) + 1 if _ALIGN.get("batch") == asked else 1
+                    _ALIGN.update({"failures": failures, "batch": asked})
+                    _ALIGN["error"] = error[:300]
+                gave_up = int(_ALIGN.get("failures", 0)) >= _ALIGN_GIVE_UP
+            _log.warning("align: %s", error)
+            if gave_up:
+                # The same names failing twice in a row are set aside rather than paid for at the end
+                # of every later pass; the error stays on the page, and new names are still aligned.
+                store.mark_seen(list(asked))
+                with _DISTIL_GUARD:
+                    _ALIGN["failures"] = 0
+        else:
             with _DISTIL_GUARD:
                 _ALIGN["failures"] = 0
-    else:
-        with _DISTIL_GUARD:
-            _ALIGN["failures"] = 0
     finally:
         with _DISTIL_GUARD:
             _ALIGN["running"] = False
@@ -3829,7 +3849,9 @@ def _stop_long_distil() -> None:
             run.cancel()
 
 
-def _run_distil_pass(limit: int, language: str, node_ids: list[str] | None = None) -> None:
+def _run_distil_pass(
+    limit: int, language: str, node_ids: list[str] | None = None, orbit_id: str | None = None
+) -> None:
     """The summary pass, on a worker thread, reporting as it goes.
 
     `should_stop` is checked between nodes, so Stop ends the batch at a node boundary rather than
@@ -3845,7 +3867,7 @@ def _run_distil_pass(limit: int, language: str, node_ids: list[str] | None = Non
         with _DISTIL_GUARD:
             _tick_node()
 
-    def failed(node_id: str, exc: Exception) -> None:
+    def failed(node_id: str, reason: str) -> None:
         # The message reaches the reader verbatim. This is a self-hosted, BYOK tool with one
         # operator, and "No LM is loaded" is the actionable sentence — the same reasoning by which
         # the orbit surface already shows its own model errors in full rather than replacing
@@ -3855,8 +3877,8 @@ def _run_distil_pass(limit: int, language: str, node_ids: list[str] | None = Non
                 # Stop killed the node's worker: that is what the reader asked for, not a crash to
                 # report (invariant 60). The node goes back to waiting, like any unsummarised one.
                 return
-            _record_failure(node_id, exc)
-        _log.warning("distil: %s failed: %s", node_id, exc)
+            _record_failure(node_id, reason)
+        _log.warning("distil: %s failed: %s", node_id, reason)
 
     try:
         # BEFORE the first node, not inside the loop: a missing model is one message, not fifty
@@ -3878,7 +3900,9 @@ def _run_distil_pass(limit: int, language: str, node_ids: list[str] | None = Non
             should_stop=should_stop,
             on_node=tick,
             on_error=failed,
+            not_counted=_not_the_captures,
             node_ids=node_ids,
+            orbit_id=orbit_id,
             run_long=_run_long_distil,
         )
         with _DISTIL_GUARD:
@@ -3963,10 +3987,7 @@ def _auto_distil_after_intake() -> None:
     # the strip's Stop reaches this pass too.
     # Only what this pass will actually take: long captures are left for a press unless the
     # operator said otherwise (below).
-    pending = sum(
-        1 for node in horizon.list_nodes(state="ready_undistilled", limit=100_000, base_dir=queue.base_dir)
-        if take_long or node.chars <= distill.SHORT_LIMIT
-    )
+    pending = len(horizon.waiting_ids(base_dir=queue.base_dir, defer_long=not take_long))
     total = min(limit, pending)
     # `total` is also what `distil_pending` is CAPPED at below, not just what the strip announces.
     # Passing the raw `limit` there let the pass re-list `ready_undistilled` when it actually ran
@@ -4002,12 +4023,12 @@ def _auto_distil_after_intake() -> None:
         with _DISTIL_GUARD:
             _tick_node()
 
-    def failed(node_id: str, exc: Exception) -> None:
+    def failed(node_id: str, reason: str) -> None:
         with _DISTIL_GUARD:
             if _DISTIL["cancel"]:
                 return  # stopped, not failed (see the manual pass)
-            _record_failure(node_id, exc)
-        _log.warning("auto-distil: %s failed: %s", node_id, exc)
+            _record_failure(node_id, reason)
+        _log.warning("auto-distil: %s failed: %s", node_id, reason)
 
     def should_stop() -> bool:
         with _DISTIL_GUARD:
@@ -4030,6 +4051,7 @@ def _auto_distil_after_intake() -> None:
             should_stop=should_stop,
             on_node=tick,
             on_error=failed,
+            not_counted=_not_the_captures,
             # Long captures are left for a press by default: an RLM run can hold this thread, which
             # is the intake worker, for minutes, and a capture dropped meanwhile would sit at
             # `queued`. With a fast or local model that wait is short, so it is the operator's call.
@@ -4431,7 +4453,8 @@ async def list_horizon(
     )
     # NOT filtered by the query: this is what a summary pass would cost, and that is a fact about
     # the Horizon rather than about what you happen to be looking at (invariant 80).
-    undistilled = await asyncio.to_thread(horizon.count_nodes, state="ready_undistilled")
+    # The summary pass's own queue, so a capture the pass gave up on is not counted as waiting.
+    undistilled = len(await asyncio.to_thread(horizon.waiting_ids))
     try:
         corpus_char_cap = max_corpus_chars()
     except SystemExit as exc:  # a malformed PN_MAX_CORPUS_CHARS, same shape as `_config()`'s
@@ -4494,9 +4517,9 @@ async def horizon_status() -> dict:
 
 def _stored_failures() -> list[dict]:
     """Captures still unsummarised whose last attempt failed, with the reason recorded on them."""
-    with horizon._connect(_horizon_queue_base()) as conn:
+    with horizon._connect_labels(_horizon_queue_base()) as conn:
         rows = conn.execute(
-            "SELECT id, title, origin, preview, error FROM nodes WHERE state = 'ready_undistilled' "
+            "SELECT id, title, origin, preview, error FROM labelled WHERE state = 'ready_undistilled' "
             "AND error IS NOT NULL AND error != '' ORDER BY updated_at DESC LIMIT ?",
             (_DISTIL_FAILURES_KEPT,),
         ).fetchall()
@@ -4562,13 +4585,9 @@ async def distil_estimate(orbit: str | None = Query(None, max_length=200)) -> di
         per_run = _LONG_CALLS[1]  # no model configured: nothing can run, the label is moot
 
     def _count() -> dict:
-        if orbit is not None:
-            ids = [m.node_id for m in horizon.nodes_in_orbit(slug(orbit))]
-            nodes = [n for n in (horizon.get_node(i) for i in ids) if n is not None]
-        else:
-            nodes = horizon.list_nodes(state="ready_undistilled", limit=100_000)
-        waiting = [n for n in nodes if n.state == "ready_undistilled"]
-        long = sum(1 for n in waiting if n.chars > distill.SHORT_LIMIT)
+        # The pass's own queue, so the number beside the button is what a press would take.
+        waiting = horizon.waiting(orbit_id=orbit)
+        long = sum(1 for _, chars in waiting if chars > distill.SHORT_LIMIT)
         short = len(waiting) - long
         return {
             "count": len(waiting), "short": short, "long": long,
@@ -4653,26 +4672,20 @@ async def distil_horizon(body: DistilRequest, request: Request) -> dict:
     # (invariant 80's shortened ladder). `output_language()` still outranks this inside the pass.
     language = request.headers.get("x-penumbra-interface-language", "") or reader_language() or ""
 
-    node_ids: list[str] | None = None
-    if body.node_ids is not None:
-        def _waiting() -> list[str]:
-            nodes = (horizon.get_node(i) for i in body.node_ids)
-            return [n.id for n in nodes if n is not None and n.state == "ready_undistilled"]
-
-        node_ids = await asyncio.to_thread(_waiting)
     if body.orbit_id is not None and not body.orbit_id.strip():
         raise HTTPException(400, "an orbit needs a value")
-    if body.orbit_id is not None:
-        def _in_orbit() -> list[str]:
-            ids = [m.node_id for m in horizon.nodes_in_orbit(body.orbit_id)]
-            nodes = (horizon.get_node(i) for i in ids)
-            return [n.id for n in nodes if n is not None and n.state == "ready_undistilled"]
-
-        node_ids = await asyncio.to_thread(_in_orbit)
-    if node_ids is not None:
-        pending = len(node_ids)
-    else:
-        pending = await asyncio.to_thread(horizon.count_nodes, state="ready_undistilled")
+    node_ids = None
+    if body.node_ids is not None:
+        for node_id in body.node_ids:
+            if not horizon.is_node_id(node_id):
+                raise HTTPException(400, f"invalid node id {node_id!r}: not a node id")
+        # One removed since it failed (its failure is still listed) is skipped, not a 404 for all.
+        resolved = await asyncio.to_thread(lambda: [horizon.resolve_id(i) for i in body.node_ids])
+        node_ids = [i for i in resolved if i is not None]
+    # The pass's own queue: captures it names are taken even after the automatic pass gave up on
+    # them, an orbit or the whole Horizon only what is still in the queue.
+    pending = len(await asyncio.to_thread(
+        lambda: horizon.waiting_ids(node_ids=node_ids, orbit_id=body.orbit_id)))
     total = min(body.limit, pending)
     with _DISTIL_GUARD:
         if _DISTIL["running"]:
@@ -4693,7 +4706,8 @@ async def distil_horizon(body: DistilRequest, request: Request) -> dict:
     # out, and a reader watching a disabled button learns nothing — `GET /horizon/status` carries the
     # progress and `POST /horizon/cancel` stops it (invariant 47).
     threading.Thread(
-        target=_run_distil_pass, args=(total, language, node_ids), name="rlm-distil", daemon=True
+        target=_run_distil_pass, args=(total, language, node_ids, body.orbit_id), name="rlm-distil",
+        daemon=True
     ).start()
     return {"started": True, **_distil_status()}
 
@@ -5785,7 +5799,7 @@ async def rename_horizon_node(node_id: str, body: NodeTitleRequest) -> dict:
     title = normalize_title(body.title)
     if not title:
         raise HTTPException(422, "title is empty after normalisation")
-    node = await asyncio.to_thread(horizon.edit_node, node_id, title=title)
+    node = await asyncio.to_thread(_edit_or_409, node_id, title=title)
     if node is None:
         raise HTTPException(404, f"no capture {node_id!r}")
     return {"node": _node_view(node)}
@@ -5802,10 +5816,19 @@ async def retag_horizon_node(node_id: str, body: NodeTagsRequest) -> dict:
     tags = distill.clean_tags(body.tags, count=len(body.tags) + 1)
     if len(tags) > distill.MAX_TAGS and len(tags) > len(current.tags):
         raise HTTPException(422, f"at most {distill.MAX_TAGS} tags")
-    node = await asyncio.to_thread(horizon.edit_node, node_id, tags=tags)
+    node = await asyncio.to_thread(_edit_or_409, node_id, tags=tags)
     if node is None:
         raise HTTPException(404, f"no capture {node_id!r}")
     return {"node": _node_view(node)}
+
+
+def _edit_or_409(node_id: str, **fields: object):
+    """`horizon.edit_node`, with a capture still being read answered 409: its labels live on its
+    memory item, which it has once its text is stored."""
+    try:
+        return horizon.edit_node(node_id, **fields)
+    except horizon.NotAnItem as exc:
+        raise HTTPException(409, "this capture is still being read; name it once it has landed") from exc
 
 
 @app.get("/horizon/{node_id}/source")

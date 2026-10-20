@@ -703,18 +703,19 @@ def test_nothing_the_validator_says_tells_the_model_to_reply_with_the_json():
     """dspy appends a tool's docstring to the planner's prompt, and the success verdict is the last
     thing a model reads before it submits. rlm-harness's own line said "You may now output this JSON
     string", and a model that took it literally replied with the JSON and the run failed."""
-    from penumbra.align import AlignConcepts
-    from penumbra.instructions import make_grounded_validator
-    from penumbra.schema import ConceptMerges
+    from penumbra.instructions import GroundedTask, make_grounded_validator
+    from penumbra.schema import FAQ
 
-    validate = make_grounded_validator(ConceptMerges, field="merges")
-    verdict = validate('{"merges": []}')
+    validate = make_grounded_validator(FAQ, field="faq")
+    verdict = validate('{"items": []}')
     assert verdict.startswith("Validation successful"), verdict
-    assert "SUBMIT(merges=" in verdict and "output this JSON" not in verdict, verdict
+    assert "SUBMIT(faq=" in verdict and "output this JSON" not in verdict, verdict
     assert "final answer" not in (validate.__doc__ or "") and "SUBMIT" in validate.__doc__
     import inspect
 
-    assert "field=self.output_field" in inspect.getsource(AlignConcepts.__init__)
+    # Every task here builds its validator in `GroundedTask` (concept alignment is the kit's task
+    # now), and names its own output field there.
+    assert "field=self.output_field" in inspect.getsource(GroundedTask.__init__)
 
 
 def test_a_small_task_gets_a_small_step_budget_and_never_a_larger_one():

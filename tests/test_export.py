@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from penumbra import api, auth, horizon, intake
 from penumbra.orbit import mutate_orbit
 from penumbra.schema import Answer, ChatTurn, Citation
+from tests._labels import label
 
 
 @pytest.fixture(autouse=True)
@@ -56,8 +57,8 @@ def _export(client) -> zipfile.ZipFile:
 def test_the_export_holds_the_data_a_vault_bookmarks_and_a_true_manifest(client):
     loose = _capture(client, "Lighthouses guide ships along the coast at night.")
     filed = _capture(client, "Origami is the art of folding paper into shapes.")
-    horizon.update_node(filed, title="Origami", tags=["craft"], entities=["Akira Yoshizawa"],
-                        summary="Folding paper [[SRC:s1|whole]] into shapes.")
+    label(filed, state=None, title="Origami", tags=["craft"], entities=["Akira Yoshizawa"],
+          summary="Folding paper [[SRC:s1|whole]] into shapes.")
     promoted = client.post(f"/horizon/{filed}/promote", json={"orbit_id": "crafts", "create": True}).json()
     source_id = promoted["membership"]["source_id"]
     mutate_orbit("crafts", lambda orb: orb.turns.append(ChatTurn(
@@ -121,7 +122,7 @@ def test_names_never_clash_and_long_titles_fit_a_filesystem(client):
              "The letter after B.", "Old console devices.", "A film about a prison plane.", "Characters."]
     for title, text in zip(["Apple", "apple", "C#", "C", "CON", "Con.Air", "漢" * 120], texts):
         node_id = _capture(client, text)
-        horizon.update_node(node_id, title=title)
+        label(node_id, state=None, title=title)
     names = [n for n in _export(client).namelist() if n.startswith("markdown/Captures/")]
     folded = [n.casefold() for n in names]
     assert len(names) == 7 and len(set(folded)) == 7, names
@@ -131,10 +132,15 @@ def test_names_never_clash_and_long_titles_fit_a_filesystem(client):
 
 def test_a_capture_row_that_does_not_parse_is_still_exported(client):
     good = _capture(client, "A readable capture.")
-    bad = _capture(client, "A capture whose tags were written badly.")
+    bad = _capture(client, "A capture whose preview was written badly.")
     later = _capture(client, "A capture after it.")
+    # Labels live in the kit's memory store, whose CHECKs refuse a malformed one; the row's own JSON
+    # columns (preview, flags) can still be written badly.
     with horizon._connect() as conn:
-        conn.execute("UPDATE nodes SET tags = ? WHERE id = ?", ('{"not": "a list"}', bad))
+        conn.execute("UPDATE nodes SET preview = ?, flags = ? WHERE id = ?",
+                     ("{broken", '{"not": "a list"}', bad))
+    with pytest.raises(ValueError):
+        horizon.get_node(bad)   # the row really does not parse
     zf = _export(client)
     ids = {json.loads(line)["id"] for line in zf.read("data/captures.jsonl").decode().splitlines()}
     assert {good, bad, later} <= ids

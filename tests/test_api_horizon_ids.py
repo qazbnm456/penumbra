@@ -81,7 +81,8 @@ def test_a_malformed_id_is_400_and_a_missing_one_404_in_either_shape(client, rou
 def test_an_unreadable_row_is_removed_by_its_temporary_id(client):
     node = _paste(client, "a row that will not parse")
     with horizon._connect() as conn:
-        conn.execute("UPDATE nodes SET tags = 'not json' WHERE id = ?", (node["id"],))
+        # A JSON column still kept on the row (labels live in the kit's store now).
+        conn.execute("UPDATE nodes SET flags = 'not json' WHERE id = ?", (node["id"],))
     assert client.get(f"/horizon/{node['former_id']}").status_code == 409
     assert client.delete(f"/horizon/{node['former_id']}").json()["removed"] is True
 

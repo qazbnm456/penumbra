@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from penumbra import concepts, filing, horizon
+from penumbra import filing, horizon, memory_store
 from penumbra.schema import Source, SourceBlock
+from tests._labels import label
 
 BASE = "h"
 ORBITS = "o"
@@ -14,12 +15,11 @@ def _capture(url, entities=(), tags=(), state="ready", title=None) -> str:
     horizon.add_pending_node(url, "web", base_dir=BASE)
     horizon.store_blocks(node_id, Source(id=node_id, kind="web", origin=url,
                                           blocks=[SourceBlock(locator="whole", text="t")]), base_dir=BASE)
-    fields = {"state": state, "entities": list(entities), "tags": list(tags)}
-    if title:
-        fields["title"] = title
-    horizon.update_node(node_id, base_dir=BASE, **fields)
     # Stored, the capture carries its kit item id; the temporary id is only its `former_id`.
-    return horizon.resolve_id(node_id, base_dir=BASE)
+    item_id = horizon.resolve_id(node_id, base_dir=BASE)
+    given = {"entities": list(entities), "tags": list(tags), "title": title}
+    label(item_id, base_dir=BASE, state=state, **{k: v for k, v in given.items() if v})
+    return item_id
 
 
 def _file(node_id, orbit):
@@ -65,8 +65,7 @@ def test_a_declined_pair_is_not_offered_again():
 def test_aliases_count_as_the_same_entity():
     _file(_capture("https://x.example/a", ["Matthew Walker", "REM"]), "sleep")
     loose = _capture("https://x.example/b", ["馬修·沃克", "REM"])
-    allowed = {"Matthew Walker", "馬修·沃克", "REM"}
-    concepts.apply_merges([("馬修·沃克", "Matthew Walker")], allowed, base_dir=BASE)
+    memory_store.store(BASE).merge("馬修·沃克", "Matthew Walker")
     got = filing.suggestions(base_dir=BASE)
     assert got[0]["node_id"] == loose and got[0]["shared"] == ["Matthew Walker", "REM"]
 

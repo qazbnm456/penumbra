@@ -5,15 +5,16 @@ from __future__ import annotations
 
 from penumbra import horizon
 from penumbra.schema import Source, SourceBlock
+from tests._labels import label
 
 
 def _node(origin: str, *, tags=(), orbits=(), state="ready", created: float = 0.0) -> str:
     node = horizon.add_pending_node(origin, "web")
     horizon.store_blocks(node.id, Source(id="s0", kind="web", origin=origin,
                                          blocks=[SourceBlock(locator="whole", text=f"text of {origin}")]))
-    horizon.update_node(node.id, state=state, title=origin.rsplit("/", 1)[-1], tags=list(tags))
     # Stored, the capture carries its kit item id; the raw SQL below has to name that row.
     node_id = horizon.resolve_id(node.id)
+    label(node_id, state=state, title=origin.rsplit("/", 1)[-1], tags=list(tags))
     with horizon._connect() as conn:
         if created:
             conn.execute("UPDATE nodes SET created_at = ? WHERE id = ?", (created, node_id))

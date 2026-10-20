@@ -28,6 +28,8 @@ A node id for a URL is a hash of the origin alone, so capturing the same URL twi
 
 ## Where the text lives
 
+A capture's labels (its title, summary, tags and entities) are rows in the kit's memory store as well, `inferred` from the summary pass and `said` from the reader (invariant 83), and are read beside the capture's row through a connection that attaches the store read-only (`horizon._connect_labels` and its `labelled` view), so every reader sees the same current labels and the Horizon's own table holds none. A label is written to the kit first and read back after, since an attached read sees the store as it was when its transaction began.
+
 A capture's text is kept twice, for two readers. Its blocks file (`horizon/nodes/<temporary id>.json`, named in the row's `blocks_file`) holds the blocks with their locators, which filing copies into an orbit. Its item in the kit's memory store (`memory_store.py`, `horizon/memory.db`) holds the joined text with its provenance: `said` for a paste, the reader's own words, and `observed` for everything taken from a source. The row records the item (`memory_rowid`) once it exists, and becoming one is invariant 79's business.
 
 The store lives beside `index.db` rather than inside it, because the kit and the Horizon each count their schema in `PRAGMA user_version`, and one file holds one count. It is opened with this product's settings, not the kit's defaults: no cap on an item, since a capture has never had one (only an orbit has, invariant 8); a search index over the first 1,000,000 characters of each text; and origins indexed, since an address is often the one word a reader remembers.
@@ -79,7 +81,7 @@ The searchable states are derived from `schema.NodeState` minus `queued`, `parsi
 
 ## A summary sees labels, not the Horizon
 
-A summary is shown the tags and entities in use (`distill.known_labels`: the 80 and 60 most used, aliases merged), so a capture reuses a label that means the same thing. It is a bounded list of names, never other captures' text: feeding summaries or unsummarised sources as context would grow every call with the Horizon, which this invariant exists to prevent, and would let one document's content leak into another's summary.
+A summary is shown the tags and entities in use (the kit's `known_listing`: the 80 and 60 most used, each entity once per capture and read through the aliases), so a capture reuses a label that means the same thing. It is a bounded list of names, never other captures' text: feeding summaries or unsummarised sources as context would grow every call with the Horizon, which this invariant exists to prevent, and would let one document's content leak into another's summary.
 
 ## Not here
 

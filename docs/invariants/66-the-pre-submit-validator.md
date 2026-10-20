@@ -34,6 +34,8 @@ The validator runs before SUBMIT, `citations.strip_markers` runs at the display 
 
 A safety net must not destroy what it protects. A line that is nothing but a coordinate strips to an empty string or a lone punctuation mark, and `EdgeTTSProvider` raises `NoAudioReceived` for punctuation-only text, which would turn a garbled line into a lost episode and a discarded paid run. `tts.spoken_script` therefore falls back to the original text when nothing alphanumeric survives. That is measured for the default provider; Chatterbox's behaviour on an emptied line is untested.
 
+The kit's labelling tasks, which Penumbra runs for the summary pass and concept alignment, are outside this rule; invariant 67's file says why.
+
 ---
 
 Index: [`AGENTS.md`](../../AGENTS.md) · Current behaviour: [`CHANGELOG.md`](../../CHANGELOG.md)

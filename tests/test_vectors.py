@@ -10,6 +10,7 @@ import pytest
 
 from penumbra import horizon, vectors
 from penumbra.schema import Source, SourceBlock
+from tests._labels import label
 
 BASE = "h"
 
@@ -55,7 +56,7 @@ def test_sync_embeds_once_and_again_after_a_change():
     _capture("https://x.example/b", "coffee notes")
     assert vectors.sync(base_dir=BASE, model=model) == 2
     assert vectors.sync(base_dir=BASE, model=model) == 0
-    horizon.update_node(a, base_dir=BASE, summary="more about sleep")
+    label(a, base_dir=BASE, state=None, summary="more about sleep")
     assert vectors.sync(base_dir=BASE, model=model) == 1
 
 

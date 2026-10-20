@@ -182,11 +182,11 @@ def sync(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> int:
     that lands while this runs leaves the row older than the node and the next sync picks it up.
     """
     placeholders = ", ".join("?" for _ in SEARCHABLE_STATES)
-    with horizon._connect(base_dir) as conn:
+    with horizon._connect_labels(base_dir) as conn:
         _ensure(conn)
         rows = conn.execute(
             f"""SELECT n.id, n.title, n.summary, n.origin, n.tags, n.entities, n.updated_at, n.blocks_file
-                FROM nodes n LEFT JOIN search_rows s ON s.node_id = n.id
+                FROM labelled n LEFT JOIN search_rows s ON s.node_id = n.id
                 WHERE n.state IN ({placeholders})
                   AND (s.node_id IS NULL OR n.updated_at > s.indexed_at)""",
             SEARCHABLE_STATES,
@@ -334,9 +334,9 @@ def _scope_clause(
 
 def _scope_rows(kind: str, value: str | None, base_dir: str | Path, orbit: str | None = None):
     clause, params = _scope_clause(kind, value, orbit, base_dir)
-    sql = (f"SELECT id, title, origin, chars, preview FROM nodes WHERE {clause} "
+    sql = (f"SELECT id, title, origin, chars, preview FROM labelled nodes WHERE {clause} "
            "ORDER BY created_at DESC, id ASC")
-    with horizon._connect(base_dir) as conn:
+    with horizon._connect_labels(base_dir) as conn:
         return conn.execute(sql, params).fetchall()
 
 
@@ -354,12 +354,12 @@ def _ranked_in_scope(
         return []
     sync(base_dir=base_dir)
     clause, params = _scope_clause(kind, value, orbit, base_dir)
-    with horizon._connect(base_dir) as conn:
+    with horizon._connect_labels(base_dir) as conn:
         _ensure(conn)
         rows = conn.execute(
             f"""SELECT s.node_id FROM search_fts
                 JOIN search_rows s ON s.rowid = search_fts.rowid
-                JOIN nodes ON nodes.id = s.node_id
+                JOIN labelled nodes ON nodes.id = s.node_id
                 WHERE search_fts MATCH ? AND {clause}
                 ORDER BY bm25(search_fts, ?, 1.0)""",
             (match_expression(terms), *params, _META_WEIGHT),
@@ -448,11 +448,11 @@ def concepts(*, limit: int = 60, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> 
     narrowed to. Read from the summaries' own lists, so an unsummarised capture contributes none."""
     placeholders = ", ".join("?" for _ in SEARCHABLE_STATES)
     out: dict[str, list[dict]] = {}
-    with horizon._connect(base_dir) as conn:
+    with horizon._connect_labels(base_dir) as conn:
         for key, column in (("tags", "tags"), ("entities", "entities")):
             rows = conn.execute(
                 f"""SELECT json_each.value AS name, COUNT(*) AS n
-                    FROM (SELECT {column} AS list FROM nodes
+                    FROM (SELECT {column} AS list FROM labelled
                           WHERE state IN ({placeholders})
                             AND CASE WHEN json_valid({column}) THEN json_type({column}) = 'array'
                                      ELSE 0 END) AS readable,
@@ -484,10 +484,11 @@ def lens(tags: list[str], *, limit: int = 40, base_dir: str | Path = DEFAULT_HOR
     marks = ", ".join("?" for _ in names)
     where = (f"CASE WHEN json_valid(nodes.tags) THEN EXISTS (SELECT 1 FROM json_each(nodes.tags) "
              f"WHERE json_each.value IN ({marks})) ELSE 0 END")
-    with horizon._connect(base_dir) as conn:
-        total = conn.execute(f"SELECT COUNT(*) FROM nodes WHERE {where}", names).fetchone()[0]
+    with horizon._connect_labels(base_dir) as conn:
+        total = conn.execute(f"SELECT COUNT(*) FROM labelled nodes WHERE {where}", names).fetchone()[0]
         rows = conn.execute(
-            f"SELECT id, former_id, title, origin, preview, summary, tags, state, created_at FROM nodes "
+            "SELECT id, former_id, title, origin, preview, summary, tags, state, created_at "
+            f"FROM labelled nodes "
             f"WHERE {where} ORDER BY created_at DESC, id ASC LIMIT ?",
             [*names, limit],
         ).fetchall()

@@ -69,6 +69,14 @@ class Source(BaseModel):
         return None
 
 
+class SummaryPaused(BaseModel):
+    """Why a capture is no longer summarised automatically: the tries the pass made and the last
+    error. Derived from the kit's failure rows on read; nothing stores it."""
+
+    tries: int
+    error: str = ""
+
+
 class Node(BaseModel):
     """One captured thing in the Horizon (Tier 0) — NOT yet part of any orbit.
 
@@ -123,68 +131,14 @@ class Node(BaseModel):
     edited: list[Literal["title", "tags"]] = Field(default_factory=list)
     #: When the summary pass last wrote this node's summary; `None` before it has.
     distilled_at: float | None = None
+    #: Set when the summary pass gave up on this capture after `horizon.DISTILL_MAX_FAILURES` failed
+    #: tries: how many and the last error. It stays out of the automatic queue until a press names it.
+    summary_paused: SummaryPaused | None = None
     #: Total characters across every block, so a listing can show weight without loading the text.
     chars: int = 0
     created_at: float
     updated_at: float
 
-
-class Distillation(BaseModel):
-    """What the cheap summariser produces for one Horizon node (`distill.py`).
-
-    A separate shape from `Node` rather than four loose return values, because it is what
-    `horizon.update_node` is handed as one delta (invariant 78) and what a test compares against.
-    Every field is display prose or a display label — none of it is citable, and none of it is ever
-    read back as a fact. That is the same line invariant 32 draws for a note: distilled metadata is
-    a way to FIND a node, never a source for an answer about it.
-    """
-
-    #: A short label. Not the node's origin and not a filename — the thing a reader scans a list by.
-    title: str = ""
-    #: Two or three sentences. Model-authored prose, so invariant 39 applies: it follows the
-    #: READER's language, not the document's.
-    summary: str = ""
-    #: Lowercase, short, reusable across nodes. The join key a later slice needs for implicit edges.
-    tags: list[str] = Field(default_factory=list)
-    #: The specific things the node is ABOUT: people, organisations, products, places, and named
-    #: concepts (a theory, a method, a stage). Narrower than a tag.
-    entities: list[str] = Field(default_factory=list)
-
-
-
-class EntityMention(BaseModel):
-    """An entity named by a long document's summary, with the coordinate of a block that names it.
-
-    The coordinate is copied from a `[[SRC:...]]` marker like a citation's, and the host drops any
-    mention whose coordinate is not a real block of the document. That is invariant 5's guarantee
-    and no more: the block exists, not that it is about this entity.
-    """
-
-    name: str
-    source_id: str
-    locator: str
-
-
-class LongDistillation(BaseModel):
-    """`DistillLongDocument`'s SUBMIT shape: a `Distillation` whose entities carry coordinates."""
-
-    title: str = ""
-    summary: str = ""
-    tags: list[str] = Field(default_factory=list)
-    entities: list[EntityMention] = Field(default_factory=list)
-
-
-class ConceptMerge(BaseModel):
-    """Two entity names for one thing: `alias` is read as `canonical` from now on."""
-
-    alias: str
-    canonical: str
-
-
-class ConceptMerges(BaseModel):
-    """`AlignConcepts`' SUBMIT shape."""
-
-    merges: list[ConceptMerge] = Field(default_factory=list)
 
 class NodeMembership(BaseModel):
     """A node that has been promoted into one orbit, and the source id it got there.

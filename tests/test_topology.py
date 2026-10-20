@@ -6,6 +6,7 @@ import sqlite3
 
 from penumbra import horizon, search, topology
 from penumbra.schema import Source, SourceBlock
+from tests._labels import label
 
 BASE = "h"
 ORBITS = "o"
@@ -19,12 +20,11 @@ def _capture(url: str, text: str = "text", *, state="ready", tags=(), entities=(
         Source(id=node_id, kind="web", origin=url, blocks=[SourceBlock(locator="whole", text=text)]),
         base_dir=BASE,
     )
-    fields = {"state": state, "tags": list(tags), "entities": list(entities)}
-    if title:
-        fields["title"] = title
-    horizon.update_node(node_id, base_dir=BASE, **fields)
     # Stored, the capture carries its kit item id; the temporary id is only its `former_id`.
-    return horizon.resolve_id(node_id, base_dir=BASE)
+    item_id = horizon.resolve_id(node_id, base_dir=BASE)
+    given = {"tags": list(tags), "entities": list(entities), "title": title}
+    label(item_id, base_dir=BASE, state=state, **{k: v for k, v in given.items() if v})
+    return item_id
 
 
 def _file(node_id: str, orbit_id: str) -> None:
@@ -117,12 +117,15 @@ def test_the_graph_can_be_one_orbit():
 def test_malformed_json_in_a_row_does_not_break_either_drawing():
     _capture("https://x.example/a", entities=["REM"])
     bad = _capture("https://x.example/b", entities=["x"])
+    # Labels live in the kit's memory store, whose CHECKs refuse malformed JSON; the JSON a drawing
+    # still reads from the row is its preview.
     conn = sqlite3.connect(horizon.index_path(BASE))
-    conn.execute("UPDATE nodes SET entities = '{broken', tags = 'nope' WHERE id = ?", (bad,))
+    conn.execute("UPDATE nodes SET preview = '{broken' WHERE id = ?", (bad,))
     conn.commit()
     conn.close()
     assert topology.star_map(base_dir=BASE)["total"]["count"] == 2
-    assert [e["name"] for e in topology.graph(base_dir=BASE)["entities"]] == ["REM"]
+    # Its labels are intact, so the graph still names what it names.
+    assert [e["name"] for e in topology.graph(base_dir=BASE)["entities"]] == ["REM", "x"]
 
 
 def test_an_orbit_narrows_an_ask_scope():

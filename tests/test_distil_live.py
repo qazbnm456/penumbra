@@ -11,7 +11,8 @@ runs on a thread inside the server process, where nothing had ever called `setup
 back `ValueError: No LM is loaded` and returned to `ready_undistilled`.
 
 The suite could not see it, and the reason is worth stating plainly: **every other distillation test
-monkeypatches `distill.distil_source`** — precisely the function whose real body could not work.
+monkeypatches the pass's short step** (`distill.summarise_short` now, `distill.distil_source`
+when this was found) — precisely the function whose real body could not work.
 Patching the unit under test at exactly the seam where the bug lives makes a green suite say nothing
 at all. An independent review found it by pointing `PN_BASE_URL` at a stub and noticing that zero
 HTTP requests arrived.

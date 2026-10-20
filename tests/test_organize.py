@@ -83,6 +83,7 @@ from fastapi.testclient import TestClient
 
 from penumbra import api, auth, horizon, intake
 from penumbra.orbit import list_orbit_summaries, load_orbit
+from tests._labels import label
 
 
 @pytest.fixture(autouse=True)
@@ -112,7 +113,8 @@ def _summarised(client, text: str, entities: list[str]) -> str:
         if horizon.get_node(node_id).state == "ready_undistilled":
             break
         time.sleep(0.02)
-    horizon.update_node(node_id, state="ready", title=text, summary=f"about {text}", entities=entities)
+    node_id = horizon.resolve_id(node_id)   # stored: it carries its kit item id now
+    label(node_id, title=text, summary=f"about {text}", entities=entities)
     return node_id
 
 
@@ -274,7 +276,7 @@ def test_a_failed_summary_is_reported_after_a_restart_and_cleared_by_dismiss(cli
             break
         time.sleep(0.02)
     with api._DISTIL_GUARD:
-        api._record_failure(node_id, RuntimeError("run timed out after 300s"))
+        api._record_failure(node_id, "RuntimeError: run timed out after 300s")
         # A restart: the process forgets everything it held.
         api._DISTIL.update({"failed": 0, "error": "", "failures": [], "running": False})
     distil = client.get("/horizon/status").json()["distil"]

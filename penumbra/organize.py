@@ -195,9 +195,9 @@ def gather(
     newest first and at most `MAX_CAPTURES`, less `skip`; and, per orbit, the titles of what it
     holds. Only summarised captures: a model placing a capture by its address alone would guess."""
     resolve = concepts.resolver(base_dir=base_dir)
-    with horizon._connect(base_dir) as conn:
+    with horizon._connect_labels(base_dir) as conn:
         rows = conn.execute(
-            "SELECT id, title, origin, preview, summary, entities, tags FROM nodes WHERE state = 'ready' "
+            "SELECT id, title, origin, preview, summary, entities, tags FROM labelled WHERE state = 'ready' "
             "ORDER BY created_at DESC"
         ).fetchall()
         members = conn.execute("SELECT node_id, orbit_id FROM memberships").fetchall()

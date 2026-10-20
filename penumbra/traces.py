@@ -140,7 +140,9 @@ def prune_traces(
 #: and a trace is the most exposed artifact this project writes (invariant 29). Their SIZE is
 #: recorded instead, which is the part that tells a reader what the run was working against — the
 #: same reasoning invariant 52 gives for streaming a step's output size and not its text.
-_BULKY_INPUTS = frozenset({"sources", "sources_excerpt", "history", "questions", "origins"})
+_BULKY_INPUTS = frozenset(
+    {"sources", "sources_excerpt", "history", "questions", "origins", "text", "section_map"}
+)
 
 #: Above this, a value is prose rather than a setting, and belongs in the run itself.
 _INPUT_MAX = 200
@@ -190,7 +192,9 @@ def run_meta(task: str, config: object, kwargs: dict) -> dict:
         "max_tokens": _effective_max_tokens(config),
         "max_retries": getattr(config, "max_retries", None),
     }
-    sources = kwargs.get("sources") or kwargs.get("sources_excerpt")
+    # The corpus a run read, under whichever name its task takes it: Penumbra's tasks take
+    # `sources`, the kit's labelling task `text`.
+    sources = kwargs.get("sources") or kwargs.get("sources_excerpt") or kwargs.get("text")
     if isinstance(sources, str):
         meta["source_chars"] = len(sources)
     for name, value in kwargs.items():

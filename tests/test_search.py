@@ -5,12 +5,15 @@ Offline and model-free: nodes are written straight into a temporary Horizon.
 
 from __future__ import annotations
 
+import json
 import sqlite3
+import time
 
 import pytest
 
-from penumbra import horizon, search
+from penumbra import horizon, memory_store, search
 from penumbra.schema import Source, SourceBlock
+from tests._labels import label
 
 BASE = "h"
 
@@ -23,12 +26,28 @@ def _capture(url: str, text: str, *, tags=(), entities=(), title=None) -> str:
         Source(id=node_id, kind="web", origin=url, blocks=[SourceBlock(locator="whole", text=text)]),
         base_dir=BASE,
     )
+    # Stored, the capture carries its kit item id; the temporary id is only its `former_id`.
+    node_id = horizon.resolve_id(node_id, base_dir=BASE)
     fields = {"tags": list(tags), "entities": list(entities)}
     if title:
         fields["title"] = title
-    horizon.update_node(node_id, base_dir=BASE, **fields)
-    # Stored, the capture carries its kit item id; the temporary id is only its `former_id`.
-    return horizon.resolve_id(node_id, base_dir=BASE)
+    label(node_id, base_dir=BASE, state=None, **{k: v for k, v in fields.items() if v})
+    return node_id
+
+
+def _raw_tags(node_id: str, value_json: str) -> None:
+    """A tags label row written straight into the kit's memory store, past its validation: labels
+    are append-only, so the newest row is the current one."""
+    conn = sqlite3.connect(memory_store.store_path(BASE))
+    try:
+        conn.execute(
+            "INSERT INTO labels (item_id, kind, value_json, provenance, run_id, created_at) "
+            "VALUES (?, 'tags', ?, 'inferred', NULL, ?)",
+            (int(node_id[1:]), value_json, time.time()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def test_grams_pairs_unspaced_runs_and_leaves_latin_alone():
@@ -76,7 +95,7 @@ def test_the_description_counts_for_more_than_the_body():
 def test_an_edit_is_picked_up_by_the_next_search():
     node = _capture("https://x.example/a", "plain text")
     assert search.search("serotonin", base_dir=BASE) == []
-    horizon.update_node(node, base_dir=BASE, summary="about serotonin")
+    label(node, base_dir=BASE, state=None, summary="about serotonin")
     assert search.search("serotonin", base_dir=BASE) == [node]
 
 
@@ -84,7 +103,7 @@ def test_a_summarised_node_is_searchable():
     """Summarising moves a node to `ready`. A hand-written state list once said `distilled`, a state
     that does not exist, and every summarised capture dropped out of search."""
     node = _capture("https://x.example/a", "hippocampus")
-    horizon.update_node(node, base_dir=BASE, state="ready", summary="memory")
+    label(node, base_dir=BASE, summary="memory")
     assert search.search("hippocampus", base_dir=BASE) == [node]
     assert search.select_for_ask("memory", budget_chars=10_000, max_items=5, base_dir=BASE).node_ids == [node]
 
@@ -121,7 +140,7 @@ def test_an_unreadable_blocks_file_still_indexes_the_description():
     node = _capture("https://x.example/a", "body", title="Mitochondria notes")
     former = horizon.get_node(node, base_dir=BASE).former_id
     horizon.node_blocks_path(former, base_dir=BASE).write_text("{not json", encoding="utf-8")
-    horizon.update_node(node, base_dir=BASE, summary="energy")
+    label(node, base_dir=BASE, state=None, summary="energy")
     assert search.search("mitochondria", base_dir=BASE) == [node]
 
 
@@ -188,10 +207,11 @@ def test_an_unknown_scope_is_refused():
 def test_a_malformed_tag_column_does_not_break_a_tag_scope_or_the_concept_list():
     good = _capture("https://x.example/a", "x", tags=["sleep"])
     bad = _capture("https://x.example/b", "y")
-    conn = sqlite3.connect(horizon.index_path(BASE))
-    conn.execute("UPDATE nodes SET tags = '{broken' WHERE id = ?", (bad,))
-    conn.commit()
-    conn.close()
+    # Tags are a label row in the kit's memory store now, which refuses a malformed value outright
+    # (a CHECK and a trigger), so none can reach the scope or the concept list.
+    for malformed in ("{broken", '{"x": "sleep"}', '[7, null, {"x": "sleep"}]'):
+        with pytest.raises((sqlite3.IntegrityError, sqlite3.OperationalError)):
+            _raw_tags(bad, malformed)
     picked = search.select_for_ask("x", "tag", "sleep", budget_chars=10_000, max_items=10, base_dir=BASE)
     assert picked.node_ids == [good]
     assert search.concepts(base_dir=BASE)["tags"] == [{"name": "sleep", "count": 1}]
@@ -227,5 +247,8 @@ def test_when_every_match_is_too_large_the_newest_that_fit_are_read():
 
 
 def test_concepts_never_offer_a_value_a_scope_would_refuse():
-    _capture("https://x.example/a", "x", tags=["t" * (search.SCOPE_VALUE_MAX + 1), "ok"])
+    # The kit caps a tag at 40 characters, so only a row written past it (an older store, a
+    # hand-edit) can carry one this long; the concept list must still not offer it.
+    node = _capture("https://x.example/a", "x")
+    _raw_tags(node, json.dumps(["t" * (search.SCOPE_VALUE_MAX + 1), "ok"]))
     assert [row["name"] for row in search.concepts(base_dir=BASE)["tags"]] == ["ok"]
