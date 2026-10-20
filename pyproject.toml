@@ -34,7 +34,7 @@ classifiers = [
 dependencies = [
     # Installed from git (`[tool.uv.sources]` below) until 1.21.0 is published, so `uv run`, CI,
     # the Docker image and the desktop runtime all get the same kit.
-    "rlm-harness==1.21.0",
+    "rlm-harness[memory-vectors]==1.21.0",
     # The kit's own bound, repeated so an install that does not go through the kit's metadata
     # first (a stale lock, `uv tool install`) cannot resolve something else. 3.4.1 rather than
     # 3.4.0: 3.4.0's lazy-import proxy for openai broke `import litellm` after `import dspy` with
@@ -105,13 +105,10 @@ dependencies = [
     # Pure Python, no ffmpeg requirement for this path (verified during design). Core, not an
     # opt-in extra, same "ship a working default" reasoning as OCR/TTS above.
     "yt-dlp>=2024.1",
-    # Local relations (`vectors.py`): an embedding model run on the CPU through the `onnxruntime`
-    # above, its tokenizer, and a vector index kept in the Horizon's own SQLite file. The MODEL is
-    # not a dependency: it is downloaded once when the reader turns the feature on, so a user who
-    # never does pays nothing in install size. `sqlite-vec` is Apache-2.0/MIT, `tokenizers`
-    # Apache-2.0, and the model (multilingual-e5-small) MIT.
-    "tokenizers>=0.19",
-    "sqlite-vec>=0.1.6",
+    # Local relations (`vectors.py`) are the kit's `MemoryVectors`, through rlm-harness's
+    # `memory-vectors` extra above (onnxruntime, tokenizers, numpy). The MODEL is not a dependency:
+    # it is downloaded once when the reader turns the feature on, so a user who never does pays
+    # nothing in install size. `tokenizers` is Apache-2.0 and the model (multilingual-e5-small) MIT.
 ]
 
 [project.optional-dependencies]
@@ -194,7 +191,7 @@ default-groups = ["dev", "subscription-sdk"]
 # rlm-harness 1.21.0 is not on PyPI yet; it comes from this commit of its main branch until it is.
 # A kit change this project needs lands in the kit first, then this `rev` moves.
 [tool.uv.sources]
-rlm-harness = { git = "https://github.com/qazbnm456/rlm-harness", rev = "15b3e6f3bc6c850db80265e96ee278bf1cc02e82" }
+rlm-harness = { git = "https://github.com/qazbnm456/rlm-harness", rev = "357b94053aec4955255b225db5fcdef4865fbb5b" }
 
 [project.scripts]
 penumbra = "penumbra.cli:main"

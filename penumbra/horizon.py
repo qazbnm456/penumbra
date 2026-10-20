@@ -218,6 +218,15 @@ _MIGRATIONS: tuple[str, ...] = (
     "DROP TABLE IF EXISTS main.search_fts",
     "DROP TABLE IF EXISTS main.entity_aliases",
     "DROP TABLE IF EXISTS main.entity_seen",
+    # 14-18: local relations are the kit's (`memory.db.vectors.db`). The old row table goes, and so
+    # do the four plain tables `sqlite-vec` kept the old embeddings in, since an embedding can be
+    # partly turned back into its text. Their virtual table cannot be dropped without that
+    # extension, which is no longer installed: it stays as an entry nothing opens (invariant 84).
+    "DROP TABLE IF EXISTS main.vector_rows",
+    "DROP TABLE IF EXISTS main.node_vectors_vector_chunks00",
+    "DROP TABLE IF EXISTS main.node_vectors_chunks",
+    "DROP TABLE IF EXISTS main.node_vectors_rowids",
+    "DROP TABLE IF EXISTS main.node_vectors_info",
 )
 
 
@@ -745,7 +754,7 @@ def _record_item(
     becomes its own item. Returns the row now carrying the id, if any.
 
     The re-key updates every table holding a foreign key to `nodes(id)`, read from the file rather
-    than listed, since some (the vector rows, dismissed suggestions, organising notes)
+    than listed, since some (dismissed suggestions, organising notes)
     are created by other modules without `ON UPDATE CASCADE`; `defer_foreign_keys` lets the parent
     and its children change in one transaction. Raises `sqlite3.IntegrityError` when the item id is
     already a row's (see `_become_item`). `chars` records the item's text length, the kit's own
@@ -1649,8 +1658,8 @@ def _retry_store(attempt, *, what: str, tries: int = 4, first_delay: float = 0.5
 
 
 #: The tables `clear_all` empties: everything a reader's captures put in the database. The
-#: extension's pairing and the downloaded embedding model are files beside it and are kept, and so is
-#: the vector index's virtual table, which only `vectors` can open (`vectors.clear_index`).
+#: extension's pairing and the downloaded embedding model are files beside it and are kept; the
+#: vectors are in the kit's store's own file, which `memory_store.erase` deletes with the store.
 _CLEARED_TABLES = (
     "map_planets", "memberships", "pending_memberships", "node_ids", "nodes", "horizon_events", "asks",
     "filing_dismissed", "organize_left",
