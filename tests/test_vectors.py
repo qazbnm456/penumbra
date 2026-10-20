@@ -317,32 +317,6 @@ def test_a_capture_too_short_to_compare_gets_no_vector_and_is_not_asked_again():
     assert vectors.sync(base_dir=BASE) == 0, "a short capture was reconsidered every sync"
 
 
-def test_mutual_matches_each_answers_every_capture_from_one_load(monkeypatch):
-    index = _use(FakeModel())
-    a = _capture("https://x.example/a", "sleep one")
-    b = _capture("https://x.example/b", "sleep two")
-    c = _capture("https://x.example/c", "coffee one")
-    d = _capture("https://x.example/d", "coffee two")
-    vectors.sync(base_dir=BASE)
-    loads = []
-    real = index._snapshot
-    monkeypatch.setattr(index, "_snapshot", lambda: loads.append(1) or real())
-    got = vectors.mutual_matches_each([a, c], {b, d}, base_dir=BASE)
-    assert [n for n, _ in got[a]] == [b] and [n for n, _ in got[c]] == [d]
-    assert len(loads) == 1
-
-
-def test_a_crowd_of_similar_unfiled_captures_still_reaches_the_filed_one():
-    """Five near-duplicates used to fill all four nearest places, so the filed capture they all
-    resemble was never reached and none of them was suggested."""
-    _use(FakeModel())
-    filed = _capture("https://x.example/f", "sleep filed")
-    crowd = [_capture(f"https://x.example/u{i}", f"sleep {i}") for i in range(6)]
-    vectors.sync(base_dir=BASE)
-    got = vectors.mutual_matches_each(crowd, {filed}, base_dir=BASE)
-    assert all([n for n, _ in got[node]] == [filed] for node in crowd)
-
-
 def test_removing_the_model_mid_sync_writes_nothing_more():
     """The reader pressed Turn off while a batch was embedding: that batch is the last one."""
     for i in range(40):

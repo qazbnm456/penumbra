@@ -132,9 +132,9 @@ from . import (
     intake,
     mapstore,
     memory_store,
-    organize,
     runner,
     search,
+    topics,
     topology,
     vectors,
 )
@@ -1454,6 +1454,10 @@ async def delete_orbit_endpoint(orbit_id: str, captures: bool = False) -> dict:
     except Exception:  # noqa: BLE001 - an index write must never undo a completed orbit write
         _log.warning("could not drop the horizon memberships for %s", orbit_id)
         forgotten = 0
+    try:
+        await asyncio.to_thread(topics.orbit_gone, orbit_id)
+    except Exception:  # noqa: BLE001 - the next sync retires it; the orbit is already gone
+        _log.warning("could not retire the topic of %s", orbit_id)
     removed = 0
     for node_id in only_here:
         try:
@@ -1660,7 +1664,7 @@ def _forget_removed_source(orbit_id: str, source_id: str) -> None:
         removed = [m.node_id for m in horizon.nodes_in_orbit(slug(orbit_id)) if m.source_id == source_id]
         horizon.forget_membership(orbit_id, source_id)
         for node_id in removed:
-            filing.dismiss(node_id, slug(orbit_id))
+            topics.removed(node_id, orbit_id)
         _forget_suggestions()
     except Exception:  # noqa: BLE001 - an index write must never undo a completed orbit write
         _log.warning("could not drop the horizon membership for %s/%s", orbit_id, source_id)
@@ -3697,143 +3701,165 @@ def _align_after_pass(base_dir) -> None:
 
 
 #: Organising's own visible state, beside alignment's (invariant 60). Guarded by `_DISTIL_GUARD`.
-#: The captures it looked at and left are kept in the Horizon's database (`organize.left_ids`), not
-#: here: process state was gone after a restart, and the waiting card with it.
+#: The captures it looked at and left are kept in the kit's memory store (`left_items`), not here:
+#: process state was gone after a restart, and the waiting card with it.
 _ORGANIZE: dict[str, object] = {"running": False, "error": ""}
 
 
-#: Rounds one pass may organise in: a round that opened orbits is followed by another over what it
-#: left, since those captures may now fit, and otherwise would wait for the next capture.
+#: Rounds one pass may organise in: a round that filed something is followed by another over what
+#: it left, since those captures may now fit, and otherwise would wait for the next capture.
 _ORGANIZE_ROUNDS = 3
 
 
 def _organize_after_pass(language: str = "", should_stop=None) -> None:
-    """`should_stop` is the automatic pass's own: it runs on the intake worker's thread, so it is
-    checked before each round and each call, and a capture dropped meanwhile waits for at most the
-    one call already in flight (invariant 47's yield)."""
-    for _round in range(_ORGANIZE_ROUNDS):
-        if should_stop is not None and should_stop():
-            return
-        if not _organize_round(language, should_stop):
-            return
-
-
-def _organize_round(language: str = "", should_stop=None) -> bool:
-    """One round of organising. In `auto` filing, the end of a summary pass sends the summarised
-    captures still in no orbit to one model call (`organize.OrganizeCaptures`) and files each where
-    it says: an orbit that exists, or a new orbit it names (at most `organize.MAX_NEW_ORBITS` a
-    call). True when it opened orbits and left captures, which another round should look at again.
+    """In `auto` filing, the end of a summary pass sends the summarised captures still in no orbit
+    to the kit's organising pass (`organize_pending`, its `OrganiseBatch` in a worker, invariant
+    21): up to three rounds of one model call each, filing into an orbit that fits or into a new
+    orbit it names. Penumbra has the say in every placement (`_OrganizeHost`): the filing goes
+    through `_file_status`, so the corpus cap and "the reader already chose" hold as for any
+    automatic filing, and a pair the reader declined or took apart is never filed.
 
     Runs after `_auto_file_suggested`, so the free local matches are taken first and the model only
     sees what they could not place. Only in `auto` mode, which the reader chose knowing it calls
-    the model; never after a stopped pass or while the model is not answering. Every filing goes
-    through `_file_status`, so the corpus cap and "the reader already chose" hold as for any
-    automatic filing, and a pair the reader declined is never filed.
+    the model; never after a stopped pass or while the model is not answering. `should_stop` is the
+    automatic pass's own (it runs on the intake worker's thread), checked before each call and each
+    placement.
     """
+    from rlm_harness.memory_tasks import organize_pending
+
     try:
         if filing_mode()[0] != "auto":
-            return False
+            return
     except SystemExit:
-        return False
+        return
     with _DISTIL_GUARD:
         if _DISTIL["cancel"] or _model_unreachable():
-            return False
+            return
     base = _horizon_queue().base_dir
-    orbits, _unreadable = list_orbit_summaries()
-    titles = {orb.id: orb.title or _fallback_name(orb.sources) for orb in orbits}
-    signature = organize.orbit_signature(titles)
-    skip = organize.left_ids(signature, base_dir=base)
-    captures, held = organize.gather(_landing_slug(), skip=skip, base_dir=base)
-    if not captures:
-        return False
-    if skip:
-        # Something new arrived, so what was left before goes again beside it: a capture left
-        # because its subject was its alone gets its orbit when the second one comes.
-        captures, held = organize.gather(_landing_slug(), base_dir=base)
-    if should_stop is not None and should_stop():
-        return False
+    store = memory_store.store(base)
+    host = _OrganizeHost(base)
+
+    async def run(payload: dict) -> dict:
+        fields = {k: payload[k] for k in ("items", "topics", "language", "max_new_topics")}
+        result = await asyncio.to_thread(
+            _run_pass_task, "rlm_harness.memory_tasks:OrganiseBatch", fields, "horizon-organize")
+        return result.model_dump() if hasattr(result, "model_dump") else dict(result)
+
+    def stopped() -> bool:
+        return _stop_requested() or (should_stop is not None and should_stop())
+
     with _DISTIL_GUARD:
         _ORGANIZE.update({"running": True, "error": ""})
     try:
-        raw = _run_pass_task(
-            _dotted(organize.OrganizeCaptures),
-            {
-                "captures": json.dumps(captures, ensure_ascii=False),
-                "orbits": json.dumps(organize.orbit_listing(titles, held), ensure_ascii=False),
-                "language": output_language() or language or reader_language() or "",
-                "max_new_orbits": organize.MAX_NEW_ORBITS,
-            },
-            "horizon-organize",
-        )
-        plan = organize.plan_from(
-            raw if isinstance(raw, dict) else {}, captures={c["id"] for c in captures}, orbits=titles
-        )
-        opened, filed = _apply_organize_plan(plan, {c["id"]: c["title"] for c in captures}, base)
-        # Left is everything not actually filed, not everything the plan did not name: a capture
-        # the plan sent to a declined orbit, or past the corpus cap, would otherwise be sent to the
-        # model again at the end of every pass.
-        # A Stop partway through the plan left the rest unfiled, not decided: those go again.
-        if not _stop_requested():
-            unfiled = {c["id"] for c in captures if c["id"] not in filed}
-            organize.remember_left(unfiled, signature, base_dir=base)
-        return opened > 0 and len(filed) < len(captures)
+        # Once before the pass marks itself in flight, so a topic an earlier pass opened and never
+        # gave an orbit (a crash between the two) is retired rather than offered to the model.
+        topics.sync(base_dir=base)
+        with topics.organizing():
+            landing = _landing_slug()
+            report = asyncio.run(organize_pending(
+                store, rounds=_ORGANIZE_ROUNDS, run=run, should_stop=stopped,
+                language=output_language() or language or reader_language() or "",
+                landing=topics.topic_of(landing, base_dir=base) if landing else None,
+                on_place=host.place, on_unplace=host.unplace, on_retire=host.retire))
+        host.finish(report)
+        if report.error:
+            with _DISTIL_GUARD:
+                if not _DISTIL["cancel"]:
+                    _ORGANIZE["error"] = report.error[:300]
+            _log.warning("organize: %s", report.error)
     except Exception as exc:  # noqa: BLE001 - reported on the page; the captures stay where they are
         with _DISTIL_GUARD:
             if not _DISTIL["cancel"]:
                 _ORGANIZE["error"] = f"{type(exc).__name__}: {exc}"[:300]
         _log.warning("organize: %s", exc)
-        return False
     finally:
+        host.clean_up()
         with _DISTIL_GUARD:
             _ORGANIZE["running"] = False
 
 
-def _apply_organize_plan(
-    plan: list[tuple[str, str, str]], titles: dict[str, str], base
-) -> tuple[int, set[str]]:
-    """File what `organize.plan_from` allowed. A new orbit is made only when its first capture is
-    about to go in, and removed again if nothing could be filed into it. Returns how many new orbits
-    it kept and which captures it filed."""
-    with horizon._connect(base) as conn:
-        filing._ensure(conn)
-        declined = {(r[0], r[1]) for r in conn.execute("SELECT node_id, orbit_id FROM filing_dismissed")}
-    made: dict[str, str] = {}
-    filed: set[str] = set()
-    for capture, kind, where in plan:
-        if _stop_requested():
-            break
-        target = where
-        if kind == "new":
-            target = made.get(where) or ""
-            if not target:
-                target = f"orbit-{uuid.uuid4().hex[:8]}"
+class _OrganizeHost:
+    """Penumbra's side of one organising pass: each placement the kit proposes becomes a filing
+    into an orbit, a new topic becomes a new orbit when its first capture is about to go in, and
+    whatever the kit takes back is undone here too."""
 
-                def _title(orb: Orbit, name: str = where) -> None:
+    def __init__(self, base) -> None:
+        self.base = base
+        self.made: dict[str, str] = {}        # topic id -> the orbit this pass created for it
+        self.filed: dict[tuple[str, str], horizon.NodeMembership] = {}
+
+    def place(self, item_id: str, topic_id: str, new_topic: bool) -> bool:
+        with topics.LOCK:
+            orbit = topics.orbits_by_topic(base_dir=self.base).get(topic_id)
+            if orbit is None and new_topic:
+                topic = memory_store.store(self.base).topic(topic_id)
+                if topic is None:
+                    return False
+                orbit = f"orbit-{uuid.uuid4().hex[:8]}"
+
+                def _title(orb: Orbit, name: str = topic.name) -> None:
                     orb.title = name
 
-                mutate_orbit(target, _title, create=True)
-                made[where] = target
-        if (capture, slug(target)) in declined:
-            continue
+                mutate_orbit(orbit, _title, create=True)
+                self.made[topic_id] = orbit   # before the row: `clean_up` must see it either way
+                topics.link(orbit, topic_id, topic.name, base_dir=self.base)
+        if orbit is None:
+            return False
+        membership = _file_status(item_id, orbit)[1]
+        if membership is None:
+            return False
+        self.filed[(item_id, topic_id)] = membership
+        return True
+
+    def unplace(self, item_id: str, topic_id: str) -> None:
+        membership = self.filed.pop((item_id, topic_id), None)
+        if membership is None:
+            return
         try:
-            membership = _file_status(capture, target)[1]
-        except Exception:  # noqa: BLE001 - one bad filing must not stop the rest
-            _log.exception("organize: could not file %s", capture)
-            continue
-        if membership is not None:
-            filed.add(capture)
-            _remember_auto_filed(
-                {"node_id": capture, "title": titles.get(capture, ""), "new_orbit": kind == "new"}, membership
-            )
-    kept = 0
-    for target in made.values():
-        if horizon.nodes_in_orbit(target, base_dir=base):
-            kept += 1
-        else:
-            delete_orbit(target)
+            _mutate_orbit_sync(membership.orbit_id, membership.source_id)
+            horizon.forget_membership(membership.orbit_id, membership.source_id, base_dir=self.base)
+        except Exception:  # noqa: BLE001 - the clean-up at the end catches an orbit left empty
+            _log.warning("organize: could not undo filing %s into %s", item_id, membership.orbit_id)
+
+    def retire(self, topic_id: str) -> None:
+        orbit = self.made.pop(topic_id, None)
+        if orbit is not None:
+            self._drop_if_empty(orbit)
+
+    def _drop_if_empty(self, orbit: str) -> None:
+        with topics.LOCK:
+            if horizon.nodes_in_orbit(orbit, base_dir=self.base):
+                return
+            delete_orbit(orbit)
             # Its planet too, so nothing of an orbit that never held anything outlives it.
-            horizon.forget_orbit(target, base_dir=base)
-    return kept, filed
+            horizon.forget_orbit(orbit, base_dir=self.base)
+            topics.orbit_gone(orbit, base_dir=self.base)
+
+    def finish(self, report) -> None:
+        """Announce what the pass kept, once it is over: a filing the pass took back a moment later
+        would otherwise have been announced with a Take out that finds nothing."""
+        created = set(report.created)
+        titles = {}
+        with horizon._connect_labels(self.base) as conn:
+            for row in conn.execute("SELECT id, title, origin FROM labelled"):
+                titles[row[0]] = row[1] or row[2]
+        for item_id, topic_id in report.placed:
+            membership = self.filed.get((item_id, topic_id))
+            if membership is not None:
+                _remember_auto_filed({"node_id": item_id, "title": titles.get(item_id, ""),
+                                      "new_orbit": topic_id in created}, membership)
+
+    def clean_up(self) -> None:
+        """Whatever the hooks did, no orbit this pass created is left empty."""
+        for orbit in list(self.made.values()):
+            try:
+                self._drop_if_empty(orbit)
+            except Exception:  # noqa: BLE001 - one orbit's clean-up must not stop the rest
+                _log.exception("organize: could not remove the empty orbit %s", orbit)
+
+
+def _mutate_orbit_sync(orbit_id: str, source_id: str) -> None:
+    mutate_orbit(orbit_id, lambda orb: remove_source(orb, source_id), create=False)
 
 
 def _stop_requested() -> bool:
@@ -4142,8 +4168,18 @@ def _file_status(
             _log.info("not filing %s into %s: it would pass the corpus cap", node_id, target)
             return "cap", None
         membership = horizon.promote_node(node_id, target, create=False)
+    _mirror_filing(node_id, target, said=reader)
     _forget_suggestions()
     return "filed", membership
+
+
+def _mirror_filing(node_id: str, orbit_id: str, *, said: bool) -> None:
+    """The kit's copy of a filing (`topics.placed`): the reader's as theirs, so it stands over an
+    earlier removal of the pair. Best-effort, since the next sync mirrors it anyway."""
+    try:
+        topics.placed(node_id, orbit_id, said=said)
+    except Exception:  # noqa: BLE001 - the filing itself has succeeded
+        _log.warning("could not mirror %s into the topic of %s", node_id, orbit_id)
 
 
 def _file_into_landing_orbit(node_id: str) -> None:
@@ -4173,7 +4209,7 @@ def _auto_file_suggested() -> int:
     try:
         if filing_mode()[0] != "auto":
             return 0
-        found = filing.suggestions(_landing_slug(), similar=_matches_or_none())
+        found = filing.suggestions(_landing_slug(), vectors=_vectors_or_none())
     except Exception:  # noqa: BLE001 - an automatic convenience never fails what called it
         _log.exception("auto filing: could not compute suggestions")
         return 0
@@ -5576,9 +5612,9 @@ def _landing_slug() -> str | None:
 
 
 def _organize_left_now() -> set[str]:
-    orbits, _unreadable = list_orbit_summaries()
-    titles = {orb.id: orb.title or _fallback_name(orb.sources) for orb in orbits}
-    return organize.left_ids(organize.orbit_signature(titles), base_dir=_horizon_queue_base())
+    """The captures organising left against the orbits as they are now (the kit's topic set)."""
+    store = memory_store.store(_horizon_queue_base())
+    return set(store.left_items(store.topic_signature()))
 
 
 @app.get("/horizon/suggestions")
@@ -5590,7 +5626,7 @@ async def filing_suggestions(since: int = 0) -> dict:
     found = await asyncio.to_thread(_suggestions_cached)
     filed, seq = _auto_filed_since(since)
     # The captures automatic organising looked at and left, because their subject is theirs alone
-    # (`organize.MIN_NEW_ORBIT`) or nothing fits: the waiting card says why they are still here.
+    # (a new orbit needs two) or nothing fits: the waiting card says why they are still here.
     left = sorted(await asyncio.to_thread(_organize_left_now)) if filing_mode()[0] == "auto" else []
     return {
         "suggestions": found, "count": len(found), "auto_filed": filed, "auto_seq": seq,
@@ -5614,7 +5650,7 @@ def _suggestions_cached() -> list[dict]:
         fresh = time.monotonic() - float(_SUGGEST_CACHE["at"]) < _SUGGEST_TTL
         if _SUGGEST_CACHE["value"] is not None and fresh and _SUGGEST_CACHE["for_gen"] == gen:
             return list(_SUGGEST_CACHE["value"])
-        found = filing.suggestions(_landing_slug(), similar=_matches_or_none())
+        found = filing.suggestions(_landing_slug(), vectors=_vectors_or_none())
         _SUGGEST_CACHE.update(at=time.monotonic(), value=found, for_gen=gen)
         return list(found)
 
@@ -5625,21 +5661,16 @@ def _forget_suggestions() -> None:
     _SUGGEST_CACHE["gen"] = int(_SUGGEST_CACHE["gen"]) + 1
 
 
-def _matches_or_none():
-    """`vectors.mutual_matches_each` for filing, or `None` when local relations are off or
-    unreadable."""
+def _vectors_or_none():
+    """The kit's vector index for similarity suggestions, or `None` when local relations are off or
+    the index cannot be opened: suggestions from summaries still work."""
     if not _vectors_ready():
         return None
-    base = _horizon_queue_base()
-
-    def matches(node_ids: list[str], among: set[str]) -> dict[str, list[tuple[str, float]]]:
-        try:
-            return vectors.mutual_matches_each(node_ids, among, base_dir=base)
-        except Exception as exc:  # noqa: BLE001 - a weak signal is dropped, never an error page
-            _log.warning("vectors: similarity unavailable: %s", exc)
-            return {}
-
-    return matches
+    try:
+        return vectors.index(_horizon_queue_base())
+    except Exception as exc:  # noqa: BLE001 - a weak signal is dropped, never an error page
+        _log.warning("vectors: similarity unavailable: %s", exc)
+        return None
 
 
 class DismissSuggestion(BaseModel):
@@ -5972,6 +6003,7 @@ async def promote_horizon_node(node_id: str, body: PromoteRequest) -> dict:
         membership = await asyncio.to_thread(
             horizon.promote_node, node_id, body.orbit_id, create=body.create
         )
+        await asyncio.to_thread(_mirror_filing, node_id, body.orbit_id, said=True)
         # Again AFTER the write: a poll that ran during it computed the answer from before it.
         _forget_suggestions()
     except FileNotFoundError as exc:

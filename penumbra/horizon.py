@@ -227,6 +227,13 @@ _MIGRATIONS: tuple[str, ...] = (
     "DROP TABLE IF EXISTS main.node_vectors_chunks",
     "DROP TABLE IF EXISTS main.node_vectors_rowids",
     "DROP TABLE IF EXISTS main.node_vectors_info",
+    # 19: an orbit is a kit topic (`topics.py`): which topic, and the name it was last given.
+    """CREATE TABLE IF NOT EXISTS main.orbit_topics (
+        orbit_id TEXT PRIMARY KEY, topic_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL DEFAULT '')""",
+    # 20-21: dismissed suggestions and organising's leftovers are the kit's (`dismiss`,
+    # `left_items`); Penumbra's own tables go with the code that made them.
+    "DROP TABLE IF EXISTS main.filing_dismissed",
+    "DROP TABLE IF EXISTS main.organize_left",
 )
 
 
@@ -1662,7 +1669,7 @@ def _retry_store(attempt, *, what: str, tries: int = 4, first_delay: float = 0.5
 #: vectors are in the kit's store's own file, which `memory_store.erase` deletes with the store.
 _CLEARED_TABLES = (
     "map_planets", "memberships", "pending_memberships", "node_ids", "nodes", "horizon_events", "asks",
-    "filing_dismissed", "organize_left",
+    "orbit_topics",
 )
 
 

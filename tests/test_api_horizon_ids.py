@@ -14,7 +14,8 @@ fastapi = pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient
 
-from penumbra import api, auth, horizon, ingest, intake
+from penumbra import api, auth, horizon, ingest, intake, memory_store, topics
+from penumbra.orbit import mutate_orbit
 from penumbra.schema import Source, SourceBlock
 
 
@@ -98,10 +99,11 @@ def test_a_capture_named_by_both_its_ids_is_named_twice(client, monkeypatch):
 
 def test_a_suggestion_dismissed_by_the_temporary_id_is_recorded_under_the_item_id(client):
     node = _paste(client, "a capture to keep out of an orbit")
+    mutate_orbit("o", lambda orb: None, create=True)
     assert client.post("/horizon/suggestions/dismiss",
                        json={"node_id": node["former_id"], "orbit": "o"}).status_code == 200
-    with horizon._connect() as conn:
-        assert [r[0] for r in conn.execute("SELECT node_id FROM filing_dismissed")] == [node["id"]]
+    store = memory_store.store(horizon.DEFAULT_HORIZON_DIR)
+    assert store.dismissed() == {(node["id"], topics.topic_of("o"))}
 
 
 def _pair(client) -> dict:

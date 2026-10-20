@@ -1,9 +1,6 @@
-"""Putting captures into orbits with a model when filing is automatic (`organize.py`,
-`api._organize_after_pass`).
-
-The model's reply is only a proposal: `plan_from` keeps what it may do (captures it was shown, orbits
-that exist, a bounded number of new ones), and every filing goes through the same checks as any
-automatic filing. The model run itself is faked here; nothing below costs a call.
+"""Organising captures into orbits with a model in the automatic filing mode: the kit's
+`organize_pending` with Penumbra's say in every placement (`api._organize_after_pass`,
+`api._OrganizeHost`). The plan's own rules are the kit's, tested there.
 """
 
 from __future__ import annotations
@@ -13,75 +10,10 @@ import time
 
 import pytest
 
-from penumbra import organize
-
-
-def test_the_plan_keeps_only_what_it_was_shown():
-    raw = {"placements": [
-        {"capture": "a", "orbit": "o1", "fit": "subject"},
-        {"capture": "a", "orbit": "o2", "fit": "subject"},  # a second place for the same capture
-        {"capture": "ghost", "orbit": "o1", "fit": "subject"},  # never shown
-        {"capture": "b", "orbit": "invented"},  # an orbit that does not exist, and no name
-        {"capture": "c", "new_orbit": "  Solar   sails "},
-        {"capture": "d", "new_orbit": "solar sails"},
-        {"capture": "e", "new_orbit": "Reading", "fit": "subject"},  # the title of an orbit that exists
-        "not a placement",
-    ]}
-    plan = organize.plan_from(raw, captures={"a", "b", "c", "d", "e"}, orbits={"o1": "Reading", "o2": ""})
-    assert plan == [
-        ("a", "orbit", "o1"),
-        ("c", "new", "Solar sails"),
-        ("d", "new", "Solar sails"),
-        ("e", "orbit", "o1"),
-    ]
-
-
-def test_a_loose_fit_leaves_the_capture_waiting():
-    """A lighthouse went into astronomy and origami into Taiwanese history when the model was told to
-    prefer the closest orbit. Filing into an existing orbit now needs the model to say the capture is
-    about that subject or a part of it; a loose or unstated fit leaves it for a subject of its own."""
-    raw = {"placements": [
-        {"capture": "lighthouse", "orbit": "space", "fit": "loose"},
-        {"capture": "origami", "orbit": "taiwan"},  # no fit given
-        {"capture": "hubble", "orbit": "space", "fit": "Part"},
-        {"capture": "exoplanet", "orbit": "space", "fit": "subject"},
-        {"capture": "comet", "new_orbit": "Space exploration"},  # an existing title, fit unstated
-        {"capture": "lighthouse", "orbit": "space", "fit": "subject"},  # its second, stated placement
-    ]}
-    plan = organize.plan_from(raw, captures={"lighthouse", "origami", "hubble", "exoplanet", "comet"},
-                              orbits={"space": "Space exploration", "taiwan": "Taiwanese history"})
-    assert plan == [
-        ("hubble", "orbit", "space"), ("exoplanet", "orbit", "space"), ("lighthouse", "orbit", "space"),
-    ]
-
-
-def test_the_plan_opens_a_bounded_number_of_new_orbits():
-    raw = {"placements": [{"capture": str(n), "new_orbit": f"subject {n // 2}"} for n in range(16)]}
-    plan = organize.plan_from(raw, captures={str(n) for n in range(16)}, orbits={}, max_new=3)
-    assert [name for _c, _k, name in plan] == ["subject 0"] * 2 + ["subject 1"] * 2 + ["subject 2"] * 2
-
-
-def test_a_new_orbit_needs_two_captures():
-    raw = {"placements": [
-        {"capture": "a", "new_orbit": "Spaced repetition"},
-        {"capture": "b", "new_orbit": "Baking"},
-        {"capture": "c", "new_orbit": "baking"},
-    ]}
-    plan = organize.plan_from(raw, captures={"a", "b", "c"}, orbits={})
-    assert plan == [("b", "new", "Baking"), ("c", "new", "Baking")], "a subject of one waits for a second"
-
-
-def test_a_reply_that_does_not_parse_places_nothing():
-    assert organize.parse_plan("```json\n{\"placements\": []}\n```") == {"placements": []}
-    assert organize.parse_plan("sorry, I cannot") == {"placements": []}
-    assert organize.plan_from(organize.parse_plan("[1, 2]"), captures={"a"}, orbits={}) == []
-
-
-fastapi = pytest.importorskip("fastapi")
-
+pytest.importorskip("fastapi")  # the `api` extra, which CI installs
 from fastapi.testclient import TestClient
 
-from penumbra import api, auth, horizon, intake
+from penumbra import api, auth, horizon, intake, memory_store, topics
 from penumbra.orbit import list_orbit_summaries, load_orbit
 from tests._labels import label
 
@@ -118,13 +50,27 @@ def _summarised(client, text: str, entities: list[str]) -> str:
     return node_id
 
 
+def _kit_plan(plan: dict) -> dict:
+    """A plan written with orbits, as the kit's step answers it: an orbit slug becomes its topic."""
+    placements = []
+    for p in plan["placements"]:
+        entry = {"item": p["capture"], "fit": p.get("fit", "")}
+        if p.get("orbit"):
+            entry["topic"] = topics.topic_of(p["orbit"]) or p["orbit"]
+        if p.get("new_orbit"):
+            entry["new_topic"] = p["new_orbit"]
+        placements.append(entry)
+    return {"plan_json": json.dumps({"placements": placements})}
+
+
 def _fake_model(monkeypatch, reply) -> list[dict]:
+    """`seen` holds each call's fields, with `captures` and `orbits` as the old step named them."""
     seen: list[dict] = []
 
     def fake(dotted, kwargs, prefix, **kw):
-        assert dotted == "penumbra.organize:OrganizeCaptures"
-        seen.append(kwargs)
-        return reply(kwargs) if callable(reply) else reply
+        assert dotted == "rlm_harness.memory_tasks:OrganiseBatch"
+        seen.append({**kwargs, "captures": kwargs["items"], "orbits": kwargs["topics"]})
+        return _kit_plan(reply(kwargs) if callable(reply) else reply)
 
     monkeypatch.setattr(api, "_run_pass_task", fake)
     return seen
@@ -231,10 +177,10 @@ def test_a_round_that_opened_orbits_is_followed_by_one_over_what_it_left(client,
 
     def reply(kwargs):
         plan = next(replies)
-        orbits = json.loads(kwargs["orbits"])
+        offered = json.loads(kwargs["topics"])
         for item in plan["placements"]:
             if item.get("orbit") == "PLACEHOLDER":
-                item["orbit"] = orbits[0]["id"]
+                item["orbit"] = topics.orbits_by_topic()[offered[0]["id"]]
         return plan
 
     seen = _fake_model(monkeypatch, reply)
@@ -258,7 +204,7 @@ def test_what_was_left_goes_again_when_something_new_arrives(client, monkeypatch
 
 
 def test_what_was_left_is_remembered_across_a_restart(client, monkeypatch):
-    """The left set lives in the Horizon's database, so the waiting card can still say why a
+    """The left set lives in the kit's memory store, so the waiting card can still say why a
     capture waits after the server restarts (it was process state, and a restart erased it)."""
     a = _summarised(client, "origami", ["Paper"])
     _fake_model(monkeypatch, {"placements": [{"capture": a, "new_orbit": "Paper folding"}]})
@@ -308,3 +254,37 @@ def test_organising_yields_to_a_waiting_capture(client, monkeypatch):
     seen = _fake_model(monkeypatch, {"placements": []})
     api._organize_after_pass(should_stop=lambda: True)
     assert seen == []
+
+
+def test_a_new_orbit_keeps_only_when_two_captures_went_in(client, monkeypatch):
+    """The kit opens a topic for two or more captures; when filing refuses one of two (the corpus
+    cap), the other is taken back and the orbit made for them goes."""
+    a = _summarised(client, "short", ["X"])
+    b = _summarised(client, "a much longer capture " * 40, ["X"])
+    monkeypatch.setattr(api, "max_corpus_chars", lambda: 200)
+    since = client.get("/horizon/suggestions").json()["auto_seq"]
+    _fake_model(monkeypatch, {"placements": [{"capture": a, "new_orbit": "Pair"},
+                                             {"capture": b, "new_orbit": "Pair"}]})
+    undone = []
+    real = api._OrganizeHost.unplace
+    def unplace(self, item_id, topic_id):
+        undone.append(item_id)
+        real(self, item_id, topic_id)
+
+    monkeypatch.setattr(api._OrganizeHost, "unplace", unplace)
+    api._organize_after_pass()
+    assert undone == [a], "a was filed, then taken back when b could not join it"
+    assert horizon.memberships_for(a) == [] and horizon.memberships_for(b) == []
+    assert list_orbit_summaries()[0] == []
+    assert client.get("/horizon/suggestions", params={"since": since}).json()["auto_filed"] == [], \
+        "a filing the pass took back is never announced"
+
+
+def test_the_kit_mirror_follows_a_filing(client, monkeypatch):
+    seed = _summarised(client, "seed", [])
+    client.post(f"/horizon/{seed}/promote", json={"orbit_id": "space", "create": True})
+    a = _summarised(client, "rockets", ["Rocket"])
+    _fake_model(monkeypatch, {"placements": [{"capture": a, "orbit": "space", "fit": "subject"}]})
+    api._organize_after_pass()
+    store = memory_store.store(horizon.DEFAULT_HORIZON_DIR)
+    assert [t.id for t in store.item_topics(a)] == [topics.topic_of("space")]

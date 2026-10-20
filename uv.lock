@@ -2922,7 +2922,7 @@ requires-dist = [
     { name = "pytesseract", specifier = ">=0.3.10" },
     { name = "python-multipart", marker = "extra == 'api'", specifier = ">=0.0.9" },
     { name = "rapidocr", specifier = ">=3.9" },
-    { name = "rlm-harness", extras = ["memory-vectors"], git = "https://github.com/qazbnm456/rlm-harness?rev=357b94053aec4955255b225db5fcdef4865fbb5b" },
+    { name = "rlm-harness", extras = ["memory-vectors"], git = "https://github.com/qazbnm456/rlm-harness?rev=cafddab8851e4fa55087c2aa322f5b768bcac176" },
     { name = "setuptools", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = "<82" },
     { name = "soundfile", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = ">=0.12" },
     { name = "trafilatura", specifier = ">=1.12" },
@@ -3844,7 +3844,7 @@ wheels = [
 [[package]]
 name = "rlm-harness"
 version = "1.21.0"
-source = { git = "https://github.com/qazbnm456/rlm-harness?rev=357b94053aec4955255b225db5fcdef4865fbb5b#357b94053aec4955255b225db5fcdef4865fbb5b" }
+source = { git = "https://github.com/qazbnm456/rlm-harness?rev=cafddab8851e4fa55087c2aa322f5b768bcac176#cafddab8851e4fa55087c2aa322f5b768bcac176" }
 dependencies = [
     { name = "dspy" },
     { name = "pydantic" },

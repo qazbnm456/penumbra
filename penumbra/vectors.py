@@ -149,15 +149,6 @@ def similar_pairs(node_ids: list[str], *, base_dir: str | Path = DEFAULT_HORIZON
             for p in index(base_dir).similar_pairs(list(node_ids))]
 
 
-def mutual_matches_each(
-    node_ids: list[str], among: set[str], *, base_dir: str | Path = DEFAULT_HORIZON_DIR
-) -> dict[str, list[tuple[str, float]]]:
-    """For each of `node_ids`, the captures in `among` above the threshold that are mutual near
-    neighbours of it, each side's nearest counted among `among` and itself; best first, from one
-    load of the vectors."""
-    return index(base_dir).similar_each(list(node_ids), among=sorted(among))
-
-
 # --- the background worker --------------------------------------------------------------------------
 
 
