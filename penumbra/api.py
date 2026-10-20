@@ -3471,7 +3471,7 @@ def _record_failure(node_id: str, reason: str) -> None:
 #: **So the feature was dead in the shipped server, in every configuration.** An independent review
 #: pointed a correctly configured `PN_BASE_URL` at a stub and watched zero HTTP requests arrive
 #: while the log filled with `ValueError: No LM is loaded`. The suite did not catch it because
-#: every distillation test monkeypatches `distill.distil_source` — exactly the function whose real
+#: every distillation test monkeypatched the summary step (then `distill.distil_source`), the code whose real
 #: body could not work — so 869 tests were green over a feature that had never once run.
 #:
 #: Configured LAZILY, on first use, rather than at startup: `PenumbraConfig.from_env()` raises
@@ -4747,9 +4747,9 @@ async def distil_horizon(body: DistilRequest, request: Request) -> dict:
     """Summarise up to `limit` captured nodes. **This spends the reader's money** (invariant 80),
     which is why it is a separate verb with an explicit number rather than something capture does.
 
-    Off the event loop, because `distil_source` refuses to run inside one — it uses `asyncio.run`,
-    and swallowing that would turn a wiring mistake into every node bouncing back with a log line
-    indistinguishable from an unreachable model."""
+    Off the event loop, because the pass (`distill.distil_pending`) refuses to run inside one: it
+    uses `asyncio.run`, and swallowing that would turn a wiring mistake into every node bouncing
+    back with a log line indistinguishable from an unreachable model."""
     # Invariant 69's signal, from the one place that HAS it. `distil_pending` deliberately does not
     # resolve a language itself — it runs with no request — so the caller that does supplies it
     # (invariant 80's shortened ladder). `output_language()` still outranks this inside the pass.
@@ -5887,10 +5887,10 @@ async def rename_horizon_node(node_id: str, body: NodeTitleRequest) -> dict:
 @app.put("/horizon/{node_id}/tags")
 async def retag_horizon_node(node_id: str, body: NodeTagsRequest) -> dict:
     """Set a capture's tags to the reader's list: one removed, one added, or all of them gone. They
-    are cleaned exactly as the summary pass cleans its own (`distill.clean_tags`), so a typed tag
-    joins the existing ones, and a later summary pass leaves them alone. Growing past the summary
-    pass's own cap is refused rather than cut, so nothing the reader typed vanishes; removing is
-    always allowed, even from a list already over it."""
+    are cleaned the way the kit's memory store keeps every tag (`distill.clean_tags` copies its
+    folding and its caps), so a typed tag joins the existing ones, and a later summary pass leaves
+    them alone. Growing past the store's cap of eight is refused rather than cut, so nothing the
+    reader typed vanishes; removing is always allowed, even from a list already over it."""
     current = await asyncio.to_thread(_node_or_404, node_id)
     tags = distill.clean_tags(body.tags, count=len(body.tags) + 1)
     if len(tags) > distill.MAX_TAGS and len(tags) > len(current.tags):

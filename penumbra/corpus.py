@@ -97,7 +97,8 @@ class Corpus:
 _MARKER_LINE = re.compile(r"^\[\[SRC:([^|\]\n]+)\|([^\]\n]+)\]\]$", re.MULTILINE)
 
 #: How much of the corpus the index may name one block at a time, and how many characters the whole
-#: index may take. Past the first, a source's blocks are listed in runs, like `distill.section_map`.
+#: index may take. Past the first, a source's blocks are listed in runs, like the kit's
+#: `memory_organise.section_map`.
 _INDEX_LINES_PER_SOURCE = 40
 _INDEX_MAX_CHARS = 16_000
 

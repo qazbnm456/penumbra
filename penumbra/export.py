@@ -6,7 +6,11 @@ The package has a lossless half and a readable half, side by side:
   stored, the alias table, removal records and Horizon asks, and `memory.db`, the kit's memory store
   as SQLite (each capture's text, every label with who wrote it, the aliases), with its vectors file
   when local relations are on. It is what a later restore would read, and nothing else in the zip is
-  meant to be parsed back.
+  meant to be parsed back. Each capture's text is in it at least twice, on purpose: as its blocks
+  file, the shape a source has and citations point into, and as its item in `memory.db`, which the
+  kit's labels, search and topics refer to; a filed capture is in each orbit file it was filed into
+  as well, as that orbit's source. The item cannot give the blocks back (their locators are gone),
+  and `memory.db` is copied whole because the labels, aliases and topics live nowhere else.
 - `media/` holds the generated audio, one file per orbit.
 - `markdown/` is a folder of notes that Obsidian opens as a vault, and that Logseq, Capacities,
   Heptabase, Bear, Notion, Apple Notes and NotebookLM can import: one note per capture, per orbit
@@ -76,7 +80,8 @@ _README_ZH = """# Penumbra 匯出
   `Entities/` 每個被提到的人、地方或概念一篇，列出它的其他名稱。
 - `bookmarks.html` 可以匯入任何瀏覽器或稍後閱讀工具（Raindrop、Pocket、Readwise Reader）。
 - `data/` 是完整紀錄（JSON，加上 SQLite 檔 `memory.db`，存放每則收錄的全文、標籤和別名），
-  日後還原就讀這裡；`media/` 是語音概覽。
+  日後還原就讀這裡。每則收錄的全文至少出現兩次，一份在 blocks，一份在 `memory.db`；
+  收進軌道的，該軌道的檔案裡還有一份。因為其他紀錄各自指向其中一份。`media/` 是語音概覽。
 - `manifest.json` 記錄格式版本和每個檔案的 SHA-256。
 
 引用在產生時檢查過它指向的位置確實存在於來源中；這只代表位置存在，不代表引文忠於原文。
@@ -92,7 +97,9 @@ Everything this Penumbra held when it was exported: {captures} captures and {orb
   and `Entities/` one note per named person, place or idea, with the other names it goes by.
 - `bookmarks.html` imports into any browser or read-later app (Raindrop, Pocket, Readwise Reader).
 - `data/` is the complete record, in JSON, with `memory.db`, a SQLite file holding each capture's
-  text, labels and aliases: what a restore reads. `media/` holds the audio overviews.
+  text, labels and aliases: what a restore reads. A capture's text is there at least twice, as its
+  blocks and in `memory.db`, and once more in each orbit it is filed in, as that orbit's source,
+  because each is what other records point into. `media/` holds the audio overviews.
 - `manifest.json` gives the format version and a SHA-256 for every file.
 
 A citation's place in its source was checked to exist when it was made. That check says the place is
