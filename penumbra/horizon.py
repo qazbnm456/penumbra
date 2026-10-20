@@ -211,6 +211,13 @@ _MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE nodes DROP COLUMN entities",
     "ALTER TABLE nodes DROP COLUMN edited",
     "ALTER TABLE nodes DROP COLUMN distilled_at",
+    # 10-13: search is the kit's, and so are the alias tables; Penumbra's own copies go. The names
+    # also exist in the kit's attached `mem`, which an unqualified name would then reach, so these
+    # steps are the only place in the package that may still write them (a tripwire test checks).
+    "DROP TABLE IF EXISTS main.search_rows",
+    "DROP TABLE IF EXISTS main.search_fts",
+    "DROP TABLE IF EXISTS main.entity_aliases",
+    "DROP TABLE IF EXISTS main.entity_seen",
 )
 
 
@@ -738,7 +745,7 @@ def _record_item(
     becomes its own item. Returns the row now carrying the id, if any.
 
     The re-key updates every table holding a foreign key to `nodes(id)`, read from the file rather
-    than listed, since some (the search and vector rows, dismissed suggestions, organising notes)
+    than listed, since some (the vector rows, dismissed suggestions, organising notes)
     are created by other modules without `ON UPDATE CASCADE`; `defer_foreign_keys` lets the parent
     and its children change in one transaction. Raises `sqlite3.IntegrityError` when the item id is
     already a row's (see `_become_item`). `chars` records the item's text length, the kit's own
@@ -1400,7 +1407,8 @@ def edit_node(
     except KeyError:
         return None   # removed in between
     with _connect(base_dir) as conn:
-        # So the search index and the vectors, which follow `updated_at`, read the new label.
+        # So the vectors, which follow `updated_at`, read the new label (the kit's search reads it at
+        # once, from the label row).
         conn.execute("UPDATE nodes SET updated_at = ? WHERE id = ?", (time.time(), row["id"]))
     return get_node(row["id"], base_dir=base_dir)
 
@@ -1645,7 +1653,7 @@ def _retry_store(attempt, *, what: str, tries: int = 4, first_delay: float = 0.5
 #: the vector index's virtual table, which only `vectors` can open (`vectors.clear_index`).
 _CLEARED_TABLES = (
     "map_planets", "memberships", "pending_memberships", "node_ids", "nodes", "horizon_events", "asks",
-    "filing_dismissed", "entity_aliases", "entity_seen", "organize_left", "search_rows", "search_fts",
+    "filing_dismissed", "organize_left",
 )
 
 
@@ -1654,8 +1662,9 @@ class IndexingInFlight(RuntimeError):
 
 
 def clear_all(*, base_dir: str | Path = DEFAULT_HORIZON_DIR, held: bool = False) -> int:
-    """Empty the Horizon: every capture, its stored text, its memberships, removal records, asks,
-    aliases and search rows. Returns how many captures there were.
+    """Empty the Horizon: every capture, its stored text, its memberships, removal records and asks,
+    and the kit's memory store with its labels, aliases and search index. Returns how many captures
+    there were.
 
     One transaction for the rows, as SQL deltas like every other write here (invariant 78), then the
     text files, which only a row pointed at, and the kit's memory store, deleted and recreated empty.

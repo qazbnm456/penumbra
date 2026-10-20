@@ -3,8 +3,9 @@
 The package has a lossless half and a readable half, side by side:
 
 - `data/` is canonical: every capture row as stored with its text file, every orbit file exactly as
-  stored, the alias table, removal records and Horizon asks. It is what a later restore would read,
-  and nothing else in the zip is meant to be parsed back.
+  stored, the alias table, removal records and Horizon asks, and `memory.db`, the kit's memory store
+  as SQLite (each capture's text, every label with who wrote it, the aliases). It is what a later
+  restore would read, and nothing else in the zip is meant to be parsed back.
 - `media/` holds the generated audio, one file per orbit.
 - `markdown/` is a folder of notes that Obsidian opens as a vault, and that Logseq, Capacities,
   Heptabase, Bear, Notion, Apple Notes and NotebookLM can import: one note per capture, per orbit
@@ -23,6 +24,8 @@ import hashlib
 import html
 import json
 import re
+import sqlite3
+import tempfile
 import time
 import zipfile
 from datetime import UTC, datetime
@@ -30,7 +33,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from . import __version__, asks, concepts, horizon, mapstore
+from . import __version__, asks, concepts, horizon, mapstore, memory_store
 from .citations import strip_markers
 from .horizon import DEFAULT_HORIZON_DIR
 from .orbit import DEFAULT_ORBITS_DIR, audio_path
@@ -70,7 +73,8 @@ _README_ZH = """# Penumbra 匯出
   `Orbits/` 每個軌道一篇，含概覽、筆記、來源，對話另成一篇；
   `Entities/` 每個被提到的人、地方或概念一篇，列出它的其他名稱。
 - `bookmarks.html` 可以匯入任何瀏覽器或稍後閱讀工具（Raindrop、Pocket、Readwise Reader）。
-- `data/` 是完整紀錄（JSON），日後還原就讀這裡；`media/` 是語音概覽。
+- `data/` 是完整紀錄（JSON，加上 SQLite 檔 `memory.db`，存放每則收錄的全文、標籤和別名），
+  日後還原就讀這裡；`media/` 是語音概覽。
 - `manifest.json` 記錄格式版本和每個檔案的 SHA-256。
 
 引用在產生時檢查過它指向的位置確實存在於來源中；這只代表位置存在，不代表引文忠於原文。
@@ -85,7 +89,8 @@ Everything this Penumbra held when it was exported: {captures} captures and {orb
   `Orbits/` one note per orbit with its overview, notes and sources, and its conversation beside it,
   and `Entities/` one note per named person, place or idea, with the other names it goes by.
 - `bookmarks.html` imports into any browser or read-later app (Raindrop, Pocket, Readwise Reader).
-- `data/` is the complete record, in JSON: what a restore reads. `media/` holds the audio overviews.
+- `data/` is the complete record, in JSON, with `memory.db`, a SQLite file holding each capture's
+  text, labels and aliases: what a restore reads. `media/` holds the audio overviews.
 - `manifest.json` gives the format version and a SHA-256 for every file.
 
 A citation's place in its source was checked to exist when it was made. That check says the place is
@@ -187,6 +192,16 @@ class _Zip:
         self.put(path, data)
         return True
 
+    def put_large(self, path: str, source: Path) -> None:
+        """Copy a file that may be large without holding it: hashed in chunks, then streamed into
+        the zip by `ZipFile.write`."""
+        digest = hashlib.sha256()
+        with source.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+        self.hashes[path] = digest.hexdigest()
+        self.zf.write(source, path)
+
     def close(self) -> None:
         self.zf.close()
 
@@ -230,6 +245,29 @@ def _all_asks(base_dir) -> list:
             return found
         found.extend(page)
         offset += len(page)
+
+
+def _put_memory_store(out: _Zip, horizon_dir: Path) -> None:
+    """The kit's memory store as `data/memory.db`, copied through SQLite's backup API: the file
+    is in WAL mode and may be written by a summary pass meanwhile, and a byte copy of it could
+    miss what the WAL holds or catch a page half written. Nothing is written when there is no
+    store yet."""
+    source_path = memory_store.store_path(horizon_dir)
+    if not source_path.is_file():
+        return
+    with tempfile.TemporaryDirectory() as scratch:
+        copy_path = Path(scratch) / "memory.db"
+        source = sqlite3.connect(source_path.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            copy = sqlite3.connect(copy_path)
+            try:
+                source.backup(copy)
+                copy.execute("PRAGMA journal_mode = DELETE")   # one self-contained file
+            finally:
+                copy.close()
+        finally:
+            source.close()
+        out.put_large("data/memory.db", copy_path)
 
 
 def _orbit_files(orbits_dir: Path) -> list[Path]:
@@ -328,6 +366,7 @@ def _write(out: _Zip, orbits_dir: Path, horizon_dir: Path, words: dict, lang: st
             audio = audio_path(path.stem, base_dir=orbits_dir, suffix=suffix)
             out.put_file(f"media/audio/{path.stem}{suffix}", audio)
     out.put("data/concepts.json", json.dumps(alias_table, ensure_ascii=False, indent=2))
+    _put_memory_store(out, horizon_dir)
     star_map = {
         "planets": mapstore.all_places(base_dir=horizon_dir),
         "settings": mapstore.settings(base_dir=horizon_dir),

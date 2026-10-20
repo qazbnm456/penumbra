@@ -1,54 +1,28 @@
-"""Full-text search over the Horizon, and the selection a Horizon ask reads.
+"""The selection a Horizon ask reads, ranked by the kit's full-text search.
 
-The index lives in the Horizon's own `index.db` as an FTS5 table, so there is no second store to
-keep in step and nothing to run beside the server. It is DERIVED: every row can be rebuilt from the
-node row and its blocks file, `sync` does exactly that for whatever is missing or older than its
-node, and deleting the tables loses nothing but time.
+The full-text index is the kit's memory store's (`memory.db`, `rlm_harness.memory`): each capture's
+text up to `memory_store.INDEX_CHARS`, its origin and its current labels, with Chinese, Japanese and
+Korean text indexed as overlapping character pairs (invariant 78 has the measurement that ruled out
+a dictionary segmenter). The store keeps it in step with every write, so nothing here syncs.
 
-**Chinese is indexed as overlapping character pairs, never through a dictionary.** FTS5's
-`unicode61` tokenizer treats a whole run of Han characters as one token, and its `trigram` tokenizer
-cannot match a two-character word, which is most of Chinese vocabulary. A segmenter was measured and
-refused: jieba's default dictionary cut 關係 in half on Traditional text, and every dictionary
-variant cut 海馬迴 into 海馬 / 迴在, so a search for the one term that mattered found nothing. Pairs
-need no dictionary, have no Traditional/Simplified bias and never lose a term to a wrong cut; they
-are the standard CJK analyzer in Lucene for the same reasons. The pairs are computed here, in
-Python, because Python's `sqlite3` cannot register an FTS5 tokenizer.
-
-**Contentless, because the text is already on disk.** Storing the paired text would double every
-node's size in the database. `content=''` keeps only the index, and `contentless_delete=1` (SQLite
-3.43) still lets a node's row be replaced or removed.
-
-Nothing here assembles a corpus. `select_for_ask` returns node ids and sizes; the caller builds the
-bounded corpus from them (invariant 78).
+Penumbra decides what a scope is (a tag, an entity and its aliases, an orbit, the readable states)
+from the Horizon's own rows, and asks the kit only for the order. Nothing here assembles a corpus:
+`select_for_ask` returns node ids and sizes, and the caller builds the bounded corpus from them
+(invariant 78).
 """
 
 from __future__ import annotations
 
 import json
-import logging
-import re
-import threading
-import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import get_args
 
 from . import concepts as aliases_store
-from . import horizon
+from . import horizon, memory_store
 from .horizon import DEFAULT_HORIZON_DIR
 from .prose import polish
 from .schema import NodeState
-
-_log = logging.getLogger(__name__)
-
-#: Scripts written without spaces between words: kana, CJK ideographs (with extension A and the
-#: compatibility block) and Hangul syllables. A run of these becomes character pairs.
-_UNSPACED = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿가-힯]+")
-
-#: A node's text beyond this is not indexed. A whole book is a few million characters, and the
-#: part a search needs to find it by is never its last half; the cap keeps one capture from
-#: dominating the index's size.
-_BODY_CAP = 1_000_000
 
 #: The node states a search may return: a capture that is a memory item. `queued`, `parsing` and
 #: `failed` may have no text yet, and `stored_unindexed` has text that is not an item yet.
@@ -57,187 +31,6 @@ _BODY_CAP = 1_000_000
 SEARCHABLE_STATES = tuple(
     s for s in get_args(NodeState) if s not in ("queued", "parsing", "stored_unindexed", "failed")
 )
-
-#: Weight of the distilled description against the body in `bm25`. A match in a title or a tag says
-#: more about what a capture is about than one somewhere in its text.
-_META_WEIGHT = 3.0
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS search_rows (
-    rowid      INTEGER PRIMARY KEY AUTOINCREMENT,
-    node_id    TEXT NOT NULL UNIQUE REFERENCES nodes(id) ON DELETE CASCADE,
-    indexed_at REAL NOT NULL
-);
-CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
-    meta, body, content='', contentless_delete=1, tokenize='unicode61 remove_diacritics 2'
-);
-CREATE TRIGGER IF NOT EXISTS search_rows_forget AFTER DELETE ON search_rows BEGIN
-    DELETE FROM search_fts WHERE rowid = old.rowid;
-END;
-"""
-# `AUTOINCREMENT` is load-bearing: without it SQLite may hand a new node the rowid of a deleted one,
-# and if that deletion's index row were ever left behind the new node would inherit its words.
-
-_READY: set[str] = set()
-_READY_LOCK = threading.Lock()
-
-
-class SearchUnavailable(RuntimeError):
-    """This SQLite build cannot hold the index (FTS5 missing, or older than 3.43)."""
-
-
-def grams(text: str) -> str:
-    """`text` with every unspaced run replaced by its overlapping character pairs.
-
-    `睡眠與記憶` becomes `睡眠 眠與 與記 記憶`; a lone character stays itself; Latin text passes
-    through for `unicode61` to split and fold. NFKC first, so a full-width `ＰＤＦ` and `PDF` are
-    one word.
-    """
-    text = unicodedata.normalize("NFKC", text or "")
-
-    def pairs(match: re.Match[str]) -> str:
-        run = match.group(0)
-        if len(run) == 1:
-            return f" {run} "
-        return " " + " ".join(run[i : i + 2] for i in range(len(run) - 1)) + " "
-
-    return _UNSPACED.sub(pairs, text)
-
-
-def query_terms(text: str, limit: int = 64) -> list[str]:
-    """The distinct terms a question searches for, in order. Latin words of one letter are dropped;
-    they match nearly everything and say nothing."""
-    seen: dict[str, None] = {}
-    for term in re.findall(r"\w+", grams(text).lower()):
-        if len(term) == 1 and not _UNSPACED.match(term):
-            continue
-        seen.setdefault(term, None)
-        if len(seen) >= limit:
-            break
-    return list(seen)
-
-
-def match_expression(terms: list[str]) -> str:
-    """An FTS5 query that matches ANY of `terms`, each quoted so no term is read as syntax.
-
-    OR rather than AND: a question in natural language carries words no document contains
-    (`什麼`, `why`), and requiring all of them would find nothing. `bm25` already ranks a document
-    that matches more of the rarer terms higher.
-    """
-    return " OR ".join('"' + term.replace('"', '""') + '"' for term in terms)
-
-
-def _ensure(conn) -> None:
-    key = str(conn.execute("PRAGMA database_list").fetchone()[2])
-    with _READY_LOCK:
-        if key in _READY and Path(key).exists():
-            return
-        try:
-            conn.executescript(_SCHEMA)
-        except Exception as exc:  # sqlite3.OperationalError, spelled broadly: the message is the point
-            raise SearchUnavailable(
-                f"this SQLite build cannot create the search index ({exc}); it needs FTS5 and "
-                "SQLite 3.43 or newer"
-            ) from exc
-        _READY.add(key)
-
-
-def _node_text(node_id: str, blocks_file: str, base_dir: str | Path) -> str:
-    """The node's block text, capped, from the row's `blocks_file`. An unreadable blocks file
-    indexes as empty rather than failing the whole sync: the description is still searchable, and
-    the listing already marks the node as unreadable when it is opened."""
-    try:
-        path = horizon.blocks_file_path(blocks_file, base_dir=base_dir)
-        blocks = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        _log.warning("search: cannot read the text of %s (%s)", node_id, exc)
-        return ""
-    parts: list[str] = []
-    size = 0
-    for block in blocks if isinstance(blocks, list) else []:
-        text = block.get("text", "") if isinstance(block, dict) else ""
-        parts.append(text)
-        size += len(text)
-        if size >= _BODY_CAP:
-            break
-    return "\n".join(parts)[:_BODY_CAP]
-
-
-def _meta_text(row) -> str:
-    fields = [row["title"] or "", row["summary"] or "", row["origin"] or ""]
-    for column in ("tags", "entities"):
-        try:
-            values = json.loads(row[column] or "[]")
-        except ValueError:
-            values = []
-        fields.extend(str(v) for v in values if isinstance(v, str))
-    return "\n".join(fields)
-
-
-def sync(*, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> int:
-    """Index every searchable node that has no row yet or changed since its row was written.
-    Returns how many were (re)indexed.
-
-    The row records the node's `updated_at` as it was READ, not the time of writing, so an edit
-    that lands while this runs leaves the row older than the node and the next sync picks it up.
-    """
-    placeholders = ", ".join("?" for _ in SEARCHABLE_STATES)
-    with horizon._connect_labels(base_dir) as conn:
-        _ensure(conn)
-        rows = conn.execute(
-            f"""SELECT n.id, n.title, n.summary, n.origin, n.tags, n.entities, n.updated_at, n.blocks_file
-                FROM labelled n LEFT JOIN search_rows s ON s.node_id = n.id
-                WHERE n.state IN ({placeholders})
-                  AND (s.node_id IS NULL OR n.updated_at > s.indexed_at)""",
-            SEARCHABLE_STATES,
-        ).fetchall()
-    done = 0
-    for row in rows:
-        meta = grams(_meta_text(row))
-        body = grams(_node_text(row["id"], row["blocks_file"], base_dir))
-        with horizon._connect(base_dir) as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                if conn.execute("SELECT 1 FROM nodes WHERE id = ?", (row["id"],)).fetchone() is None:
-                    conn.execute("ROLLBACK")
-                    continue  # removed while its text was being read
-                rowid = conn.execute(
-                    """INSERT INTO search_rows (node_id, indexed_at) VALUES (?, ?)
-                       ON CONFLICT(node_id) DO UPDATE SET indexed_at = excluded.indexed_at
-                       RETURNING rowid""",
-                    (row["id"], row["updated_at"]),
-                ).fetchone()[0]
-                conn.execute("DELETE FROM search_fts WHERE rowid = ?", (rowid,))
-                conn.execute(
-                    "INSERT INTO search_fts (rowid, meta, body) VALUES (?, ?, ?)", (rowid, meta, body)
-                )
-                conn.execute("COMMIT")
-            except BaseException:
-                conn.execute("ROLLBACK")
-                raise
-        done += 1
-    return done
-
-
-def search(query: str, *, limit: int = 200, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> list[str]:
-    """Node ids matching `query`, best first. Syncs the index first, so a capture that landed a
-    moment ago is findable."""
-    terms = query_terms(query)
-    if not terms:
-        return []
-    sync(base_dir=base_dir)
-    placeholders = ", ".join("?" for _ in SEARCHABLE_STATES)
-    with horizon._connect(base_dir) as conn:
-        _ensure(conn)
-        rows = conn.execute(
-            f"""SELECT s.node_id FROM search_fts
-                JOIN search_rows s ON s.rowid = search_fts.rowid
-                JOIN nodes n ON n.id = s.node_id
-                WHERE search_fts MATCH ? AND n.state IN ({placeholders})
-                ORDER BY bm25(search_fts, ?, 1.0) LIMIT ?""",
-            (match_expression(terms), *SEARCHABLE_STATES, _META_WEIGHT, limit),
-        ).fetchall()
-    return [row[0] for row in rows]
 
 
 # --- the selection a Horizon ask reads ------------------------------------------------------------
@@ -340,31 +133,16 @@ def _scope_rows(kind: str, value: str | None, base_dir: str | Path, orbit: str |
         return conn.execute(sql, params).fetchall()
 
 
-def _ranked_in_scope(
-    question: str, kind: str, value: str | None, base_dir: str | Path, orbit: str | None = None
-) -> list[str]:
-    """Node ids in the scope that match `question`, best first.
+def _ranked(question: str, base_dir: str | Path) -> list[str]:
+    """Every item id the kit's search matches `question` with, best first.
 
-    The scope is part of the FTS query, not a filter applied to the top hits afterwards: with a
-    global `LIMIT`, five hundred better matches outside a tag left nothing inside it, and the ask
-    fell back to the newest captures while telling the reader their words had found nothing.
+    No limit, so the caller's scope keeps whatever falls inside it: with a global `LIMIT`, five
+    hundred better matches outside a tag once left nothing inside it, and the ask fell back to the
+    newest captures while telling the reader their words had found nothing.
     """
-    terms = query_terms(question)
-    if not terms:
-        return []
-    sync(base_dir=base_dir)
-    clause, params = _scope_clause(kind, value, orbit, base_dir)
-    with horizon._connect_labels(base_dir) as conn:
-        _ensure(conn)
-        rows = conn.execute(
-            f"""SELECT s.node_id FROM search_fts
-                JOIN search_rows s ON s.rowid = search_fts.rowid
-                JOIN labelled nodes ON nodes.id = s.node_id
-                WHERE search_fts MATCH ? AND {clause}
-                ORDER BY bm25(search_fts, ?, 1.0)""",
-            (match_expression(terms), *params, _META_WEIGHT),
-        ).fetchall()
-    return [row[0] for row in rows]
+    if not question.strip():
+        return []   # the kit lists every item, newest first, for an empty query
+    return memory_store.store(base_dir).search_ids(question, limit=None)
 
 
 def _label(row) -> str:
@@ -397,9 +175,7 @@ def select_for_ask(
     """
     rows = _scope_rows(kind, value, base_dir, orbit)
     by_id = {row["id"]: row for row in rows}
-    ranked = [
-        node_id for node_id in _ranked_in_scope(question, kind, value, base_dir, orbit) if node_id in by_id
-    ]
+    ranked = [node_id for node_id in _ranked(question, base_dir) if node_id in by_id]
     matched = set(ranked)
 
     def picked(row) -> Picked:
