@@ -206,7 +206,7 @@ def test_only_undistilled_nodes_are_touched():
 
 def test_a_node_whose_blocks_are_missing_is_skipped_not_crashed_on():
     node = _captured()
-    horizon.node_blocks_path(node.id).unlink()
+    horizon.node_blocks_path(node.former_id).unlink()
     assert distill.distil_pending(run=lambda **kw: Distillation(title="t")) == []
     assert horizon.get_node(node.id).state == "ready_undistilled"
 
@@ -430,7 +430,7 @@ def test_a_node_with_no_stored_text_is_reported_as_a_failure_not_ticked_as_done(
     )
     # The row survives; the text behind it does not. A pruned disk, a half-restored backup, a
     # partial copy — the row is the index and the blocks are a separate file (invariant 78).
-    horizon.node_blocks_path(node.id, base_dir=base).unlink()
+    horizon.node_blocks_path(node.former_id, base_dir=base).unlink()
 
     ticks: list[int] = []
     failures: list[tuple[str, Exception]] = []
@@ -488,7 +488,7 @@ def test_a_corrupt_blocks_file_fails_one_node_without_ending_the_batch(tmp_path)
     # The MIDDLE one, so "the batch stopped here" and "the batch skipped this" are distinguishable.
     # `list_nodes` is newest-first, so index 1 is reached second whichever way it is read.
     broken = made[1]
-    horizon.node_blocks_path(broken.id, base_dir=base).write_text("{,", encoding="utf-8")
+    horizon.node_blocks_path(broken.former_id, base_dir=base).write_text("{,", encoding="utf-8")
 
     failures: list[tuple[str, Exception]] = []
     ticks: list[int] = []
@@ -618,7 +618,8 @@ def test_the_automatic_pass_leaves_long_captures_for_a_press(tmp_path):
         horizon.store_blocks(node_id, doc, base_dir=base)
     done = distill.distil_pending(base_dir=base, run=lambda **_: distill.Distillation(title="t"),
                                   run_long=lambda *_: pytest.fail("a long document ran"), defer_long=True)
-    assert done == [short_id]
+    # Stored, the short capture is reported by its kit item id.
+    assert done == [horizon.resolve_id(short_id, base_dir=base)]
     assert horizon.get_node(long_id, base_dir=base).state == "ready_undistilled"
 
 

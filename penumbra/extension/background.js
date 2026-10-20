@@ -488,6 +488,14 @@ async function pressIcon(tab) {
   await capture(tab, { kind: "page" });
 }
 
+// The id the card keeps for a capture: its temporary id once it has one (`former_id`), else its id.
+// The temporary id is a hash of what was captured, so it never names another capture, while the
+// item id it becomes (`m<n>`) starts again from `m1` after the reader clears everything; the
+// server resolves either.
+function captureKey(node) {
+  return node ? node.former_id || node.id : null;
+}
+
 async function withdraw(tab, state) {
   const tabId = tab && tab.id;
   if (!state.mine || !state.nodeId) {
@@ -617,7 +625,7 @@ async function send(tab, body) {
     const orbits = await orbitList();
     const into = body.orbit ? (orbits.find((o) => o.id === body.orbit) || {}).title : "";
     if (mine) {
-      const nodeId = got.node && got.node.id;
+      const nodeId = captureKey(got.node);
       // Marked only if the tab still shows that page: after a navigation the tick would sit on a
       // page that was never kept. The URL is readable only while the press's grant lasts, which a
       // navigation ends, so an unreadable URL counts as moved on.
@@ -640,7 +648,7 @@ async function send(tab, body) {
         status: msg("alreadyKept"),
         title: (got.node && (got.node.title || (got.node.preview || {}).title)) || shown,
         note: where.status === msg("saved") ? msg("alreadyKeptNote") : where.status,
-        nodeId: got.node && got.node.id,
+        nodeId: captureKey(got.node),
         orbits: into ? [] : orbits,
         fileLabel: msg("fileInto"),
         againLabel: msg("keepAnother"),
@@ -654,7 +662,7 @@ async function send(tab, body) {
       note: into && !got.filed
         ? [filingNote(got, into), got.filing_mode === "auto" ? msg("autoWontMove") : ""].filter(Boolean).join(" ")
         : where.note,
-      nodeId: got.node && got.node.id,
+      nodeId: captureKey(got.node),
       orbits: into || (got.orbits || []).length ? [] : orbits,
       fileLabel: msg("fileInto"),
       undoLabel: msg("undo"),

@@ -271,7 +271,7 @@ def test_a_moon_read_still_in_flight_holds_the_card_and_lets_go_when_the_reader_
     page.evaluate("document.activeElement.blur()")
     # Every capture read takes 600ms from here, and nothing is held.
     page.evaluate("""() => { const real = window.api;
-      window.api = (path, ...rest) => path.startsWith('/horizon/nd-')
+      window.api = (path, ...rest) => /^[/]horizon[/](nd-|m[0-9])/.test(path)
         ? new Promise((done) => setTimeout(done, 600)).then(() => real(path, ...rest)) : real(path, ...rest);
       dropCapturesHeld(); }""")
     before = page.evaluate("document.getElementById('starmap-card').offsetHeight")

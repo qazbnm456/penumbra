@@ -36,11 +36,12 @@ def test_add_node_stores_the_row_and_the_blocks_separately():
     """Blocks on disk, metadata in the index — a listing of a thousand nodes must not carry a
     thousand corpora."""
     node = horizon.add_node(_source(text="the body"))
-    assert node.id.startswith("nd-")
+    # Stored, the capture is its kit item (`m<n>`); the temporary id names its blocks file.
+    assert node.id == "m1" and node.former_id.startswith("nd-")
     assert node.kind == "web"
     assert node.chars == len("the body")
 
-    blocks = json.loads(horizon.node_blocks_path(node.id).read_text(encoding="utf-8"))
+    blocks = json.loads(horizon.node_blocks_path(node.former_id).read_text(encoding="utf-8"))
     assert blocks == [{"locator": "whole", "text": "the body"}]
     # The text is NOT in the index: that is the whole point of the split.
     with sqlite3.connect(horizon.index_path()) as conn:
@@ -66,7 +67,7 @@ def test_capturing_the_same_url_twice_is_one_node():
     assert first.id == second.id
     assert horizon.count_nodes() == 1
     # The blocks are NOT overwritten: another orbit's promotion may already have copied from them.
-    blocks = json.loads(horizon.node_blocks_path(first.id).read_text(encoding="utf-8"))
+    blocks = json.loads(horizon.node_blocks_path(first.former_id).read_text(encoding="utf-8"))
     assert blocks[0]["text"] == "v1"
 
 
@@ -298,7 +299,7 @@ def test_removing_a_node_drops_its_memberships_but_never_a_promoted_source():
     assert horizon.remove_node(node.id) is True
     assert horizon.get_node(node.id) is None
     assert horizon.memberships_for(node.id) == []
-    assert not horizon.node_blocks_path(node.id).exists()
+    assert not horizon.node_blocks_path(node.former_id).exists()
     assert len(load_orbit("myorbit").sources) == 1, "promotion is a copy; removal must not reach it"
 
 
@@ -389,13 +390,15 @@ def test_capturing_one_origin_from_many_threads_never_raises_and_never_diverges(
         t.join()
 
     assert not errors, errors
-    assert len(set(results)) == 1, "one origin must be one node"
+    # A loser may hold the temporary id it read before the winner's re-key; both name one capture.
+    current = {horizon.resolve_id(r) for r in results}
+    assert len(current) == 1 and None not in current, "one origin must be one node"
     assert horizon.count_nodes() == 1
 
     node = horizon.get_node(results[0])
     on_disk = sum(
         len(block["text"])
-        for block in json.loads(horizon.node_blocks_path(node.id).read_text(encoding="utf-8"))
+        for block in json.loads(horizon.node_blocks_path(node.former_id).read_text(encoding="utf-8"))
     )
     assert node.chars == on_disk, "the index and the blocks came from different captures"
 
@@ -645,7 +648,8 @@ def test_both_owned_states_are_recovered_and_each_falls_back_to_the_right_one():
 
     recovered = horizon.reset_interrupted_states()
 
-    assert recovered == {"parsing": [parsing.id], "distilling": [distilling.id]}
+    # Its blocks stored, the distilling capture is a kit item now, reported by its current id.
+    assert recovered == {"parsing": [parsing.id], "distilling": [horizon.resolve_id(distilling.id)]}
     assert horizon.get_node(parsing.id).state == "queued"
     assert horizon.get_node(distilling.id).state == "ready_undistilled"
     assert horizon.get_node(untouched.id).state == "failed", "a real failure is not an owned state"
@@ -734,7 +738,7 @@ def test_search_never_reads_the_blocks_on_disk():
     """Invariant 78: the index is what a listing renders, and reading a thousand block files to
     answer a keystroke is the shape it exists to avoid. Asserted by removing the files."""
     node = _distilled("https://example.com/a", "findable", "and still findable", [], [])
-    horizon.node_blocks_path(node.id).unlink()
+    horizon.node_blocks_path(node.former_id).unlink()
     assert {n.id for n in horizon.list_nodes(query="findable")} == {node.id}
 
 def test_search_ands_its_terms_and_leaves_cjk_alone(tmp_path):
@@ -986,9 +990,13 @@ def test_edited_is_part_of_the_row_and_says_which_names_are_the_readers():
     assert horizon.edit_node(node.id, title="T").edited == ["title", "tags"]
 
 
-#: A stand-in for the first step a later change appends: the shipped baseline has none yet
-#: (invariant 84), and the mechanism has to be proven before one is needed.
+#: A stand-in for the next step a later change appends, after the shipped ones (invariant 84), so
+#: the mechanism is proven on a step no shipped database has applied yet.
 _PROBE_STEP = "ALTER TABLE nodes ADD COLUMN probe TEXT"
+
+#: The shipped steps followed by the stand-in, and the version a database ends at after them.
+_STEPS = horizon._MIGRATIONS + (_PROBE_STEP,)
+_LATEST = len(_STEPS)
 
 
 def _baseline_database(base: Path) -> None:
@@ -1008,7 +1016,7 @@ def test_a_database_behind_the_steps_is_migrated_and_a_new_one_starts_at_the_lat
     """`_SCHEMA` is the first shape and `_MIGRATIONS` its history, counted in `user_version`. A
     database written before a step keeps its rows and gains the column; a new one runs every step;
     running the steps again changes nothing."""
-    monkeypatch.setattr(horizon, "_MIGRATIONS", (_PROBE_STEP,))
+    monkeypatch.setattr(horizon, "_MIGRATIONS", _STEPS)
     monkeypatch.setattr(horizon, "_INITIALIZED", set())
     old = tmp_path / "old"
     _baseline_database(old)
@@ -1017,10 +1025,11 @@ def test_a_database_behind_the_steps_is_migrated_and_a_new_one_starts_at_the_lat
     horizon.add_node(_source(), base_dir=fresh)
     for base in (old, fresh):
         with sqlite3.connect(horizon.index_path(base)) as conn:
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
-            assert "probe" in [r[1] for r in conn.execute("PRAGMA table_info(nodes)")]
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == _LATEST
+            columns = [r[1] for r in conn.execute("PRAGMA table_info(nodes)")]
+            assert "former_id" in columns and "probe" in columns
             horizon._migrate(conn)  # nothing left to apply
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == _LATEST
 
 
 def test_processes_migrating_an_old_database_at_once_never_apply_a_step_twice(tmp_path):
@@ -1040,7 +1049,7 @@ def test_processes_migrating_an_old_database_at_once_never_apply_a_step_twice(tm
     _baseline_database(old)
     probe = (
         "import sqlite3, sys, time; from penumbra import horizon\n"
-        f"horizon._MIGRATIONS = ({_PROBE_STEP!r},)\n"
+        f"horizon._MIGRATIONS = {_STEPS!r}\n"
         "conn = sqlite3.connect(horizon.index_path(sys.argv[1]), timeout=30)\n"
         "time.sleep(max(0.0, float(sys.argv[2]) - time.time()))\n"
         "horizon._migrate(conn)\n"
@@ -1058,5 +1067,5 @@ def test_processes_migrating_an_old_database_at_once_never_apply_a_step_twice(tm
     assert all(run.returncode == 0 for run in runs), [err for _, err in results]
     assert all(out.strip() == "[]" for out, _ in results)
     with sqlite3.connect(horizon.index_path(old)) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == _LATEST
         assert conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0] == 1

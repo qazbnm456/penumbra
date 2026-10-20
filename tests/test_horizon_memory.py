@@ -70,14 +70,15 @@ def test_a_capture_becomes_one_item_holding_its_text_and_its_provenance():
     store = memory_store.store(horizon.DEFAULT_HORIZON_DIR)
     for node, provenance, text in ((page, "observed", "the body"), (pasted, "said", "my own words")):
         assert node.state == "ready_undistilled"
-        [item] = store.find_meta("node_id", node.id)
+        # The item is found by the capture's temporary id, which the row keeps as `former_id`.
+        [item] = store.find_meta("node_id", node.former_id)
         assert (item.text, item.provenance, item.origin) == (text, provenance, node.origin)
         assert item.meta["kind"] == "web"
 
 
 def test_an_empty_capture_still_becomes_an_item_and_says_it_was_empty():
     node = horizon.add_node(_source(text="   "))
-    [item] = memory_store.store(horizon.DEFAULT_HORIZON_DIR).find_meta("node_id", node.id)
+    [item] = memory_store.store(horizon.DEFAULT_HORIZON_DIR).find_meta("node_id", node.former_id)
     assert item.text == node.origin and item.meta["empty_text"] is True
 
 
@@ -137,11 +138,11 @@ def test_a_capture_removed_while_it_was_being_stored_leaves_no_item_and_no_text(
 def test_removing_a_capture_purges_its_item_and_its_text():
     node = horizon.add_node(_source(text="a secret worth forgetting"))
     store = memory_store.store(horizon.DEFAULT_HORIZON_DIR)
-    [item] = store.find_meta("node_id", node.id)
+    [item] = store.find_meta("node_id", node.former_id)
     assert horizon.remove_node(node.id) is True
     assert store.get(item.id) is None and store.purged(item.id) is not None
     assert store.search("secret") == []
-    assert not horizon.node_blocks_path(node.id).exists()
+    assert not horizon.node_blocks_path(node.former_id).exists()
 
 
 def test_clearing_refuses_while_a_capture_is_being_stored_and_no_claim_starts_while_it_clears():
@@ -168,7 +169,7 @@ def test_removing_a_waiting_capture_purges_an_item_a_crash_left_behind():
                      (node.id,))
     assert horizon.remove_node(node.id) is True
     store = memory_store.store(horizon.DEFAULT_HORIZON_DIR)
-    assert store.find_meta("node_id", node.id) == [] and store.search("leftover") == []
+    assert store.find_meta("node_id", node.former_id) == [] and store.search("leftover") == []
 
 
 def test_a_removal_that_decides_to_keep_a_filed_capture_keeps_its_text():
@@ -177,7 +178,7 @@ def test_a_removal_that_decides_to_keep_a_filed_capture_keeps_its_text():
         conn.execute("INSERT INTO memberships (node_id, orbit_id, source_id, promoted_at) "
                      "VALUES (?, 'o', 's1', 0)", (node.id,))
     assert horizon.remove_node(node.id, only_if_unfiled=True) is False
-    [item] = memory_store.store(horizon.DEFAULT_HORIZON_DIR).find_meta("node_id", node.id)
+    [item] = memory_store.store(horizon.DEFAULT_HORIZON_DIR).find_meta("node_id", node.former_id)
     assert item.text == "still wanted"
 
 
@@ -207,9 +208,10 @@ def test_a_membership_recorded_while_the_capture_waits_is_written_when_it_become
     [node] = horizon.list_nodes()
     assert node.state == "stored_unindexed" and horizon.nodes_in_orbit("my-orbit") == []
     assert horizon.record_orbit_sources("my-orbit", [source]) == 0, "pending counts as recorded"
-    horizon.index_stored(node.id)
+    stored = horizon.index_stored(node.id)
+    assert stored.former_id == node.id, "the waiting capture is re-keyed to its item id"
     [membership] = horizon.nodes_in_orbit("my-orbit")
-    assert (membership.node_id, membership.source_id) == (node.id, "s0")
+    assert (membership.node_id, membership.source_id) == (stored.id, "s0")
 
 
 def test_an_orbit_storing_a_queued_capture_wins_once_and_intake_then_leaves_it():
@@ -229,13 +231,15 @@ def test_the_queue_stores_waiting_captures_and_runs_the_after_parse_hook(monkeyp
     assert node.state == "stored_unindexed"
     ready: list[str] = []
     queue = IntakeQueue(parse=lambda origin, node_id: _source(origin))
-    queue.set_ready_hook(ready.append)
+    queue.set_ready_hook(lambda node_id, former_id: ready.append((node_id, former_id)))
     try:
         queue.nudge()
-        assert _until(lambda: ready == [node.id])
+        # The hook names the capture by its item id and the temporary id it had while it waited.
+        assert _until(lambda: ready == [(horizon.resolve_id(node.id), node.id)])
     finally:
         queue.stop(timeout=5)
-    assert horizon.get_node(node.id).state == "ready_undistilled" and ready == [node.id]
+    stored = horizon.get_node(node.id)
+    assert stored.state == "ready_undistilled" and ready == [(stored.id, node.id)]
 
 
 def test_resubmitting_a_failed_capture_with_stored_text_stores_it_rather_than_fetching(monkeypatch):
@@ -246,8 +250,9 @@ def test_resubmitting_a_failed_capture_with_stored_text_stores_it_rather_than_fe
         assert queue.wait_idle(5)
         assert fetched == ["https://example.com/a"]
         with sqlite3.connect(horizon.index_path()) as conn:
-            conn.execute("UPDATE nodes SET memory_rowid = NULL, state = 'failed', error = 'x' WHERE id = ?",
-                         (node.id,))
+            # `node` is the queued answer, so its id is the temporary one the stored row keeps.
+            conn.execute("UPDATE nodes SET memory_rowid = NULL, state = 'failed', error = 'x' "
+                         "WHERE id = ? OR former_id = ?", (node.id, node.id))
         again = queue.submit("https://example.com/a")
         assert again.state == "stored_unindexed"
         assert _until(lambda: horizon.get_node(node.id).state == "ready_undistilled")
@@ -326,7 +331,7 @@ def test_a_removal_never_purges_or_unlinks_what_a_capture_of_the_same_text_holds
     """Forget a paste while the store is busy, paste the same text again, then let the purge retry:
     the new capture keeps its own item and its blocks, and the old item is gone."""
     first = horizon.add_node(_source("pasted:same", text="the same words"))
-    [old] = memory_store.store(horizon.DEFAULT_HORIZON_DIR).find_meta("node_id", first.id)
+    [old] = memory_store.store(horizon.DEFAULT_HORIZON_DIR).find_meta("node_id", first.former_id)
     store = memory_store.store(horizon.DEFAULT_HORIZON_DIR)
     real_purge, later = store.purge, []
     monkeypatch.setattr(store, "purge", lambda *a, **k: (_ for _ in ()).throw(_busy()))
@@ -334,12 +339,13 @@ def test_a_removal_never_purges_or_unlinks_what_a_capture_of_the_same_text_holds
     assert horizon.remove_node(first.id) is True
     monkeypatch.setattr(store, "purge", real_purge)
     again = horizon.add_node(_source("pasted:same", text="the same words"))
-    assert again.id == first.id and again.state == "ready_undistilled"
+    # The same text is the same temporary id; the new capture is a new item.
+    assert again.former_id == first.former_id and again.state == "ready_undistilled"
     assert later and later[0]() is True
-    [kept] = store.find_meta("node_id", again.id)
+    [kept] = store.find_meta("node_id", again.former_id)
     assert kept.id != old.id and store.get(old.id) is None
-    horizon._unlink_blocks_of_gone(again.id, f"{again.id}.json", base_dir=horizon.DEFAULT_HORIZON_DIR)
-    assert horizon.node_blocks_path(again.id).exists()
+    horizon._unlink_blocks_of_gone(f"{again.former_id}.json", base_dir=horizon.DEFAULT_HORIZON_DIR)
+    assert horizon.node_blocks_path(again.former_id).exists()
 
 
 def test_a_purge_from_before_a_clear_never_touches_the_new_store(monkeypatch):
@@ -352,7 +358,7 @@ def test_a_purge_from_before_a_clear_never_touches_the_new_store(monkeypatch):
     horizon.clear_all()
     again = horizon.add_node(_source("pasted:two", text="after the clear"))
     assert later and later[0]() is True
-    assert memory_store.store(horizon.DEFAULT_HORIZON_DIR).find_meta("node_id", again.id)
+    assert memory_store.store(horizon.DEFAULT_HORIZON_DIR).find_meta("node_id", again.former_id)
 
 
 def test_a_capture_removed_and_made_again_while_its_item_was_added_is_left_for_its_own_store(monkeypatch):

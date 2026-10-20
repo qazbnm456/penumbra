@@ -18,7 +18,8 @@ def _capture(url, entities=(), tags=(), state="ready", title=None) -> str:
     if title:
         fields["title"] = title
     horizon.update_node(node_id, base_dir=BASE, **fields)
-    return node_id
+    # Stored, the capture carries its kit item id; the temporary id is only its `former_id`.
+    return horizon.resolve_id(node_id, base_dir=BASE)
 
 
 def _file(node_id, orbit):

@@ -251,6 +251,113 @@ function withToken(path) {
 
 // --- API helpers --------------------------------------------------------------------------------
 
+//: The Horizon's epoch this page loaded with (`horizon.epoch`): every clear replaces it. A capture's
+//: id is its memory item id, never reused within one store, but a clear starts a new store numbered
+//: from `m1`, so a page holding ids from before a clear must not send them. Taken from the first
+//: response that carries one, and sent with every request that names a capture (`namesCapture`);
+//: the server refuses a stale one with 412.
+let horizonEpoch = null;
+
+//: A capture id in the path, or a `node_id`/`node_ids` field in the body: the requests an id from
+//: before a clear could misdirect. Only these carry the epoch, so a capture, a question in an orbit
+//: or a note typed into a page that has not noticed a clear is still sent, never refused for it.
+const CAPTURE_IN_PATH = /^\/horizon\/(?:nd-[0-9a-f]{16}|m[1-9][0-9]*)(?:[/?]|$)/;
+
+function namesCapture(path, body) {
+  return CAPTURE_IN_PATH.test(String(path)) || (typeof body === "string" && /"node_ids?"\s*:/.test(body));
+}
+
+//: A page whose ids predate a clear: reload, so it holds nothing from before. The promise never
+//: settles, so no caller shows an error, a toast or a status line in the moment before the reload
+//: (invariant 60). What the reader was typing into a capture, a Horizon question or a chat
+//: question is kept for the reloaded page (`restoreTypedText`): a reload can land while a field
+//: is being filled (a poll, a question's preview) or as a question is sent.
+const TYPED_FIELDS = ["capture-input", "ask-h-input", "ask-input"];
+const TYPED_KEY = "penumbra.typedBeforeReload";
+
+function reloadForNewEpoch() {
+  try {
+    const typed = {};
+    for (const id of TYPED_FIELDS) {
+      const field = document.getElementById(id);
+      if (field && field.value) typed[id] = field.value;
+    }
+    if (Object.keys(typed).length) sessionStorage.setItem(TYPED_KEY, JSON.stringify(typed));
+  } catch {
+    // no storage here: the reload still has to happen
+  }
+  window.location.reload();
+  return new Promise(() => {});
+}
+
+//: Once, on load: put back what `reloadForNewEpoch` kept, then forget it.
+function restoreTypedText() {
+  let typed = null;
+  try {
+    typed = JSON.parse(sessionStorage.getItem(TYPED_KEY) || "null");
+    sessionStorage.removeItem(TYPED_KEY);
+  } catch {
+    return;
+  }
+  for (const [id, value] of Object.entries(typed || {})) {
+    const field = TYPED_FIELDS.includes(id) ? document.getElementById(id) : null;
+    if (field && typeof value === "string" && !field.value) {
+      field.value = value;
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+}
+
+//: A capture's id changes once, when its text becomes a memory item (`m<n>`); the old one comes
+//: back as `former_id` on every object that names it. Every response is walked for those before
+//: any caller looks anything up by id, and each held id is swapped for the new one: the open
+//: cards, the list, the map's and the graph's focus, the held card details, the orbit picker, the
+//: rows' `data-node-id`.
+function rekeyHeld(data) {
+  const moved = new Map();
+  const walk = (value, depth) => {
+    if (!value || typeof value !== "object" || depth > 6) return;
+    if (Array.isArray(value)) {
+      for (const entry of value) walk(entry, depth + 1);
+      return;
+    }
+    const now = typeof value.id === "string" ? value.id : value.node_id;
+    if (typeof value.former_id === "string" && typeof now === "string" && value.former_id !== now) {
+      moved.set(value.former_id, now);
+    }
+    for (const key of Object.keys(value)) {
+      if (value[key] && typeof value[key] === "object") walk(value[key], depth + 1);
+    }
+  };
+  walk(data, 0);
+  if (!moved.size) return;
+  const swap = (id) => (moved.has(id) ? moved.get(id) : id);
+  for (const old of [...horizonState.open]) {
+    if (moved.has(old)) {
+      horizonState.open.delete(old);
+      horizonState.open.add(moved.get(old));
+    }
+  }
+  horizonState.nodes = horizonState.nodes.map((n) => (moved.has(n.id) ? { ...n, id: moved.get(n.id), former_id: n.id } : n));
+  for (const el of document.querySelectorAll("[data-node-id]")) {
+    if (moved.has(el.dataset.nodeId)) el.dataset.nodeId = moved.get(el.dataset.nodeId);
+  }
+  const focus = starMap.focus;
+  if (focus && focus.kind === "node" && focus.node && moved.has(focus.node.id)) {
+    starMap.focus = { ...focus, node: { ...focus.node, id: swap(focus.node.id) } };
+  } else if (focus && focus.kind === "capture" && moved.has(focus.id)) {
+    starMap.focus = { ...focus, id: swap(focus.id) };
+  }
+  for (const [old, now] of moved) {
+    if (capturesHeld.byId.has(old)) {
+      capturesHeld.byId.set(now, capturesHeld.byId.get(old));
+      capturesHeld.byId.delete(old);
+    }
+  }
+  if (orbitPickOpen.nodeId) orbitPickOpen.nodeId = swap(orbitPickOpen.nodeId);
+  if (graphState.capture) graphState.capture = swap(graphState.capture);
+}
+
 async function api(path, options) {
   // Every request carries the interface language the reader PICKED. One choke point rather than a
   // field in five request bodies — `_resolve_language` is reached from every run-taking endpoint,
@@ -263,7 +370,9 @@ async function api(path, options) {
   opts.headers = { ...(opts.headers || {}), "X-Penumbra-Interface-Language": uiLangName() };
   const token = apiToken();
   if (token) opts.headers.Authorization = `Bearer ${token}`;
+  if (horizonEpoch && namesCapture(path, opts.body)) opts.headers["X-Horizon-Epoch"] = horizonEpoch;
   const resp = await fetch(path, opts);
+  if (resp.status === 412) return reloadForNewEpoch();
   if (resp.status === 401) {
     // The server mints a fresh token each launch, so a stale one in localStorage is the ordinary
     // case here, not an attack. Drop it — otherwise every later request fails the same way and a
@@ -308,7 +417,14 @@ async function api(path, options) {
     throw err;
   }
   if (asBlob) return resp.blob();
-  return resp.status === 204 ? null : resp.json();
+  if (resp.status === 204) return null;
+  const data = await resp.json();
+  if (data && typeof data.epoch === "string") {
+    if (horizonEpoch === null) horizonEpoch = data.epoch;
+    else if (data.epoch !== horizonEpoch) return reloadForNewEpoch();   // a poll noticed a clear
+  }
+  rekeyHeld(data);
+  return data;
 }
 
 // --- Reasoning-trace ticker (Phase 3) --------------------------------------------------------
@@ -9838,7 +9954,9 @@ function renderStream({ append = false, newIds = new Set() } = {}) {
       stream.appendChild(line);
       lastDay = day;
     }
-    stream.appendChild(item.node ? renderNode(item.node, { isNew: newIds.has(item.node.id) }) : renderRemoval(item.event));
+    // A link captured a moment ago was answered under its temporary id and may be read by now.
+    const isNew = item.node && (newIds.has(item.node.id) || newIds.has(item.node.former_id));
+    stream.appendChild(item.node ? renderNode(item.node, { isNew }) : renderRemoval(item.event));
   }
   stream.dataset.rendered = String(horizonState.nodes.length);
   stream.dataset.lastDay = lastDay;
@@ -14556,12 +14674,12 @@ function drawStarMap() {
     const item = items[i];
     const x = d * Math.cos(angle);
     const y = d * Math.sin(angle);
-    looseRing.appendChild(moonBody(x, y, stableHash(`moon:${item ? item.id : i}`),
+    looseRing.appendChild(moonBody(x, y, stableHash(`moon:${item ? item.former_id || item.id : i}`),
       moonClass(item) + moonLensClass(item, starMap.lenses)));
     if (item) looseRing.appendChild(moonHit(x, y, { kind: "capture", ...item }));
     const lensMark = item ? moonLensClass(item, starMap.lenses) : "";
     looseLooks.push({ x, y, state: skyMoonState(item ? { kind: "capture", ...item } : null),
-      seed: stableHash(`moon:${item ? item.id : i}`), faded: lensMark.includes("is-faded"),
+      seed: stableHash(`moon:${item ? item.former_id || item.id : i}`), faded: lensMark.includes("is-faded"),
       lensed: lensMark.includes("is-lensed") });
     if (item && isFocusedMoon(item)) looseRing.appendChild(moonMark(x, y));
   }
@@ -14606,10 +14724,10 @@ function drawStarMap() {
       const d = p.r + 8 + (i % 2) * 5;
       const x = d * Math.cos(angle);
       const y = d * Math.sin(angle);
-      moonRing.appendChild(moonBody(x, y, stableHash("moon:" + (item.id || orbit.slug + ":" + i)),
+      moonRing.appendChild(moonBody(x, y, stableHash("moon:" + (item.former_id || item.id || orbit.slug + ":" + i)),
         moonClass(item) + moonLensClass(item, starMap.lenses)));
       const lensMark = moonLensClass(item, starMap.lenses);
-      moonLooks.push({ x, y, state: skyMoonState(item), seed: stableHash("moon:" + (item.id || orbit.slug + ":" + i)),
+      moonLooks.push({ x, y, state: skyMoonState(item), seed: stableHash("moon:" + (item.former_id || item.id || orbit.slug + ":" + i)),
         faded: lensMark.includes("is-faded"), lensed: lensMark.includes("is-lensed") });
       moonRing.appendChild(moonHit(x, y, { ...item, orbit: orbit.slug }));
       if (isFocusedMoon(item)) moonRing.appendChild(moonMark(x, y));
@@ -19142,6 +19260,7 @@ initSuggestions();
 //: orbit opens that orbit. `replace: true` on the way in: the first entry is this one, not a
 //: second one stacked on top of it.
 (async () => {
+  restoreTypedText();
   installShortcuts();
   installTokenGate();
   installPrintReferences();

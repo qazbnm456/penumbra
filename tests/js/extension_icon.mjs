@@ -39,13 +39,17 @@ const chrome = {
 };
 
 const requests = [];
+const undoBodies = [];
 let captureGate = null;
 async function fetch(url, init = {}) {
   const path = String(url).replace(/^http:\/\/127\.0\.0\.1:9/, "");
   if (String(url).startsWith("ext://")) return { blob: async () => ({ arrayBuffer: async () => new ArrayBuffer(1) }) };
   requests.push(path);
+  if (path === "/extension/undo") undoBodies.push(JSON.parse(init.body || "{}"));
   if (path === "/extension/capture" && captureGate) await captureGate;
-  const body = path === "/extension/capture" ? { node: { id: "nd-1" }, duplicate: false, orbits: [] } : {};
+  // A page capture is answered once stored: under its item id, with the temporary one beside it.
+  const body = path === "/extension/capture"
+    ? { node: { id: "m1", former_id: "nd-1" }, duplicate: false, orbits: [] } : {};
   return { ok: true, status: 200, json: async () => body };
 }
 class OffscreenCanvas {
@@ -68,6 +72,7 @@ await api.pressIcon(tab);
 results.afterCapture = (await api.tabState(7)) || null;
 await api.pressIcon(tab);
 results.withdrawn = { undo: requests.includes("/extension/undo"), state: await api.tabState(7) };
+results.undoSent = undoBodies[0] ? undoBodies[0].node_id : null;
 
 // Pressed again while on its way: taken back the moment it lands.
 requests.length = 0;

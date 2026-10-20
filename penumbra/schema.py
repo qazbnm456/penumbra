@@ -80,7 +80,8 @@ class Node(BaseModel):
     promotion is re-id + append rather than a re-fetch — no new parsing, no new marker scheme, and
     citations work exactly as they already do.
 
-    The blocks live on disk (`horizon/nodes/<id>.json`), not in this object and not in the index: this
+    The blocks live on disk (`horizon/nodes/<temporary id>.json`, the name the row's `blocks_file`
+    keeps when the id changes), not in this object and not in the index: this
     is the row a listing renders, and a listing of a thousand nodes must not carry a thousand
     corpora. `horizon.node_source` loads them when something actually needs the text.
 
@@ -89,7 +90,12 @@ class Node(BaseModel):
     orbits — which is the "different facets of yourself" premise the Horizon exists for.
     """
 
+    #: The capture's id: a temporary `nd-<hash>` until its text is a kit memory item, then the item's
+    #: id (`m<n>`). Every route still resolves the temporary one (`horizon.resolve_id`).
     id: str
+    #: The temporary id a capture had before it became an item, or `None` while it still has it.
+    #: What a page, the island or the extension holding the old id re-keys by.
+    former_id: str | None = None
     kind: SourceKind
     #: The URL or path this came from. Pasted text gets `ingest.ingest_pasted_text`'s
     #: `f"pasted:{snippet} #{hash}"`, which is already content-derived — NOT the bare string

@@ -45,7 +45,8 @@ def _capture(url, text, state="ready_undistilled") -> str:
                                           blocks=[SourceBlock(locator="whole", text=text)]), base_dir=BASE)
     if state != "ready_undistilled":
         horizon.update_node(node_id, base_dir=BASE, state=state)
-    return node_id
+    # Stored, the capture carries its kit item id; the temporary id is only its `former_id`.
+    return horizon.resolve_id(node_id, base_dir=BASE)
 
 
 def test_sync_embeds_once_and_again_after_a_change():

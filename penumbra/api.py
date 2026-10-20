@@ -274,6 +274,8 @@ async def _lifespan(_app: FastAPI):
     # `resume_interrupted` resets both owned states through `horizon.reset_interrupted_states` and
     # re-queues whatever was still waiting (invariants 78/79/80).
     await asyncio.to_thread(_horizon_queue().resume_interrupted)
+    # Loaded here so the epoch middleware never opens SQLite on the event loop.
+    await asyncio.to_thread(horizon.epoch, _horizon_queue_base())
     recorded = await asyncio.to_thread(_backfill_horizon)
     if recorded:
         _log.info("horizon: recorded %d source(s) added inside orbits", recorded)
@@ -364,6 +366,38 @@ def _presented_token(request: Request) -> str | None:
     if scheme.lower() == "bearer" and value.strip():
         return value.strip()
     return request.query_params.get(auth.QUERY_PARAM)
+
+
+#: The header a workspace sends its Horizon epoch in (`horizon.epoch`).
+EPOCH_HEADER = "x-horizon-epoch"
+
+
+@app.middleware("http")
+async def _refuse_a_stale_epoch(request: Request, call_next):
+    """Refuse a request from a page whose Horizon ids predate a clear: 412 with the current epoch,
+    before the handler runs.
+
+    A capture's id is its kit item id (`m<n>`), never reused within one store; a clear starts a new
+    store numbered from `m1`, so a background window still holding `m3` would otherwise rename,
+    file or remove whatever capture is `m3` now. 412, not 409: the page reads 409 as "saved
+    citations, confirm" or "a run is in flight". The workspace sends the header with every request
+    that names a capture (in its path or body), and only a request that sends it is checked:
+    the island holds no capture ids, the extension keeps a capture's temporary id (a content hash,
+    never reused) and its gate is emptied by a clear, and `EventSource`, `<audio src>` and
+    download links cannot send headers, which is sound only while none of those URLs names a node
+    id (a later one that does takes the epoch as a query parameter). Registered before the token
+    check, so it runs after it: an unauthenticated request never learns the epoch. Reads the
+    process copy (`horizon.cached_epoch`), never SQLite on the event loop."""
+    sent = request.headers.get(EPOCH_HEADER)
+    if sent:
+        base = _horizon_queue_base()
+        current = horizon.cached_epoch(base) or await asyncio.to_thread(horizon.epoch, base)
+        if sent != current:
+            return JSONResponse(
+                status_code=412,
+                content={"detail": "the Horizon was cleared since this page loaded", "epoch": current},
+            )
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -3223,8 +3257,8 @@ class _RevalidatingStatics(StaticFiles):
 #
 # ROUTE ORDER MATTERS HERE. Starlette matches in registration order, so every literal path
 # (`/horizon/status`, `/horizon/upload`, …) must be declared BEFORE `/horizon/{node_id}` or it is captured
-# as a node id. `node_blocks_path`'s pattern check means the worst case is a 404 rather than
-# something worse, but a 404 on `/horizon/status` is still a bug, and the ordering is the fix.
+# as a node id. `is_node_id` refuses a literal word, so the worst case is a 400 rather than something
+# worse, but a 400 on `/horizon/status` is still a bug, and the ordering is the fix.
 
 
 async def _form_or_400(request: Request):
@@ -3245,16 +3279,15 @@ async def _form_or_400(request: Request):
 def _node_or_404(node_id: str) -> Node:
     """Resolve a node id or raise the right 4xx — never a raw 500.
 
-    Invariant 27's rule, at Tier 0: a malformed id and a missing one are DIFFERENT answers.
-    `horizon.node_blocks_path` raises `ValueError` for anything that is not a minted id (invariant 77's
-    sibling finding: `remove_node("../../orbits/myorbit")` once deleted a live orbit file), and
-    that must be a 400 rather than escaping. A well-formed id that is simply not here is a 404.
+    Invariant 27's rule, at Tier 0: a malformed id and a missing one are DIFFERENT answers. Either
+    shape names a capture (its item id, or the temporary id it had before, which `get_node`
+    resolves), and the handler uses the returned `node.id` from then on, including when it hands
+    the id to another module. A well-formed id that is simply not here is a 404.
     """
     if not horizon.is_node_id(node_id):
         # Checked FIRST and explicitly: `get_node` is a SQL lookup, so a malformed id just misses
-        # and is indistinguishable from a missing one. Only `node_blocks_path` validates, and only
-        # the handlers that touch the file reach it — so without this, `DELETE /horizon/../../x` and
-        # `DELETE /horizon/<absent>` would give the same answer for very different reasons.
+        # and is indistinguishable from a missing one, so without this `GET /horizon/../../x` and
+        # `GET /horizon/<absent>` would give the same answer for very different reasons.
         raise HTTPException(400, f"invalid node id {node_id!r}: not a node id")
     try:
         node = horizon.get_node(node_id)
@@ -3273,6 +3306,18 @@ def _node_or_404(node_id: str) -> Node:
     if node is None:
         raise HTTPException(404, f"no such node: {node_id!r}")
     return node
+
+
+def _resolved_or_404(node_id: str) -> str:
+    """A node id as the row now carries it, by SQL alone (it never parses the row): 400 when it is
+    not an id, 404 when nothing carries it. For the routes that must not read the row first
+    (`DELETE`) and for ids in bodies and lists."""
+    if not horizon.is_node_id(node_id):
+        raise HTTPException(400, f"invalid node id {node_id!r}: not a node id")
+    resolved = horizon.resolve_id(node_id)
+    if resolved is None:
+        raise HTTPException(404, f"no such node: {node_id!r}")
+    return resolved
 
 
 class CaptureRequest(BaseModel):
@@ -4159,11 +4204,22 @@ _FILE_ON_READY: dict[str, str] = {}
 _FILE_ON_READY_LOCK = threading.Lock()
 
 
-def _on_capture_ready(node_id: str) -> None:
-    """A capture finished parsing: file it where it was asked to go, or into the landing orbit, and
-    wake the local embedder."""
+def _pop_file_target(*node_ids: str | None) -> str | None:
+    """Take the orbit a capture was asked to go to, registered under any of its ids: the temporary
+    one it had when it was asked, or its item id."""
+    found = None
     with _FILE_ON_READY_LOCK:
-        target = _FILE_ON_READY.pop(node_id, None)
+        for node_id in node_ids:
+            if node_id:
+                found = _FILE_ON_READY.pop(node_id, None) or found
+    return found
+
+
+def _on_capture_ready(node_id: str, former_id: str | None = None) -> None:
+    """A capture finished parsing: file it where it was asked to go, or into the landing orbit, and
+    wake the local embedder. `node_id` is its item id; `former_id` the temporary id a target may
+    have been registered under."""
+    target = _pop_file_target(node_id, former_id)
     if target:
         _file_status(node_id, target, reader=True)  # the reader chose it, from the extension
     elif not horizon.memberships_for(node_id):
@@ -4311,10 +4367,9 @@ def _file_or_wait(node: Node, target: str | None = None) -> bool:
         # Stored before it was registered (a retry already armed): the hook has run without it, so
         # the caller files it now, unless the hook took the target after all.
         current = horizon.get_node(node.id)
-        if current is not None and current.state in ("ready", "ready_undistilled"):
-            with _FILE_ON_READY_LOCK:
-                if _FILE_ON_READY.pop(node.id, None) is not None:
-                    return False
+        if (current is not None and current.state in ("ready", "ready_undistilled")
+                and _pop_file_target(node.id, current.id) is not None):
+            return False
     _horizon_queue().arm_retry()
     return True
 
@@ -4408,6 +4463,8 @@ async def list_horizon(
         #: failing loudly, a long way from the decision that caused it. The row can say so before
         #: the promotion instead.
         "corpus_char_cap": corpus_char_cap,
+        #: Replaced by every clear; a page compares it with the one it loaded with (`horizon.epoch`).
+        "epoch": await asyncio.to_thread(horizon.epoch, _horizon_queue_base()),
     }
 
 
@@ -4431,7 +4488,8 @@ async def horizon_status() -> dict:
         stored = await asyncio.to_thread(_stored_failures)
         if stored:
             distil = {**distil, "failures": stored, "failed": len(stored)}
-    return {**_horizon_queue().status(), "distil": distil, "align": align, "organize": organizing}
+    return {**_horizon_queue().status(), "distil": distil, "align": align, "organize": organizing,
+            "epoch": await asyncio.to_thread(horizon.epoch, _horizon_queue_base())}
 
 
 def _stored_failures() -> list[dict]:
@@ -4879,11 +4937,10 @@ async def extension_capture(request: Request) -> dict:
             # Read before it was registered: file it now instead of waiting for a hook already run.
             current = await asyncio.to_thread(horizon.get_node, node.id)
             if current is not None and current.state in ("ready", "ready_undistilled"):
-                with _FILE_ON_READY_LOCK:
-                    pending = _FILE_ON_READY.pop(node.id, None)
+                pending = _pop_file_target(node.id, current.id)
                 if pending:
-                    await asyncio.to_thread(lambda: _file_status(node.id, pending, reader=True))
-        _remember_extension_capture(node.id)
+                    await asyncio.to_thread(lambda: _file_status(current.id, pending, reader=True))
+        _remember_extension_capture(node.former_id or node.id)
         return {"node": node.model_dump(), "queued": before is None, "duplicate": before is not None,
                 **await asyncio.to_thread(_where_it_is, node.id)}
 
@@ -4911,7 +4968,9 @@ async def extension_capture(request: Request) -> dict:
         node, outcome, duplicate = await _abandonable(_store)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    _remember_extension_capture(node.id)
+    # By its temporary id, which the extension keeps (`captureKey`): a hash of what was captured,
+    # so it never names a capture made after a clear, when item ids start again from `m1`.
+    _remember_extension_capture(node.former_id or node.id)
     queue.nudge()
     return {"node": node.model_dump(), "duplicate": duplicate, **_filing_answer(outcome),
             **await asyncio.to_thread(_where_it_is, node.id)}
@@ -4957,9 +5016,21 @@ def _remember_extension_capture(node_id: str) -> None:
 
 
 def _recent_extension_capture(node_id: str) -> bool:
-    with _EXTENSION_RECENT_LOCK:
-        at = _EXTENSION_RECENT.get(node_id)
-    return at is not None and time.monotonic() - at <= _EXTENSION_UNDO_SECONDS
+    """Whether this browser just made the capture `node_id` names: recorded under the id it was
+    given, which a link's capture changes once it is read, so the body's id is checked first and
+    then the row's current and temporary ids. SQL only: it never parses the row."""
+    now = time.monotonic()
+
+    def recent(key: str | None) -> bool:
+        if not key:
+            return False
+        with _EXTENSION_RECENT_LOCK:
+            at = _EXTENSION_RECENT.get(key)
+        return at is not None and now - at <= _EXTENSION_UNDO_SECONDS
+
+    if recent(node_id):
+        return True
+    return any(recent(key) for key in horizon.ids_of(node_id))
 
 
 class ExtensionFile(BaseModel):
@@ -4979,7 +5050,7 @@ class ExtensionUndo(BaseModel):
 async def extension_file(body: ExtensionFile) -> dict:
     """Capture key: file a capture the extension just made into an orbit, from its card. A link not
     read yet is filed once it is."""
-    if not _recent_extension_capture(body.node_id):
+    if not await asyncio.to_thread(_recent_extension_capture, body.node_id):
         raise HTTPException(404, "not a capture this browser just made")
     target = (await asyncio.to_thread(_load_orbit_or_404, body.orbit)).id
     node = await asyncio.to_thread(horizon.get_node, body.node_id)
@@ -4987,22 +5058,22 @@ async def extension_file(body: ExtensionFile) -> dict:
         raise HTTPException(404, "that capture is gone")
     if node.state not in ("ready", "ready_undistilled"):
         with _FILE_ON_READY_LOCK:
-            _FILE_ON_READY[body.node_id] = target
-        return {"filed": None, "orbit": target, **await asyncio.to_thread(_where_it_is, body.node_id)}
-    outcome, _membership = await asyncio.to_thread(lambda: _file_status(body.node_id, target, reader=True))
-    return {"orbit": target, **_filing_answer(outcome), **await asyncio.to_thread(_where_it_is, body.node_id)}
+            _FILE_ON_READY[node.id] = target
+        return {"filed": None, "orbit": target, **await asyncio.to_thread(_where_it_is, node.id)}
+    outcome, _membership = await asyncio.to_thread(lambda: _file_status(node.id, target, reader=True))
+    return {"orbit": target, **_filing_answer(outcome), **await asyncio.to_thread(_where_it_is, node.id)}
 
 
 @app.post("/extension/undo")
 async def extension_undo(body: ExtensionUndo) -> dict:
     """Capture key: take back a capture the extension just made, from its card: out of any orbit it
     was filed into (unless an answer already cites it) and out of the Horizon."""
-    if not _recent_extension_capture(body.node_id):
+    if not await asyncio.to_thread(_recent_extension_capture, body.node_id):
         raise HTTPException(404, "not a capture this browser just made")
+    ids = {body.node_id, *await asyncio.to_thread(horizon.ids_of, body.node_id)}
 
     def _undo() -> bool:
-        with _FILE_ON_READY_LOCK:
-            _FILE_ON_READY.pop(body.node_id, None)
+        _pop_file_target(*ids)
         for membership in horizon.memberships_for(body.node_id):
             orbit = load_orbit(membership.orbit_id)
             if orbit is None or _citations_of(orbit, membership.source_id):
@@ -5013,7 +5084,8 @@ async def extension_undo(body: ExtensionUndo) -> dict:
 
     removed = await asyncio.to_thread(_undo)
     with _EXTENSION_RECENT_LOCK:
-        _EXTENSION_RECENT.pop(body.node_id, None)
+        for key in ids:
+            _EXTENSION_RECENT.pop(key, None)
     _forget_suggestions()
     return {"removed": bool(removed)}
 
@@ -5198,6 +5270,8 @@ def _chosen_or_422(node_ids: list[str]) -> list[search.Picked]:
     exist, be readable and fit the same budget."""
     if not node_ids:
         raise HTTPException(422, "there is nothing to read in this scope yet")
+    # Resolved first, so a capture named by its item id and by its temporary id is named twice.
+    node_ids = [_resolved_or_404(node_id) for node_id in node_ids]
     if len(set(node_ids)) != len(node_ids):
         raise HTTPException(422, "the same capture was named twice")
     budget, items_cap = _ask_bounds()
@@ -5205,8 +5279,6 @@ def _chosen_or_422(node_ids: list[str]) -> list[search.Picked]:
         raise HTTPException(422, f"at most {items_cap} captures can be read at once")
     picked: list[search.Picked] = []
     for node_id in node_ids:
-        if not horizon.is_node_id(node_id):
-            raise HTTPException(400, f"invalid node id {node_id!r}: not a node id")
         node = horizon.get_node(node_id)
         if node is None:
             raise HTTPException(404, f"no such node: {node_id!r}")
@@ -5522,8 +5594,8 @@ async def dismiss_suggestion(body: DismissSuggestion) -> dict:
     """Do not suggest filing this capture into this orbit again."""
     if not horizon.is_node_id(body.node_id):
         raise HTTPException(400, f"invalid node id {body.node_id!r}: not a node id")
-    await asyncio.to_thread(_node_or_404, body.node_id)
-    await asyncio.to_thread(filing.dismiss, body.node_id, slug(body.orbit))
+    node = await asyncio.to_thread(_node_or_404, body.node_id)
+    await asyncio.to_thread(filing.dismiss, node.id, slug(body.orbit))
     _forget_suggestions()
     return {"dismissed": True}
 
@@ -5552,7 +5624,10 @@ async def preview_horizon_ask(body: HorizonAskPreviewRequest) -> dict:
     the count before the reader spends anything."""
     question = _question_or_422(body.question)
     selection = await asyncio.to_thread(_select_or_http, question, body.scope)
-    return _selection_payload(selection, *_ask_bounds())
+    # The epoch too: the ask that follows names these captures, so a page that missed a clear
+    # learns it here, before the reader is asked to spend anything.
+    return {**_selection_payload(selection, *_ask_bounds()),
+            "epoch": await asyncio.to_thread(horizon.epoch, _horizon_queue_base())}
 
 
 @app.post("/horizon/ask")
@@ -5772,8 +5847,7 @@ async def delete_horizon_node(node_id: str, everywhere: bool = False) -> dict:
     needs the id to be well-formed and nothing else; `remove_node` is a plain SQL delete that never
     parses the row.
     """
-    if not horizon.is_node_id(node_id):
-        raise HTTPException(400, f"invalid node id {node_id!r}: not a node id")
+    node_id = await asyncio.to_thread(_resolved_or_404, node_id)
     left_orbits: list[str] = []
     if everywhere:
         # The reader chose to delete it from every orbit too. Each orbit loses the source the way
@@ -5880,6 +5954,7 @@ async def move_horizon_node(node_id: str, body: MoveRequest) -> dict:
     citation of it unverified (its id is never reused, invariant 50), so when there are any the
     first call answers 409 with the count, and only a call with `confirm` removes it.
     """
+    node_id = await asyncio.to_thread(_resolved_or_404, node_id)
     if not body.from_orbit.strip() or not body.to_orbit.strip():
         raise HTTPException(400, "a move needs both orbits")
     if slug(body.from_orbit) == slug(body.to_orbit):
@@ -5927,6 +6002,7 @@ async def unfile_horizon_node(node_id: str, body: UnfileRequest) -> dict:
     and when there are any the first call answers 409 with the count. Removal also records the pair
     as declined, so a suggestion or automatic filing does not put it straight back.
     """
+    node_id = await asyncio.to_thread(_resolved_or_404, node_id)
     if not body.orbit.strip():
         raise HTTPException(400, "unfiling needs an orbit")
     memberships = await asyncio.to_thread(horizon.memberships_for, node_id)

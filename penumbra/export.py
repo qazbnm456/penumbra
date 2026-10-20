@@ -311,11 +311,14 @@ def _write(out: _Zip, orbits_dir: Path, horizon_dir: Path, words: dict, lang: st
         record["orbits"] = [m.model_dump() for m in members.get(row["id"], [])]
         lines.append(json.dumps(record, ensure_ascii=False, default=str))
     out.put("data/captures.jsonl", "\n".join(lines) + ("\n" if lines else ""))
-    blocks_dir = horizon.horizon_dir(horizon_dir) / "nodes"
-    if blocks_dir.is_dir():
-        for path in sorted(blocks_dir.glob("*.json")):
-            if horizon.is_node_id(path.stem):
-                out.put_file(f"data/blocks/{path.name}", path)
+    # Each capture's blocks by the file its row names (the file keeps the capture's temporary id).
+    for row in rows:
+        try:
+            path = horizon.blocks_file_path(row["blocks_file"], base_dir=horizon_dir)
+        except ValueError:
+            continue
+        if path.is_file():
+            out.put_file(f"data/blocks/{path.name}", path)
     for path in _orbit_files(orbits_dir):
         folder = "data/orbits/unreadable" if path in unreadable else "data/orbits"
         out.put_file(f"{folder}/{path.name}", path)

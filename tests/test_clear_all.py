@@ -119,7 +119,9 @@ def test_clearing_erases_the_memory_store_and_waits_for_a_capture_being_stored(c
 
     node_id = _capture(client, "Text that must not outlive a clear.")
     base = api._horizon_queue_base()
-    assert memory_store.store(base).find_meta("node_id", node_id)
+    # The item is found by the capture's temporary id, which the row keeps as `former_id`.
+    temporary = horizon.get_node(node_id).former_id
+    assert memory_store.store(base).find_meta("node_id", temporary)
     assert horizon._claim("nd-" + "2" * 16)
     try:
         reply = client.post("/data/clear", json={"confirm": "clear everything"})
@@ -128,7 +130,7 @@ def test_clearing_erases_the_memory_store_and_waits_for_a_capture_being_stored(c
         horizon._release("nd-" + "2" * 16)
     assert client.post("/data/clear", json={"confirm": "clear everything"}).status_code == 200
     assert memory_store.store(base).search("outlive") == []
-    assert memory_store.store(base).find_meta("node_id", node_id) == []
+    assert memory_store.store(base).find_meta("node_id", temporary) == []
 
 
 def test_a_capture_that_starts_storing_after_the_check_holds_the_whole_clear_off(client, monkeypatch):

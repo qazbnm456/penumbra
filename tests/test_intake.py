@@ -191,7 +191,8 @@ def test_submitting_the_same_origin_twice_parses_once(stopped_queues):
     second = q.submit("https://example.com/a")
     assert q.wait_idle(5)
 
-    assert first.id == second.id
+    # The first answer was the queued capture's temporary id; stored, it became its item id.
+    assert horizon.resolve_id(first.id) == second.id
     assert parses == ["https://example.com/a"]
     assert horizon.count_nodes() == 1
 
@@ -560,7 +561,7 @@ def test_submit_returns_a_node_even_if_the_row_vanishes_mid_reset(stopped_queues
     monkeypatch.setattr(horizon, "update_node", lambda *args, **kwargs: None)
     again = q.submit("https://example.com/a")
     assert again is not None, "submit returned None under a non-optional annotation"
-    assert again.id == node.id
+    assert again.id == horizon.resolve_id(node.id)
 
 def test_resubmitting_a_failed_origin_is_the_retry_path(stopped_queues):
     """**"Try again" has no endpoint of its own — `submit` IS the retry**, and until now nothing

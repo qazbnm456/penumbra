@@ -27,7 +27,8 @@ def _capture(url: str, text: str, *, tags=(), entities=(), title=None) -> str:
     if title:
         fields["title"] = title
     horizon.update_node(node_id, base_dir=BASE, **fields)
-    return node_id
+    # Stored, the capture carries its kit item id; the temporary id is only its `former_id`.
+    return horizon.resolve_id(node_id, base_dir=BASE)
 
 
 def test_grams_pairs_unspaced_runs_and_leaves_latin_alone():
@@ -118,7 +119,8 @@ def test_a_node_without_readable_text_is_not_searchable():
 
 def test_an_unreadable_blocks_file_still_indexes_the_description():
     node = _capture("https://x.example/a", "body", title="Mitochondria notes")
-    horizon.node_blocks_path(node, base_dir=BASE).write_text("{not json", encoding="utf-8")
+    former = horizon.get_node(node, base_dir=BASE).former_id
+    horizon.node_blocks_path(former, base_dir=BASE).write_text("{not json", encoding="utf-8")
     horizon.update_node(node, base_dir=BASE, summary="energy")
     assert search.search("mitochondria", base_dir=BASE) == [node]
 

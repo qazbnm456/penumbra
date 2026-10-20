@@ -251,6 +251,7 @@ def left_ids(signature: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> s
 def remember_left(ids: set[str], signature: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> None:
     if not ids:
         return
+    ids = {horizon.resolve_id(node_id, base_dir=base_dir) or node_id for node_id in ids}
     now = time.time()
     with horizon._connect(base_dir) as conn:
         conn.executescript(_LEFT_SCHEMA)
