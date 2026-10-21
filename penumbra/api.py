@@ -2988,8 +2988,9 @@ def _translate_trace_event(event: dict) -> dict:
         # while the validator was rejecting a draft, and nothing said so.
         #
         # `meta` read `status`, a key `record_tool_call` never writes — so it was always None.
-        # `ok` is the field, and its THREE states matter: True, False, and absent (upstream's
-        # `read_skill` records no outcome at all).
+        # `ok` is the field, and its THREE states matter: True, False, and absent, for a writer that
+        # declared no outcome (the kit's `CAUSE_UNKNOWN`; its own skill tools record one since
+        # 1.24.0, so a read of an unknown skill now shows as rejected).
         #
         # The kind stays "tool" even for a rejection. `failed` is TERMINAL — `TERMINAL_KINDS` in
         # `app.js` closes the ticker on it — so using it for one rejected tool call would end the
