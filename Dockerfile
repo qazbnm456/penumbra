@@ -33,8 +33,6 @@ ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl unzip \
-        # `git`, because rlm-harness comes from a git source until it is published (`uv.lock`)
-        git \
         tesseract-ocr \
         # rapidocr pulls opencv, which needs these at runtime even in its headless build
         libglib2.0-0 libgl1 \
@@ -52,9 +50,9 @@ RUN set -eux; \
     rm /tmp/deno.zip; \
     deno --version
 
-# The locked set, not a fresh resolve: `pip install .` ignores `[tool.uv.sources]`, so it could not
-# find rlm-harness 1.21.0 (a git source until it is published) and would resolve everything else
-# afresh. `uv` is copied in at a pinned version rather than installed by a script.
+# The locked set, not a fresh resolve: `pip install .` would resolve everything but the pinned kit
+# afresh, so the image could carry versions CI never ran. `uv` is copied in at a pinned version
+# rather than installed by a script.
 COPY --from=ghcr.io/astral-sh/uv:0.12.21 /uv /usr/local/bin/uv
 
 WORKDIR /src

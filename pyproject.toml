@@ -32,8 +32,8 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    # Installed from git (`[tool.uv.sources]` below) until 1.21.0 is published, so `uv run`, CI,
-    # the Docker image and the desktop runtime all get the same kit.
+    # An exact version, so `uv run`, CI, the Docker image and the desktop runtime all get the same
+    # kit; the `memory-vectors` extra is local relations (`vectors.py`).
     "rlm-harness[memory-vectors]==1.21.0",
     # The kit's own bound, repeated so an install that does not go through the kit's metadata
     # first (a stale lock, `uv tool install`) cannot resolve something else. 3.4.1 rather than
@@ -187,11 +187,6 @@ subscription-sdk = ["claude-agent-sdk>=0.1.60"]
 # sync with `uv sync --no-group subscription-sdk`.
 [tool.uv]
 default-groups = ["dev", "subscription-sdk"]
-
-# rlm-harness 1.21.0 is not on PyPI yet; it comes from this commit of its main branch until it is.
-# A kit change this project needs lands in the kit first, then this `rev` moves.
-[tool.uv.sources]
-rlm-harness = { git = "https://github.com/qazbnm456/rlm-harness", rev = "cafddab8851e4fa55087c2aa322f5b768bcac176" }
 
 [project.scripts]
 penumbra = "penumbra.cli:main"
