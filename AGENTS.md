@@ -2,7 +2,7 @@
 
 Penumbra builds on [`rlm-harness`](https://github.com/qazbnm456/rlm-harness). It is a personal knowledge hub whose main surface is a desktop app: you throw anything into the Horizon (text, web pages, PDFs including scanned ones, YouTube captions), see how it connects on a star map and in per-orbit knowledge graphs, ask questions grounded in it with citations you can verify, and take a distilled artifact away. `penumbra serve` and the CLI remain for source installs. See `README.md` for the overview.
 
-`rlm-harness` is pinned to an exact version in `pyproject.toml`. Until 1.21.0 is on PyPI it comes from one commit of its git repository (`[tool.uv.sources]`), and `uv.lock` carries that commit to `uv run`, CI, the Docker image and the desktop runtime alike. To develop against a local checkout, install it editable over the top:
+`rlm-harness` is pinned to an exact PyPI version in `pyproject.toml` (1.21.0), and `uv.lock` carries it to `uv run`, CI, the Docker image and the desktop runtime alike. A kit change this project needs lands and is released in the kit first, then the pin moves. To develop against a local checkout, install it editable over the top:
 
 ```
 uv pip install -e ../rlm-harness

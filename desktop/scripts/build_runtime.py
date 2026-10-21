@@ -99,10 +99,8 @@ def install_app(python: Path, home: Path) -> None:
     # dependencies afresh, so the app shipped whatever was newest on build day rather than what
     # `uv.lock` pins and CI tests: it picked up dspy 3.4.0, which rlm-harness could not drive, and
     # every run in the app failed while the whole suite passed. The lock is exported and installed
-    # exactly (`pip sync`), with its hashes checked, then Penumbra itself goes in without letting
-    # it re-resolve anything. One line carries no hash: rlm-harness comes from a git commit until
-    # it is published, and that commit is what pins it; `uv pip sync` checks the hashes present
-    # and installs it beside them (measured on the 1.21.0 git rev, 1957 hashed lines).
+    # exactly (`pip sync`), with every hash checked, then Penumbra itself goes in without letting
+    # it re-resolve anything.
     # `--locked` refuses a lock that no longer matches `pyproject.toml`, rather than quietly
     # shipping a stale set. `--no-default-groups`, not `--no-dev`: the dev venv
     # also syncs a `subscription-sdk` group by default, and `--no-dev` left its 262 MB in the app.

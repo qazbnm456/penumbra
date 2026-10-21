@@ -2922,7 +2922,7 @@ requires-dist = [
     { name = "pytesseract", specifier = ">=0.3.10" },
     { name = "python-multipart", marker = "extra == 'api'", specifier = ">=0.0.9" },
     { name = "rapidocr", specifier = ">=3.9" },
-    { name = "rlm-harness", extras = ["memory-vectors"], git = "https://github.com/qazbnm456/rlm-harness?rev=cafddab8851e4fa55087c2aa322f5b768bcac176" },
+    { name = "rlm-harness", extras = ["memory-vectors"], specifier = "==1.21.0" },
     { name = "setuptools", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = "<82" },
     { name = "soundfile", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = ">=0.12" },
     { name = "trafilatura", specifier = ">=1.12" },
@@ -3844,10 +3844,14 @@ wheels = [
 [[package]]
 name = "rlm-harness"
 version = "1.21.0"
-source = { git = "https://github.com/qazbnm456/rlm-harness?rev=cafddab8851e4fa55087c2aa322f5b768bcac176#cafddab8851e4fa55087c2aa322f5b768bcac176" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dspy" },
     { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3e/90/bb3c47dec2c0dda82b8e51ace2300b544e1025668d4992c1de5effe7cd80/rlm_harness-1.21.0.tar.gz", hash = "sha256:cffa5e36609eccb6b70ddef1cd47453952e5de83e1504687a227bb438e402c86", size = 1071263, upload-time = "2026-10-21T02:09:36.476Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6b/dd/bf9dc97da27d91de43ae6d07de2aa467499e08dcb434b777c25bc68bafb4/rlm_harness-1.21.0-py3-none-any.whl", hash = "sha256:2b4a86e6ef4f68246d0671f464625abbb9023e37152d5ec344b9fdd0e0c1a8ac", size = 452074, upload-time = "2026-10-21T02:09:34.641Z" },
 ]
 
 [package.optional-dependencies]
