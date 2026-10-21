@@ -34,7 +34,7 @@ classifiers = [
 dependencies = [
     # An exact version, so `uv run`, CI, the Docker image and the desktop runtime all get the same
     # kit; the `memory-vectors` extra is local relations (`vectors.py`).
-    "rlm-harness[memory-vectors]==1.21.0",
+    "rlm-harness[memory-vectors]==1.24.0",
     # The kit's own bound, repeated so an install that does not go through the kit's metadata
     # first (a stale lock, `uv tool install`) cannot resolve something else. 3.4.1 rather than
     # 3.4.0: 3.4.0's lazy-import proxy for openai broke `import litellm` after `import dspy` with
@@ -131,7 +131,7 @@ api = [
 # (`PN_MAIN_MODEL`/`PN_SUB_MODEL` = `claude-agent-sdk/<id>`), via rlm-harness's `ClaudeAgentLM`,
 # injected by `config.setup` (AGENTS.md invariant 35). Installs the SDK that adapter needs; it ALSO
 # needs the Claude Code CLI installed and logged in — a runtime prerequisite pip cannot express.
-subscription = ["claude-agent-sdk>=0.1.60"]
+subscription = ["claude-agent-sdk>=0.1.61"]
 
 # A fully LOCAL TTS provider (`PN_TTS_PROVIDER=chatterbox`): no network, no API key, and none of
 # the undocumented-endpoint grey area `edge-tts` operates in. Deliberately an EXTRA, not a core
@@ -179,7 +179,7 @@ dev = [
 # default: a bare `uv sync` PRUNES claude-agent-sdk back out, and the next subscription run dies with
 # ClaudeAgentLM's ImportError for no reason the operator changed. The sibling `cve-reverser` hit this
 # for real and documented the same mirror; copied rather than rediscovered.
-subscription-sdk = ["claude-agent-sdk>=0.1.60"]
+subscription-sdk = ["claude-agent-sdk>=0.1.61"]
 
 # Bare `uv sync` default-installs `subscription-sdk` so the SDK is never pruned from the dev venv.
 # `dev` MUST stay listed — `default-groups` REPLACES uv's built-in `["dev"]`, it does not append, so
