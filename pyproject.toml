@@ -34,7 +34,7 @@ classifiers = [
 dependencies = [
     # An exact version, so `uv run`, CI, the Docker image and the desktop runtime all get the same
     # kit; the `memory-vectors` extra is local relations (`vectors.py`).
-    "rlm-harness[memory-vectors]==1.24.0",
+    "rlm-harness[memory-vectors]==1.24.1",
     # The kit's own bound, repeated so an install that does not go through the kit's metadata
     # first (a stale lock, `uv tool install`) cannot resolve something else. 3.4.1 rather than
     # 3.4.0: 3.4.0's lazy-import proxy for openai broke `import litellm` after `import dspy` with

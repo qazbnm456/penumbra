@@ -2922,7 +2922,7 @@ requires-dist = [
     { name = "pytesseract", specifier = ">=0.3.10" },
     { name = "python-multipart", marker = "extra == 'api'", specifier = ">=0.0.9" },
     { name = "rapidocr", specifier = ">=3.9" },
-    { name = "rlm-harness", extras = ["memory-vectors"], specifier = "==1.24.0" },
+    { name = "rlm-harness", extras = ["memory-vectors"], specifier = "==1.24.1" },
     { name = "setuptools", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = "<82" },
     { name = "soundfile", marker = "python_full_version >= '3.13' and extra == 'chatterbox'", specifier = ">=0.12" },
     { name = "trafilatura", specifier = ">=1.12" },
@@ -3843,15 +3843,15 @@ wheels = [
 
 [[package]]
 name = "rlm-harness"
-version = "1.24.0"
+version = "1.24.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dspy" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/84/2b/ea1ba80996753f229e4343b9337a12de3c54be8ac1b2e63c09a1830318d9/rlm_harness-1.24.0.tar.gz", hash = "sha256:e7de1c719104aca46e8b41db014431512eddfbb00cd084faae6783d127046a70", size = 1158566, upload-time = "2026-10-21T15:13:25.023Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/67/c6/be141c0e71cf5f42587cb086342dd6e85b1b7fbc3daa3d2bb3f3bd52af0d/rlm_harness-1.24.1.tar.gz", hash = "sha256:4f2a54af0ae5b60f59aeb35be3afbca36720b732f85fecb43c4044b13e9aa429", size = 1161975, upload-time = "2026-10-23T07:30:03.666Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/90/db/64cf51a0e58330893d9f9d88cc0120d83859f0c8d324942934daf83c41ec/rlm_harness-1.24.0-py3-none-any.whl", hash = "sha256:38e780fc59cb2e7fe20df9b40d731fd5fc8f3976e4637924b6c1d550af39ecb8", size = 468632, upload-time = "2026-10-21T15:13:23.409Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/d8/4cc213c383ea90cdcd5278939172a9ad86288dc8af75f496f99ffa610003/rlm_harness-1.24.1-py3-none-any.whl", hash = "sha256:7d861703ef9a8d4c93083657d7c30ab363886f808fc55d536a5f5c56ad56e5aa", size = 469887, upload-time = "2026-10-23T07:30:01.765Z" },
 ]
 
 [package.optional-dependencies]
