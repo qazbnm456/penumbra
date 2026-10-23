@@ -161,6 +161,12 @@ def test_a_scope_that_fits_is_read_whole_with_matches_first():
     assert picked.node_ids == [b, a]
 
 
+def test_a_tag_scope_is_folded_the_way_the_store_keeps_tags():
+    node = _capture("https://x.example/a", "sleep and memory", tags=["sleep"])
+    picked = search.select_for_ask("?", "tag", "Sleep", budget_chars=10_000, max_items=10, base_dir=BASE)
+    assert picked.node_ids == [node]
+
+
 def test_an_entity_scope_matches_the_entity_list_exactly():
     a = _capture("https://x.example/a", "x", entities=["Matthew Walker"])
     _capture("https://x.example/b", "y", entities=["Matthew"])

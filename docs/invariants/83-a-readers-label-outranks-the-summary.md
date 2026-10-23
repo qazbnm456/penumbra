@@ -16,7 +16,7 @@ A capture can be renamed while it still waits for its summary, and the summary p
 - Renaming refuses an empty name rather than deriving one, as renaming an orbit does (invariant 53).
 - Growing the tags past eight is refused rather than cut, so nothing typed disappears; removing is always allowed.
 - A capture still being read (queued, parsing, failed before its text was stored, or waiting to be stored) has no labels yet: its labels belong to its memory item, which it has once its text is stored (invariant 79). Renaming or retagging it answers 409, and the card offers neither until it has landed.
-- Every edit moves the row's `updated_at`, which is what the full-text and vector indexes resync on.
+- Every edit moves the row's `updated_at`, so the capture's last change is the edit. The kit's search reads the label row directly, and a vector follows the text it was made from.
 
 ---
 

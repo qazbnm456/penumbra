@@ -100,8 +100,7 @@ def test_every_function_that_takes_a_node_id_accepts_the_temporary_one(tmp_path)
     temp = node.former_id
     assert horizon.get_node(temp).id == node.id
     assert horizon.update_node(temp, error=None).id == node.id
-    assert horizon.edit_node(temp, tags=["t"]).id == node.id
-    assert horizon.edited_fields(temp) == ["tags"]
+    assert horizon.edit_node(temp, tags=["t"]).edited == ["tags"]
     assert horizon.claim_node(temp, expect="ready_undistilled", to="distilling") is True
     assert horizon.claim_node(temp, expect="distilling", to="ready_undistilled") is True
     assert horizon.node_source(temp).id == node.id

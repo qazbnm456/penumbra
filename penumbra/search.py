@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import get_args
 
+from rlm_harness.memory import fold_name
+
 from . import concepts as aliases_store
 from . import horizon, memory_store
 from .horizon import DEFAULT_HORIZON_DIR
@@ -108,7 +110,7 @@ def _scope_clause(
         # AND, and `json_each` over a malformed column raises instead of matching nothing.
         # An entity scope matches every name alignment folded into it (`concepts.py`).
         names = (aliases_store.names_for(value, base_dir=base_dir) if kind == "entity"
-                 else [name for name in value.split(TAG_SEPARATOR) if name])
+                 else [fold_name(name) for name in value.split(TAG_SEPARATOR) if name])
         marks = ", ".join("?" for _ in names)
         sql += (f" AND CASE WHEN json_valid(nodes.{column}) THEN EXISTS "
                 f"(SELECT 1 FROM json_each(nodes.{column}) WHERE json_each.value IN ({marks})) "

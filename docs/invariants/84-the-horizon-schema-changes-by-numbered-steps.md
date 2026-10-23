@@ -12,7 +12,7 @@ Two processes can open an old database at the same moment (the server and a CLI 
 
 ## What it makes possible
 
-Without a version, `CREATE TABLE IF NOT EXISTS` cannot add a column to a database that already exists. The persisted `readable` flag that `_READABLE`'s comment asks for is one step, and so is every later column. This is the usual way an embedded SQLite database evolves. The mechanism is tested with a stand-in step, so it is proven before the first real step ships.
+Without a version, `CREATE TABLE IF NOT EXISTS` cannot add a column to a database that already exists. The persisted `readable` flag that `_READABLE`'s comment asks for is one step, and so is every later column. This is the usual way an embedded SQLite database evolves. A stand-in step appended after the shipped ones tests the mechanism.
 
 ## The baseline was reset once, before release
 

@@ -1,8 +1,8 @@
 # Invariant 78: The Horizon is an index, not a corpus
 
-**The Horizon (`horizon.py`) is an index, not a corpus: nothing at Tier 0 ever assembles a blob, and every write to it is a SQL delta (`update_node`; there is deliberately no `save_node`).**
+**The Horizon (`horizon.py`) is an index, not a corpus: nothing at Tier 0 assembles a blob over the Horizon, only a Horizon ask over a bounded selection, and every write to it is a SQL delta (`update_node`; there is deliberately no `save_node`).**
 
-The one stated exception to the delta rule is `promote_node`'s `INSERT OR REPLACE` into `memberships`, whose four columns are all freshly supplied and which has no earlier row to preserve. The two rules answer different questions (how the Horizon coexists with invariant 8, and how it survives concurrent writers), but breaking either one turns the Horizon back into an orbit.
+The stated exceptions to the delta rule are a few `INSERT OR REPLACE` writes of rows whose columns are all freshly supplied and which have no earlier row to preserve: `promote_node`'s into `memberships`, the epoch in `horizon_meta`, and an orbit's topic in `orbit_topics`. The two rules answer different questions (how the Horizon coexists with invariant 8, and how it survives concurrent writers), but breaking either one turns the Horizon back into an orbit.
 
 ## Why there are two tiers
 
@@ -69,7 +69,7 @@ The initialisation cache checks that the database file still exists. Without tha
 
 ## The search index
 
-The full-text index is the kit's memory store's (`items_fts` and `labels_fts` in `memory.db`): each capture's text up to `memory_store.INDEX_CHARS`, its origin, and its current labels, so a title the reader set or a summary that just landed is found at once, with no sync. Penumbra's own FTS index in `index.db` was dropped when search moved there (invariant 84). `search.select_for_ask` asks the kit only for the order (`search_ids` with no limit) and decides the scope itself from the Horizon's rows (the readable states, a tag, an entity with its aliases, an orbit through `memberships`), so the scope is applied inside the ranking, never to a cut of its top hits: with a global `LIMIT`, five hundred better matches outside a tag once left nothing inside it. An empty question matches nothing, although the kit would list every item for one.
+The full-text index is the kit's memory store's (`items_fts` and `labels_fts` in `memory.db`): each capture's text up to `memory_store.INDEX_CHARS`, its origin, and its current labels, so a title the reader set or a summary that just landed is found at once, with no sync. Penumbra keeps no full-text index of its own in `index.db`. `search.select_for_ask` asks the kit only for the order (`search_ids` with no limit) and decides the scope itself from the Horizon's rows (the readable states, a tag, an entity with its aliases, an orbit through `memberships`), so the scope is applied inside the ranking, never to a cut of its top hits: with a global `LIMIT`, five hundred better matches outside a tag once left nothing inside it. An empty question matches nothing, although the kit would list every item for one.
 
 Chinese, Japanese and Korean text is indexed as overlapping character pairs (the kit adds single characters), never through a dictionary. FTS5's `unicode61` tokenizer makes a whole run of Han characters one token, and its `trigram` tokenizer cannot match a two-character word, which is most of Chinese vocabulary. A dictionary segmenter was measured and refused: jieba's default dictionary split 關係 on Traditional text, its Traditional dictionary and a Simplified-conversion round trip both split 海馬迴 into 海馬 / 迴在, and a search for 海馬迴 then found nothing. Pairs need no dictionary, carry no Traditional or Simplified bias and never lose a term to a wrong cut; they are the standard CJK analyzer in Lucene for the same reasons. `tests/test_search.py` keeps both measured words as tests against the kit's index.
 
@@ -77,7 +77,7 @@ The searchable states are derived from `schema.NodeState` minus `queued`, `parsi
 
 ## The star map and the knowledge graph
 
-`topology.py` draws both from rows already in the index: `nodes.entities`, `nodes.tags` and `memberships`. It never reads a node's text and never calls a model, so drawing the Horizon costs one query however large it grows. Two entities are linked when one capture names both; two orbits are bridged when captures filed into each name the same entity. An unsummarised capture names nothing, so it is counted apart and offered for summarising rather than guessed into the picture. Orbits are keyed by `slug`, the token memberships are written with, which `/orbits` also reports, because an orbit's id and its filename can differ (invariant 10). Each drawing's output is capped (the 60 most-named entities, 300 captures, at least each orbit's three strongest bridges, `BRIDGES_PER_ORBIT`) and reports how much it left out; the graph's side panel says so when entities were dropped.
+`topology.py` draws both from rows already in the index: each capture's entities and tags (read through the `labelled` view over the memory store's labels) and `memberships`. It never reads a node's text and never calls a model, so drawing the Horizon costs one query however large it grows. Two entities are linked when one capture names both; two orbits are bridged when captures filed into each name the same entity. An unsummarised capture names nothing, so it is counted apart and offered for summarising rather than guessed into the picture. Orbits are keyed by `slug`, the token memberships are written with, which `/orbits` also reports, because an orbit's id and its filename can differ (invariant 10). Each drawing's output is capped (the 60 most-named entities, 300 captures, at least each orbit's three strongest bridges, `BRIDGES_PER_ORBIT`) and reports how much it left out; the graph's side panel says so when entities were dropped.
 
 ## A summary sees labels, not the Horizon
 
@@ -85,7 +85,7 @@ A summary is shown the tags and entities in use (the kit's `known_listing`: the 
 
 ## Not here
 
-There are no parsers beyond what `ingest_one` handles, no embeddings and no edges inferred from text. Traditional and Simplified spellings of the same word do not match each other in the index. The find box on the Horizon still matches the distilled fields by substring; the full-text index serves Horizon asks. WAL needs a real local filesystem and degrades or fails on a network share, as the orbit files already do, more quietly.
+There are no parsers beyond what `ingest_one` handles, and no edges inferred from text other than the weak similarity lines of invariant 82. Traditional and Simplified spellings of the same word do not match each other in the index. The find box on the Horizon still matches the distilled fields by substring; the full-text index serves Horizon asks. WAL needs a real local filesystem and degrades or fails on a network share, as the orbit files already do, more quietly.
 
 ---
 

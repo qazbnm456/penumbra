@@ -961,7 +961,7 @@ def test_a_readers_title_and_tags_survive_a_later_summary():
     node = horizon.add_node(_source())
     edited = horizon.edit_node(node.id, title="My name for it", tags=["mine"])
     assert (edited.title, edited.tags) == ("My name for it", ["mine"])
-    assert horizon.edited_fields(node.id) == ["title", "tags"]
+    assert horizon.get_node(node.id).edited == ["title", "tags"]
     after = label(node.id, title="Model title", tags=["model"], summary="S.")
     assert (after.title, after.tags) == ("My name for it", ["mine"])
     assert (after.summary, after.state) == ("S.", "ready")
@@ -973,7 +973,7 @@ def test_editing_only_the_title_leaves_the_tags_to_the_summary():
     node = horizon.add_node(_source())
     horizon.edit_node(node.id, title="Renamed")
     horizon.edit_node(node.id, title="Renamed again")
-    assert horizon.edited_fields(node.id) == ["title"]
+    assert horizon.get_node(node.id).edited == ["title"]
     after = label(node.id, state=None, title="Model", tags=["model"])
     assert (after.title, after.tags) == ("Renamed again", ["model"])
 

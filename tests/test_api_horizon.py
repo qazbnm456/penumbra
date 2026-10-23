@@ -2349,6 +2349,14 @@ def test_a_capture_still_being_read_cannot_be_renamed_yet(client):
     assert client.put(f"/horizon/{pending.id}/tags", json={"tags": ["x"]}).status_code == 409
 
 
+def test_a_failed_capture_is_not_told_to_wait(client):
+    base = api._horizon_queue_base()
+    pending = horizon.add_pending_node("https://example.com/never-read", "web", base_dir=base)
+    horizon.update_node(pending.id, state="failed", error="ParseError: no text", base_dir=base)
+    reply = client.put(f"/horizon/{pending.id}/title", json={"title": "Named"})
+    assert reply.status_code == 409 and "could not be read" in reply.json()["detail"]
+
+
 def _wait_for_pass(client) -> None:
     for _ in range(750):
         if client.get("/horizon/status").json()["distil"]["running"] is False:

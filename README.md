@@ -174,7 +174,7 @@ curl -X GET  "localhost:8000/horizon?q=design&limit=25"     # search the distill
 curl -X GET  localhost:8000/horizon/status                  # what is parsing, what is summarising
 curl -X POST localhost:8000/horizon/distil -H "Content-Type: application/json" \
     -d '{"limit": 20}'                                    # SPENDS: up to 20 summaries on your key
-curl -X POST localhost:8000/horizon/cancel                  # stop both at the next item boundary
+curl -X POST localhost:8000/horizon/cancel                  # stop both at once
 curl -X GET  localhost:8000/horizon/nd-0123456789abcdef     # one node, plus the orbits it is filed in
 curl -X POST localhost:8000/horizon/nd-0123456789abcdef/promote -H "Content-Type: application/json" \
     -d '{"orbit_id": "research"}'                          # Tier 0 -> Tier 1

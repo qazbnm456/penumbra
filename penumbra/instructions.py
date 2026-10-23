@@ -560,22 +560,6 @@ def make_grounded_validator(
     return validate
 
 
-def with_step_budget(kw: dict, steps: int) -> dict:
-    """`kw` with a config capping this task at `steps` REPL turns, or at the configured budget when
-    that is lower. One budget for every task gave a concept alignment the 25 turns an orbit-wide
-    guide needs, so a model looping on a small decision could spend 25 capped replies. A caller that
-    passes its own `config` keeps it.
-    """
-    if "config" in kw:
-        return kw
-    from dataclasses import replace
-
-    from rlm_harness import get_config
-
-    base = get_config()
-    return {**kw, "config": replace(base, max_iterations=min(base.max_iterations, steps))}
-
-
 def apply_skills(task: Any, skills_dir: str | None) -> None:
     """Wire `skills_dir` onto `task` using `discovery="inject"`, the shape four sibling projects
     already use.

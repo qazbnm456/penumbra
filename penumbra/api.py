@@ -5903,11 +5903,14 @@ async def retag_horizon_node(node_id: str, body: NodeTagsRequest) -> dict:
 
 
 def _edit_or_409(node_id: str, **fields: object):
-    """`horizon.edit_node`, with a capture still being read answered 409: its labels live on its
-    memory item, which it has once its text is stored."""
+    """`horizon.edit_node`, with a capture that has no memory item answered 409: its labels live on
+    that item, which it has once its text is stored, and a failed capture never has one."""
     try:
         return horizon.edit_node(node_id, **fields)
     except horizon.NotAnItem as exc:
+        if exc.failed:
+            raise HTTPException(409, "this capture could not be read, so it cannot be named; "
+                                     "retry or remove it") from exc
         raise HTTPException(409, "this capture is still being read; name it once it has landed") from exc
 
 

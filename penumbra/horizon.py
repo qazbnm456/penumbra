@@ -1388,14 +1388,12 @@ EDITABLE = ("title", "tags")
 
 
 class NotAnItem(ValueError):
-    """The capture is still being read, so it has no labels yet to change (it becomes a kit item
-    once its text is stored)."""
+    """The capture has no kit item, so it has no labels to change: it is still being read (it
+    becomes an item once its text is stored), or `failed` says it never will be."""
 
-
-def edited_fields(node_id: str, *, base_dir: str | Path = DEFAULT_HORIZON_DIR) -> list[str]:
-    """Which of `EDITABLE` the reader has set on this node, in that order."""
-    node = get_node(node_id, base_dir=base_dir)
-    return node.edited if node is not None else []
+    def __init__(self, node_id: str, *, failed: bool = False) -> None:
+        self.failed = failed
+        super().__init__(f"capture {node_id} " + ("failed to be read" if failed else "is still being read"))
 
 
 def edit_node(
@@ -1411,20 +1409,19 @@ def edit_node(
         raise ValueError(f"not editable: {sorted(unknown)} (editable: {list(EDITABLE)})")
     checked = {column: _FIELD_ADAPTERS[column].validate_python(value) for column, value in fields.items()}
     with _connect(base_dir) as conn:
-        row = conn.execute("SELECT id, memory_rowid FROM nodes WHERE id = ? OR former_id = ?",
+        row = conn.execute("SELECT id, state, memory_rowid FROM nodes WHERE id = ? OR former_id = ?",
                            (node_id, node_id)).fetchone()
     if row is None:
         return None
     if row["memory_rowid"] is None:
-        raise NotAnItem(f"capture {node_id} is still being read")
+        raise NotAnItem(node_id, failed=row["state"] == "failed")
     try:
         # The kit first, outside any transaction here; the row is read back after (`_connect_labels`).
         memory_store.store(base_dir).label(row["id"], provenance="said", **checked)
     except KeyError:
         return None   # removed in between
     with _connect(base_dir) as conn:
-        # So the vectors, which follow `updated_at`, read the new label (the kit's search reads it at
-        # once, from the label row).
+        # The capture's last change is the reader's edit; the kit's search reads the label row itself.
         conn.execute("UPDATE nodes SET updated_at = ? WHERE id = ?", (time.time(), row["id"]))
     return get_node(row["id"], base_dir=base_dir)
 
